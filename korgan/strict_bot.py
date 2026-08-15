@@ -11,7 +11,7 @@ from korgan import bot as base_bot
 from korgan.config import get_settings
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
-from korgan.production_legal import ProductionOpenAILegalService
+from korgan.repaired_production_legal import ProductionOpenAILegalService
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.ui import main_menu
 
