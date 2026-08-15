@@ -1,0 +1,1 @@
+Civil claim hotfix scope: isolate state-duty law/calculation from civil-claim legal qualification and model FINAL QA; prevent stale Tax Code references from blocking DOCX; avoid duplicate state-duty requests; reduce repeated legal research by treating articles 715 and 722 as the core loan/debt backbone and using one medium-context pass before any high-context fallback.
