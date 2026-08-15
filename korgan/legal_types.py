@@ -16,6 +16,8 @@ class ExtractedDocument:
     text_summary: str = ""
     parties: list[str] = field(default_factory=list)
     identifiers: list[str] = field(default_factory=list)
+    addresses: list[str] = field(default_factory=list)
+    contacts: list[str] = field(default_factory=list)
     dates: list[str] = field(default_factory=list)
     amounts: list[str] = field(default_factory=list)
     obligations: list[str] = field(default_factory=list)
@@ -35,6 +37,8 @@ class ExtractedDocument:
                 f"Кратко: {self.text_summary or 'нет'}",
                 line("Стороны", self.parties),
                 line("Идентификаторы", self.identifiers),
+                line("Адреса", self.addresses),
+                line("Контакты", self.contacts),
                 line("Даты", self.dates),
                 line("Суммы", self.amounts),
                 line("Обязательства", self.obligations),
