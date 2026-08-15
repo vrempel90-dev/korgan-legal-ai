@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
@@ -7,29 +9,29 @@ from aiogram.types import CallbackQuery, Message
 
 from korgan import bot as base_bot
 from korgan.ui import (
-    DOCUMENTS_TEXT,
     MAIN_TEXT,
     WELCOME_TEXT,
     back_to_main,
-    case_menu,
     delete_confirm_menu,
-    documents_menu,
     help_menu,
     main_menu,
 )
 
+LOGGER = logging.getLogger(__name__)
 router = Router(name="korgan-inline-menu")
 
 
 async def _edit(callback: CallbackQuery, text: str, markup) -> None:
     await callback.answer()
     message = callback.message
-    if not isinstance(message, Message):
+    if message is None:
+        await callback.bot.send_message(callback.from_user.id, text, parse_mode="HTML", reply_markup=markup)
         return
     try:
         await message.edit_text(text, parse_mode="HTML", reply_markup=markup)
-    except TelegramBadRequest:
-        await message.answer(text, parse_mode="HTML", reply_markup=markup)
+    except (TelegramBadRequest, AttributeError):
+        chat_id = getattr(getattr(message, "chat", None), "id", callback.from_user.id)
+        await callback.bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
 
 
 async def _case_text(state: FSMContext) -> str:
@@ -40,7 +42,7 @@ async def _case_text(state: FSMContext) -> str:
         "📦 <b>Моё дело</b>\n\n"
         f"📎 Загружено документов / сканов: <b>{len(docs)}</b>\n"
         f"💬 Текстовых описаний ситуации: <b>{len(facts)}</b>\n\n"
-        "Можно добавить материалы или сразу перейти к подготовке иска."
+        "Чтобы сформировать иск, нажмите «📄 Документ» в главном меню."
     )
 
 
@@ -60,14 +62,9 @@ async def consult_callback(callback: CallbackQuery) -> None:
     )
 
 
-@router.callback_query(F.data == "menu:documents")
-async def documents_callback(callback: CallbackQuery) -> None:
-    await _edit(callback, DOCUMENTS_TEXT, documents_menu())
-
-
 @router.callback_query(F.data == "menu:case")
 async def case_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    await _edit(callback, await _case_text(state), case_menu())
+    await _edit(callback, await _case_text(state), back_to_main())
 
 
 @router.callback_query(F.data == "menu:prices")
@@ -135,36 +132,46 @@ async def delete_confirm_callback(callback: CallbackQuery, state: FSMContext) ->
     await _edit(callback, "✅ Данные текущего дела удалены.", main_menu())
 
 
-@router.callback_query(F.data == "doc:upload")
-async def upload_callback(callback: CallbackQuery) -> None:
-    await _edit(
-        callback,
-        "📎 <b>Загрузка документов</b>\n\n"
-        "Отправьте сюда PDF, DOCX, TXT, JPG, PNG, WEBP или фотографию документа.\n\n"
-        "KORGAN извлечёт необходимые для дела факты и сохранит их в текущей сессии.",
-        documents_menu(),
-    )
-
-
-@router.callback_query(F.data == "doc:case")
-async def document_case_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    await _edit(callback, await _case_text(state), case_menu())
-
-
-@router.callback_query(F.data == "doc:clear")
-async def document_clear_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    data = await state.get_data()
-    language = str(data.get("language", "ru"))
-    await state.set_data({"language": language, "documents": [], "facts": []})
-    await _edit(callback, "🧹 Текущее дело очищено.", documents_menu())
-
-
 @router.callback_query(F.data == "doc:claim")
 async def claim_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer()
+    """The main-menu Document button must always produce visible feedback."""
+    await callback.answer("Открываю подготовку документа…")
+    LOGGER.info("Document button clicked by telegram_user_id=%s", callback.from_user.id)
+
+    context = await base_bot._case_context(state)
     message = callback.message
-    if isinstance(message, Message):
-        await base_bot.claim_handler(message, state)
+    chat_id = getattr(getattr(message, "chat", None), "id", callback.from_user.id)
+
+    if not context.strip():
+        await callback.bot.send_message(
+            chat_id,
+            "📄 <b>Подготовка искового заявления</b>\n\n"
+            "Сначала опишите обстоятельства дела обычным сообщением или пришлите PDF/DOCX/TXT, фото либо скан. "
+            "После этого снова нажмите «📄 Документ» — KORGAN проверит правовую основу и пришлёт готовый иск файлом .docx.",
+            parse_mode="HTML",
+            reply_markup=main_menu(),
+        )
+        return
+
+    if message is None:
+        await callback.bot.send_message(
+            chat_id,
+            "Не удалось открыть сообщение меню. Отправьте /menu и нажмите «📄 Документ» ещё раз.",
+            reply_markup=main_menu(),
+        )
+        return
+
+    # Telegram may expose callback.message through a compatible message type;
+    # do not silently discard it with isinstance(Message) checks.
+    try:
+        await base_bot.claim_handler(message, state)  # type: ignore[arg-type]
+    except Exception:
+        LOGGER.exception("Document button claim action failed")
+        await callback.bot.send_message(
+            chat_id,
+            "Не удалось запустить подготовку иска. Материалы дела сохранены; попробуйте нажать «📄 Документ» ещё раз.",
+            reply_markup=main_menu(),
+        )
 
 
 @router.callback_query(F.data == "help:capabilities")
@@ -175,7 +182,7 @@ async def capabilities_callback(callback: CallbackQuery) -> None:
         "• консультировать по праву Республики Казахстан;\n"
         "• принимать документы и сканы;\n"
         "• извлекать стороны, даты, суммы и другие факты;\n"
-        "• готовить проект искового заявления;\n"
+        "• готовить проект искового заявления в .docx;\n"
         "• проверять правовые основания по официальным источникам.",
         help_menu(),
     )
@@ -186,10 +193,10 @@ async def claim_help_callback(callback: CallbackQuery) -> None:
     await _edit(
         callback,
         "📄 <b>Как подготовить иск</b>\n\n"
-        "1. Опишите ситуацию.\n"
-        "2. Загрузите договоры, квитанции и другие доказательства.\n"
-        "3. Откройте «Документы» → «Исковое заявление».\n"
-        "4. KORGAN проверит правовую основу и сформирует DOCX либо укажет, что требует проверки.",
+        "1. Опишите ситуацию или пришлите документы/сканы.\n"
+        "2. Вернитесь в главное меню.\n"
+        "3. Нажмите «📄 Документ».\n"
+        "4. KORGAN проверит правовую основу и пришлёт готовый DOCX либо укажет, что требует проверки.",
         help_menu(),
     )
 
@@ -209,7 +216,7 @@ async def incomplete_callback(callback: CallbackQuery) -> None:
     await _edit(
         callback,
         "❗ <b>Документ получился неполным</b>\n\n"
-        "Добавьте недостающие документы или напишите отсутствующие факты обычным сообщением, затем сформируйте иск повторно.",
+        "Добавьте недостающие документы или напишите отсутствующие факты обычным сообщением, затем нажмите «📄 Документ» повторно.",
         help_menu(),
     )
 
