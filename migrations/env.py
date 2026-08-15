@@ -6,13 +6,18 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from korgan_legal_ai.db.engine import normalize_database_url
+
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 url = os.getenv("DATABASE_URL") or os.getenv("TEST_DATABASE_URL")
 if url:
-    config.set_main_option("sqlalchemy.url", url)
+    # Alembic uses ConfigParser interpolation, so literal percent signs in a
+    # generated database password must be escaped while storing the URL.
+    normalized_url = normalize_database_url(url).replace("%", "%%")
+    config.set_main_option("sqlalchemy.url", normalized_url)
 
 
 def run_migrations_offline() -> None:
