@@ -75,7 +75,8 @@ def _identifier_in_source(value: str, raw_text: str) -> bool:
     compact = re.sub(r"[\s\u00a0\u202f-]+", "", value)
     if not compact:
         return False
-    pattern = "".join(re.escape(char) + r"[\s\u00a0\u202f-]*" for char in compact).rstrip("*")
+    separator = r"[\s\u00a0\u202f-]*"
+    pattern = separator.join(re.escape(char) for char in compact)
     return re.search(pattern, raw_text) is not None
 
 
