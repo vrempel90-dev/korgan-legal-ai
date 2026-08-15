@@ -1,13 +1,44 @@
 from __future__ import annotations
 
+import json
+import logging
 import re
 from datetime import date, datetime
+from typing import Any
+from urllib.parse import urlparse
 
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.production_legal import (
     COURT_NOTE,
     ProductionOpenAILegalService as _BaseProductionOpenAILegalService,
 )
+from korgan.verified_openai import _actual_response_urls, _canonical_url
+
+LOGGER = logging.getLogger(__name__)
+
+
+_CONSULT_RESEARCH_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "verified_points": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "statement": {"type": "string"},
+                    "article": {"type": "string"},
+                    "source_url": {"type": "string"},
+                },
+                "required": ["statement", "article", "source_url"],
+                "additionalProperties": False,
+            },
+        },
+        "unresolved_facts": {"type": "array", "items": {"type": "string"}},
+        "clarifying_questions": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["verified_points", "unresolved_facts", "clarifying_questions"],
+    "additionalProperties": False,
+}
 
 
 _CLAIMANT_ROLE_MARKERS = (
@@ -80,6 +111,14 @@ _LIMITATION_MARKERS = (
 
 def _normalize(value: str) -> str:
     return re.sub(r"[^0-9a-zа-яё]+", "", value.lower())
+
+
+def _is_adilet_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host == "adilet.zan.kz" or host.endswith(".adilet.zan.kz")
 
 
 def _party_for_prefix(prefix: str) -> str | None:
@@ -249,7 +288,6 @@ def _recent_due_date(case_context: str) -> date | None:
                 continue
     if not candidates:
         return None
-    # The latest explicitly stated contractual due date is the conservative choice.
     return max(candidates)
 
 
@@ -278,7 +316,6 @@ def _prepare_draft_for_validation(case_context: str, draft: ClaimDraft) -> None:
     _drop_nonstandard_party_summons(draft)
     _drop_irrelevant_limitation_discussion(case_context, draft)
 
-    # Restore only requisites that the extractor explicitly bound to one party.
     _restore_role_bound_bucket(case_context, draft, "Адреса:", "Адрес")
     _restore_role_bound_bucket(case_context, draft, "Идентификаторы:", "ИИН/БИН")
     _restore_role_bound_bucket(case_context, draft, "Контакты:", "Контакт")
@@ -340,7 +377,111 @@ def _sync_state_duty_request(draft: ClaimDraft) -> None:
 
 
 class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
-    """Production service with deterministic pre-QA repair and the original hard gate."""
+    """Production service with court-ready drafting plus practical source-bound consultation."""
+
+    async def consult(
+        self,
+        question: str,
+        case_context: str = "",
+        language: str = "ru",
+    ) -> tuple[str, list[str]]:
+        """Consult without turning fail-closed into a refusal to help.
+
+        Exact law is source-bound to Adilet. When the answer depends on contract
+        wording or missing evidence, the assistant still gives a practical factual
+        analysis and asks for the exact missing documents instead of refusing.
+        """
+        tools = [{
+            "type": "web_search",
+            "filters": {"allowed_domains": ["adilet.zan.kz"]},
+            "search_context_size": "medium",
+        }]
+        research_prompt = (
+            f"Дата проверки: {date.today().isoformat()}. Исследуй ТОЛЬКО тот правовой вопрос, который задал пользователь. "
+            "Не превращай обычную консультацию в исследование для искового заявления.\n\n"
+            "ПРАВИЛА:\n"
+            "1. verified_points: только выводы по действующему праву Республики Казахстан, для которых ты реально открыл страницу Adilet.\n"
+            "2. Для каждого verified_point укажи точный номер статьи/пункта и URL той страницы Adilet, которую реально использовал.\n"
+            "3. Если ответ зависит от текста договора, акта, приложения, переписки, вида переданных документов или иных фактов — перечисли это в unresolved_facts.\n"
+            "4. В clarifying_questions дай только вопросы, ответы на которые реально изменят юридический вывод.\n"
+            "5. Не выдумывай содержание договора и не подменяй отсутствие факта предположением.\n"
+            "6. Не ищи госпошлину, подсудность, исковую давность и процессуальные нормы, если пользователь об этом не спрашивает и они не нужны для ответа.\n\n"
+            f"ВОПРОС ПОЛЬЗОВАТЕЛЯ:\n{question}\n\n"
+            f"МАТЕРИАЛЫ/КОНТЕКСТ:\n{case_context[:30000] if case_context else 'нет'}"
+        )
+
+        payload, research_response = await self._structured_response(
+            model=self.settings.openai_model,
+            instructions=(
+                "Ты юридический исследователь KORGAN для консультаций по праву Республики Казахстан. "
+                "Ищи только то, что относится к вопросу. Fail-closed относится к нормам права, а не к способности помочь пользователю."
+            ),
+            content=[{"role": "user", "content": [{"type": "input_text", "text": research_prompt}]}],
+            schema_name="korgan_consult_research",
+            schema=_CONSULT_RESEARCH_SCHEMA,
+            tools=tools,
+        )
+
+        actual_urls = [
+            url for url in _actual_response_urls(research_response)
+            if _is_adilet_url(url) and self._is_current_official_source(url)
+        ]
+        actual_by_canonical = {
+            _canonical_url(url): url
+            for url in actual_urls
+            if _canonical_url(url)
+        }
+
+        verified_points: list[str] = []
+        used_urls: list[str] = []
+        for point in payload.get("verified_points", []):
+            statement = str(point.get("statement", "")).strip()
+            article = str(point.get("article", "")).strip()
+            claimed_url = str(point.get("source_url", "")).strip()
+            actual_url = actual_by_canonical.get(_canonical_url(claimed_url))
+            if not statement or not article or not actual_url:
+                continue
+            verified_points.append(f"{statement} [статья/пункт: {article}; источник: {actual_url}]")
+            if actual_url not in used_urls:
+                used_urls.append(actual_url)
+
+        unresolved = [str(x).strip() for x in payload.get("unresolved_facts", []) if str(x).strip()]
+        clarifying = [str(x).strip() for x in payload.get("clarifying_questions", []) if str(x).strip()]
+
+        LOGGER.info(
+            "KORGAN consultation research: actual_adilet_urls=%d verified_points=%d unresolved=%d",
+            len(actual_urls),
+            len(verified_points),
+            len(unresolved),
+        )
+
+        answer_prompt = (
+            f"ВОПРОС:\n{question}\n\n"
+            f"КОНТЕКСТ ПОЛЬЗОВАТЕЛЯ:\n{case_context[:30000] if case_context else 'нет'}\n\n"
+            f"ПОДТВЕРЖДЕННЫЕ НОРМЫ/ВЫВОДЫ:\n{json.dumps(verified_points, ensure_ascii=False)}\n\n"
+            f"НЕУСТАНОВЛЕННЫЕ ФАКТЫ:\n{json.dumps(unresolved, ensure_ascii=False)}\n\n"
+            f"УТОЧНЯЮЩИЕ ВОПРОСЫ:\n{json.dumps(clarifying, ensure_ascii=False)}\n\n"
+            "Дай практическую консультацию. Начни с краткого ответа по сути. Затем объясни, от чего зависит окончательный вывод и что пользователю делать дальше. "
+            "Конкретное содержание закона, номера статей, сроки, обязанности и запреты можно утверждать ТОЛЬКО из списка ПОДТВЕРЖДЕННЫЕ НОРМЫ/ВЫВОДЫ. "
+            "Если список пуст, НЕ ОТКАЗЫВАЙСЯ ОТ КОНСУЛЬТАЦИИ: дай предварительный анализ только по фактам пользователя, объясни договорные/доказательственные развилки "
+            "и запроси нужный документ или пункт договора. Не пиши фразу 'не удалось проверить ответ' и не советуй просто переформулировать вопрос. "
+            "Не выдумывай отсутствующие условия договора. Если нужен документ, назови конкретно какой раздел/пункт нужен."
+        )
+
+        response = await self.client.responses.create(
+            model=self.settings.openai_model,
+            instructions=(
+                "Ты KORGAN Legal AI, практикующий юридический ассистент по праву Казахстана. "
+                "Помогай пользователю даже при неполных данных, но отделяй фактический предварительный анализ от подтвержденных норм права. "
+                f"Отвечай на {'казахском' if language == 'kk' else 'русском'}."
+            ),
+            input=answer_prompt,
+            store=False,
+        )
+
+        fully_verified = bool(verified_points) and not unresolved
+        marker = "✅ VERIFIED" if fully_verified else "⚠️ NEEDS_VERIFICATION"
+        return f"{marker}\n\n{response.output_text.strip()}", used_urls
 
     async def draft_claim(
         self,
