@@ -172,6 +172,8 @@ class Financials(BaseModel):
     rate/cap fields so a percentage can never be mis-parsed as KZT.
     """
 
+    contract_amount: Decimal | None = None
+    payments: list[Decimal] = Field(default_factory=list)
     principal: Decimal | None = None
     penalty: Decimal | None = None
     interest: Decimal | None = None
@@ -284,6 +286,8 @@ class EvidenceMap(BaseModel):
 
 
 class CalculationResult(BaseModel):
+    contract_amount: Decimal | None = None
+    payments_total: Decimal = Decimal("0")
     principal: Decimal
     penalty: Decimal
     interest: Decimal
@@ -291,6 +295,8 @@ class CalculationResult(BaseModel):
     total: Decimal
     currency: str
     mismatch_with_user_total: bool = False
+    principal_conflicts_with_payments: bool = False
+    other_excluded_as_duplicate: bool = False
     penalty_days: int | None = Field(default=None, ge=0)
     penalty_rate_percent_per_day: Decimal | None = Field(default=None, ge=0)
     penalty_cap_amount: Decimal | None = Field(default=None, ge=0)

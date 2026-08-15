@@ -38,6 +38,10 @@ class DebtClaimDrafter:
             needs.append("evidence_gaps")
         if calculation.mismatch_with_user_total:
             needs.append("claim_total_mismatch")
+        if calculation.principal_conflicts_with_payments:
+            needs.append("principal_conflicts_with_payments")
+        if calculation.other_excluded_as_duplicate:
+            needs.append("other_amount_duplicated_debt")
         return list(dict.fromkeys(needs))
 
     @classmethod
@@ -168,6 +172,22 @@ class DebtClaimDrafter:
         defendant_block = DebtClaimDrafter._party_block("Ответчик", defendant)
         facts = "\n".join(f"- {fact.statement}" for fact in case.facts)
         total = f"{calculation.total} {calculation.currency}"
+        # The debt is presented as derived so the contract sum is visibly an input to the balance,
+        # never a second claimable position.
+        derivation_line = ""
+        if calculation.contract_amount is not None:
+            derivation_line = (
+                f"Стоимость по договору: {calculation.contract_amount} {calculation.currency}\n"
+                f"Оплачено: {calculation.payments_total} {calculation.currency}\n"
+            )
+        # A zero "other" line is not printed at all: the category exists only for amounts that are
+        # genuinely outside the debt, and an empty row invites a duplicate to be filled into it.
+        other_line = ""
+        if calculation.other > 0:
+            other_line = f"Иные суммы: {calculation.other} {calculation.currency}\n"
+        interest_line = ""
+        if calculation.interest > 0:
+            interest_line = f"Проценты: {calculation.interest} {calculation.currency}\n"
 
         jurisdiction = DebtClaimDrafter._item(procedural, "jurisdiction")
         if jurisdiction is not None and jurisdiction.status == VerificationStatus.VERIFIED:
@@ -270,11 +290,9 @@ class DebtClaimDrafter:
 {pretrial_text}
 
 РАСЧЕТ ТРЕБОВАНИЙ
-Основной долг: {calculation.principal} {calculation.currency}
+{derivation_line}Основной долг: {calculation.principal} {calculation.currency}
 Неустойка: {calculation.penalty} {calculation.currency}
-Проценты: {calculation.interest} {calculation.currency}
-Иные суммы: {calculation.other} {calculation.currency}
-Итого: {total}
+{interest_line}{other_line}Итого: {total}
 
 ПРАВОВОЕ ОБОСНОВАНИЕ
 Истец основывает требования на зафиксированных договорных обязательствах, факте их исполнения
