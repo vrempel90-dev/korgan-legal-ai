@@ -1,0 +1,84 @@
+review_batch: "manual-deterministic-rules-review-2026-08-15"
+reviewed_by: "KORGAN legal rules manual review"
+reviewed_at: "2026-08-15T00:35:00+05:00"
+state_duty_rules:
+  - rule_code: "property_claim_legal_entity"
+    claimant_type: "legal_entity"
+    claim_type: "property"
+    rate_percent: "3.0"
+    cap_mrp: "20000"
+    effective_from: "2026-07-01"
+    basis:
+      code_id: "TAX_RK_2025"
+      article_number: "665"
+      part: "1"
+      point: "1"
+mrp_values:
+  - value_year: 2026
+    value_kzt: "4325"
+    effective_from: "2026-01-01"
+    effective_to: "2026-12-31"
+    basis:
+      code_id: "BUDGET_RK_2026"
+      article_number: "7"
+jurisdiction_rules:
+  - rule_code: "commercial_debt_legal_entities_subject_matter"
+    dimension: "subject_matter"
+    plaintiff_type: "legal_entity"
+    defendant_type: "legal_entity"
+    dispute_type: "commercial_debt"
+    result_code: "specialized_interdistrict_economic_court"
+    effective_from: "2026-07-01"
+    basis:
+      code_id: "GPK_RK"
+      article_number: "27"
+      part: "1"
+  - rule_code: "commercial_debt_legal_entities_territorial"
+    dimension: "territorial"
+    plaintiff_type: "legal_entity"
+    defendant_type: "legal_entity"
+    dispute_type: "commercial_debt"
+    result_code: "defendant_location"
+    effective_from: "2026-07-01"
+    basis:
+      code_id: "GPK_RK"
+      article_number: "29"
+      part: "2"
+deadline_rules:
+  - rule_code: "general_debt_limitation"
+    deadline_type: "limitation"
+    duration_value: 3
+    duration_unit: "years"
+    trigger_event: "obligation_due_date"
+    start_offset_days: 1
+    requires_workday_calendar: true
+    effective_from: "1994-12-27"
+    bases:
+      - code_id: "GK_RK_GENERAL"
+        article_number: "178"
+        part: "1"
+      - code_id: "GK_RK_GENERAL"
+        article_number: "180"
+        part: "2"
+      - code_id: "GK_RK_GENERAL"
+        article_number: "173"
+      - code_id: "GK_RK_GENERAL"
+        article_number: "174"
+      - code_id: "GK_RK_GENERAL"
+        article_number: "175"
+  - rule_code: "civil_appeal_general"
+    deadline_type: "appeal"
+    duration_value: 1
+    duration_unit: "months"
+    trigger_event: "final_judgment_date"
+    start_offset_days: 1
+    requires_workday_calendar: true
+    effective_from: "2016-01-01"
+    bases:
+      - code_id: "GPK_RK"
+        article_number: "403"
+        part: "3"
+      - code_id: "GPK_RK"
+        article_number: "122"
+      - code_id: "GPK_RK"
+        article_number: "123"
