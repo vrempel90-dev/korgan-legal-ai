@@ -10,11 +10,26 @@ from docx.shared import Pt
 from korgan.legal_types import ClaimDraft, VerificationStatus
 
 
+DRAFT_NOTICE = (
+    "ПРОЕКТ — сформирован KORGAN Legal AI на основании данных пользователя. "
+    "Перед подачей необходимо проверить факты, реквизиты, доказательства, расчёты, подсудность, "
+    "госпошлину и все пункты NEEDS_VERIFICATION. Формирование проекта не гарантирует принятие документа или исход дела."
+)
+
+
 def build_claim_docx(draft: ClaimDraft) -> bytes:
     doc = Document()
     styles = doc.styles
     styles["Normal"].font.name = "Times New Roman"
     styles["Normal"].font.size = Pt(12)
+
+    # Keep the court-facing body clean, but preserve an unobtrusive service notice in the footer.
+    for section in doc.sections:
+        footer = section.footer.paragraphs[0]
+        footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = footer.add_run(DRAFT_NOTICE)
+        run.font.name = "Times New Roman"
+        run.font.size = Pt(8)
 
     right = doc.add_paragraph()
     right.alignment = WD_ALIGN_PARAGRAPH.RIGHT
