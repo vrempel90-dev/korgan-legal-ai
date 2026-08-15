@@ -24,6 +24,14 @@ DELO_2_CONTEXT = (
 )
 
 
+def _header_text(payload: bytes) -> str:
+    """Шапка иска, а не первый параграф: перед ней печатается KORGAN QA STATUS."""
+    for paragraph in Document(io.BytesIO(payload)).paragraphs:
+        if "Госпошлина:" in paragraph.text:
+            return paragraph.text
+    raise AssertionError("В документе нет шапки со строкой госпошлины")
+
+
 def _draft(**overrides) -> ClaimDraft:
     base = dict(
         status=VerificationStatus.NEEDS_VERIFICATION,
@@ -94,14 +102,14 @@ def test_docx_header_always_shows_state_duty() -> None:
     draft = _draft()
     _apply_state_duty(DELO_2_CONTEXT, draft)
 
-    header = Document(io.BytesIO(build_claim_docx(draft))).paragraphs[0].text
+    header = _header_text(build_claim_docx(draft))
 
     assert "Госпошлина: 24 000 тенге" in header
     assert header.count("Госпошлина:") == 1
 
 
 def test_docx_header_shows_marker_when_duty_is_unknown() -> None:
-    header = Document(io.BytesIO(build_claim_docx(_draft()))).paragraphs[0].text
+    header = _header_text(build_claim_docx(_draft()))
 
     assert NEEDS_CALCULATION_MARKER in header
 

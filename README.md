@@ -18,6 +18,19 @@ Exact articles, deadlines, jurisdiction/court and current legal status must not 
 
 A concrete court name is never accepted from the model unless the case materials name it: matching an address to a court district/specialisation is not derivable from law, so it goes to `NEEDS_VERIFICATION`.
 
+### What blocks a document and what only marks it
+
+Fail-closed means "do not assert what is not proven", not "do not produce a document". Only two classes of defect stop the DOCX (`korgan/claim_qa_policy.py`):
+
+1. fabrication or substitution — a fact, amount, date, role or document that is not in the case materials;
+2. chat/service text leaking into the court document.
+
+Everything else is a gap and is marked inside the document instead: a missing second piece of evidence, an unsent pre-trial claim, an unverified article. A receipt (расписка) is a self-sufficient written proof of handing over money under a loan between individuals, and a pre-trial claim is not generally mandatory for such a debt — neither may block drafting.
+
+### Refusal diagnostics
+
+Every refusal carries a machine-readable reason (`korgan/claim_failure.py`): stage (`research`/`draft`/`qa`/`render`), code, the concrete fields and the failed checks. It is written to the log as a single line — `CLAIM_FAIL stage=… code=… fields=… issues=…` — and shown to the user as the actual cause instead of a generic message.
+
 ## Deterministic calculations
 
 Everything computable from a rate fixed in law is computed in `korgan/legal_calc.py`, not by the model. The state duty for a monetary claim follows статья 665 НК РК (Кодекс РК № 214-VIII): 1% of the claim price for individuals, 3% for legal entities, capped at 10 000 МРП (4 325 ₸ in 2026, Закон РК № 239-VIII).
