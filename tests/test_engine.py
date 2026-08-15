@@ -62,3 +62,4 @@ def test_engine_runs_fact_lock_router_and_workflow():
     assert provider.calls == 2
     assert result.qa.passed is True
     assert result.routing.legal_area == LegalArea.DEBT_RECOVERY
+    assert result.locked_case.raw_text == ""
