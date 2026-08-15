@@ -8,7 +8,7 @@ def main_menu() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="⚖️ Консультация", callback_data="menu:consult"),
-                InlineKeyboardButton(text="📄 Документ", callback_data="doc:claim"),
+                InlineKeyboardButton(text="📄 Документ", callback_data="menu:documents"),
             ],
             [
                 InlineKeyboardButton(text="💰 Цены", callback_data="menu:prices"),
@@ -26,6 +26,7 @@ def main_menu() -> InlineKeyboardMarkup:
 def documents_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Подготовить иск", callback_data="doc:claim")],
             [InlineKeyboardButton(text="📎 Загрузить документы / сканы", callback_data="doc:upload")],
             [InlineKeyboardButton(text="📂 Материалы текущего дела", callback_data="doc:case")],
             [InlineKeyboardButton(text="🧹 Очистить текущее дело", callback_data="doc:clear")],
@@ -89,6 +90,7 @@ WELCOME_TEXT = (
 MAIN_TEXT = "🏠 <b>Главное меню</b>\n\nВыберите нужный раздел 👇"
 
 DOCUMENTS_TEXT = (
-    "📄 <b>Работа с документами</b>\n\n"
-    "Загрузите материалы текущего дела. Готовый иск KORGAN отправит отдельным файлом .docx."
+    "📄 <b>Документы</b>\n\n"
+    "Выберите действие: загрузите материалы дела или запустите подготовку иска. "
+    "Готовый иск KORGAN отправит отдельным файлом .docx."
 )
