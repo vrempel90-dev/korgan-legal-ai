@@ -11,9 +11,9 @@ from korgan import bot as base_bot
 from korgan.config import get_settings
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
+from korgan.production_legal import ProductionOpenAILegalService
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.ui import main_menu
-from korgan.verified_openai import VerifiedOpenAILegalService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ async def configure_telegram_menu(bot: Bot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    base_bot.service = VerifiedOpenAILegalService(settings)
+    base_bot.service = ProductionOpenAILegalService(settings)
     base_bot.MENU = main_menu()
 
     bot = Bot(token=settings.telegram_bot_token)
@@ -51,7 +51,7 @@ async def main() -> None:
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN with legal consent gate and document confirmation")
+    LOGGER.info("Starting KORGAN with consent gate and court-ready DOCX drafting")
     try:
         await dp.start_polling(bot)
     finally:
