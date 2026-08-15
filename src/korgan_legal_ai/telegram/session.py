@@ -13,6 +13,8 @@ class SessionState(StrEnum):
     MENU = "menu"
     AWAITING_CLAIM = "awaiting_claim"
     AWAITING_CLARIFICATION = "awaiting_clarification"
+    AWAITING_DOCUMENTS = "awaiting_documents"
+    AWAITING_DOCUMENT_CLARIFICATION = "awaiting_document_clarification"
 
 
 @dataclass
