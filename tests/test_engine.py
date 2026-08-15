@@ -1,19 +1,14 @@
-from decimal import Decimal
 from typing import TypeVar
 
 from pydantic import BaseModel
 
 from korgan_legal_ai.domain.models import (
     DocumentType,
-    Fact,
-    Financials,
     LegalArea,
-    Party,
-    PartyRole,
     RoutingDecision,
 )
 from korgan_legal_ai.drafting.debt_claim import DebtClaimDrafter
-from korgan_legal_ai.fact_lock.service import FactLockExtraction, FactLockService
+from korgan_legal_ai.fact_lock.service import FactLockService, FactLockWireExtraction
 from korgan_legal_ai.llm.base import LLMProvider
 from korgan_legal_ai.orchestration.debt_claim import DebtClaimWorkflow
 from korgan_legal_ai.orchestration.engine import LegalEngine
@@ -30,16 +25,16 @@ class SequencedProvider(LLMProvider):
 
     def parse(self, *, model: str, system: str, user: str, schema: type[T]) -> T:
         self.calls += 1
-        if schema is FactLockExtraction:
+        if schema is FactLockWireExtraction:
             return schema.model_validate(
-                FactLockExtraction(
-                    parties=[
-                        Party(name="A", role=PartyRole.CREDITOR),
-                        Party(name="B", role=PartyRole.DEBTOR),
+                {
+                    "parties": [
+                        {"name": "A", "role": "creditor"},
+                        {"name": "B", "role": "debtor"},
                     ],
-                    facts=[Fact(statement="B не вернул долг A")],
-                    financials=Financials(principal=Decimal("500")),
-                ).model_dump()
+                    "facts": [{"id": "f1", "statement": "B не вернул долг A"}],
+                    "financials": {"principal": "500"},
+                }
             )
         if schema is RoutingDecision:
             return schema.model_validate(
