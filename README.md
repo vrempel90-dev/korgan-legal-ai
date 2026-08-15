@@ -24,6 +24,14 @@ Everything computable from a rate fixed in law is computed in `korgan/legal_calc
 
 When the claim price or the payer type cannot be established from the materials, the document carries `[ТРЕБУЕТ РАСЧЁТА ГОСПОШЛИНЫ]` instead of a guessed number. Both rate constants are year-bound and must be re-verified when the next budget law enters into force.
 
+Late-payment interest under статья 353 ГК РК is computed the same way: principal × NB RK base rate × days of delay / 365, over an explicit period, with the prayer for relief asking for the amount as of the filing date plus continuing accrual until actual payment. The base-rate table lists only confirmed decisions — a delay starting before the earliest entry flags the *rate* as unverified and keeps the provision itself.
+
+## Provision corpus
+
+`korgan/legal_corpus.py` holds provisions stable enough to cite from code, each with its act, article number, source URL and check date. It exists because research runs per-pass: a provision confirmed during consultation was otherwise re-derived by the document pass and, on a weaker search, downgraded to `NEEDS_VERIFICATION`. Articles cited in a consultation answer are also carried into the case materials.
+
+Corpus entries were checked against secondary legal databases, not read from adilet.zan.kz by the shipping code, so every claim citing them carries a note asking for an official-source check before filing.
+
 ## Stack
 
 - Python 3.11+

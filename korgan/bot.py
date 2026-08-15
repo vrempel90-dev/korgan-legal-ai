@@ -13,6 +13,7 @@ from aiogram.types import BufferedInputFile, KeyboardButton, Message, ReplyKeybo
 from korgan.claim_docx import build_claim_docx
 from korgan.claim_intent import is_claim_drafting_request
 from korgan.config import get_settings
+from korgan.legal_corpus import extract_cited_articles
 from korgan.legal_types import ExtractedDocument, VerificationStatus
 from korgan.openai_legal import OpenAILegalService
 
@@ -56,9 +57,17 @@ async def _case_context(state: FSMContext) -> str:
     data = await state.get_data()
     docs = data.get("documents", []) or []
     facts = data.get("facts", []) or []
+    consulted = data.get("consulted_articles", []) or []
     chunks = [str(item) for item in docs]
     if facts:
         chunks.append("Сообщения пользователя о фактах:\n" + "\n".join(str(x) for x in facts[-12:]))
+    if consulted:
+        # A provision confirmed while consulting on this case must not be
+        # re-derived from scratch — and silently lost — by the document pass.
+        chunks.append(
+            "Нормы, применённые KORGAN в консультации по этому же делу: "
+            + "; ".join(str(x) for x in consulted)
+        )
     return "\n\n---\n\n".join(chunks)
 
 
@@ -241,6 +250,15 @@ async def legal_question(message: Message, state: FSMContext) -> None:
         LOGGER.exception("Consultation failed")
         await message.answer("Не удалось выполнить юридический поиск. Попробуйте повторить вопрос.", reply_markup=MENU)
         return
+    # Carry the provisions this answer relied on into the case, so the claim
+    # pass cites them instead of re-researching them.
+    if urls:
+        cited = extract_cited_articles(answer)
+        if cited:
+            known = list((await state.get_data()).get("consulted_articles", []) or [])
+            known.extend(item for item in cited if item not in known)
+            await state.update_data(consulted_articles=known[-12:])
+
     sources = ""
     if urls:
         sources = "\n\nОфициальные источники:\n" + "\n".join(f"• {url}" for url in urls[:5])

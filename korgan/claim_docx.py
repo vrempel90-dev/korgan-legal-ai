@@ -153,6 +153,14 @@ def build_claim_docx(draft: ClaimDraft) -> bytes:
             paragraph = doc.add_paragraph(basis)
             paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
+    # Deterministic interest calculation belongs next to the facts it follows
+    # from, not inside model-written prose.
+    if draft.late_interest:
+        interest_heading = doc.add_paragraph()
+        interest_heading.add_run("Расчёт неустойки за просрочку").bold = True
+        interest_paragraph = doc.add_paragraph(draft.late_interest)
+        interest_paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+
     request_heading = doc.add_paragraph()
     request_heading.add_run("На основании изложенного ПРОШУ СУД:").bold = True
     for request in draft.requests:

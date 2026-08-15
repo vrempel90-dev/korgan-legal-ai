@@ -2,11 +2,40 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date, timedelta
+from typing import Any
 
-from korgan.legal_calc import NEEDS_CALCULATION_MARKER, gosposhlina_line
+from korgan.legal_calc import (
+    NEEDS_CALCULATION_MARKER,
+    NEEDS_RATE_MARKER,
+    calc_late_payment_interest,
+    format_kzt,
+    gosposhlina_line,
+    late_interest_line,
+    parse_amount_kzt,
+)
+from korgan.legal_corpus import (
+    GENERAL_TERRITORIAL_JURISDICTION,
+    LATE_PAYMENT_INTEREST,
+    Provision,
+    pending_check_note,
+)
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.openai_legal import _CLAIM_SCHEMA, _VALIDATION_SCHEMA
 from korgan.verified_openai import VerifiedOpenAILegalService
+
+# The court pass needs two facts the base schema does not carry: when the money
+# was due, and whether the plaintiff asks for late-payment interest. Both are
+# facts to extract, not amounts to compute — the arithmetic stays in code.
+_COURT_CLAIM_SCHEMA: dict[str, Any] = {
+    **_CLAIM_SCHEMA,
+    "properties": {
+        **_CLAIM_SCHEMA["properties"],
+        "due_date": {"type": "string"},
+        "interest_claimed": {"type": "boolean"},
+    },
+    "required": [*_CLAIM_SCHEMA["required"], "due_date", "interest_claimed"],
+}
 
 
 class CourtDocumentQualityError(RuntimeError):
@@ -224,6 +253,140 @@ def _apply_state_duty(case_context: str, draft: ClaimDraft) -> None:
     ]
 
 
+INTEREST_RATE_NOTE = (
+    "Сумма неустойки за просрочку по ст. 353 ГК РК не рассчитана: базовая ставка Национального Банка РК "
+    "на дату начала просрочки отсутствует в справочнике — NEEDS_VERIFICATION по значению ставки "
+    "(сама норма применима)."
+)
+
+INTEREST_DATE_NOTE = (
+    "Сумма неустойки за просрочку по ст. 353 ГК РК не рассчитана: из материалов не установлена дата, "
+    "до которой ответчик обязан был исполнить денежное обязательство — NEEDS_VERIFICATION."
+)
+
+GESV_NOTE = (
+    "Заём между физическими лицами: проверьте применимость ст. 725-1 ГК РК (обязательное указание годовой "
+    "эффективной ставки вознаграждения). Требования не распространяются на займодателей, указанных в пункте 2 "
+    "статьи 718 ГК РК, и на договоры, заключённые до 16.07.2018. Несоответствие пункту 1 статьи 725-1 влечёт "
+    "недействительность договора, поэтому норма проверяется до подачи и в тело иска не вносится — "
+    "NEEDS_VERIFICATION."
+)
+
+CONTINUING_INTEREST_WORDING = (
+    "с продолжением начисления неустойки по день фактического исполнения денежного обязательства"
+)
+
+_DATE_PATTERN = re.compile(r"(\d{2})[.\-/](\d{2})[.\-/](\d{4})")
+
+_GESV_MARKERS = ("гэсв", "годовая эффективная ставка", "годовой эффективной ставки")
+
+
+def _parse_date(value: str) -> date | None:
+    match = _DATE_PATTERN.search(value or "")
+    if not match:
+        return None
+    day, month, year = (int(part) for part in match.groups())
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _cites_article(draft: ClaimDraft, provision: Provision) -> bool:
+    article_head = provision.article.split(",")[0].strip()
+    return any(article_head in line for line in draft.legal_basis)
+
+
+def _apply_late_interest(
+    draft: ClaimDraft,
+    due_date_raw: str,
+    interest_claimed: bool,
+    today: date,
+) -> None:
+    """Compute статья 353 ГК РК interest in code and cite the provision from the corpus.
+
+    The provision itself is never downgraded: when only the rate is unknown, the
+    note says so, so the claim keeps its legal ground.
+    """
+    if not interest_claimed:
+        return
+
+    if not _cites_article(draft, LATE_PAYMENT_INTEREST):
+        draft.legal_basis.append(f"В соответствии со статьёй 353 Гражданского кодекса Республики Казахстан {LATE_PAYMENT_INTEREST.summary}.")
+
+    due_date = _parse_date(due_date_raw)
+    principal = parse_amount_kzt(draft.price_of_claim)
+    if due_date is None or principal is None:
+        draft.late_interest = NEEDS_RATE_MARKER if due_date else ""
+        if INTEREST_DATE_NOTE not in draft.verification_notes:
+            draft.verification_notes.append(INTEREST_DATE_NOTE)
+        return
+
+    start = due_date + timedelta(days=1)
+    if today < start:
+        return
+
+    interest = calc_late_payment_interest(principal, start, today)
+    draft.late_interest = late_interest_line(interest)
+    if interest is None:
+        if INTEREST_RATE_NOTE not in draft.verification_notes:
+            draft.verification_notes.append(INTEREST_RATE_NOTE)
+        return
+
+    draft.requests.append(
+        f"Взыскать с ответчика неустойку за просрочку исполнения денежного обязательства "
+        f"в размере {format_kzt(interest.amount)} за период {interest.period()}, "
+        f"{CONTINUING_INTEREST_WORDING}."
+    )
+
+
+def _apply_jurisdiction_provision(draft: ClaimDraft) -> None:
+    """Every claim of this type states the jurisdiction rule with its article number."""
+    if _cites_article(draft, GENERAL_TERRITORIAL_JURISDICTION):
+        return
+    draft.legal_basis.append(
+        f"В соответствии со статьёй {GENERAL_TERRITORIAL_JURISDICTION.article} "
+        f"Гражданского процессуального кодекса Республики Казахстан "
+        f"{GENERAL_TERRITORIAL_JURISDICTION.summary}."
+    )
+
+
+def _apply_individual_loan_check(case_context: str, draft: ClaimDraft) -> None:
+    """Flag статья 725-1 ГК РК when the loan looks like one between individuals.
+
+    The provision can void the contract, so it is raised as a check for the
+    lawyer rather than written into the claim the plaintiff files.
+    """
+    lowered = case_context.lower()
+    if "иин" not in lowered or any(marker in lowered for marker in ("бин", "тоо", "акционерное общество")):
+        return
+    if any(marker in lowered for marker in _GESV_MARKERS):
+        return
+    if GESV_NOTE not in draft.verification_notes:
+        draft.verification_notes.append(GESV_NOTE)
+
+
+def _corpus_pending_note(draft: ClaimDraft) -> None:
+    used = [
+        provision
+        for provision in (LATE_PAYMENT_INTEREST, GENERAL_TERRITORIAL_JURISDICTION)
+        if _cites_article(draft, provision) and provision.official_check_pending
+    ]
+    if not used:
+        return
+    note = pending_check_note(used)
+    if note not in draft.verification_notes:
+        draft.verification_notes.append(note)
+
+
+def _split_fact_fields(payload: dict[str, Any]) -> tuple[dict[str, Any], str, bool]:
+    """Separate the extracted facts from the fields ClaimDraft accepts."""
+    rest = dict(payload)
+    due_date_raw = str(rest.pop("due_date", "") or "")
+    interest_claimed = bool(rest.pop("interest_claimed", False))
+    return rest, due_date_raw, interest_claimed
+
+
 def _hard_quality_issues(case_context: str, draft: ClaimDraft) -> list[str]:
     body = _court_body_text(draft)
     lowered = body.lower()
@@ -274,7 +437,13 @@ class ProductionOpenAILegalService(VerifiedOpenAILegalService):
             "10. Известную цену иска заполняй точно.\n"
             "11. Если точный суд не подтвержден, court = '[ТРЕБУЕТ УТОЧНЕНИЯ: точное наименование суда по месту жительства ответчика]'. Не выдумывай суд.\n"
             "12. Размер госпошлины не указывай вообще: он рассчитывается системой детерминированно по действующей ставке "
-            "и подставляется в документ автоматически. Не пиши сумму пошлины и не добавляй пояснений о ней.\n\n"
+            "и подставляется в документ автоматически. Не пиши сумму пошлины и не добавляй пояснений о ней.\n"
+            "13. Сумму неустойки/процентов за просрочку тоже не считай и не указывай: её рассчитывает система. "
+            "Вместо этого заполни два поля фактов — due_date (дата в формате ДД.ММ.ГГГГ, до которой ответчик обязан был "
+            "вернуть деньги; пустая строка, если из материалов она не следует) и interest_claimed (true, если истец "
+            "требует проценты/неустойку за просрочку либо материалы прямо указывают на такое требование).\n"
+            "14. Норму о подсудности и норму об ответственности за просрочку денежного обязательства система "
+            "подставляет сама — не пиши их номера наугад.\n\n"
             f"МАТЕРИАЛЫ ДЕЛА:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
             f"VERIFIED:\n{verified_block}\n\n"
             f"НЕ ПОДТВЕРЖДЕНО (только для verification_notes):\n{unverified_block}"
@@ -289,9 +458,10 @@ class ProductionOpenAILegalService(VerifiedOpenAILegalService):
             ),
             content=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
             schema_name="korgan_court_ready_claim",
-            schema=_CLAIM_SCHEMA,
+            schema=_COURT_CLAIM_SCHEMA,
         )
 
+        payload, due_date_raw, interest_claimed = _split_fact_fields(payload)
         draft = ClaimDraft(status=research.status, source_urls=research.source_urls, **payload)
         validation = await self.validate_claim(case_context, research, draft)
         model_problems = (
@@ -321,8 +491,11 @@ class ProductionOpenAILegalService(VerifiedOpenAILegalService):
                 ),
                 content=[{"role": "user", "content": [{"type": "input_text", "text": repair_prompt}]}],
                 schema_name="korgan_repaired_claim",
-                schema=_CLAIM_SCHEMA,
+                schema=_COURT_CLAIM_SCHEMA,
             )
+            repaired_payload, repaired_due_date, repaired_interest = _split_fact_fields(repaired_payload)
+            due_date_raw = repaired_due_date or due_date_raw
+            interest_claimed = interest_claimed or repaired_interest
             draft = ClaimDraft(status=research.status, source_urls=research.source_urls, **repaired_payload)
             validation = await self.validate_claim(case_context, research, draft)
             hard_problems = _hard_quality_issues(case_context, draft)
@@ -341,8 +514,13 @@ class ProductionOpenAILegalService(VerifiedOpenAILegalService):
                 draft.verification_notes.extend(x for x in remaining if x not in draft.verification_notes)
 
         # Deterministic fields are decided by code, after every model pass:
-        # the duty is calculated, the court is never guessed.
+        # money is calculated, provisions come from the corpus, the court is
+        # never guessed.
         _apply_state_duty(case_context, draft)
+        _apply_late_interest(draft, due_date_raw, interest_claimed, date.today())
+        _apply_jurisdiction_provision(draft)
+        _apply_individual_loan_check(case_context, draft)
+        _corpus_pending_note(draft)
         _enforce_court_verification(case_context, draft)
 
         if research.unverified_claims or draft.verification_notes:
