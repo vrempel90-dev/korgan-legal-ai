@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from threading import Event
 from typing import Any
 
@@ -46,6 +47,59 @@ class TelegramRuntime:
         self.privacy_version = privacy_version
         self.poll_timeout_seconds = poll_timeout_seconds
         self.max_case_chars = max_case_chars
+
+    @staticmethod
+    def _safe_exception_diagnostics(exc: BaseException) -> tuple[str, str, str]:
+        """Return privacy-safe pipeline diagnostics without logging case text or exception text.
+
+        Exception messages from providers can contain request fragments. We therefore record only
+        exception classes plus a project-relative traceback location. The stage is inferred from
+        module paths already present in the traceback, so diagnostics remain useful without
+        persisting Telegram ids, case text, prompts, URLs, or provider payloads.
+        """
+        frames = traceback.extract_tb(exc.__traceback__)
+        normalized = [
+            (frame, frame.filename.replace("\\", "/"))
+            for frame in frames
+        ]
+
+        stage_rules = (
+            ("/fact_lock/", "fact_lock"),
+            ("/router/", "task_router"),
+            ("/procedural_rules/", "procedural_rules"),
+            ("/research/", "legal_research"),
+            ("/corpus/", "legal_research"),
+            ("/procedural/", "procedural_checks"),
+            ("/drafting/", "drafting"),
+            ("/qa/", "final_qa"),
+            ("/calculations/", "calculations"),
+            ("/evidence/", "evidence_map"),
+            ("/orchestration/", "orchestration"),
+            ("/llm/", "llm_provider"),
+        )
+        stage = "unknown"
+        for marker, candidate in stage_rules:
+            if any(marker in path for _, path in normalized):
+                stage = candidate
+                break
+
+        project_frames = [
+            (frame, path)
+            for frame, path in normalized
+            if "/korgan_legal_ai/" in path
+        ]
+        selected = project_frames[-1][0] if project_frames else (frames[-1] if frames else None)
+        if selected is None:
+            location = "unknown"
+        else:
+            path = selected.filename.replace("\\", "/")
+            marker = "/korgan_legal_ai/"
+            relative = f"korgan_legal_ai/{path.split(marker, maxsplit=1)[1]}" if marker in path else path.rsplit("/", maxsplit=1)[-1]
+            location = f"{relative}:{selected.name}:{selected.lineno}"
+
+        cause = exc.__cause__ or exc.__context__
+        cause_type = type(cause).__name__ if cause is not None else "none"
+        return stage, location, cause_type
 
     @staticmethod
     def _language_markup() -> dict[str, Any]:
@@ -209,6 +263,10 @@ class TelegramRuntime:
         try:
             result = self.engine.process(candidate)
         except ClarificationRequired as exc:
+            logger.info(
+                "legal_request_needs_clarification stage=fact_lock question_count=%d",
+                len(exc.questions),
+            )
             session.state = SessionState.AWAITING_CLARIFICATION
             self.sessions.save(user_id, session)
             questions = "\n".join(f"• {question}" for question in exc.questions)
@@ -218,21 +276,38 @@ class TelegramRuntime:
             )
             return
         except LegalQABlocked:
+            logger.warning("legal_request_blocked stage=final_qa reason=qa_blocked")
             self.sessions.clear_case(user_id)
             self.api.send_message(chat_id, text(session.language, "qa_blocked"))
             return
         except NotImplementedError:
+            logger.warning("legal_request_blocked stage=task_router reason=unsupported_workflow")
             self.sessions.clear_case(user_id)
             self.api.send_message(chat_id, text(session.language, "unsupported"))
             return
         except Exception as exc:
-            logger.error("Telegram legal request failed safely: %s", type(exc).__name__)
+            stage, location, cause_type = self._safe_exception_diagnostics(exc)
+            logger.error(
+                "legal_request_failed stage=%s exception_type=%s cause_type=%s location=%s",
+                stage,
+                type(exc).__name__,
+                cause_type,
+                location,
+            )
             self.sessions.clear_case(user_id)
             self.api.send_message(chat_id, text(session.language, "internal_error"))
             return
 
         session = self.sessions.clear_case(user_id)
         document = result.document
+        qa = getattr(result, "qa", None)
+        qa_passed = getattr(qa, "passed", "unknown")
+        logger.info(
+            "legal_request_completed readiness=%s needs_verification_count=%d qa_passed=%s",
+            document.readiness.value,
+            len(document.needs_verification),
+            qa_passed,
+        )
         self.api.send_message(
             chat_id,
             text(session.language, "result_header", readiness=document.readiness.value),
