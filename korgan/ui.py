@@ -26,7 +26,7 @@ def main_menu() -> InlineKeyboardMarkup:
 def documents_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📄 Исковое заявление", callback_data="doc:claim")],
+            [InlineKeyboardButton(text="📄 Исковое заявление — Word", callback_data="doc:claim")],
             [InlineKeyboardButton(text="📎 Загрузить документы / сканы", callback_data="doc:upload")],
             [InlineKeyboardButton(text="📂 Материалы текущего дела", callback_data="doc:case")],
             [InlineKeyboardButton(text="🧹 Очистить текущее дело", callback_data="doc:clear")],
@@ -39,7 +39,7 @@ def case_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📎 Добавить документ / скан", callback_data="doc:upload")],
-            [InlineKeyboardButton(text="📄 Подготовить иск", callback_data="doc:claim")],
+            [InlineKeyboardButton(text="📄 Подготовить иск в Word", callback_data="doc:claim")],
             [InlineKeyboardButton(text="🧹 Очистить дело", callback_data="doc:clear")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main")],
         ]
@@ -80,7 +80,7 @@ WELCOME_TEXT = (
     "⚖️ <b>KORGAN Legal AI</b>\n\n"
     "Юридический AI‑ассистент по законодательству Республики Казахстан.\n\n"
     "Можно получить консультацию, загрузить PDF/DOCX/TXT, фото или скан, "
-    "извлечь необходимые факты из документов и подготовить проект искового заявления.\n\n"
+    "извлечь необходимые факты из документов и подготовить проект искового заявления в формате Word (.docx).\n\n"
     "🔎 Точные нормы, сроки, госпошлина и подсудность используются только после "
     "проверки официальных источников. Если подтверждения недостаточно — KORGAN "
     "покажет <b>NEEDS_VERIFICATION</b>, а не будет угадывать.\n\n"
@@ -91,5 +91,5 @@ MAIN_TEXT = "🏠 <b>Главное меню</b>\n\nВыберите нужны�
 
 DOCUMENTS_TEXT = (
     "📄 <b>Работа с документами</b>\n\n"
-    "Загрузите материалы или выберите документ, который нужно подготовить."
+    "Загрузите материалы дела или подготовьте иск. Готовое исковое заявление KORGAN отправит отдельным файлом Word (.docx)."
 )
