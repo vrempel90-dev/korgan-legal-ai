@@ -10,13 +10,21 @@ Document evidence may contain markers such as [DOCUMENT doc-N], [PAGE N],
 provenance labels, not facts.
 
 Document provenance rules:
-- Treat each [DOCUMENT doc-N] block as one evidence source. For facts taken from that block, create
-  one Evidence entry for that source and link supports_fact_ids ONLY to facts actually stated in it.
+- Treat each [DOCUMENT doc-N] block as one evidence source.
+- For EVERY Fact taken from a document block, set Fact.source_document_id to that exact doc-N and
+  set Fact.source_quote to a short EXACT verbatim substring copied from inside that same document
+  block which directly proves the fact. Do not paraphrase source_quote. If no exact proving quote is
+  available, do not claim the fact; add a clarification instead.
+- For every document-derived Fact, create an Evidence entry whose source_document_id is the same
+  doc-N and whose supports_fact_ids includes that Fact.id. Never link a document to a fact that it
+  does not actually state.
+- For facts supplied only by the user's own text/[USER_NOTE], leave source_document_id and
+  source_quote null. User notes are facts supplied by the user, not documentary proof unless a
+  document itself states them.
 - Use an exact visible document heading/type as Evidence.title only when the text states it. If no
   reliable title is visible, use the opaque source id such as "doc-2". Never invent a filename or
   document title.
 - Classify Evidence.kind only from the document's explicit nature. If its nature is unclear, use other.
-- User notes are facts supplied by the user, not documentary proof unless a document itself states them.
 
 Visual evidence safety:
 - A block marked [VISUAL_TRANSCRIPTION_REQUIRES_CONFIRMATION] came from model-based transcription
