@@ -27,7 +27,11 @@ def _draft(**overrides) -> ClaimDraft:
 
 
 def _header_text(payload: bytes) -> str:
-    return Document(io.BytesIO(payload)).paragraphs[0].text
+    """Шапка иска, а не первый параграф: перед ней печатается KORGAN QA STATUS."""
+    for paragraph in Document(io.BytesIO(payload)).paragraphs:
+        if "В суд:" in paragraph.text:
+            return paragraph.text
+    raise AssertionError("В документе нет шапки с реквизитами сторон")
 
 
 def _num_ids(payload: bytes) -> list[str | None]:

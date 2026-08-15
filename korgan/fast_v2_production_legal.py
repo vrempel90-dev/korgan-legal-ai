@@ -3,12 +3,18 @@ from __future__ import annotations
 import json
 import re
 
+from korgan.claim_failure import (
+    ClaimFailure,
+    ClaimFailureCode,
+    ClaimStage,
+    CourtDocumentQualityError,
+)
+from korgan.claim_qa_policy import apply_soft_qa_findings, split_qa_issues
 from korgan.fast_production_legal import ProductionOpenAILegalService as _FastBase
 from korgan.legal_routing import detect_claim_profile
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.openai_legal import _CLAIM_SCHEMA
 from korgan.production_legal import (
-    CourtDocumentQualityError,
     _apply_state_duty,
     _hard_quality_issues,
 )
@@ -52,6 +58,19 @@ _DATE_WORD_RE = re.compile(
 )
 _DATE_NUM_RE = re.compile(r"(?<!\d)(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?!\d)")
 _AMOUNT_RE = re.compile(r"(?<!\d)(\d[\d\s ]{2,})(?:\s*(?:тенге|тг))", re.IGNORECASE)
+
+
+# Модель формулирует пошлину и как «госпошлина», и как «государственная
+# пошлина». Единый критерий на обе формы; korgan.state_duty_final_hotfix
+# переиспользует именно его, чтобы два места не расходились между собой.
+_STATE_DUTY_RE = re.compile(
+    r"(?:\bгоспошлин\w*\b|\bгосударственн\w*\s+пошлин\w*\b)",
+    re.IGNORECASE,
+)
+
+
+def _is_state_duty_request(text: str) -> bool:
+    return bool(_STATE_DUTY_RE.search(text or ""))
 
 
 def _uncertain_date_variants(case_context: str) -> list[tuple[str, tuple[str, ...]]]:
@@ -125,8 +144,9 @@ def _remove_false_state_duty_evidence(case_context: str, draft: ClaimDraft) -> N
 def _normalize_state_duty_request(draft: ClaimDraft) -> None:
     """The model never controls the amount of state duty in the prayer."""
     duty = (draft.state_duty or "").strip()
-    cleaned = [request for request in draft.requests if "госпошлин" not in request.lower()]
-    draft.requests = cleaned
+    # Убираем обе формулировки, иначе «государственная пошлина» от модели
+    # переживала очистку и складывалась с канонической строкой в дубль.
+    draft.requests = [request for request in draft.requests if not _is_state_duty_request(request)]
 
     if not duty or duty.startswith("[ТРЕБУЕТ"):
         return
@@ -222,16 +242,21 @@ class ProductionOpenAILegalService(_FastBase):
         _deterministic_pre_qa(case_context, research, draft)
 
         validation = await self.validate_claim(case_context, research, draft)
-        blocking = list(dict.fromkeys(
-            validation["critical_errors"]
-            + validation["unsupported_legal_claims"]
-            + _hard_quality_issues(case_context, draft)
-        ))
+        blocking, evidence_gaps, unsupported_law = split_qa_issues(
+            critical_errors=validation["critical_errors"],
+            unsupported_legal_claims=validation["unsupported_legal_claims"],
+            hard_issues=_hard_quality_issues(case_context, draft),
+        )
 
         # Missing fields alone do not justify a costly model rewrite. The
         # preflight catches filing-critical party data before research; any
         # remaining filing item is surfaced as a review note.
         if not blocking:
+            apply_soft_qa_findings(
+                draft,
+                evidence_gaps=evidence_gaps,
+                unsupported_legal_claims=unsupported_law,
+            )
             for item in validation["missing_required_fields"]:
                 if item not in draft.verification_notes:
                     draft.verification_notes.append(item)
@@ -256,13 +281,24 @@ class ProductionOpenAILegalService(_FastBase):
             draft = ClaimDraft(status=research.status, source_urls=research.source_urls, **repaired_payload)
             _deterministic_pre_qa(case_context, research, draft)
             validation = await self.validate_claim(case_context, research, draft)
-            blocking = list(dict.fromkeys(
-                validation["critical_errors"]
-                + validation["unsupported_legal_claims"]
-                + _hard_quality_issues(case_context, draft)
-            ))
+            blocking, evidence_gaps, unsupported_law = split_qa_issues(
+                critical_errors=validation["critical_errors"],
+                unsupported_legal_claims=validation["unsupported_legal_claims"],
+                hard_issues=_hard_quality_issues(case_context, draft),
+            )
             if blocking:
-                raise CourtDocumentQualityError("; ".join(blocking[:12]))
+                raise CourtDocumentQualityError(
+                    ClaimFailure(
+                        stage=ClaimStage.QA,
+                        code=ClaimFailureCode.QA_BLOCKED,
+                        issues=blocking,
+                    )
+                )
+            apply_soft_qa_findings(
+                draft,
+                evidence_gaps=evidence_gaps,
+                unsupported_legal_claims=unsupported_law,
+            )
             for item in validation["missing_required_fields"]:
                 if item not in draft.verification_notes:
                     draft.verification_notes.append(item)

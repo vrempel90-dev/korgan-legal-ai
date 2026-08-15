@@ -27,6 +27,43 @@ QA_LAWYER_REVIEW = "LAWYER-REVIEW DRAFT"
 QA_READY = "READY FOR FINAL HUMAN REVIEW"
 
 
+# Единый источник правды о том, что шаблону реально нужно для сборки документа.
+# Раньше такого списка не было нигде, и набор полей, которые спрашивает
+# korgan.claim_preflight на входе, невозможно было сверить с тем, что требует
+# рендеринг. Названия совпадают с формулировками, которые видит пользователь.
+#
+# Суд сюда намеренно не входит: точное наименование суда не выводится из закона
+# (см. README и production_legal.COURT_PLACEHOLDER), поэтому его отсутствие
+# помечается внутри документа, а не блокирует сборку.
+REQUIRED_DOCUMENT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("claimant", "данные истца (ФИО, ИИН, адрес)"),
+    ("defendant", "данные ответчика (ФИО, адрес)"),
+    ("facts", "обстоятельства дела"),
+    ("requests", "требования к ответчику (просительная часть)"),
+)
+
+
+def _is_blank(value: object) -> bool:
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, list):
+        return not [item for item in value if str(item).strip()]
+    return not value
+
+
+def missing_required_fields(draft: ClaimDraft) -> list[str]:
+    """Поля, без которых собирать иск бессмысленно, в понятных пользователю словах.
+
+    Проверка детерминированная и выполняется до рендеринга, чтобы отказ называл
+    конкретное недостающее поле вместо generic-сообщения.
+    """
+    return [
+        label
+        for attribute, label in REQUIRED_DOCUMENT_FIELDS
+        if _is_blank(getattr(draft, attribute, None))
+    ]
+
+
 def _strip_label(value: str, label: str) -> str:
     """Drop a header label the model already put inside the value itself."""
     text = value.strip()

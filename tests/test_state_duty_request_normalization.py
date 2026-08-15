@@ -1,4 +1,4 @@
-from korgan.fast_v2_production_legal import _normalize_state_duty_request
+from korgan.fast_v2_production_legal import _is_state_duty_request, _normalize_state_duty_request
 from korgan.legal_types import ClaimDraft, VerificationStatus
 
 
@@ -25,7 +25,8 @@ def test_state_duty_request_is_replaced_with_one_deterministic_item() -> None:
 
     _normalize_state_duty_request(draft)
 
-    duty_requests = [item for item in draft.requests if "госпошлин" in item.lower()]
+    # Считаем обе формулировки: «госпошлина» и «государственная пошлина».
+    duty_requests = [item for item in draft.requests if _is_state_duty_request(item)]
     assert duty_requests == [
         "Взыскать с ответчика в пользу истца расходы по уплате государственной пошлины в размере 8 000 тенге."
     ]

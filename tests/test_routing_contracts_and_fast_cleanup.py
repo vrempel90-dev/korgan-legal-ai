@@ -6,6 +6,7 @@ from docx import Document
 
 from korgan.contract_docx import build_contract_docx
 from korgan.fast_v2_production_legal import (
+    _is_state_duty_request,
     _mark_uncertain_dates,
     _normalize_state_duty_request,
     _remove_false_state_duty_evidence,
@@ -56,7 +57,7 @@ def test_uncertain_date_is_marked_only_once() -> None:
 def test_state_duty_request_is_replaced_by_deterministic_amount() -> None:
     draft = _claim()
     _normalize_state_duty_request(draft)
-    duty_requests = [x for x in draft.requests if "госпошлин" in x.lower()]
+    duty_requests = [x for x in draft.requests if _is_state_duty_request(x)]
     assert duty_requests == ["Взыскать с ответчика в пользу истца расходы по уплате государственной пошлины в размере 1 500 тенге."]
     assert "6 500" not in " ".join(draft.requests)
 
