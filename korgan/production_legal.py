@@ -56,6 +56,20 @@ _EXPLICIT_ADDRESS_MARKERS = (
     "кв.",
 )
 
+_PARTY_PREFIX_MARKERS = (
+    "истец",
+    "истца",
+    "истцу",
+    "ответчик",
+    "ответчика",
+    "ответчику",
+    "займодав",
+    "заемщик",
+    "заёмщик",
+    "кредитор",
+    "должник",
+)
+
 
 def _court_body_text(draft: ClaimDraft) -> str:
     return "\n".join(
@@ -109,10 +123,7 @@ def _known_party_data_issues(case_context: str, draft: ClaimDraft) -> list[str]:
 
             if ":" in candidate:
                 prefix, remainder = candidate.split(":", 1)
-                if any(
-                    word in prefix.lower()
-                    for word in ("истец", "ответчик", "займодав", "заемщик", "заёмщик", "адрес истца", "адрес ответчика")
-                ):
+                if any(marker in prefix.lower() for marker in _PARTY_PREFIX_MARKERS):
                     role_bound = True
                     candidate = remainder.strip()
 
