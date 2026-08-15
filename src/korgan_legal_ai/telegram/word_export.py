@@ -96,7 +96,7 @@ def build_claim_docx(document_text: str, *, title: str = "Исковое зая�
             previous_major = False
             continue
 
-        if stripped.startswith(("ЦЕНА ИСКА:", "Государственная пошлина:")):
+        if stripped.startswith("ЦЕНА ИСКА:"):
             run = paragraph.add_run(stripped)
             _set_run_font(run, bold=True)
             previous_major = False
@@ -108,7 +108,6 @@ def build_claim_docx(document_text: str, *, title: str = "Исковое зая�
             previous_major = False
             continue
 
-        # Preserve simple numbered prayer/attachment lists and dash facts without reflowing values.
         run = paragraph.add_run(stripped)
         _set_run_font(run)
         previous_major = False
