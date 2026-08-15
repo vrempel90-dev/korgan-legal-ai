@@ -1,9 +1,9 @@
 [build]
 builder = "RAILPACK"
-buildCommand = "pip install ."
+buildCommand = "pip install --target /app/.python ."
 
 [deploy]
-preDeployCommand = ["python -m alembic upgrade head"]
-startCommand = "korgan-telegram"
+preDeployCommand = ["PYTHONPATH=/app/.python python -m alembic upgrade head"]
+startCommand = "PYTHONPATH=/app/.python python -m korgan_legal_ai.telegram.main"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
