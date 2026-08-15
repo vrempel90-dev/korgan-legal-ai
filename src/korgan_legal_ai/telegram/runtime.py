@@ -5,18 +5,16 @@ import traceback
 from threading import Event
 from typing import Any
 
+from korgan_legal_ai.documents import DocumentExtractionError, OpenAIDocumentExtractor
 from korgan_legal_ai.domain.exceptions import ClarificationRequired, LegalQABlocked
 from korgan_legal_ai.orchestration.engine import LegalEngine
 from korgan_legal_ai.telegram.localization import text
-from korgan_legal_ai.telegram.session import (
-    SessionState,
-    SessionStore,
-    TelegramSession,
-)
+from korgan_legal_ai.telegram.session import SessionState, SessionStore, TelegramSession
+from korgan_legal_ai.telegram.word_export import build_claim_docx
 
 logger = logging.getLogger(__name__)
 
-PRIVACY_VERSION_DEFAULT = "2026-08-15"
+PRIVACY_VERSION_DEFAULT = "2026-08-15-v3"
 
 BOT_COMMANDS = [
     {"command": "start", "description": "Начать работу"},
@@ -27,6 +25,20 @@ BOT_COMMANDS = [
     {"command": "help", "description": "Помощь"},
 ]
 
+_ALLOWED_DOCUMENT_MIME = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "image/jpeg",
+    "image/png",
+}
+_EXTENSION_MIME = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
+
 
 class TelegramRuntime:
     def __init__(
@@ -35,35 +47,30 @@ class TelegramRuntime:
         api: Any,
         engine: LegalEngine,
         sessions: SessionStore,
+        document_extractor: OpenAIDocumentExtractor | None = None,
         privacy_version: str = PRIVACY_VERSION_DEFAULT,
         poll_timeout_seconds: int = 30,
-        max_case_chars: int = 16000,
+        max_case_chars: int = 60000,
+        max_document_bytes: int = 10_000_000,
+        max_documents_per_case: int = 8,
     ) -> None:
         self.api = api
         self.engine = engine
-        # The backend is always chosen explicitly by the caller. There is no default, so a
-        # misconfigured deployment can never quietly downgrade to in-memory sessions.
         self.sessions = sessions
+        self.document_extractor = document_extractor
         self.privacy_version = privacy_version
         self.poll_timeout_seconds = poll_timeout_seconds
         self.max_case_chars = max_case_chars
+        self.max_document_bytes = max_document_bytes
+        self.max_documents_per_case = max_documents_per_case
 
     @staticmethod
     def _safe_exception_diagnostics(exc: BaseException) -> tuple[str, str, str]:
-        """Return privacy-safe pipeline diagnostics without logging case text or exception text.
-
-        Exception messages from providers can contain request fragments. We therefore record only
-        exception classes plus a project-relative traceback location. The stage is inferred from
-        module paths already present in the traceback, so diagnostics remain useful without
-        persisting Telegram ids, case text, prompts, URLs, or provider payloads.
-        """
+        """Return privacy-safe pipeline diagnostics without logging case text or exception text."""
         frames = traceback.extract_tb(exc.__traceback__)
-        normalized = [
-            (frame, frame.filename.replace("\\", "/"))
-            for frame in frames
-        ]
-
+        normalized = [(frame, frame.filename.replace("\\", "/")) for frame in frames]
         stage_rules = (
+            ("/documents/", "document_extraction"),
             ("/fact_lock/", "fact_lock"),
             ("/router/", "task_router"),
             ("/procedural_rules/", "procedural_rules"),
@@ -71,6 +78,7 @@ class TelegramRuntime:
             ("/corpus/", "legal_research"),
             ("/procedural/", "procedural_checks"),
             ("/drafting/", "drafting"),
+            ("/house_style/", "house_style"),
             ("/qa/", "final_qa"),
             ("/calculations/", "calculations"),
             ("/evidence/", "evidence_map"),
@@ -82,31 +90,28 @@ class TelegramRuntime:
             if any(marker in path for _, path in normalized):
                 stage = candidate
                 break
-
-        project_frames = [
-            (frame, path)
-            for frame, path in normalized
-            if "/korgan_legal_ai/" in path
-        ]
+        project_frames = [(frame, path) for frame, path in normalized if "/korgan_legal_ai/" in path]
         selected = project_frames[-1][0] if project_frames else (frames[-1] if frames else None)
         if selected is None:
             location = "unknown"
         else:
             path = selected.filename.replace("\\", "/")
             marker = "/korgan_legal_ai/"
-            relative = f"korgan_legal_ai/{path.split(marker, maxsplit=1)[1]}" if marker in path else path.rsplit("/", maxsplit=1)[-1]
+            relative = (
+                f"korgan_legal_ai/{path.split(marker, maxsplit=1)[1]}"
+                if marker in path
+                else path.rsplit("/", maxsplit=1)[-1]
+            )
             location = f"{relative}:{selected.name}:{selected.lineno}"
-
         cause = exc.__cause__ or exc.__context__
-        cause_type = type(cause).__name__ if cause is not None else "none"
-        return stage, location, cause_type
+        return stage, location, type(cause).__name__ if cause is not None else "none"
 
     @staticmethod
     def _language_markup() -> dict[str, Any]:
         return {
             "inline_keyboard": [[
-                {"text": "Русский", "callback_data": "lang:ru"},
-                {"text": "Қазақша", "callback_data": "lang:kk"},
+                {"text": "🇷🇺 Русский", "callback_data": "lang:ru"},
+                {"text": "🇰🇿 Қазақша", "callback_data": "lang:kk"},
             ]]
         }
 
@@ -120,9 +125,27 @@ class TelegramRuntime:
 
     def _menu_markup(self, language: str) -> dict[str, Any]:
         return {
-            "inline_keyboard": [[
-                {"text": text(language, "claim_button"), "callback_data": "flow:claim"}
-            ]]
+            "inline_keyboard": [
+                [
+                    {"text": text(language, "claim_button"), "callback_data": "flow:claim"},
+                    {"text": text(language, "claim_docs_button"), "callback_data": "flow:documents"},
+                ],
+                [
+                    {"text": text(language, "capabilities_button"), "callback_data": "nav:help"},
+                    {"text": text(language, "language_button"), "callback_data": "nav:language"},
+                ],
+                [
+                    {"text": text(language, "privacy_button"), "callback_data": "nav:privacy"},
+                ],
+            ]
+        }
+
+    def _documents_markup(self, language: str) -> dict[str, Any]:
+        return {
+            "inline_keyboard": [
+                [{"text": text(language, "documents_actions_build"), "callback_data": "documents:build"}],
+                [{"text": text(language, "documents_actions_clear"), "callback_data": "documents:clear"}],
+            ]
         }
 
     def _send_language(self, user_id: int, chat_id: int, session: TelegramSession) -> None:
@@ -144,11 +167,6 @@ class TelegramRuntime:
         )
 
     def _require_consent(self, user_id: int, chat_id: int, session: TelegramSession) -> bool:
-        """Gate every legal action behind consent to the *current* privacy version.
-
-        A superseded policy version must not keep holding unfinished case text, so the buffer
-        is dropped before the session is written back and the user is asked to accept again.
-        """
         if session.consent_version == self.privacy_version:
             return True
         session.case_buffer = None
@@ -175,11 +193,48 @@ class TelegramRuntime:
         self.sessions.save(user_id, session)
         self.api.send_message(chat_id, text(session.language, "claim_prompt"))
 
+    def _start_documents(self, user_id: int, chat_id: int, session: TelegramSession) -> None:
+        if not self._require_consent(user_id, chat_id, session):
+            return
+        session.case_buffer = None
+        session.state = SessionState.AWAITING_DOCUMENTS
+        self.sessions.save(user_id, session)
+        self.api.send_message(
+            chat_id,
+            text(session.language, "documents_prompt"),
+            reply_markup=self._documents_markup(session.language),
+        )
+
     @staticmethod
     def _command(value: str) -> str | None:
         if not value.startswith("/"):
             return None
         return value.split(maxsplit=1)[0].split("@", maxsplit=1)[0].lower()
+
+    @staticmethod
+    def _document_count(buffer: str | None) -> int:
+        return (buffer or "").count("[DOCUMENT doc-")
+
+    @staticmethod
+    def _resolve_document_mime(document: dict[str, Any]) -> str | None:
+        mime = document.get("mime_type")
+        if isinstance(mime, str) and mime in _ALLOWED_DOCUMENT_MIME:
+            return mime
+        filename = document.get("file_name")
+        if isinstance(filename, str):
+            lower = filename.lower()
+            for suffix, candidate in _EXTENSION_MIME.items():
+                if lower.endswith(suffix):
+                    return candidate
+        return None
+
+    def _append_case_text(self, session: TelegramSession, value: str) -> bool:
+        existing = session.case_buffer or ""
+        candidate = value if not existing else f"{existing}\n\n{value}"
+        if len(candidate) > self.max_case_chars:
+            return False
+        session.case_buffer = candidate
+        return True
 
     def _handle_command(
         self,
@@ -209,56 +264,32 @@ class TelegramRuntime:
         else:
             self.api.send_message(chat_id, text(session.language, "help"))
 
-    def _handle_message(self, message: dict[str, Any]) -> None:
-        chat = message.get("chat") or {}
-        sender = message.get("from") or {}
-        chat_id = chat.get("id")
-        user_id = sender.get("id")
-        if not isinstance(chat_id, int) or not isinstance(user_id, int):
+    def _send_word_document(self, chat_id: int, session: TelegramSession, result: Any) -> None:
+        if not hasattr(self.api, "send_document"):
             return
-
-        session = self.sessions.get(user_id)
-        if chat.get("type") != "private":
-            self.api.send_message(chat_id, text(session.language, "private_only"))
-            return
-
-        value = message.get("text")
-        if not isinstance(value, str) or not value.strip():
-            self.api.send_message(chat_id, text(session.language, "empty"))
-            return
-        value = value.strip()
-
-        command = self._command(value)
-        if command is not None:
-            self._handle_command(
-                user_id=user_id,
-                chat_id=chat_id,
-                command=command,
-                session=session,
-            )
-            return
-
-        if not self._require_consent(user_id, chat_id, session):
-            return
-
-        if session.state not in {
-            SessionState.AWAITING_CLAIM,
-            SessionState.AWAITING_CLARIFICATION,
-        }:
-            self._send_menu(user_id, chat_id, session)
-            return
-
-        existing = session.case_buffer or ""
-        candidate = value if not existing else f"{existing}\n\nДополнение пользователя:\n{value}"
-        if len(candidate) > self.max_case_chars:
-            self.api.send_message(
+        try:
+            data = build_claim_docx(result.document.text)
+            case_id = getattr(getattr(result, "locked_case", None), "case_id", "")
+            suffix = str(case_id)[:8] if case_id else "draft"
+            self.api.send_document(
                 chat_id,
-                text(session.language, "too_long", limit=self.max_case_chars),
+                filename=f"KORGAN_isk_{suffix}.docx",
+                data=data,
+                caption=text(session.language, "word_ready"),
             )
-            return
+        except Exception as exc:
+            logger.error("word_delivery_failed exception_type=%s", type(exc).__name__)
+            self.api.send_message(chat_id, text(session.language, "word_failed"))
 
-        session.case_buffer = candidate
-        self.sessions.save(user_id, session)
+    def _process_case(
+        self,
+        *,
+        user_id: int,
+        chat_id: int,
+        session: TelegramSession,
+        candidate: str,
+        clarification_state: SessionState,
+    ) -> None:
         self.api.send_message(chat_id, text(session.language, "processing"))
         try:
             result = self.engine.process(candidate)
@@ -267,13 +298,11 @@ class TelegramRuntime:
                 "legal_request_needs_clarification stage=fact_lock question_count=%d",
                 len(exc.questions),
             )
-            session.state = SessionState.AWAITING_CLARIFICATION
+            session.state = clarification_state
+            session.case_buffer = candidate
             self.sessions.save(user_id, session)
             questions = "\n".join(f"• {question}" for question in exc.questions)
-            self.api.send_message(
-                chat_id,
-                text(session.language, "clarification", questions=questions),
-            )
+            self.api.send_message(chat_id, text(session.language, "clarification", questions=questions))
             return
         except LegalQABlocked:
             logger.warning("legal_request_blocked stage=final_qa reason=qa_blocked")
@@ -315,16 +344,209 @@ class TelegramRuntime:
         if document.needs_verification:
             self.api.send_message(
                 chat_id,
-                text(
-                    session.language,
-                    "needs",
-                    items=", ".join(document.needs_verification),
-                ),
+                text(session.language, "needs", items=", ".join(document.needs_verification)),
             )
         else:
             self.api.send_message(chat_id, text(session.language, "no_needs"))
         self.api.send_message(chat_id, document.text)
+        self._send_word_document(chat_id, session, result)
         self._send_menu(user_id, chat_id, session)
+
+    def _handle_document_message(
+        self,
+        *,
+        message: dict[str, Any],
+        user_id: int,
+        chat_id: int,
+        session: TelegramSession,
+    ) -> bool:
+        document = message.get("document")
+        photos = message.get("photo")
+        file_id: str | None = None
+        mime_type: str | None = None
+        reported_size: int | None = None
+
+        if isinstance(document, dict):
+            file_id_value = document.get("file_id")
+            if isinstance(file_id_value, str):
+                file_id = file_id_value
+            mime_type = self._resolve_document_mime(document)
+            size_value = document.get("file_size")
+            reported_size = size_value if isinstance(size_value, int) else None
+        elif isinstance(photos, list) and photos:
+            photo = photos[-1] if isinstance(photos[-1], dict) else None
+            if photo:
+                file_id_value = photo.get("file_id")
+                if isinstance(file_id_value, str):
+                    file_id = file_id_value
+                size_value = photo.get("file_size")
+                reported_size = size_value if isinstance(size_value, int) else None
+                mime_type = "image/jpeg"
+        else:
+            return False
+
+        if not self._require_consent(user_id, chat_id, session):
+            return True
+        if session.state not in {
+            SessionState.AWAITING_DOCUMENTS,
+            SessionState.AWAITING_DOCUMENT_CLARIFICATION,
+        }:
+            self._start_documents(user_id, chat_id, session)
+            session = self.sessions.get(user_id)
+
+        if file_id is None or mime_type not in _ALLOWED_DOCUMENT_MIME:
+            self.api.send_message(chat_id, text(session.language, "document_unsupported"))
+            return True
+        if reported_size is not None and reported_size > self.max_document_bytes:
+            self.api.send_message(
+                chat_id,
+                text(
+                    session.language,
+                    "document_too_large",
+                    limit_mb=max(1, self.max_document_bytes // 1_000_000),
+                ),
+            )
+            return True
+        count = self._document_count(session.case_buffer)
+        if count >= self.max_documents_per_case:
+            self.api.send_message(
+                chat_id,
+                text(session.language, "document_limit", limit=self.max_documents_per_case),
+            )
+            return True
+        if self.document_extractor is None or not hasattr(self.api, "download_file"):
+            self.api.send_message(chat_id, text(session.language, "document_error"))
+            return True
+
+        self.api.send_message(chat_id, text(session.language, "document_processing"))
+        if hasattr(self.api, "send_chat_action"):
+            try:
+                self.api.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+
+        try:
+            raw = self.api.download_file(file_id, max_bytes=self.max_document_bytes)
+            extracted = self.document_extractor.extract(
+                source_id=f"doc-{count + 1}",
+                data=raw,
+                mime_type=mime_type,
+            )
+        except DocumentExtractionError:
+            logger.warning("document_extraction_blocked reason=safe_extraction_failed")
+            self.api.send_message(chat_id, text(session.language, "document_empty"))
+            return True
+        except Exception as exc:
+            stage, location, cause_type = self._safe_exception_diagnostics(exc)
+            logger.error(
+                "document_ingest_failed stage=%s exception_type=%s cause_type=%s location=%s",
+                stage,
+                type(exc).__name__,
+                cause_type,
+                location,
+            )
+            self.api.send_message(chat_id, text(session.language, "document_error"))
+            return True
+
+        if not self._append_case_text(session, extracted.as_case_context()):
+            self.api.send_message(
+                chat_id,
+                text(session.language, "too_long", limit=self.max_case_chars),
+            )
+            return True
+        session.state = SessionState.AWAITING_DOCUMENTS
+        self.sessions.save(user_id, session)
+        self.api.send_message(
+            chat_id,
+            text(
+                session.language,
+                "document_received",
+                index=count + 1,
+                chars=len(extracted.text),
+            ),
+            reply_markup=self._documents_markup(session.language),
+        )
+        return True
+
+    def _handle_message(self, message: dict[str, Any]) -> None:
+        chat = message.get("chat") or {}
+        sender = message.get("from") or {}
+        chat_id = chat.get("id")
+        user_id = sender.get("id")
+        if not isinstance(chat_id, int) or not isinstance(user_id, int):
+            return
+
+        session = self.sessions.get(user_id)
+        if chat.get("type") != "private":
+            self.api.send_message(chat_id, text(session.language, "private_only"))
+            return
+
+        if self._handle_document_message(
+            message=message,
+            user_id=user_id,
+            chat_id=chat_id,
+            session=session,
+        ):
+            return
+
+        value = message.get("text")
+        if not isinstance(value, str) or not value.strip():
+            self.api.send_message(chat_id, text(session.language, "empty"))
+            return
+        value = value.strip()
+
+        command = self._command(value)
+        if command is not None:
+            self._handle_command(
+                user_id=user_id,
+                chat_id=chat_id,
+                command=command,
+                session=session,
+            )
+            return
+
+        if not self._require_consent(user_id, chat_id, session):
+            return
+
+        if session.state == SessionState.AWAITING_DOCUMENTS:
+            if not self._append_case_text(session, f"[USER_NOTE]\n{value}"):
+                self.api.send_message(chat_id, text(session.language, "too_long", limit=self.max_case_chars))
+                return
+            self.sessions.save(user_id, session)
+            self.api.send_message(
+                chat_id,
+                text(session.language, "document_note_added"),
+                reply_markup=self._documents_markup(session.language),
+            )
+            return
+
+        if session.state not in {
+            SessionState.AWAITING_CLAIM,
+            SessionState.AWAITING_CLARIFICATION,
+            SessionState.AWAITING_DOCUMENT_CLARIFICATION,
+        }:
+            self._send_menu(user_id, chat_id, session)
+            return
+
+        existing = session.case_buffer or ""
+        candidate = value if not existing else f"{existing}\n\nДополнение пользователя:\n{value}"
+        if len(candidate) > self.max_case_chars:
+            self.api.send_message(chat_id, text(session.language, "too_long", limit=self.max_case_chars))
+            return
+        session.case_buffer = candidate
+        self.sessions.save(user_id, session)
+        clarification_state = (
+            SessionState.AWAITING_DOCUMENT_CLARIFICATION
+            if session.state == SessionState.AWAITING_DOCUMENT_CLARIFICATION
+            else SessionState.AWAITING_CLARIFICATION
+        )
+        self._process_case(
+            user_id=user_id,
+            chat_id=chat_id,
+            session=session,
+            candidate=candidate,
+            clarification_state=clarification_state,
+        )
 
     def _handle_callback(self, callback: dict[str, Any]) -> None:
         query_id = callback.get("id")
@@ -361,6 +583,42 @@ class TelegramRuntime:
         if data == "flow:claim":
             self._start_claim(user_id, chat_id, session)
             return
+        if data == "flow:documents":
+            self._start_documents(user_id, chat_id, session)
+            return
+        if data == "documents:build":
+            if not self._require_consent(user_id, chat_id, session):
+                return
+            candidate = session.case_buffer or ""
+            if not candidate.strip():
+                self.api.send_message(
+                    chat_id,
+                    text(session.language, "documents_missing"),
+                    reply_markup=self._documents_markup(session.language),
+                )
+                return
+            self._process_case(
+                user_id=user_id,
+                chat_id=chat_id,
+                session=session,
+                candidate=candidate,
+                clarification_state=SessionState.AWAITING_DOCUMENT_CLARIFICATION,
+            )
+            return
+        if data == "documents:clear":
+            session = self.sessions.clear_case(user_id)
+            self.api.send_message(chat_id, text(session.language, "cancelled"))
+            self._start_documents(user_id, chat_id, session)
+            return
+        if data == "nav:help":
+            self.api.send_message(chat_id, text(session.language, "help"))
+            return
+        if data == "nav:language":
+            self._send_language(user_id, chat_id, session)
+            return
+        if data == "nav:privacy":
+            self._send_privacy(user_id, chat_id, session)
+            return
         if data == "menu":
             self._send_menu(user_id, chat_id, session)
 
@@ -383,23 +641,13 @@ class TelegramRuntime:
         offset: int | None = None
         while not stopper.is_set():
             try:
-                updates = self.api.get_updates(
-                    offset=offset,
-                    timeout_seconds=self.poll_timeout_seconds,
-                )
+                updates = self.api.get_updates(offset=offset, timeout_seconds=self.poll_timeout_seconds)
                 for update in updates:
                     update_id = update.get("update_id")
                     try:
                         self.handle_update(update)
                     except Exception as exc:
-                        # One update that cannot be handled must never block the queue: without
-                        # confirming the offset Telegram redelivers it forever and the bot stops
-                        # serving every other user. Nothing is released to the user here, so the
-                        # legal path stays fail-closed while the transport keeps running.
-                        logger.error(
-                            "Telegram update failed safely: %s",
-                            type(exc).__name__,
-                        )
+                        logger.error("Telegram update failed safely: %s", type(exc).__name__)
                     finally:
                         if isinstance(update_id, int):
                             offset = update_id + 1
