@@ -11,6 +11,7 @@ from korgan import bot as base_bot
 from korgan.config import get_settings
 from korgan.menu_handlers import router as menu_router
 from korgan.menu_start import router as start_router
+from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.ui import main_menu
 from korgan.verified_openai import VerifiedOpenAILegalService
 
@@ -38,11 +39,14 @@ async def main() -> None:
     await configure_telegram_menu(bot)
 
     dp = Dispatcher(storage=MemoryStorage())
+    # /start first, then persistent reply-keyboard actions, then legacy inline callbacks,
+    # and only after that the generic legal text/file handlers.
     dp.include_router(start_router)
+    dp.include_router(reply_menu_router)
     dp.include_router(menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN verified polling with clickable inline and Telegram menus")
+    LOGGER.info("Starting KORGAN with persistent clickable reply keyboard")
     try:
         await dp.start_polling(bot)
     finally:
