@@ -1,0 +1,8 @@
+[build]
+builder = "RAILPACK"
+
+[deploy]
+preDeployCommand = ["alembic upgrade head"]
+startCommand = "korgan-telegram"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
