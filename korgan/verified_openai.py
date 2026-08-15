@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date
 from typing import Any
 from urllib.parse import urlparse
 
 from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.strict_openai import StrictOpenAILegalService
+
+LOGGER = logging.getLogger(__name__)
 
 _VERIFIED_RESEARCH_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -51,8 +54,101 @@ def _canonical_url(url: str) -> str:
     return f"{host}{parsed.path.rstrip('/')}"
 
 
+def _append_url(urls: list[str], value: Any) -> None:
+    if isinstance(value, str) and value.startswith(("http://", "https://")) and value not in urls:
+        urls.append(value)
+
+
+def _actual_response_urls(response: Any) -> list[str]:
+    """Return URLs that came from actual Responses API search/citation objects.
+
+    We deliberately do not trust URLs merely printed by the model in output_text.
+    """
+    urls: list[str] = []
+
+    try:
+        data = response.model_dump(exclude_none=True)
+    except Exception:
+        data = None
+
+    if isinstance(data, dict):
+        for item in data.get("output", []) or []:
+            if not isinstance(item, dict):
+                continue
+
+            # Full source list for a web search call. This is populated when
+            # include=["web_search_call.action.sources"] is requested.
+            if item.get("type") == "web_search_call":
+                action = item.get("action") or {}
+                if isinstance(action, dict):
+                    _append_url(urls, action.get("url"))
+                    for source in action.get("sources", []) or []:
+                        if isinstance(source, dict):
+                            _append_url(urls, source.get("url"))
+
+            # URL citations attached to final output text are also actual
+            # response metadata and therefore safe to treat as searched URLs.
+            if item.get("type") == "message":
+                for content in item.get("content", []) or []:
+                    if not isinstance(content, dict):
+                        continue
+                    for annotation in content.get("annotations", []) or []:
+                        if isinstance(annotation, dict) and annotation.get("type") == "url_citation":
+                            _append_url(urls, annotation.get("url"))
+
+    # Backward-compatible object traversal for SDK response classes.
+    for item in getattr(response, "output", []) or []:
+        if getattr(item, "type", None) == "web_search_call":
+            action = getattr(item, "action", None)
+            _append_url(urls, getattr(action, "url", None))
+            for source in getattr(action, "sources", []) or []:
+                _append_url(urls, getattr(source, "url", None))
+        if getattr(item, "type", None) == "message":
+            for content in getattr(item, "content", []) or []:
+                for annotation in getattr(content, "annotations", []) or []:
+                    if getattr(annotation, "type", None) == "url_citation":
+                        _append_url(urls, getattr(annotation, "url", None))
+
+    return urls
+
+
 class VerifiedOpenAILegalService(StrictOpenAILegalService):
-    """Strict service where every VERIFIED statement must map to an actual web-search source."""
+    """Strict service where every VERIFIED statement maps to an actual web-search source."""
+
+    async def _structured_response(
+        self,
+        *,
+        model: str,
+        instructions: str,
+        content: list[dict[str, Any]] | str,
+        schema_name: str,
+        schema: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], Any]:
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "instructions": instructions,
+            "input": content,
+            "text": self._json_schema(schema_name, schema),
+            "store": False,
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "required"
+            # Responses API only returns the complete list of web-search
+            # sources when this include field is requested.
+            kwargs["include"] = ["web_search_call.action.sources"]
+
+        response = await self.client.responses.create(**kwargs)
+        payload = json.loads(response.output_text)
+        source_urls = _actual_response_urls(response)
+        output_types = [getattr(item, "type", type(item).__name__) for item in getattr(response, "output", []) or []]
+        LOGGER.info(
+            "KORGAN Responses metadata: output_types=%s actual_web_urls=%d",
+            output_types,
+            len(source_urls),
+        )
+        return payload, response
 
     async def research_case(self, case_context: str, language: str = "ru") -> LegalResearch:
         tools = [{
@@ -96,7 +192,7 @@ class VerifiedOpenAILegalService(StrictOpenAILegalService):
         )
 
         actual_urls = [
-            url for url in self._annotation_urls(response)
+            url for url in _actual_response_urls(response)
             if self._is_current_official_source(url)
         ]
         actual_by_canonical = {
