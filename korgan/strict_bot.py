@@ -8,20 +8,20 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from korgan import bot as base_bot
 from korgan.config import get_settings
-from korgan.strict_openai import StrictOpenAILegalService
+from korgan.verified_openai import VerifiedOpenAILegalService
 
 LOGGER = logging.getLogger(__name__)
 
 
 async def main() -> None:
     settings = get_settings()
-    base_bot.service = StrictOpenAILegalService(settings)
+    base_bot.service = VerifiedOpenAILegalService(settings)
 
     bot = Bot(token=settings.telegram_bot_token)
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN strict polling (OpenAI + mandatory official research)")
+    LOGGER.info("Starting KORGAN verified polling (OpenAI + source-bound current-law research)")
     try:
         await dp.start_polling(bot)
     finally:
