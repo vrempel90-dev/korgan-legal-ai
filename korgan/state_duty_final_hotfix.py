@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-import re
-
+# Наследоваться нужно от civil_claim_hotfix, а не от robust_production_legal:
+# иначе изоляция стейл-налоговых норм (_sanitize_civil_research) и послабление
+# по статье 716 для займа (_core_profile_supported) выпадают из рантайма, хотя
+# README описывает их как действующие.
 from korgan.civil_claim_hotfix import ProductionOpenAILegalService as _BaseProductionOpenAILegalService
 
+# Критерий «это просьба о госпошлине» один на весь пайплайн: он же используется
+# в korgan.fast_v2_production_legal при детерминированной нормализации.
+from korgan.fast_v2_production_legal import _STATE_DUTY_RE, _is_state_duty_request
 
-_STATE_DUTY_RE = re.compile(
-    r"(?:\bгоспошлин\w*\b|\bгосударственн\w*\s+пошлин\w*\b)",
-    re.IGNORECASE,
-)
-
-
-def _is_state_duty_request(text: str) -> bool:
-    return bool(_STATE_DUTY_RE.search(text or ""))
+__all__ = ["ProductionOpenAILegalService", "_STATE_DUTY_RE", "_is_state_duty_request"]
 
 
 def _enforce_single_state_duty_request(draft) -> None:
@@ -41,7 +39,7 @@ def _enforce_single_state_duty_request(draft) -> None:
 
 
 class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
-    """Final guard layered on top of the corrected civil-claim research runtime."""
+    """Final guard: state-duty wording cannot create a false QA block."""
 
     async def validate_claim(self, case_context, research, draft):
         _enforce_single_state_duty_request(draft)

@@ -10,7 +10,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BufferedInputFile, KeyboardButton, Message, ReplyKeyboardMarkup
 
-from korgan.claim_docx import build_claim_docx
+from korgan.claim_docx import build_claim_docx, missing_required_fields
+from korgan.claim_failure import (
+    ClaimFailure,
+    ClaimFailureCode,
+    ClaimStage,
+    failure_from_exception,
+)
 from korgan.claim_intent import is_claim_drafting_request
 from korgan.claim_preflight import inspect_claim_context
 from korgan.config import get_settings
@@ -168,6 +174,17 @@ async def document_handler(message: Message, state: FSMContext) -> None:
     await _analyze_upload(message, state, stream.getvalue(), filename, document.mime_type)
 
 
+async def _report_claim_failure(message: Message, failure: ClaimFailure) -> None:
+    """Записать причину отказа в лог и назвать её пользователю.
+
+    Fail-closed обязан быть объяснимым: в логе остаётся одна структурированная
+    строка с этапом, кодом и полем, а пользователь получает конкретную причину
+    вместо «Проверьте материалы и повторите запрос».
+    """
+    LOGGER.error(failure.log_line(), exc_info=True)
+    await message.answer(failure.user_message(), reply_markup=MENU)
+
+
 @router.message(Command("claim"))
 @router.message(F.text == "📄 Подготовить иск")
 async def claim_handler(message: Message, state: FSMContext) -> None:
@@ -198,17 +215,47 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
     lang = await _language(state)
     await message.answer("Проверяю право и формирую Word-документ…")
     await message.bot.send_chat_action(message.chat.id, "typing")
+
+    # Каждый этап отвечает за свою причину отказа. Раньше все три были накрыты
+    # одним except, поэтому ни лог, ни пользователь не могли отличить сбой
+    # исследования от блокировки QA или от ошибки шаблонизации.
     try:
         research = await service.research_case(context, language=lang)
+    except Exception as exc:
+        await _report_claim_failure(message, failure_from_exception(exc, stage=ClaimStage.RESEARCH))
+        return
+
+    try:
         draft = await service.draft_claim(context, research, language=lang)
-        file_bytes = build_claim_docx(draft)
-    except Exception:
-        LOGGER.exception("Claim generation failed")
-        await message.answer(
-            "Не удалось безопасно сформировать Word-документ. KORGAN не будет отправлять сырой текст иска в чат. Проверьте материалы и повторите запрос.",
-            reply_markup=MENU,
+    except Exception as exc:
+        await _report_claim_failure(message, failure_from_exception(exc, stage=ClaimStage.DRAFT))
+        return
+
+    absent = missing_required_fields(draft)
+    if absent:
+        await state.update_data(mode="claim_details")
+        await _report_claim_failure(
+            message,
+            ClaimFailure(
+                stage=ClaimStage.RENDER,
+                code=ClaimFailureCode.MISSING_DOCUMENT_FIELD,
+                fields=absent,
+            ),
         )
         return
+
+    try:
+        file_bytes = build_claim_docx(draft)
+    except Exception as exc:
+        await _report_claim_failure(message, failure_from_exception(exc, stage=ClaimStage.RENDER))
+        return
+
+    LOGGER.info(
+        "CLAIM_RELEASED status=%s notes=%d sources=%d",
+        draft.status.value,
+        len(draft.verification_notes),
+        len(draft.source_urls),
+    )
 
     marker = "✅ VERIFIED" if draft.status == VerificationStatus.VERIFIED else "⚠️ NEEDS_VERIFICATION"
     notes = "\n".join(f"• {x}" for x in draft.verification_notes[:10])

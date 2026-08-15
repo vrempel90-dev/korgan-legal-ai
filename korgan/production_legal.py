@@ -3,14 +3,21 @@ from __future__ import annotations
 import json
 import re
 
+from korgan.claim_failure import (
+    ClaimFailure,
+    ClaimFailureCode,
+    ClaimStage,
+    CourtDocumentQualityError,
+)
+from korgan.claim_qa_policy import apply_soft_qa_findings, split_qa_issues
 from korgan.legal_calc import NEEDS_CALCULATION_MARKER, gosposhlina_line
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.openai_legal import _CLAIM_SCHEMA, _VALIDATION_SCHEMA
 from korgan.verified_openai import VerifiedOpenAILegalService
 
-
-class CourtDocumentQualityError(RuntimeError):
-    """Raised when a draft still fails deterministic court-document checks."""
+# CourtDocumentQualityError переехал в korgan.claim_failure, где он несёт
+# машиночитаемую причину отказа. Реэкспорт сохраняет существующие импорты.
+__all__ = ["CourtDocumentQualityError", "ProductionOpenAILegalService"]
 
 
 _FORBIDDEN_COURT_PATTERNS: tuple[tuple[str, str], ...] = (
@@ -336,16 +343,29 @@ class ProductionOpenAILegalService(VerifiedOpenAILegalService):
             )
             draft = ClaimDraft(status=research.status, source_urls=research.source_urls, **repaired_payload)
             validation = await self.validate_claim(case_context, research, draft)
-            hard_problems = _hard_quality_issues(case_context, draft)
 
-            # Critical legal/factual errors and deterministic contamination are a hard stop.
-            blocking = list(dict.fromkeys(
-                validation["critical_errors"]
-                + validation["unsupported_legal_claims"]
-                + hard_problems
-            ))
+            # Только фабрикация фактов и загрязнение судебного текста — жёсткий
+            # стоп. Пробел в доказательствах и неподтверждённая норма права
+            # отмечаются внутри документа, а не отменяют его выдачу.
+            blocking, evidence_gaps, unsupported_law = split_qa_issues(
+                critical_errors=validation["critical_errors"],
+                unsupported_legal_claims=validation["unsupported_legal_claims"],
+                hard_issues=_hard_quality_issues(case_context, draft),
+            )
             if blocking:
-                raise CourtDocumentQualityError("; ".join(blocking[:12]))
+                raise CourtDocumentQualityError(
+                    ClaimFailure(
+                        stage=ClaimStage.QA,
+                        code=ClaimFailureCode.QA_BLOCKED,
+                        issues=blocking,
+                    )
+                )
+
+            apply_soft_qa_findings(
+                draft,
+                evidence_gaps=evidence_gaps,
+                unsupported_legal_claims=unsupported_law,
+            )
 
             remaining = list(validation["missing_required_fields"])
             if remaining:
