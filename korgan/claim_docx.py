@@ -10,6 +10,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 from docx.text.paragraph import Paragraph
 
+from korgan.legal_calc import NEEDS_CALCULATION_MARKER
 from korgan.legal_types import ClaimDraft
 
 
@@ -129,7 +130,10 @@ def build_claim_docx(draft: ClaimDraft) -> bytes:
     right.add_run("Ответчик:\n").bold = True
     for item in _party_lines(draft.defendant, "Ответчик", "[ТРЕБУЕТ УТОЧНЕНИЯ: данные ответчика]"):
         right.add_run(f"{item}\n")
-    right.add_run(f"Цена иска: {price}")
+    right.add_run(f"Цена иска: {price}\n")
+    # Never absent: either a computed amount or the explicit calculation marker.
+    duty = _strip_label(draft.state_duty, "Госпошлина") or NEEDS_CALCULATION_MARKER
+    right.add_run(f"Госпошлина: {duty}")
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER

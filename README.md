@@ -14,7 +14,15 @@ Production-oriented MVP for Kazakhstan legal consultations, document intake and 
 
 ## Fail-closed rule
 
-Exact articles, deadlines, state duty, jurisdiction/court and current legal status must not be guessed. If they cannot be verified from an allowed official source, the draft keeps an explicit `[ТРЕБУЕТ УТОЧНЕНИЯ: ...]` / verification note.
+Exact articles, deadlines, jurisdiction/court and current legal status must not be guessed. If they cannot be verified from an allowed official source, the draft keeps an explicit `[ТРЕБУЕТ УТОЧНЕНИЯ: ...]` / verification note.
+
+A concrete court name is never accepted from the model unless the case materials name it: matching an address to a court district/specialisation is not derivable from law, so it goes to `NEEDS_VERIFICATION`.
+
+## Deterministic calculations
+
+Everything computable from a rate fixed in law is computed in `korgan/legal_calc.py`, not by the model. The state duty for a monetary claim follows статья 665 НК РК (Кодекс РК № 214-VIII): 1% of the claim price for individuals, 3% for legal entities, capped at 10 000 МРП (4 325 ₸ in 2026, Закон РК № 239-VIII).
+
+When the claim price or the payer type cannot be established from the materials, the document carries `[ТРЕБУЕТ РАСЧЁТА ГОСПОШЛИНЫ]` instead of a guessed number. Both rate constants are year-bound and must be re-verified when the next budget law enters into force.
 
 ## Stack
 
