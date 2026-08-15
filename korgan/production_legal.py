@@ -31,6 +31,31 @@ _FORBIDDEN_COURT_PATTERNS: tuple[tuple[str, str], ...] = (
     ("**", "Markdown-разметка попала в иск"),
 )
 
+_NON_PARTY_LOCATION_MARKERS = (
+    "место заключения",
+    "место подписания",
+    "место исполнения договора",
+    "место передачи денег",
+    "место совершения сделки",
+)
+
+_EXPLICIT_ADDRESS_MARKERS = (
+    "место жительства",
+    "место регистрации",
+    "адрес регистрации",
+    "адрес проживания",
+    "улица",
+    "ул.",
+    "проспект",
+    "пр-т",
+    "микрорайон",
+    "мкр",
+    "дом ",
+    "д. ",
+    "квартира",
+    "кв.",
+)
+
 
 def _court_body_text(draft: ClaimDraft) -> str:
     return "\n".join(
@@ -53,7 +78,7 @@ def _normalize(value: str) -> str:
 
 
 def _known_party_data_issues(case_context: str, draft: ClaimDraft) -> list[str]:
-    """Deterministically catch loss of identifiers, e-mail, phones and explicit party addresses."""
+    """Catch loss of identifiers/e-mail and only addresses explicitly tied to a party."""
     issues: list[str] = []
     party_text = "\n".join([*draft.claimant, *draft.defendant])
     normalized_party = _normalize(party_text)
@@ -67,24 +92,41 @@ def _known_party_data_issues(case_context: str, draft: ClaimDraft) -> list[str]:
         if email.lower() not in party_text.lower():
             issues.append(f"известный e-mail {email} потерян в реквизитах сторон")
 
-    # Extraction context contains a dedicated party-address line. Every explicit value there
-    # should survive into claimant/defendant unless the extractor marked it unknown.
+    # The extractor's «Адреса» bucket may also contain a contract/signing location.
+    # A generic city or «место заключения договора» is NOT a party address. Enforce
+    # preservation only when the value is explicitly bound to a party or clearly
+    # looks like a residential/registration street address.
     for line in case_context.splitlines():
         if not line.startswith("Адреса:"):
             continue
         raw = line.split(":", 1)[1].strip()
         if not raw or raw == "не установлено":
             continue
+
         for value in raw.split(";"):
             candidate = value.strip()
-            # Strip role labels such as «Истец:», «Ответчик:», «Займодавец:».
+            role_bound = False
+
             if ":" in candidate:
                 prefix, remainder = candidate.split(":", 1)
-                if any(word in prefix.lower() for word in ("истец", "ответчик", "займодав", "заемщик", "заёмщик", "адрес")):
+                if any(
+                    word in prefix.lower()
+                    for word in ("истец", "ответчик", "займодав", "заемщик", "заёмщик", "адрес истца", "адрес ответчика")
+                ):
+                    role_bound = True
                     candidate = remainder.strip()
+
+            lowered_candidate = candidate.lower()
+            if any(marker in lowered_candidate for marker in _NON_PARTY_LOCATION_MARKERS):
+                continue
+
+            if not role_bound and not any(marker in lowered_candidate for marker in _EXPLICIT_ADDRESS_MARKERS):
+                continue
+
             norm = _normalize(candidate)
             if len(norm) >= 8 and norm not in normalized_party:
                 issues.append(f"известный адрес «{candidate}» потерян в реквизитах сторон")
+
     return issues
 
 
@@ -113,7 +155,8 @@ class ProductionOpenAILegalService(VerifiedOpenAILegalService):
             "Результат будет автоматически помещен в Word-файл, поэтому судебные поля должны содержать только текст самого иска.\n\n"
             "ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА КАЧЕСТВА:\n"
             "1. Используй ВСЕ известные из материалов реквизиты сторон: ФИО, ИИН/БИН, адрес, телефон, e-mail. "
-            "Нельзя заменять известное значение заглушкой.\n"
+            "Нельзя заменять известное значение заглушкой. Место заключения/подписания/исполнения договора не является адресом стороны, "
+            "если материалы прямо не связывают его с местом жительства, регистрации или нахождения этой стороны.\n"
             "2. Не придумывай неизвестное. Для реально отсутствующего обязательного реквизита используй только '[ТРЕБУЕТ УТОЧНЕНИЯ: ...]'.\n"
             "3. Факты изложи хронологично: договор, исполнение истцом, срок исполнения ответчиком, нарушение. Не выдумывай претензии, переписку или платежи.\n"
             "4. Правовое обоснование строй ТОЛЬКО на VERIFIED-выводах. Если для займа VERIFIED статьи 715 и/или 722 ГК РК, обязательно используй их.\n"
@@ -220,6 +263,8 @@ class ProductionOpenAILegalService(VerifiedOpenAILegalService):
             "1) факты, которых нет в материалах (включая выдуманные претензии, переписку или платежи);\n"
             "2) правовые утверждения, которых нет в VERIFIED;\n"
             "3) известные в материалах ФИО/ИИН/адрес/контакт/сумму, которые проект потерял или заменил заглушкой;\n"
+            "При этом место заключения, подписания или исполнения договора само по себе НЕ является адресом стороны. "
+            "Считай адрес известным только при явной привязке к месту жительства, регистрации, нахождения или конкретной стороне.\n"
             "4) загруженный/подтвержденный документ, ошибочно названный 'при наличии';\n"
             "5) прямо применимую VERIFIED-норму материального права, необоснованно отсутствующую в legal_basis;\n"
             "6) любой служебный/чатовый текст: NEEDS_VERIFICATION, советы, URL, Markdown, 'можно адаптировать', 'если нужно', 'при наличии';\n"
