@@ -1,52 +1,58 @@
-# KORGAN Legal AI
+# KORGAN Legal AI — Telegram / OpenAI only
 
-Telegram legal AI assistant for the Republic of Kazakhstan.
+Production-oriented MVP for Kazakhstan legal consultations, document intake and court-claim drafting.
 
-## MVP architecture
+## Current workflow
 
-Telegram -> strict RAG -> Pinecone -> official Adilet sources -> OpenAI -> answer with verification status.
+1. User describes the dispute in Telegram.
+2. User can attach PDF/DOCX/TXT or photo/scan (JPG/PNG/WEBP).
+3. OpenAI extracts only visible facts and marks unreadable/missing data.
+4. KORGAN researches legal basis with OpenAI Web Search restricted to official Kazakhstan legal domains (default: `adilet.zan.kz`).
+5. A separate drafting pass builds a structured claim.
+6. A separate validation pass checks facts, legal support and missing required fields.
+7. The bot returns a DOCX and marks it `VERIFIED` or `NEEDS_VERIFICATION`.
 
-### Safety invariant
+## Fail-closed rule
 
-KORGAN is fail-closed. Concrete legal facts (articles, deadlines, state duties, jurisdiction and similar claims) must be grounded in retrieved trusted sources. If the system cannot confirm them, it returns `NEEDS_VERIFICATION` rather than guessing.
+Exact articles, deadlines, state duty, jurisdiction/court and current legal status must not be guessed. If they cannot be verified from an allowed official source, the draft keeps an explicit `[ТРЕБУЕТ УТОЧНЕНИЯ: ...]` / verification note.
 
-## Required environment variables
+## Stack
 
-Copy `.env.example` to `.env` locally or configure the same variables in Railway.
+- Python 3.11+
+- aiogram 3
+- OpenAI Responses API (text, images/files, structured outputs, web search)
+- python-docx
+- Railway-ready long polling
 
-- `TELEGRAM_BOT_TOKEN`
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL`
-- `OPENAI_EMBEDDING_MODEL`
-- `PINECONE_API_KEY`
-- `PINECONE_INDEX_NAME`
-- `RAG_MIN_SCORE`
+No Pinecone, MongoDB, Gemini, Groq, DeepSeek or OpenRouter is required for this MVP.
 
-No Gemini, Groq, DeepSeek or OpenRouter keys are used.
+## Environment
 
-## Run the Telegram worker
+```env
+TELEGRAM_BOT_TOKEN=...
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5.1
+OPENAI_VISION_MODEL=gpt-5.1
+OPENAI_VALIDATION_MODEL=gpt-5.1
+OFFICIAL_LEGAL_DOMAINS=adilet.zan.kz
+```
+
+## Run
 
 ```bash
 pip install -r requirements.txt
 python -m korgan.bot
 ```
 
-## Index an official legal act
+## Telegram
 
-Only `https://adilet.zan.kz` URLs are accepted:
+- `/start`
+- `/ru`, `/kk`
+- `/claim`
+- `/clear`
+- Send text for consultation / facts
+- Send PDF/DOCX/TXT or photo/scan to add evidence to current case
 
-```bash
-python -m korgan.ingest "https://adilet.zan.kz/..."
-```
+## Privacy note
 
-The Pinecone index dimension must match the selected OpenAI embedding model.
-
-## Railway
-
-Use the start command:
-
-```text
-python -m korgan.bot
-```
-
-Store all secrets in Railway Variables. Never commit `.env`.
+OpenAI requests are sent with `store=False`. Uploaded case material is held only in the bot's in-memory FSM for the current process in this MVP; `/clear` removes current-session case material. Production persistence/retention should be added only with explicit consent and encryption.
