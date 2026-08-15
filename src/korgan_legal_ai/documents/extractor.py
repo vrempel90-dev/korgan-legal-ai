@@ -44,10 +44,14 @@ class ExtractedDocument:
     def as_case_context(self) -> str:
         """Serialize evidence text for Fact Lock without exposing the original filename.
 
-        Values marked OCR_UNCERTAIN are not trustworthy enough to become locked facts without a
-        clarification. The Fact Lock prompt explicitly treats those markers as unresolved.
+        Text-layer DOCX/PDF content is deterministic extraction. Visual-only content is marked as a
+        transcription that requires confirmation for material legal facts; this prevents a confident
+        OCR/model error from silently becoming a locked party, amount, date or contract number.
         """
-        lines = [f"[DOCUMENT {self.source_id}]", self.text.strip()]
+        lines = [f"[DOCUMENT {self.source_id}]"]
+        if self.method == "vision":
+            lines.append("[VISUAL_TRANSCRIPTION_REQUIRES_CONFIRMATION]")
+        lines.append(self.text.strip())
         if self.uncertain_fragments:
             lines.append("[OCR_UNCERTAIN]")
             lines.extend(f"- {item}" for item in self.uncertain_fragments if item.strip())
@@ -68,7 +72,8 @@ class OpenAIDocumentExtractor:
 
     DOCX and text PDFs are parsed deterministically in-process. OpenAI vision is used only when a
     source has no reliable embedded text (images and scan-only PDFs). Model output is transcription,
-    never a legal conclusion. Responses are sent with store=False.
+    never a legal conclusion. Responses are sent with store=False. Material facts from visual-only
+    transcription remain confirmation-gated by Fact Lock.
     """
 
     def __init__(
