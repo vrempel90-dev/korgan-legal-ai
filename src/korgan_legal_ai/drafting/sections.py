@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from string import Formatter
 from typing import Callable
 
@@ -13,6 +14,8 @@ from korgan_legal_ai.domain.models import (
 from korgan_legal_ai.drafting.context import DraftContext
 
 NEEDS = "NEEDS_VERIFICATION"
+
+_ARTICLE_IN_TEXT = re.compile(r"\bстат(?:ья|ьи|ье|ью|ей)\s+(\d+(?:-\d+)?)", re.IGNORECASE)
 
 _REPRESENTATIVE_LABELS = {
     RepresentativeKind.DIRECTOR: "руководитель",
@@ -315,23 +318,30 @@ def render_attachments(ctx: DraftContext) -> str:
 
 
 def render_signature(ctx: DraftContext) -> str | None:
-    authority = ctx.item("authority")
-    if authority is not None and authority.status != VerificationStatus.VERIFIED:
-        return _need(authority.conclusion)
+    """Name the signatory the user gave, and separately flag what is still unproven.
 
+    A missing authority document does not make the signatory unknown. Replacing the whole block
+    with a marker would hide a fact the user supplied; printing the name and marking only the
+    unverified part keeps both statements true.
+    """
     procedure = ctx.case.procedure
     kind = procedure.representative_kind
-    if kind is None and not procedure.representative_name:
-        return None
+    lines: list[str] = []
 
-    label = _REPRESENTATIVE_LABELS.get(kind, "представитель") if kind else "представитель"
-    name = procedure.representative_name or _need("ФИО подписанта не зафиксировано.")
-    lines = [f"Подписант: {name} ({label})"]
-    if procedure.filing_mode == FilingMode.ELECTRONIC:
-        lines.append("Документ подписывается ЭЦП при подаче через судебный кабинет.")
-    elif procedure.filing_mode == FilingMode.PAPER:
-        lines.append("Подпись: ______________________")
-    return "\n".join(lines)
+    if kind is not None or procedure.representative_name:
+        label = _REPRESENTATIVE_LABELS.get(kind, "представитель") if kind else "представитель"
+        name = procedure.representative_name or _need("ФИО подписанта не зафиксировано.")
+        lines.append(f"Подписант: {name} ({label})")
+        if procedure.filing_mode == FilingMode.ELECTRONIC:
+            lines.append("Документ подписывается ЭЦП при подаче через судебный кабинет.")
+        elif procedure.filing_mode == FilingMode.PAPER:
+            lines.append("Подпись: ______________________")
+
+    authority = ctx.item("authority")
+    if authority is not None and authority.status != VerificationStatus.VERIFIED:
+        lines.append(_need(authority.conclusion))
+
+    return "\n".join(lines) if lines else None
 
 
 RENDERERS: dict[SectionKind, Callable[[DraftContext], str | None]] = {
@@ -352,3 +362,39 @@ RENDERERS: dict[SectionKind, Callable[[DraftContext], str | None]] = {
     SectionKind.ATTACHMENTS: render_attachments,
     SectionKind.SIGNATURE: render_signature,
 }
+
+
+def render_practice(ctx: DraftContext) -> str | None:
+    """List supporting court practice, if the reviewed corpus returned any.
+
+    An empty corpus produces no section at all. Practice never carries a NEEDS_VERIFICATION marker
+    of its own because its absence is not a gap: a document is complete without it.
+    """
+    if not ctx.practice:
+        return None
+
+    verified_articles = {
+        citation.article.split(",", maxsplit=1)[0].strip()
+        for citation in ctx.verified_citations()
+        if citation.article
+    }
+    lines = []
+    for hit in ctx.practice:
+        act = hit.act
+        entry = (
+            f"- {act.court_name}, дело № {act.case_number} от "
+            f"{act.decided_on.strftime('%d.%m.%Y')} ({act.instance})"
+        )
+        # A decision's own wording may name articles this case never verified. Reproducing it would
+        # put an unverified statutory reference into the document under the guise of a quotation,
+        # so the summary is only carried over when every article it names is already verified here.
+        cited = set(_ARTICLE_IN_TEXT.findall(act.summary))
+        if cited <= verified_articles:
+            entry += f": {act.summary}"
+        else:
+            entry += " (изложение мотивов — по тексту акта в источнике)"
+        lines.append(f"{entry}. {act.source_url}")
+    return "\n".join(lines)
+
+
+RENDERERS[SectionKind.PRACTICE] = render_practice

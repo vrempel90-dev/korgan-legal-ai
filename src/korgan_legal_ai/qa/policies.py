@@ -109,12 +109,13 @@ class FinalQAPolicy:
         procedural: ProceduralReport | None = None,
         calculation: CalculationResult | None = None,
         blueprint: "DocumentBlueprint | None" = None,
+        practice: tuple = (),
     ) -> list[QAViolation]:
         raise NotImplementedError
 
 
 class PartyPresencePolicy(FinalQAPolicy):
-    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None):
+    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None, practice=()):
         missing = [party.name for party in case.parties if party.name not in document.text]
         if not missing:
             return []
@@ -124,7 +125,7 @@ class PartyPresencePolicy(FinalQAPolicy):
 class ExactCitationPolicy(FinalQAPolicy):
     """Require the exact canonical article/part/point locator used in the draft."""
 
-    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None):
+    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None, practice=()):
         used = {
             _locator(match.group("article"), match.group("part"), match.group("point"))
             for match in ARTICLE_RE.finditer(document.text)
@@ -152,7 +153,7 @@ class ExactCitationPolicy(FinalQAPolicy):
 class AmountConsistencyPolicy(FinalQAPolicy):
     """The total in calculations and the prayer must exactly match deterministic CalculationLayer."""
 
-    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None):
+    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None, practice=()):
         claims_money = (
             blueprint.monetary
             if blueprint is not None
@@ -197,7 +198,7 @@ class AmountConsistencyPolicy(FinalQAPolicy):
 class DateConsistencyPolicy(FinalQAPolicy):
     """Block dates invented by the drafter outside LockedCase or deterministic procedural output."""
 
-    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None):
+    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None, practice=()):
         used, invalid = _dates_in_text(document.text)
         if invalid:
             return [QAViolation(code=self.code, message="В документе есть некорректные даты: " + ", ".join(invalid))]
@@ -228,6 +229,10 @@ class DateConsistencyPolicy(FinalQAPolicy):
             for period in calculation.penalty_periods:
                 allowed.add(period.start)
                 allowed.add(period.end)
+        # A decision date comes from the reviewed practice corpus, on the same footing as a norm's
+        # effective date: it is retrieved, not composed by the drafter.
+        for hit in practice:
+            allowed.add(hit.act.decided_on)
         for citation in citations:
             if citation.effective_from is not None:
                 allowed.add(citation.effective_from)
@@ -250,7 +255,7 @@ class DateConsistencyPolicy(FinalQAPolicy):
 class OutcomeGuaranteePolicy(FinalQAPolicy):
     FORBIDDEN = ("вы точно выиграете", "суд обязательно удовлетворит", "гарантированно выигра")
 
-    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None):
+    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None, practice=()):
         lower = document.text.lower()
         if not any(phrase in lower for phrase in self.FORBIDDEN):
             return []
@@ -260,7 +265,7 @@ class OutcomeGuaranteePolicy(FinalQAPolicy):
 class FilingReadinessLanguagePolicy(FinalQAPolicy):
     FORBIDDEN = ("готов к подаче", "можно подавать без проверки")
 
-    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None):
+    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None, practice=()):
         lower = document.text.lower()
         if not any(phrase in lower for phrase in self.FORBIDDEN):
             return []
@@ -279,7 +284,7 @@ class ClaimRoleDirectionPolicy(FinalQAPolicy):
     swap during drafting.
     """
 
-    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None):
+    def check(self, *, case, document, citations, procedural=None, calculation=None, blueprint=None, practice=()):
         from korgan_legal_ai.domain.models import PartyRole
 
         if blueprint is not None:

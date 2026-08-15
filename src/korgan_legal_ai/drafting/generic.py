@@ -55,6 +55,8 @@ class DocumentDrafter:
             needs.append("principal_conflicts_with_payments")
         if calculation.other_excluded_as_duplicate:
             needs.append("other_amount_duplicated_debt")
+        if calculation.penalty_cap_base_ambiguous:
+            needs.append("penalty_cap_base")
         return list(dict.fromkeys(needs))
 
     def _document(
@@ -105,6 +107,7 @@ class DocumentDrafter:
         procedural: ProceduralReport,
         evidence_map: EvidenceMap,
         calculation: CalculationResult,
+        practice: tuple = (),
     ) -> DraftContext:
         return DraftContext(
             blueprint=self.blueprint,
@@ -112,6 +115,7 @@ class DocumentDrafter:
             procedural=procedural,
             evidence_map=evidence_map,
             calculation=calculation,
+            practice=practice,
         )
 
     def draft(
@@ -120,8 +124,9 @@ class DocumentDrafter:
         procedural: ProceduralReport,
         evidence_map: EvidenceMap,
         calculation: CalculationResult,
+        practice: tuple = (),
     ) -> DraftDocument:
-        context = self._context(case, procedural, evidence_map, calculation)
+        context = self._context(case, procedural, evidence_map, calculation, practice)
         if self.provider is not None and self.model:
             payload = {
                 "locked_case": case.model_dump(mode="json"),
@@ -161,13 +166,14 @@ class DocumentDrafter:
         procedural: ProceduralReport,
         evidence_map: EvidenceMap,
         calculation: CalculationResult,
+        practice: tuple = (),
     ) -> DraftDocument:
         """Build a deterministic fail-closed document after an LLM draft fails Final Legal QA.
 
         The fallback deliberately contains visible NEEDS_VERIFICATION markers instead of guessing.
         It is still a lawyer-review draft and must pass the same Final Legal QA before release.
         """
-        context = self._context(case, procedural, evidence_map, calculation)
+        context = self._context(case, procedural, evidence_map, calculation, practice)
         return self._document(
             text=self.render(context),
             procedural=procedural,

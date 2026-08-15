@@ -43,6 +43,7 @@ class DocumentWorkflow:
         evidence: EvidenceMapBuilder | None = None,
         calculations: CalculationLayer | None = None,
         qa: FinalLegalQA | None = None,
+        practice: object | None = None,
         audit_factory: Callable[[], HashChainAuditLog] | None = None,
         as_of_date_provider: Callable[[], date] | None = None,
     ) -> None:
@@ -52,6 +53,9 @@ class DocumentWorkflow:
         self.evidence = evidence or EvidenceMapBuilder()
         self.calculations = calculations or CalculationLayer()
         self.qa = qa or FinalLegalQA()
+        # Optional. With no practice corpus connected the document is simply produced without a
+        # practice section; nothing is substituted for the missing support.
+        self.practice = practice
         self.audit_factory = audit_factory or HashChainAuditLog
         self.as_of_date_provider = as_of_date_provider or date.today
         self._last_audit_verified = False
@@ -80,6 +84,21 @@ class DocumentWorkflow:
                 ],
             },
         )
+
+    def _find_practice(self, case: LockedCase) -> tuple:
+        """Look for supporting court practice, and treat its absence as normal.
+
+        The query is built from the locked facts only. Retrieval is advisory: it cannot change a
+        verification status, and an empty or unreachable corpus yields an empty result rather than
+        an error or a substitute.
+        """
+        if self.practice is None:
+            return ()
+        query = " ".join(fact.statement for fact in case.facts).strip()
+        if not query:
+            return ()
+        area = self.blueprint.legal_area.value if self.blueprint.legal_area else None
+        return tuple(self.practice.search(query, legal_area=area))
 
     def run(self, case: LockedCase, routing: RoutingDecision) -> WorkflowResult:
         if routing.document_type != self.blueprint.document_type:
@@ -114,7 +133,15 @@ class DocumentWorkflow:
         )
         audit.append("procedural_checked", procedural.model_dump(mode="json"))
 
-        document = self.drafter.draft(case, procedural, evidence_map, calculation)
+        practice = self._find_practice(case)
+        if practice:
+            audit.append(
+                "judicial_practice_attached",
+                {"count": len(practice), "case_numbers": [hit.act.case_number for hit in practice]},
+            )
+        document = self.drafter.draft(
+            case, procedural, evidence_map, calculation, practice=practice
+        )
         self._audit_house_style(audit, document, calculation, event="house_style_review")
 
         citations = [citation for item in procedural.items for citation in item.sources]
@@ -125,6 +152,7 @@ class DocumentWorkflow:
             calculation=calculation,
             procedural=procedural,
             blueprint=self.blueprint,
+            practice=practice,
         )
         audit.append("final_qa", qa_result.model_dump(mode="json"))
 
@@ -138,7 +166,9 @@ class DocumentWorkflow:
                 "llm_draft_blocked_by_final_qa",
                 {"violation_codes": [violation.code for violation in qa_result.violations]},
             )
-            fallback = self.drafter.safe_fallback(case, procedural, evidence_map, calculation)
+            fallback = self.drafter.safe_fallback(
+                case, procedural, evidence_map, calculation, practice=practice
+            )
             self._audit_house_style(
                 audit,
                 fallback,
@@ -152,6 +182,7 @@ class DocumentWorkflow:
                 calculation=calculation,
                 procedural=procedural,
                 blueprint=self.blueprint,
+                practice=practice,
             )
             audit.append("safe_fallback_final_qa", fallback_qa.model_dump(mode="json"))
             if fallback_qa.passed:

@@ -30,6 +30,7 @@ class SectionKind(StrEnum):
     TERMS = "terms"
     GROUNDS = "grounds"
     LEGAL_GROUNDS = "legal_grounds"
+    PRACTICE = "practice"
     CLOSING_FORMULA = "closing_formula"
     PRAYER = "prayer"
     ATTACHMENTS = "attachments"

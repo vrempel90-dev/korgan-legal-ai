@@ -4,6 +4,10 @@ from korgan_legal_ai.blueprints.registry import BLUEPRINTS, CLAIM_DEBT_RECOVERY
 from korgan_legal_ai.config import Settings
 from korgan_legal_ai.corpus.embeddings import OpenAIEmbeddingProvider
 from korgan_legal_ai.corpus.repository import LegalNormRepository
+from korgan_legal_ai.corpus.practice import (
+    JudicialPracticeRepository,
+    JudicialPracticeService,
+)
 from korgan_legal_ai.corpus.search import HybridSearchService
 from korgan_legal_ai.db.engine import build_engine
 from korgan_legal_ai.drafting.debt_claim import DebtClaimDrafter
@@ -68,6 +72,24 @@ def build_debt_claim_workflow(settings: Settings) -> DebtClaimWorkflow:
     )
 
 
+def _build_practice_service(settings: Settings) -> JudicialPracticeService | None:
+    """Connect the judicial-practice corpus only when its infrastructure is fully configured.
+
+    Practice strengthens an argument; it is never required for one. Missing infrastructure means
+    documents are produced without a practice section, not that anything weaker takes its place.
+    """
+    if not settings.database_url or not settings.openai_api_key:
+        return None
+    engine = build_engine(settings.database_url)
+    return JudicialPracticeService(
+        JudicialPracticeRepository(engine),
+        OpenAIEmbeddingProvider(
+            api_key=settings.openai_api_key,
+            model=settings.korgan_embedding_model,
+        ),
+    )
+
+
 def build_workflows(
     settings: Settings,
     *,
@@ -79,6 +101,7 @@ def build_workflows(
     added to the registry therefore becomes available end-to-end without touching this factory.
     """
     checker = _build_procedural_checker(settings)
+    practice = _build_practice_service(settings)
     model = settings.korgan_model_draft if provider else None
     workflows: dict[str, DocumentWorkflow] = {}
     for blueprint in BLUEPRINTS:
@@ -86,12 +109,14 @@ def build_workflows(
             workflows[blueprint.key] = DebtClaimWorkflow(
                 procedural=checker,
                 drafter=DebtClaimDrafter(provider=provider, model=model),
+                practice=practice,
             )
             continue
         workflows[blueprint.key] = DocumentWorkflow(
             blueprint=blueprint,
             procedural=checker,
             drafter=DocumentDrafter(blueprint, provider=provider, model=model),
+            practice=practice,
         )
     return workflows
 

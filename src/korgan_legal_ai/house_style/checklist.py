@@ -13,9 +13,23 @@ from korgan_legal_ai.house_style.rules import HouseStyleRuleSet, load_rules
 # Others describe quoting a specific norm, and those can only be satisfied when the canonical corpus
 # supplied that norm's effective wording. Reporting the second group as unsatisfied on an empty
 # corpus is the correct outcome, not a defect: the alternative would be reciting law from memory.
+def _title_with_subject_probe() -> re.Pattern[str]:
+    """Any registered document title followed by its subject line.
+
+    The corpus derived this rule from claims, where it reads "И С К" plus a subject. The habit is
+    the same for a претензия or a жалоба; only the word changes, so the probe is built from the
+    registered titles rather than hardcoding the claim's.
+    """
+    from korgan_legal_ai.blueprints.registry import BLUEPRINTS
+
+    titles = sorted({blueprint.title for blueprint in BLUEPRINTS}, key=len, reverse=True)
+    alternation = "|".join(re.escape(title) for title in titles)
+    return re.compile(rf"(?m)^(?:{alternation}|И\s?С\s?К)\s*$\n^\S", re.UNICODE)
+
+
 _PROBES: dict[str, re.Pattern[str]] = {
     "header.court_then_parties_then_price": re.compile(r"ЦЕНА ИСКА", re.I),
-    "heading.isk_with_subject": re.compile(r"ИСКОВОЕ ЗАЯВЛЕНИЕ|И\s?С\s?К\b"),
+    "heading.isk_with_subject": _title_with_subject_probe(),
     "calc.explicit_formula": re.compile(r"РАСЧЕТ ТРЕБОВАНИЙ", re.I),
     "pretrial.factual_block": re.compile(r"ДОСУДЕБН", re.I),
     "closing.rukovodstvuyas_proshu_sud": re.compile(r"(?is)Руководствуясь.*?(ПРОШУ|ТРЕБУЮ)"),

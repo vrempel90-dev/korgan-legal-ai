@@ -19,6 +19,7 @@ VERIFICATION_LABELS: dict[str, dict[str, str]] = {
         "claim_total_mismatch": "расхождение с названной вами общей суммой",
         "principal_conflicts_with_payments": "расхождение суммы долга с историей оплат",
         "other_amount_duplicated_debt": "«иные суммы» дублируют уже учтённый долг",
+        "penalty_cap_base": "база договорного потолка неустойки (долг на дату просрочки или остаток)",
     },
     "kk": {
         "jurisdiction": "соттылық және құзыретті сот",
@@ -31,6 +32,7 @@ VERIFICATION_LABELS: dict[str, dict[str, str]] = {
         "claim_total_mismatch": "сіз атаған жалпы сомамен алшақтық",
         "principal_conflicts_with_payments": "борыш сомасы мен төлем тарихының алшақтығы",
         "other_amount_duplicated_debt": "«өзге сомалар» есепке алынған борышты қайталайды",
+        "penalty_cap_base": "тұрақсыздық айыбы шегінің базасы (мерзім өткендегі борыш па, қалдық па)",
     },
 }
 

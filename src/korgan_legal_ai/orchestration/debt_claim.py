@@ -30,6 +30,7 @@ class DebtClaimWorkflow(DocumentWorkflow):
         evidence: EvidenceMapBuilder | None = None,
         calculations: CalculationLayer | None = None,
         qa: FinalLegalQA | None = None,
+        practice: object | None = None,
         audit_factory: Callable[[], HashChainAuditLog] | None = None,
         as_of_date_provider: Callable[[], date] | None = None,
     ) -> None:
@@ -40,6 +41,7 @@ class DebtClaimWorkflow(DocumentWorkflow):
             evidence=evidence,
             calculations=calculations,
             qa=qa,
+            practice=practice,
             audit_factory=audit_factory,
             as_of_date_provider=as_of_date_provider,
         )

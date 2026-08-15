@@ -41,6 +41,7 @@ class FinalLegalQA:
         procedural: ProceduralReport | None = None,
         calculation: CalculationResult | None = None,
         blueprint: DocumentBlueprint | None = None,
+        practice: tuple = (),
     ) -> QAResult:
         violations = []
         for policy in self.policies:
@@ -52,6 +53,7 @@ class FinalLegalQA:
                     procedural=procedural,
                     calculation=calculation,
                     blueprint=blueprint,
+                    practice=practice,
                 )
             )
         return QAResult(passed=not any(violation.blocking for violation in violations), violations=violations)

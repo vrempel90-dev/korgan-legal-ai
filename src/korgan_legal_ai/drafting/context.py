@@ -31,6 +31,9 @@ class DraftContext:
     procedural: ProceduralReport
     evidence_map: EvidenceMap
     calculation: CalculationResult
+    # Court decisions that support the argument. Persuasive material only: practice is printed
+    # beside verified norms and can never stand in for one.
+    practice: tuple = ()
 
     def item(self, name: str) -> ProceduralItem | None:
         return next((item for item in self.procedural.items if item.name == name), None)

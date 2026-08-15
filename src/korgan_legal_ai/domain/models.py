@@ -330,6 +330,10 @@ class CalculationResult(BaseModel):
     penalty_rate_percent_per_day: Decimal | None = Field(default=None, ge=0)
     penalty_cap_amount: Decimal | None = Field(default=None, ge=0)
     penalty_cap_applied: bool = False
+    # True when "не более N% от суммы задолженности" would yield a different ceiling depending on
+    # whether it is read against the defaulted debt or the remaining balance, and the choice
+    # changes the result. The wording question belongs to a human, so it is reported, not resolved.
+    penalty_cap_base_ambiguous: bool = False
     # Every accrual period the penalty was built from: start, end, days and the balance that was
     # actually outstanding during that period. This is what makes a period-based penalty auditable
     # by a human instead of being a single unexplained number.

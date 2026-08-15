@@ -110,6 +110,7 @@ class CalculationLayer:
         penalty_rate = financials.penalty_rate_percent_per_day
         penalty_cap_amount: Decimal | None = None
         penalty_cap_applied = False
+        penalty_cap_base_ambiguous = False
         penalty_periods: list[PenaltyPeriod] = []
 
         dated = [
@@ -177,6 +178,17 @@ class CalculationLayer:
                     MONEY_QUANT,
                     rounding=ROUND_HALF_UP,
                 )
+                # "Не более N% от суммы задолженности" can be read against the defaulted debt or
+                # against what remains today. The readings only diverge once a payment lands during
+                # the delay, and only matter when the ceiling actually binds under one of them.
+                # That is a question about contract wording, so it is surfaced rather than decided.
+                alternative_cap = (principal * cap_percent / HUNDRED).quantize(
+                    MONEY_QUANT,
+                    rounding=ROUND_HALF_UP,
+                )
+                penalty_cap_base_ambiguous = alternative_cap != penalty_cap_amount and (
+                    raw_penalty > min(alternative_cap, penalty_cap_amount)
+                )
                 if raw_penalty > penalty_cap_amount:
                     raw_penalty = penalty_cap_amount
                     penalty_cap_applied = True
@@ -201,5 +213,6 @@ class CalculationLayer:
             penalty_rate_percent_per_day=penalty_rate,
             penalty_cap_amount=penalty_cap_amount,
             penalty_cap_applied=penalty_cap_applied,
+            penalty_cap_base_ambiguous=penalty_cap_base_ambiguous,
             penalty_periods=penalty_periods,
         )
