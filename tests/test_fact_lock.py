@@ -175,3 +175,109 @@ def test_invalid_wire_role_fails_closed_instead_of_becoming_a_party_fact():
         assert any("роль стороны A" in question for question in exc.questions)
     else:
         raise AssertionError("ClarificationRequired expected")
+
+
+def test_document_fact_requires_exact_quote_and_matching_evidence_source():
+    raw = (
+        "[DOCUMENT doc-1]\n"
+        "[PAGE 1]\n"
+        "Договор поставки №15 заключен 10 февраля 2026 года. "
+        "Стоимость товара составляет 8 450 000 тенге.\n"
+        "[USER_NOTE]\nПодготовить иск о взыскании долга."
+    )
+    wire = _wire(
+        facts=[
+            {
+                "id": "f1",
+                "statement": "Стоимость товара составляет 8 450 000 тенге",
+                "source_document_id": "doc-1",
+                "source_quote": "Стоимость товара составляет 8 450 000 тенге.",
+            }
+        ],
+        evidence=[
+            {
+                "title": "Договор поставки №15",
+                "kind": "contract",
+                "supports_fact_ids": ["f1"],
+                "source_document_id": "doc-1",
+            }
+        ],
+        financials={"contract_amount": "8450000"},
+    )
+
+    case = FactLockService(FakeProvider(wire), "test").lock(raw)
+
+    assert case.facts[0].statement == "Стоимость товара составляет 8 450 000 тенге"
+    assert case.evidence[0].supports_fact_ids == ["f1"]
+    assert case.evidence[0].title == "Договор поставки №15"
+
+
+def test_invented_document_quote_fails_closed():
+    raw = "[DOCUMENT doc-1]\n[PAGE 1]\nДолг составляет 5 450 000 тенге."
+    wire = _wire(
+        facts=[
+            {
+                "id": "f1",
+                "statement": "Долг составляет 9 999 999 тенге",
+                "source_document_id": "doc-1",
+                "source_quote": "Долг составляет 9 999 999 тенге.",
+            }
+        ],
+        evidence=[
+            {
+                "title": "doc-1",
+                "supports_fact_ids": ["f1"],
+                "source_document_id": "doc-1",
+            }
+        ],
+    )
+
+    try:
+        FactLockService(FakeProvider(wire), "test").lock(raw)
+    except ClarificationRequired as exc:
+        assert any("точной выдержкой" in question for question in exc.questions)
+    else:
+        raise AssertionError("ClarificationRequired expected")
+
+
+def test_unknown_document_source_fails_closed():
+    raw = "[DOCUMENT doc-1]\n[PAGE 1]\nДолг составляет 5 450 000 тенге."
+    wire = _wire(
+        facts=[
+            {
+                "id": "f1",
+                "statement": "Долг составляет 5 450 000 тенге",
+                "source_document_id": "doc-9",
+                "source_quote": "Долг составляет 5 450 000 тенге.",
+            }
+        ]
+    )
+
+    try:
+        FactLockService(FakeProvider(wire), "test").lock(raw)
+    except ClarificationRequired as exc:
+        assert any("неизвестный источник doc-9" in question for question in exc.questions)
+    else:
+        raise AssertionError("ClarificationRequired expected")
+
+
+def test_document_fact_without_matching_evidence_link_fails_closed():
+    raw = "[DOCUMENT doc-1]\n[PAGE 1]\nДолг составляет 5 450 000 тенге."
+    wire = _wire(
+        facts=[
+            {
+                "id": "f1",
+                "statement": "Долг составляет 5 450 000 тенге",
+                "source_document_id": "doc-1",
+                "source_quote": "Долг составляет 5 450 000 тенге.",
+            }
+        ],
+        evidence=[],
+    )
+
+    try:
+        FactLockService(FakeProvider(wire), "test").lock(raw)
+    except ClarificationRequired as exc:
+        assert any("не связан с доказательством" in question for question in exc.questions)
+    else:
+        raise AssertionError("ClarificationRequired expected")
