@@ -12,6 +12,7 @@ from aiogram.types import BufferedInputFile, KeyboardButton, Message, ReplyKeybo
 
 from korgan.claim_docx import build_claim_docx
 from korgan.claim_intent import is_claim_drafting_request
+from korgan.claim_preflight import inspect_claim_context
 from korgan.config import get_settings
 from korgan.legal_types import ExtractedDocument, VerificationStatus
 from korgan.openai_legal import OpenAILegalService
@@ -173,17 +174,29 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
     global service
     if service is None:
         return
-    await state.update_data(mode="main")
+
     context = await _case_context(state)
     if not context.strip():
+        await state.update_data(mode="main")
         await message.answer(
             "Сначала опишите ситуацию или пришлите документы/сканы. Без фактов я не буду придумывать иск.",
             reply_markup=MENU,
         )
         return
 
+    # Instant deterministic completeness gate. Do this BEFORE legal web search
+    # and drafting so an obviously incomplete case does not burn 40–70 seconds
+    # only to be rejected by FINAL QA.
+    preflight = inspect_claim_context(context)
+    if not preflight.ready:
+        LOGGER.info("CLAIM_PREFLIGHT_MISSING fields=%s", list(preflight.missing))
+        await state.update_data(mode="claim_details")
+        await message.answer(preflight.user_message(), reply_markup=MENU)
+        return
+
+    await state.update_data(mode="main")
     lang = await _language(state)
-    await message.answer("Проверяю материалы и формирую Word-документ…")
+    await message.answer("Проверяю право и формирую Word-документ…")
     await message.bot.send_chat_action(message.chat.id, "typing")
     try:
         research = await service.research_case(context, language=lang)
@@ -224,6 +237,17 @@ async def legal_question(message: Message, state: FSMContext) -> None:
         return
 
     data = await state.get_data()
+
+    # The previous claim preflight asked for missing requisites. Save this reply
+    # as case facts and immediately retry the claim — do not waste a consultation
+    # API call and do not make the user press the document button again.
+    if data.get("mode") == "claim_details":
+        facts = list(data.get("facts", []) or [])
+        facts.append(message.text)
+        await state.update_data(facts=facts[-20:], mode="main")
+        await claim_handler(message, state)
+        return
+
     explicit_consultation = data.get("mode") == "consultation"
 
     # A direct claim request from the main mode must produce DOCX. But when the
@@ -236,8 +260,6 @@ async def legal_question(message: Message, state: FSMContext) -> None:
 
     facts = list(data.get("facts", []) or [])
     facts.append(message.text)
-    # Consultation mode is intentionally one-shot. Further messages still go to
-    # ordinary consultation unless they explicitly request document generation.
     await state.update_data(facts=facts[-20:], mode="main")
     context = await _case_context(state)
     lang = await _language(state)
