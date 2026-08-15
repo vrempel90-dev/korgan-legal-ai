@@ -49,6 +49,33 @@ class ReadinessStatus(StrEnum):
     READY_FOR_FINAL_HUMAN_REVIEW = "READY FOR FINAL HUMAN REVIEW"
 
 
+class FilingMode(StrEnum):
+    PAPER = "paper"
+    ELECTRONIC = "electronic"
+
+
+class RepresentativeKind(StrEnum):
+    DIRECTOR = "director"
+    EMPLOYEE = "employee"
+    ADVOCATE = "advocate"
+    LEGAL_CONSULTANT = "legal_consultant"
+    OTHER = "other"
+
+
+class EvidenceKind(StrEnum):
+    CONTRACT = "contract"
+    PRIMARY_DOCUMENT = "primary_document"
+    PAYMENT = "payment"
+    PRETRIAL_DEMAND = "pretrial_demand"
+    PRETRIAL_DELIVERY = "pretrial_delivery"
+    AUTHORITY = "authority"
+    PROFESSIONAL_STATUS = "professional_status"
+    REGISTRATION = "registration"
+    STATE_DUTY_PAYMENT = "state_duty_payment"
+    RECONCILIATION = "reconciliation"
+    OTHER = "other"
+
+
 class Party(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)
     name: str
@@ -69,6 +96,7 @@ class Evidence(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)
     title: str
     description: str | None = None
+    kind: EvidenceKind = EvidenceKind.OTHER
     supports_fact_ids: list[str] = Field(default_factory=list)
 
 
@@ -81,6 +109,23 @@ class Financials(BaseModel):
     currency: str = "KZT"
 
 
+class ProcedureFacts(BaseModel):
+    """Only explicit filing/procedure facts locked from the user or supplied documents.
+
+    None means unknown. Legal modules must never convert None into a guessed legal fact.
+    """
+
+    obligation_due_date: date | None = None
+    pretrial_required_by_contract: bool | None = None
+    pretrial_demand_sent_date: date | None = None
+    representative_kind: RepresentativeKind | None = None
+    representative_name: str | None = None
+    representative_can_sign_claim: bool | None = None
+    filing_mode: FilingMode | None = None
+    third_party_count: int = Field(default=0, ge=0)
+    copies_prepared: bool | None = None
+
+
 class LockedCase(BaseModel):
     case_id: str = Field(default_factory=lambda: uuid4().hex)
     raw_text: str
@@ -88,12 +133,22 @@ class LockedCase(BaseModel):
     facts: list[Fact]
     evidence: list[Evidence] = Field(default_factory=list)
     financials: Financials = Field(default_factory=Financials)
+    procedure: ProcedureFacts = Field(default_factory=ProcedureFacts)
     ambiguities: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_distinct_party_roles(self) -> "LockedCase":
         if len(self.parties) < 2:
             raise ValueError("At least two parties are required")
+        fact_ids = {fact.id for fact in self.facts}
+        dangling = {
+            fact_id
+            for evidence in self.evidence
+            for fact_id in evidence.supports_fact_ids
+            if fact_id not in fact_ids
+        }
+        if dangling:
+            raise ValueError("Evidence cannot reference unknown fact ids")
         return self
 
 

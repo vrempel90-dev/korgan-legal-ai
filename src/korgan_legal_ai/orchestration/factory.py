@@ -12,6 +12,7 @@ from korgan_legal_ai.orchestration.debt_claim import DebtClaimWorkflow
 from korgan_legal_ai.orchestration.engine import LegalEngine
 from korgan_legal_ai.procedural.checker import ProceduralChecker
 from korgan_legal_ai.procedural_rules.basis import LegalBasisVerifier
+from korgan_legal_ai.procedural_rules.deadlines import DeadlineCalculator
 from korgan_legal_ai.procedural_rules.jurisdiction import JurisdictionResolver
 from korgan_legal_ai.procedural_rules.repository import ProceduralRuleRepository
 from korgan_legal_ai.procedural_rules.state_duty import StateDutyCalculator
@@ -49,6 +50,7 @@ def _build_procedural_checker(settings: Settings) -> ProceduralChecker:
         gateway,
         state_duty_calculator=StateDutyCalculator(rule_repository, basis_verifier),
         jurisdiction_resolver=JurisdictionResolver(rule_repository, basis_verifier),
+        deadline_calculator=DeadlineCalculator(rule_repository, basis_verifier),
     )
 
 

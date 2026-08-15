@@ -7,6 +7,7 @@ from korgan_legal_ai.domain.models import (
     DocumentType,
     DraftDocument,
     EvidenceMap,
+    FilingMode,
     LockedCase,
     PartyRole,
     ProceduralReport,
@@ -47,7 +48,10 @@ class DebtClaimDrafter:
                 "calculation": calculation.model_dump(mode="json"),
                 "instruction": (
                     "Use VERIFIED procedural conclusions and exact citations as supplied. "
-                    "Do not introduce any article/amount/deadline/court rule whose status is not VERIFIED."
+                    "Do not introduce any article, amount, date, deadline, court rule, attachment "
+                    "or representative power whose status/fact is not explicitly VERIFIED/locked. "
+                    "The debt prayer amount must exactly equal calculation.total. If state duty is "
+                    "VERIFIED, state it separately as court costs and never add it to the claim price."
                 ),
             }
             generated = self.provider.parse(
@@ -74,6 +78,19 @@ class DebtClaimDrafter:
         )
 
     @staticmethod
+    def _party_block(label: str, party) -> str:
+        lines = [f"{label}: {party.name}"]
+        if party.iin_bin:
+            lines.append(f"БИН/ИИН: {party.iin_bin}")
+        if party.address:
+            lines.append(f"Адрес: {party.address}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _item(procedural: ProceduralReport, name: str):
+        return next((item for item in procedural.items if item.name == name), None)
+
+    @staticmethod
     def _deterministic_draft(
         case: LockedCase,
         calculation: CalculationResult,
@@ -87,63 +104,96 @@ class DebtClaimDrafter:
             (p for p in case.parties if p.role in {PartyRole.DEFENDANT, PartyRole.DEBTOR}),
             case.parties[1],
         )
+        claimant_block = DebtClaimDrafter._party_block("Истец", claimant)
+        defendant_block = DebtClaimDrafter._party_block("Ответчик", defendant)
         facts = "\n".join(f"- {fact.statement}" for fact in case.facts)
         total = f"{calculation.total} {calculation.currency}"
-        procedural_lines = "\n".join(
-            f"- {item.name}: {item.conclusion} [{item.status}]"
-            for item in procedural.items
-        )
+
+        due_line = ""
+        if case.procedure.obligation_due_date is not None:
+            due_line = (
+                "\nСрок исполнения обязательства: "
+                + case.procedure.obligation_due_date.strftime("%d.%m.%Y")
+            )
+
+        pretrial = DebtClaimDrafter._item(procedural, "pretrial")
+        pretrial_text = pretrial.conclusion if pretrial else "Не проверено."
+        if case.procedure.pretrial_demand_sent_date is not None:
+            pretrial_text += (
+                " Дата направления претензии: "
+                + case.procedure.pretrial_demand_sent_date.strftime("%d.%m.%Y")
+                + "."
+            )
+
+        state_duty = DebtClaimDrafter._item(procedural, "state_duty")
+        court_costs_section = ""
+        if state_duty is not None and state_duty.status == VerificationStatus.VERIFIED:
+            court_costs_section = f"\n\nСУДЕБНЫЕ РАСХОДЫ\n{state_duty.conclusion}"
+
         verified_citations = [
             citation
             for item in procedural.items
             for citation in item.sources
             if citation.status == VerificationStatus.VERIFIED
         ]
+        unique_citations: list = []
+        seen: set[tuple[str | None, str | None, str | None]] = set()
+        for citation in verified_citations:
+            key = (citation.law_name, citation.article, citation.source_url)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_citations.append(citation)
         citation_lines = "\n".join(
             f"- {citation.law_name or citation.source_title}, статья {citation.article}: "
             f"{citation.source_url}"
-            for citation in verified_citations
+            for citation in unique_citations
             if citation.article and citation.source_url
         )
         if not citation_lines:
             citation_lines = "- Точные нормы не добавлены: подтвержденных citations для этого проекта нет."
 
+        attachments = [evidence.title for evidence in case.evidence]
+        if case.procedure.filing_mode == FilingMode.PAPER and case.procedure.copies_prepared is True:
+            attachments.append("Копии иска и приложений по числу ответчиков и третьих лиц")
+        attachment_lines = "\n".join(
+            f"{index}. {title}" for index, title in enumerate(dict.fromkeys(attachments), start=1)
+        ) or "1. Перечень фактически предоставленных приложений отсутствует."
+
         return f"""В ______________________________ суд
 
-Истец: {claimant.name}
-Ответчик: {defendant.name}
+{claimant_block}
 
-ИСКОВОЕ ЗАЯВЛЕНИЕ
+{defendant_block}
+
+ИСК
 о взыскании задолженности
 
+ЦЕНА ИСКА: {total}
+
 ОБСТОЯТЕЛЬСТВА ДЕЛА
-{facts}
+{facts}{due_line}
+
+СВЕДЕНИЯ О ДОСУДЕБНОМ ПОРЯДКЕ
+{pretrial_text}
 
 РАСЧЕТ ТРЕБОВАНИЙ
 Основной долг: {calculation.principal} {calculation.currency}
 Неустойка: {calculation.penalty} {calculation.currency}
 Проценты: {calculation.interest} {calculation.currency}
 Иные суммы: {calculation.other} {calculation.currency}
-Итого: {total}
-
-ПРОЦЕССУАЛЬНАЯ ПРОВЕРКА
-{procedural_lines}
-
-ПОДТВЕРЖДЕННЫЕ НОРМЫ
-{citation_lines}
+Итого: {total}{court_costs_section}
 
 ПРАВОВОЕ ОБОСНОВАНИЕ
-Требования основываются на обязательстве, описанном в зафиксированных фактах дела. В проект
-включены только те точные процессуальные нормы и расчеты, которые имеют статус VERIFIED.
-Вопросы со статусом NEEDS_VERIFICATION не заменяются предположениями и подлежат проверке
-до финальной юридической проверки человеком.
+Требования основываются на обязательстве и доказательствах, изложенных выше. В настоящий
+проект включаются только точные нормы, прошедшие проверку по canonical-корпусу и официальному
+источнику.
+{citation_lines}
 
 ПРОШУ СУД:
-1. Взыскать с {defendant.name} в пользу {claimant.name} сумму требований в размере {total}.
-2. Разрешить вопрос о судебных расходах в соответствии с применимым законодательством после
-   проверки состава и документального подтверждения расходов.
+1. Взыскать с {defendant.name} в пользу {claimant.name} задолженность в размере {total}.
+2. Взыскать судебные расходы в подтвержденном размере в соответствии с применимым законодательством.
 
 ПРИЛОЖЕНИЯ:
-Перечень приложений формируется по фактически предоставленным доказательствам и после
-процессуальной проверки обязательного состава приложений.
+{attachment_lines}
 """

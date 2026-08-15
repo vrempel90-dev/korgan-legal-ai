@@ -3,7 +3,14 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from korgan_legal_ai.domain.exceptions import ClarificationRequired
-from korgan_legal_ai.domain.models import Evidence, Fact, Financials, LockedCase, Party
+from korgan_legal_ai.domain.models import (
+    Evidence,
+    Fact,
+    Financials,
+    LockedCase,
+    Party,
+    ProcedureFacts,
+)
 from korgan_legal_ai.llm.base import LLMProvider
 from korgan_legal_ai.prompts.fact_lock import FACT_LOCK_SYSTEM
 
@@ -13,6 +20,7 @@ class FactLockExtraction(BaseModel):
     facts: list[Fact]
     evidence: list[Evidence] = Field(default_factory=list)
     financials: Financials = Field(default_factory=Financials)
+    procedure: ProcedureFacts = Field(default_factory=ProcedureFacts)
     ambiguities: list[str] = Field(default_factory=list)
 
 

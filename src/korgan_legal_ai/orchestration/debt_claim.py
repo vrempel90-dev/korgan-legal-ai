@@ -56,7 +56,13 @@ class DebtClaimWorkflow:
 
         document = self.drafter.draft(case, procedural, evidence_map, calculation)
         citations = [citation for item in procedural.items for citation in item.sources]
-        qa_result = self.qa.check(case, document, citations)
+        qa_result = self.qa.check(
+            case,
+            document,
+            citations,
+            procedural=procedural,
+            calculation=calculation,
+        )
         self.audit.append("final_qa", qa_result.model_dump(mode="json"))
 
         if not qa_result.passed:
