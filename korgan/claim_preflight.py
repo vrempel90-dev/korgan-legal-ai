@@ -7,7 +7,7 @@ from dataclasses import dataclass
 _CLAIMANT_MARKERS = ("истец", "истца", "займодавец", "займодавца", "кредитор")
 _DEFENDANT_MARKERS = ("ответчик", "ответчика", "заемщик", "заёмщик", "должник")
 _ADDRESS_MARKERS = (
-    "адрес", "место жительства", "проживает", "проживаю", "живет", "живёт",
+    "адрес", "место жительства", "место нахождения", "проживает", "проживаю", "живу ", "живет", "живёт",
     "ул.", " улица ", "дом ", "д. ", "квартира", "кв.", "мкр", "проспект",
 )
 _LEGAL_ENTITY_MARKERS = ("тоо", "ао ", "акционерное общество", "юридическое лицо", "бин")
@@ -52,7 +52,6 @@ def _has_role_bound_name(text: str, markers: tuple[str, ...]) -> bool:
     for window in _windows(text, markers, 120):
         for candidate in _NAME_RE.findall(window):
             lowered = candidate.lower()
-            # Do not mistake common document labels for a person's full name.
             if any(word in lowered for word in ("сообщения пользователя", "материалы дела", "важные факты", "гражданский кодекс")):
                 continue
             return True
@@ -66,14 +65,43 @@ def _has_role_bound_iin(text: str, markers: tuple[str, ...]) -> bool:
     return False
 
 
+def _segments(text: str) -> list[str]:
+    return [part.strip() for part in re.split(r"[;\n]+", text) if part.strip()]
+
+
+def _looks_like_address(segment: str) -> bool:
+    lowered = f" {segment.lower()} "
+    return any(token in lowered for token in _ADDRESS_MARKERS)
+
+
 def _has_role_bound_address(text: str, markers: tuple[str, ...]) -> bool:
-    for window in _windows(text, markers, 260):
-        lowered = window.lower()
-        if any(marker in lowered for marker in _ADDRESS_MARKERS):
-            # A bare city is not enough; demand some street/house/residence signal.
-            if any(token in lowered for token in ("ул.", " улица ", "дом ", "д. ", "кв.", "квартира", "мкр", "проспект", "место жительства", "адрес", "проживает", "проживаю", "живет", "живёт")):
-                return True
-    return False
+    claimant = markers == _CLAIMANT_MARKERS
+
+    # Require party + address in the same compact field/segment. A defendant's
+    # address located nearby must never satisfy the claimant requirement.
+    for segment in _segments(text):
+        lowered = segment.lower()
+        if any(marker in lowered for marker in markers) and _looks_like_address(segment):
+            return True
+
+    lowered = text.lower()
+    if claimant:
+        patterns = (
+            r"\bмой\s+адрес\b",
+            r"\bадрес\s+истц[а-яё]*\b",
+            r"\bместо\s+жительства\s+истц[а-яё]*\b",
+            r"\bя\s+проживаю\b",
+            r"\bя\s+живу\b",
+            r"\bпроживаю\s+по\s+адресу\b",
+        )
+    else:
+        patterns = (
+            r"\bадрес\s+ответчик[а-яё]*\b",
+            r"\bместо\s+жительства\s+ответчик[а-яё]*\b",
+            r"\bответчик[а-яё]*.{0,80}\b(?:живет|живёт|проживает)\b",
+            r"\bон\s+(?:живет|живёт|проживает)\b",
+        )
+    return any(re.search(pattern, lowered, flags=re.DOTALL) for pattern in patterns)
 
 
 def _has_claimant_dob(text: str) -> bool:
