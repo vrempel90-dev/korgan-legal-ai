@@ -103,7 +103,7 @@ EVAL_CASES: tuple[EvalCase, ...] = (
         expected_penalty=Decimal("175200.00"),
         expected_total=Decimal("2575200.00"),
         must_not_say=_SUPPLIED_PROBES,
-        tags=("money", "partial_payment", "penalty"),
+        tags=("money", "partial_payment", "penalty", "trap"),
     ),
     EvalCase(
         id="E2_multiple_payments",

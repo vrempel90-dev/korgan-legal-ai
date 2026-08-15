@@ -175,7 +175,7 @@ def test_no_document_is_produced_while_required_facts_are_missing() -> None:
 
 
 def test_back_command_reopens_the_previous_question() -> None:
-    runtime, api, store = _consented()
+    runtime, _api, store = _consented()
     runtime.handle_update(_callback("flow:interview"))
     runtime.handle_update(_callback(f"doctype:{CLAIM_DEBT_RECOVERY.key}"))
     runtime.handle_update(_message("ТОО «Арман Логистикс»"))
@@ -191,7 +191,7 @@ def test_back_command_reopens_the_previous_question() -> None:
 
 
 def test_cancel_erases_collected_answers() -> None:
-    runtime, api, store = _consented()
+    runtime, _api, store = _consented()
     runtime.handle_update(_callback("flow:interview"))
     runtime.handle_update(_callback(f"doctype:{CLAIM_DEBT_RECOVERY.key}"))
     runtime.handle_update(_message("ТОО «Арман Логистикс»"))
@@ -202,7 +202,7 @@ def test_cancel_erases_collected_answers() -> None:
 
 
 def test_a_stale_choice_button_cannot_overwrite_a_later_answer() -> None:
-    runtime, api, store = _consented()
+    runtime, _api, store = _consented()
     runtime.handle_update(_callback("flow:interview"))
     runtime.handle_update(_callback(f"doctype:{CLAIM_DEBT_RECOVERY.key}"))
     runtime.handle_update(_message("ТОО «Арман Логистикс»"))

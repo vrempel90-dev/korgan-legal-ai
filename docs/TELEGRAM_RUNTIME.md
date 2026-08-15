@@ -15,17 +15,51 @@ The production runtime uses Telegram Bot API long polling (`getUpdates`).
 - the bot processes legal matters only in private chats;
 - commands are registered through `setMyCommands`.
 
-## Claim entry paths
+## Entry paths
 
-The main menu offers two paths into the same legal pipeline:
+The main menu offers three paths into the same legal pipeline:
 
-1. **Describe the case** — the user's text is sent to the existing `LegalEngine`.
-2. **Upload documents** — PDF, DOCX, JPG and PNG evidence is converted into source text first, then
+1. **Guided dialogue** — the user picks a document type and answers one validated question at a
+   time. See below.
+2. **Describe the case** — the user's text is sent to the existing `LegalEngine`.
+3. **Upload documents** — PDF, DOCX, JPG and PNG evidence is converted into source text first, then
    the resulting evidence context is sent to the same `LegalEngine`.
 
-Telegram never resolves law or calculations itself. Both paths still execute Fact Lock -> router ->
+Telegram never resolves law or calculations itself. Paths 2 and 3 execute Fact Lock -> router ->
 Legal RAG/procedural checks -> deterministic calculations -> drafting -> house-style review -> Final
-Legal QA.
+Legal QA. Path 1 replaces the two inference stages with the user's own typed answers and explicit
+choice of document type; every verification stage after that is identical.
+
+A guard test asserts the transport holds no legal vocabulary of its own and does not import the
+legal layers directly.
+
+## Guided dialogue
+
+The question list comes from the blueprint of the chosen document type, so a newly supported
+document type appears in the dialogue without any change to the transport.
+
+- one question per message, with the answer validated before it is stored;
+- an answer that cannot be parsed is asked again, never interpreted;
+- "не знаю" and "нет" stay different: an unknown value becomes an explicit NEEDS_VERIFICATION item,
+  an explicit "none" is a determined fact and is never reported as unverified;
+- some questions cannot be answered "не знаю" at all — without them the document cannot be built,
+  and the dialogue says so rather than proceeding;
+- dependent questions appear only when their trigger applies, and changing a trigger drops the
+  answer it invalidated;
+- `/back` reopens the previous question;
+- **generation is blocked while any required answer is missing**, so an incomplete matter never
+  reaches the drafting stage;
+- files are not accepted while the dialogue is running, because it owns the encrypted buffer.
+
+Collected answers live in the same encrypted unfinished-case buffer as free-text case data and
+inherit its encryption, TTL and deletion rules. Unreadable stored state restarts the dialogue rather
+than being partially trusted.
+
+## Verification queue
+
+The NEEDS_VERIFICATION list is delivered as its own message, separate from the document text, so a
+reviewer sees the outstanding checks as a work list. Items are shown in legal language; the
+vocabulary lives in the domain layer, so the transport relays a gap without holding legal wording.
 
 ## Document evidence boundary
 
@@ -54,6 +88,9 @@ Default limits are controlled by `TELEGRAM_MAX_DOCUMENT_BYTES`,
 ## Word delivery
 
 After the same Final Legal QA permits release, Telegram sends the draft text and a `.docx` version.
+Headings, party labels and the file name come from the blueprint of the document that was actually
+drafted, so an иск and a претензия are distinguishable by their attachment name alone. Quoted norms
+are set in italics and party requisites in bold, per the house style.
 Word export is presentation-only: it preserves the exact released text and any
 `NEEDS_VERIFICATION` markers and does not add legal rules, recalculate amounts or repair facts.
 Document author/last-modified metadata is blanked.
@@ -145,7 +182,8 @@ alembic upgrade head
 ```
 
 The document flow adds two encrypted dialogue states (`awaiting_documents` and
-`awaiting_document_clarification`) through migration `20260815_0009`.
+`awaiting_document_clarification`) through migration `20260815_0009`. The guided dialogue adds
+`awaiting_document_type` and `awaiting_interview` through migration `20260815_0010`.
 
 ## Start
 
