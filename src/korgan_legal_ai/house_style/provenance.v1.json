@@ -1,0 +1,242 @@
+{
+  "corpus_version": 1,
+  "corpus_size": 12,
+  "documents": [
+    {
+      "document_id": "kzc-01",
+      "dispute_type": "prepayment_contractor",
+      "sha256": "3890353525dd36d7ef53f6aa3cd97c70454bedf6ad263b5ea0a996d309f2a5c7",
+      "corpus_version": 1
+    },
+    {
+      "document_id": "kzc-02",
+      "dispute_type": "debt_and_penalty_services",
+      "sha256": "7514a217d6892fe637e381e162502dc2cf71aad56fac9e9bd35335a947c9b392",
+      "corpus_version": 1
+    },
+    {
+      "document_id": "kzc-03",
+      "dispute_type": "deposit_receipt",
+      "sha256": "73e282c1f5ec28c637e3502609b49b1c83867681df37de5977395bfbff03eacb",
+      "corpus_version": 1
+    },
+    {
+      "document_id": "kzc-04",
+      "dispute_type": "tort_traffic_accident",
+      "sha256": "2737462072834002fe1aa2d92e1f94f12f9da66fa54f381dbbc90a8674a7312a",
+      "corpus_version": 1
+    },
+    {
+      "document_id": "kzc-05",
+      "dispute_type": "debt_contractor",
+      "sha256": "79d10e660df208eb58c80571f8814b09080ca18f5d4f376b3245fbbe71f41a89",
+      "corpus_version": 1
+    },
+    {
+      "document_id": "kzc-06",
+      "dispute_type": "loan_receipt",
+      "sha256": "42a49a01b4077860f1cfe8bc074fec203d9ac6a5590061d85c3eb4329b28dde7",
+      "corpus_version": 1
+    },
+    {
+      "document_id": "kzc-07",
+      "dispute_type": "debt_and_penalty_supply",
+      "sha256": "30805a4c27a8eb304f687975c0509f5b4b45cae7b09d1433ea1012fea21a2f6b",
+      "corpus_version": 1
+    },
+    {
+      "document_id": "kzc-08",
+      "dispute_type": "bank_guarantee_recovery",
+      "sha256": "b628a769a5256988a10e4fc65180dfe3fc66a623b937e7a337e7ec2001f95cc5",
+      "corpus_version": 1
+    },
+    {
+      "document_id": "kzc-09",
+      "dispute_type": "administrative_tax_notice",
+      "sha256": "7f72fa1dd627b3919a764b46e91ffad1086e1485ec9ad6b7a98058296dd1b693",
+      "corpus_version": 1
+    },
+    {
+      "document_id": "kzc-10",
+      "dispute_type": "lease_prepayment",
+      "sha256": "14f21c5017c1340304fb31c3c3acf38b6e765ebca654e37b13bcff0e32d8747e",
+      "corpus_version": 1
+    },
+    {
+      "document_id": "kzc-11",
+      "dispute_type": "penalty_foreign_supply",
+      "sha256": "4e6b905d19d55c02c646f1f5c178a13cb4fcc85ad609d5a44f9c55544e14844b",
+      "corpus_version": 1
+    },
+    {
+      "document_id": "kzc-12",
+      "dispute_type": "vindication_and_property_damage",
+      "sha256": "b9914d42ed6948d9b9fff9ad5128eb8444367c5a0b70a928121412cf07506fbb",
+      "corpus_version": 1
+    }
+  ],
+  "provenance": [
+    {
+      "rule_id": "header.court_then_parties_then_price",
+      "derived_from": [
+        "kzc-01",
+        "kzc-02",
+        "kzc-03",
+        "kzc-04",
+        "kzc-05",
+        "kzc-06",
+        "kzc-07",
+        "kzc-10",
+        "kzc-11"
+      ],
+      "source_count": 9
+    },
+    {
+      "rule_id": "heading.isk_with_subject",
+      "derived_from": [
+        "kzc-01",
+        "kzc-02",
+        "kzc-03",
+        "kzc-04",
+        "kzc-05",
+        "kzc-06",
+        "kzc-07",
+        "kzc-08",
+        "kzc-09",
+        "kzc-10",
+        "kzc-11",
+        "kzc-12"
+      ],
+      "source_count": 12
+    },
+    {
+      "rule_id": "opening.gpk8_verbatim",
+      "derived_from": [
+        "kzc-01",
+        "kzc-02",
+        "kzc-03",
+        "kzc-04",
+        "kzc-05",
+        "kzc-06",
+        "kzc-07",
+        "kzc-08",
+        "kzc-11"
+      ],
+      "source_count": 9
+    },
+    {
+      "rule_id": "facts.norm_after_contract",
+      "derived_from": [
+        "kzc-01",
+        "kzc-02",
+        "kzc-03",
+        "kzc-05",
+        "kzc-06",
+        "kzc-07",
+        "kzc-08",
+        "kzc-10",
+        "kzc-11"
+      ],
+      "source_count": 9
+    },
+    {
+      "rule_id": "calc.explicit_formula",
+      "derived_from": [
+        "kzc-01",
+        "kzc-02",
+        "kzc-05",
+        "kzc-07",
+        "kzc-08",
+        "kzc-10",
+        "kzc-11"
+      ],
+      "source_count": 7
+    },
+    {
+      "rule_id": "pretrial.factual_block",
+      "derived_from": [
+        "kzc-01",
+        "kzc-02",
+        "kzc-05",
+        "kzc-06",
+        "kzc-07",
+        "kzc-08",
+        "kzc-10"
+      ],
+      "source_count": 7
+    },
+    {
+      "rule_id": "costs.representative_113",
+      "derived_from": [
+        "kzc-02",
+        "kzc-03",
+        "kzc-10",
+        "kzc-12"
+      ],
+      "source_count": 4
+    },
+    {
+      "rule_id": "duty.state_fee_separate_demand",
+      "derived_from": [
+        "kzc-01",
+        "kzc-02",
+        "kzc-03",
+        "kzc-04",
+        "kzc-05",
+        "kzc-06",
+        "kzc-07",
+        "kzc-08",
+        "kzc-09",
+        "kzc-10",
+        "kzc-11",
+        "kzc-12"
+      ],
+      "source_count": 12
+    },
+    {
+      "rule_id": "closing.rukovodstvuyas_proshu_sud",
+      "derived_from": [
+        "kzc-01",
+        "kzc-02",
+        "kzc-03",
+        "kzc-04",
+        "kzc-05",
+        "kzc-06",
+        "kzc-07",
+        "kzc-08",
+        "kzc-09",
+        "kzc-10",
+        "kzc-11",
+        "kzc-12"
+      ],
+      "source_count": 12
+    },
+    {
+      "rule_id": "attachments.numbered_from_text",
+      "derived_from": [
+        "kzc-01",
+        "kzc-02",
+        "kzc-03",
+        "kzc-04",
+        "kzc-05",
+        "kzc-06",
+        "kzc-07",
+        "kzc-08",
+        "kzc-09",
+        "kzc-10",
+        "kzc-11",
+        "kzc-12"
+      ],
+      "source_count": 12
+    },
+    {
+      "rule_id": "signature.representative_ecp",
+      "derived_from": [
+        "kzc-02",
+        "kzc-03",
+        "kzc-05"
+      ],
+      "source_count": 3
+    }
+  ]
+}

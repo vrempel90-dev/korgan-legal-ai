@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "header.court_then_parties_then_price",
+      "title": "Шапка: суд → истец → ответчик → «Цена иска»",
+      "source_count": 9,
+      "observed_in": "9/12"
+    },
+    {
+      "id": "heading.isk_with_subject",
+      "title": "Заголовок И С К + подзаголовок предмета",
+      "source_count": 12,
+      "observed_in": "12/12"
+    },
+    {
+      "id": "opening.gpk8_verbatim",
+      "title": "Открывающая формула — дословная цитата ст. 8 ГПК РК",
+      "source_count": 9,
+      "observed_in": "9/12"
+    },
+    {
+      "id": "facts.norm_after_contract",
+      "title": "Профильная норма цитируется сразу после договора",
+      "source_count": 9,
+      "observed_in": "9/12"
+    },
+    {
+      "id": "calc.explicit_formula",
+      "title": "Расчёт показан явной формулой/таблицей",
+      "source_count": 7,
+      "observed_in": "7/12"
+    },
+    {
+      "id": "pretrial.factual_block",
+      "title": "Досудебный порядок как фактический блок",
+      "source_count": 7,
+      "observed_in": "7/12"
+    },
+    {
+      "id": "costs.representative_113",
+      "title": "Расходы на представителя со ссылкой на ст. 113 ГПК РК",
+      "source_count": 4,
+      "observed_in": "4/12"
+    },
+    {
+      "id": "duty.state_fee_separate_demand",
+      "title": "Госпошлина отдельным пунктом требований",
+      "source_count": 12,
+      "observed_in": "12/12"
+    },
+    {
+      "id": "closing.rukovodstvuyas_proshu_sud",
+      "title": "Заключительная формула «руководствуясь … ПРОШУ СУД:»",
+      "source_count": 12,
+      "observed_in": "12/12"
+    },
+    {
+      "id": "attachments.numbered_from_text",
+      "title": "Приложения — нумерованный список из текста",
+      "source_count": 12,
+      "observed_in": "12/12"
+    },
+    {
+      "id": "signature.representative_ecp",
+      "title": "Подпись представителя, ЭЦП при э-подаче",
+      "source_count": 3,
+      "observed_in": "3/12"
+    }
+  ]
+}
