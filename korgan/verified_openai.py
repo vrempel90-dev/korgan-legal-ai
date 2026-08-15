@@ -76,8 +76,6 @@ def _actual_response_urls(response: Any) -> list[str]:
             if not isinstance(item, dict):
                 continue
 
-            # Full source list for a web search call. This is populated when
-            # include=["web_search_call.action.sources"] is requested.
             if item.get("type") == "web_search_call":
                 action = item.get("action") or {}
                 if isinstance(action, dict):
@@ -86,8 +84,6 @@ def _actual_response_urls(response: Any) -> list[str]:
                         if isinstance(source, dict):
                             _append_url(urls, source.get("url"))
 
-            # URL citations attached to final output text are also actual
-            # response metadata and therefore safe to treat as searched URLs.
             if item.get("type") == "message":
                 for content in item.get("content", []) or []:
                     if not isinstance(content, dict):
@@ -96,7 +92,6 @@ def _actual_response_urls(response: Any) -> list[str]:
                         if isinstance(annotation, dict) and annotation.get("type") == "url_citation":
                             _append_url(urls, annotation.get("url"))
 
-    # Backward-compatible object traversal for SDK response classes.
     for item in getattr(response, "output", []) or []:
         if getattr(item, "type", None) == "web_search_call":
             action = getattr(item, "action", None)
@@ -113,7 +108,7 @@ def _actual_response_urls(response: Any) -> list[str]:
 
 
 class VerifiedOpenAILegalService(StrictOpenAILegalService):
-    """Strict service where every VERIFIED statement maps to an actual web-search source."""
+    """Strict service where every VERIFIED statement maps to an actual official web-search source."""
 
     async def _structured_response(
         self,
@@ -135,8 +130,6 @@ class VerifiedOpenAILegalService(StrictOpenAILegalService):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "required"
-            # Responses API only returns the complete list of web-search
-            # sources when this include field is requested.
             kwargs["include"] = ["web_search_call.action.sources"]
 
         response = await self.client.responses.create(**kwargs)
@@ -161,21 +154,30 @@ class VerifiedOpenAILegalService(StrictOpenAILegalService):
         prompt = (
             f"Дата проверки: {today}. Проведи юридическое исследование только по действующему праву Республики Казахстан.\n\n"
             "КРИТИЧЕСКИЕ ПРАВИЛА:\n"
-            "1. Каждый вывод в verified_points ОБЯЗАН иметь точный номер статьи и URL официальной страницы Adilet, "
-            "которую ты реально открыл через web search. Один общий список ссылок недостаточен.\n"
-            "2. Не используй старый ГПК K990000411_, старый Закон о госпошлине Z960000065_ и старый Налоговый кодекс K1700000120.\n"
-            "3. Для гражданского процесса проверяй действующий ГПК K1500000377.\n"
-            "4. Для договора займа проверяй действующий ГК (Особенная часть) K990000409_, особенно статьи 715 и 722, если они применимы к фактам.\n"
-            "5. Для исковой давности проверяй ГК (Общая часть) K940001000_, особенно статьи 178 и 180.\n"
-            "6. Для обычного гражданского иска проверяй ГПК, в частности статьи 26, 29, 148 и 149, если они применимы.\n"
-            "7. При обсуждении судебного приказа сначала полностью проверь действующую статью 135 ГПК. "
+            "1. Каждый правовой вывод в verified_points ОБЯЗАН иметь точный номер статьи и URL официальной страницы Adilet, "
+            "которую ты реально открыл через web search. Исключение только для проверки официального наименования/юрисдикции конкретного суда: "
+            "для этого разрешены официальные страницы gov.kz и sud.gov.kz, а в поле article укажи 'официальный перечень судов'.\n"
+            "2. gov.kz и sud.gov.kz НЕЛЬЗЯ использовать вместо Adilet для подтверждения материального или процессуального права; "
+            "они разрешены только для структуры, наименования и юрисдикции суда.\n"
+            "3. Не используй старый ГПК K990000411_, старый Закон о госпошлине Z960000065_ и старый Налоговый кодекс K1700000120.\n"
+            "4. Для гражданского процесса проверяй действующий ГПК K1500000377.\n"
+            "5. Для договора займа проверяй действующий ГК (Особенная часть) K990000409_, особенно статьи 715 и 722, если они применимы к фактам.\n"
+            "6. Для исковой давности проверяй ГК (Общая часть) K940001000_, особенно статьи 178 и 180, но не раздувай итоговый иск вопросом давности, "
+            "если из дат очевидно, что риска пропуска нет и стороны этот вопрос не ставят.\n"
+            "7. Для обычного гражданского иска проверяй ГПК, в частности статьи 26, 29, 148 и 149, если они применимы.\n"
+            "8. При обсуждении судебного приказа сначала полностью проверь действующую статью 135 ГПК. "
             "Не считай обычный письменный договор займа основанием для приказа, если такого действующего подпункта в статье 135 нет.\n"
-            "8. Для госпошлины на дату после 01.01.2026 используй Налоговый кодекс 2025 года K2500000214, "
+            "9. Для госпошлины на дату после 01.01.2026 используй Налоговый кодекс 2025 года K2500000214, "
             "проверь статью 665 и возможные льготы по статье 668. Если ставка для данного истца и требования подтверждена, "
             "рассчитай конкретную сумму от цены иска. Если нет — оставь NEEDS_VERIFICATION.\n"
-            "9. Не делай вывод об обязательном или необязательном претензионном порядке только из отсутствия результата поиска. "
+            "10. Не делай вывод об обязательном или необязательном претензионном порядке только из отсутствия результата поиска. "
             "Такой вывод можно поместить в verified_points лишь при наличии конкретной действующей нормы, которая его подтверждает; иначе unverified_claims.\n"
-            "10. Если точная норма не подтверждена — она запрещена в verified_points.\n\n"
+            "11. Если в материалах есть полный адрес ответчика с городом и районом, отдельно проверь: (а) правило территориальной подсудности по действующему ГПК на Adilet; "
+            "(б) точное действующее наименование суда гражданской юрисдикции для этого района по официальной странице gov.kz или sud.gov.kz. "
+            "Не угадывай название суда. Если оба элемента подтверждены, добавь verified_point с точным названием суда и в notes добавь РОВНО одну строку "
+            "формата 'VERIFIED_COURT: <точное официальное наименование суда>'. Если точный суд не подтвержден — такой строки быть не должно.\n"
+            "12. Не включай в итоговый иск неизвестные телефон/e-mail ответчика как обязательные placeholders: такие сведения указываются только если известны истцу.\n"
+            "13. Если точная норма не подтверждена — она запрещена в verified_points.\n\n"
             f"МАТЕРИАЛЫ ДЕЛА:\n{case_context[:self.settings.max_case_text_chars]}"
         )
 
@@ -183,6 +185,7 @@ class VerifiedOpenAILegalService(StrictOpenAILegalService):
             model=self.settings.openai_model,
             instructions=(
                 "Ты юридический исследователь KORGAN. Работай fail-closed и проверяй актуальную редакцию каждого акта. "
+                "Нормы права подтверждай по Adilet; gov.kz/sud.gov.kz используй только для официальной проверки суда. "
                 f"Язык результата: {'казахский' if language == 'kk' else 'русский'}."
             ),
             content=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
@@ -219,15 +222,31 @@ class VerifiedOpenAILegalService(StrictOpenAILegalService):
                     )
                 continue
 
-            verified_claims.append(f"{statement} [статья {article}; источник: {actual_url}]")
+            verified_claims.append(f"{statement} [основание: {article}; источник: {actual_url}]")
             if actual_url not in used_urls:
                 used_urls.append(actual_url)
 
         unverified = list(payload.get("unverified_claims", [])) + rejected
         notes = list(payload.get("notes", []))
 
+        # A VERIFIED_COURT marker is trusted only if the same court name also
+        # survived source-binding inside verified_claims.
+        clean_notes: list[str] = []
+        for note in notes:
+            if note.startswith("VERIFIED_COURT:"):
+                court = note.split(":", 1)[1].strip()
+                normalized = "".join(ch.lower() for ch in court if ch.isalnum())
+                if normalized and any(
+                    normalized in "".join(ch.lower() for ch in claim if ch.isalnum())
+                    for claim in verified_claims
+                ):
+                    clean_notes.append(note)
+                continue
+            clean_notes.append(note)
+        notes = clean_notes
+
         if not verified_claims:
-            unverified.append("Не удалось подтвердить ни одного правового вывода с привязкой к конкретной статье и фактически открытому источнику Adilet.")
+            unverified.append("Не удалось подтвердить ни одного правового вывода с привязкой к конкретному основанию и фактически открытому официальному источнику.")
         if not used_urls:
             unverified.append("Нет допустимых актуальных официальных источников, непосредственно связанных с VERIFIED-выводами.")
 
