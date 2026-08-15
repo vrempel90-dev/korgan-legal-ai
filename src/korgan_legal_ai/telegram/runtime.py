@@ -38,6 +38,12 @@ _EXTENSION_MIME = {
     ".jpeg": "image/jpeg",
     ".png": "image/png",
 }
+_RESERVED_EVIDENCE_MARKERS = (
+    "[DOCUMENT",
+    "[PAGE",
+    "[VISUAL_TRANSCRIPTION_REQUIRES_CONFIRMATION]",
+    "[OCR_UNCERTAIN]",
+)
 
 
 class TelegramRuntime:
@@ -228,6 +234,14 @@ class TelegramRuntime:
                     return candidate
         return None
 
+    @staticmethod
+    def _safe_user_note(value: str) -> str:
+        """Prevent user text from masquerading as transport-generated evidence markers."""
+        safe = value
+        for marker in _RESERVED_EVIDENCE_MARKERS:
+            safe = safe.replace(marker, marker.replace("[", "［", 1))
+        return safe
+
     def _append_case_text(self, session: TelegramSession, value: str) -> bool:
         existing = session.case_buffer or ""
         candidate = value if not existing else f"{existing}\n\n{value}"
@@ -387,7 +401,27 @@ class TelegramRuntime:
 
         if not self._require_consent(user_id, chat_id, session):
             return True
-        if session.state not in {
+
+        # If a user adds evidence while already describing/clarifying a case, keep the locked input
+        # buffer and attach the document to the same matter. Starting the document path from the menu
+        # still creates a fresh case via _start_documents().
+        if session.state == SessionState.AWAITING_CLARIFICATION:
+            session.state = SessionState.AWAITING_DOCUMENT_CLARIFICATION
+            self.sessions.save(user_id, session)
+            self.api.send_message(
+                chat_id,
+                text(session.language, "documents_prompt"),
+                reply_markup=self._documents_markup(session.language),
+            )
+        elif session.state == SessionState.AWAITING_CLAIM:
+            session.state = SessionState.AWAITING_DOCUMENTS
+            self.sessions.save(user_id, session)
+            self.api.send_message(
+                chat_id,
+                text(session.language, "documents_prompt"),
+                reply_markup=self._documents_markup(session.language),
+            )
+        elif session.state not in {
             SessionState.AWAITING_DOCUMENTS,
             SessionState.AWAITING_DOCUMENT_CLARIFICATION,
         }:
@@ -454,7 +488,10 @@ class TelegramRuntime:
                 text(session.language, "too_long", limit=self.max_case_chars),
             )
             return True
-        session.state = SessionState.AWAITING_DOCUMENTS
+        # Preserve the distinction that this case was already waiting for a clarification so a
+        # later typed answer is immediately re-run through Fact Lock rather than treated as a note.
+        if session.state != SessionState.AWAITING_DOCUMENT_CLARIFICATION:
+            session.state = SessionState.AWAITING_DOCUMENTS
         self.sessions.save(user_id, session)
         self.api.send_message(
             chat_id,
@@ -509,7 +546,8 @@ class TelegramRuntime:
             return
 
         if session.state == SessionState.AWAITING_DOCUMENTS:
-            if not self._append_case_text(session, f"[USER_NOTE]\n{value}"):
+            safe_note = self._safe_user_note(value)
+            if not self._append_case_text(session, f"[USER_NOTE]\n{safe_note}"):
                 self.api.send_message(chat_id, text(session.language, "too_long", limit=self.max_case_chars))
                 return
             self.sessions.save(user_id, session)
