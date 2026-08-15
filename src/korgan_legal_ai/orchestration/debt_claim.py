@@ -13,6 +13,16 @@ from korgan_legal_ai.procedural.checker import ProceduralChecker
 from korgan_legal_ai.qa.service import FinalLegalQA
 
 
+class _AuditVerificationSnapshot:
+    """Compatibility view that never retains audit payloads from a completed legal request."""
+
+    def __init__(self, verified: bool) -> None:
+        self._verified = verified
+
+    def verify(self) -> bool:
+        return self._verified
+
+
 class DebtClaimWorkflow:
     def __init__(
         self,
@@ -22,7 +32,7 @@ class DebtClaimWorkflow:
         evidence: EvidenceMapBuilder | None = None,
         calculations: CalculationLayer | None = None,
         qa: FinalLegalQA | None = None,
-        audit: HashChainAuditLog | None = None,
+        audit_factory: Callable[[], HashChainAuditLog] | None = None,
         as_of_date_provider: Callable[[], date] | None = None,
     ) -> None:
         self.procedural = procedural
@@ -30,29 +40,40 @@ class DebtClaimWorkflow:
         self.evidence = evidence or EvidenceMapBuilder()
         self.calculations = calculations or CalculationLayer()
         self.qa = qa or FinalLegalQA()
-        self.audit = audit or HashChainAuditLog()
+        self.audit_factory = audit_factory or HashChainAuditLog
         self.as_of_date_provider = as_of_date_provider or date.today
+        self._last_audit_verified = False
+
+    @property
+    def audit(self) -> _AuditVerificationSnapshot:
+        """Expose verification compatibility without keeping any prior case/audit entries."""
+        return _AuditVerificationSnapshot(self._last_audit_verified)
 
     def run(self, case: LockedCase, routing: RoutingDecision) -> WorkflowResult:
         if routing.legal_area != LegalArea.DEBT_RECOVERY:
             raise ValueError("DebtClaimWorkflow only accepts debt_recovery routing")
 
-        self.audit.append("case_locked", case.model_dump(mode="json"))
-        self.audit.append("task_routed", routing.model_dump(mode="json"))
+        self._last_audit_verified = False
+        # A fresh chain per legal request prevents audit state from crossing user/case boundaries
+        # when the workflow instance is reused by a long-running Telegram process.
+        audit = self.audit_factory()
+
+        audit.append("case_locked", case.model_dump(mode="json"))
+        audit.append("task_routed", routing.model_dump(mode="json"))
 
         evidence_map = self.evidence.build(case)
         calculation = self.calculations.calculate_money(case.financials)
-        self.audit.append("calculation_completed", calculation.model_dump(mode="json"))
+        audit.append("calculation_completed", calculation.model_dump(mode="json"))
 
         as_of_date = self.as_of_date_provider()
-        self.audit.append("procedural_reference_date", {"date": as_of_date.isoformat()})
+        audit.append("procedural_reference_date", {"date": as_of_date.isoformat()})
         procedural = self.procedural.check(
             case,
             routing=routing,
             calculation=calculation,
             as_of_date=as_of_date,
         )
-        self.audit.append("procedural_checked", procedural.model_dump(mode="json"))
+        audit.append("procedural_checked", procedural.model_dump(mode="json"))
 
         document = self.drafter.draft(case, procedural, evidence_map, calculation)
         citations = [citation for item in procedural.items for citation in item.sources]
@@ -60,18 +81,20 @@ class DebtClaimWorkflow:
             case,
             document,
             citations,
-            procedural=procedural,
             calculation=calculation,
+            procedural=procedural,
         )
-        self.audit.append("final_qa", qa_result.model_dump(mode="json"))
+        audit.append("final_qa", qa_result.model_dump(mode="json"))
 
         if not qa_result.passed:
+            self._last_audit_verified = audit.verify()
             raise LegalQABlocked("Final Legal QA blocked document output")
 
-        self.audit.append(
+        audit.append(
             "document_released_for_human_review",
             {"readiness": document.readiness, "needs_verification": document.needs_verification},
         )
+        self._last_audit_verified = audit.verify()
         return WorkflowResult(
             locked_case=case,
             routing=routing,
@@ -80,5 +103,5 @@ class DebtClaimWorkflow:
             calculation=calculation,
             document=document,
             qa=qa_result,
-            audit_head=self.audit.head,
+            audit_head=audit.head,
         )

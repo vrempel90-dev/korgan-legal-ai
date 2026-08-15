@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "openai>=1.68.0",
+  "httpx>=0.28.0",
   "pydantic>=2.8.0",
   "pydantic-settings>=2.4.0",
   "sqlalchemy>=2.0.36",
@@ -27,6 +28,7 @@ dev = [
 
 [project.scripts]
 korgan-legal = "korgan_legal_ai.cli:app"
+korgan-telegram = "korgan_legal_ai.telegram.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/korgan_legal_ai"]
