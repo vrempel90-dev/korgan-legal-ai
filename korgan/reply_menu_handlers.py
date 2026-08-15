@@ -1,61 +1,142 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import BaseFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, ReplyKeyboardRemove
+from aiogram.types import BufferedInputFile, CallbackQuery, Message, ReplyKeyboardRemove
 
 from korgan import bot as base_bot
 from korgan.claim_intent import is_claim_drafting_request
-from korgan.ui import main_menu
+from korgan.contract_docx import build_contract_docx
+from korgan.contract_intent import is_contract_drafting_request
+from korgan.legal_types import VerificationStatus
+from korgan.ui import documents_menu, main_menu
 
+LOGGER = logging.getLogger(__name__)
 router = Router(name="korgan-reply-main-menu")
 
 
+class ContractDetailsFilter(BaseFilter):
+    async def __call__(self, message: Message, state: FSMContext) -> bool:
+        data = await state.get_data()
+        return data.get("mode") == "contract_details" and bool(message.text) and not message.text.startswith("/")
+
+
 class ClaimRequestFilter(BaseFilter):
-    """Recognize claim drafting unless the user explicitly entered consultation mode."""
+    """Recognize claim drafting unless the user explicitly entered consultation/contract mode."""
+
+    async def __call__(self, message: Message, state: FSMContext) -> bool:
+        data = await state.get_data()
+        if data.get("mode") in {"consultation", "contract_details"}:
+            return False
+        return is_claim_drafting_request(message.text)
+
+
+class ContractRequestFilter(BaseFilter):
+    """Recognize contract drafting without stealing «иск по договору ...» from the claim router."""
 
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
         if data.get("mode") == "consultation":
             return False
-        return is_claim_drafting_request(message.text)
+        if is_claim_drafting_request(message.text):
+            return False
+        return is_contract_drafting_request(message.text)
 
 
-async def _save_long_claim_message_as_facts(message: Message, state: FSMContext) -> None:
-    """Preserve a detailed same-message case description before DOCX routing."""
+async def _save_user_text_as_facts(message: Message, state: FSMContext, *, min_length: int = 24) -> None:
     text = (message.text or "").strip()
-    if not text or text == "📄 Документ" or len(text) < 80:
+    if not text or text in {"📄 Документ", "⚖️ Исковое заявление", "🤝 Договор"} or len(text) < min_length:
         return
     data = await state.get_data()
     facts = list(data.get("facts", []) or [])
-    if not facts or facts[-1] != text:
+    if text not in facts[-3:]:
         facts.append(text)
     await state.update_data(facts=facts[-20:])
 
 
 async def _send_claim_as_word(message: Message, state: FSMContext) -> None:
-    """A claim request must end in a DOCX file, never in a full chat-text claim."""
+    """A claim request must end in DOCX and the user's requested claim type must enter case context."""
+    # Save even when documents already exist: «составь иск о расторжении ...» is
+    # part of the task and must not disappear merely because case files were loaded.
+    await _save_user_text_as_facts(message, state)
     context = await base_bot._case_context(state)
-    if not context.strip():
-        # A user may describe the whole case and ask for a claim in one message.
-        # The claim-intent router runs before the generic text handler, so save
-        # that detailed message here instead of losing it.
-        await _save_long_claim_message_as_facts(message, state)
-        context = await base_bot._case_context(state)
 
     if not context.strip():
         await message.answer(
-            "📄 Сначала опишите обстоятельства дела или пришлите документы/сканы. После этого попросите подготовить иск — KORGAN пришлёт его файлом Word (.docx).",
+            "⚖️ Сначала опишите обстоятельства дела или пришлите документы/сканы. Затем напишите, какой результат нужен, например: «подготовь иск о взыскании долга».",
             reply_markup=main_menu(),
         )
         return
 
     await state.update_data(mode="main")
-    # The global consent gate has already protected this message. The generated
-    # file itself contains the KORGAN draft notice, while verification warnings
-    # are returned in the Telegram caption.
     await base_bot.claim_handler(message, state)
+
+
+async def _send_contract_as_word(message: Message, state: FSMContext) -> None:
+    await _save_user_text_as_facts(message, state)
+    context = await base_bot._case_context(state)
+
+    if not context.strip() or len(context.strip()) < 80:
+        await state.update_data(mode="contract_details")
+        await message.answer(
+            "🤝 Опишите договор одним сообщением:\n"
+            "• какой договор нужен;\n"
+            "• кто стороны и их роли;\n"
+            "• предмет договора;\n"
+            "• цена/оплата, если есть;\n"
+            "• срок;\n"
+            "• важные особые условия.\n\n"
+            "Можно также прикрепить документы или переписку. KORGAN сам определит точный вид договора и проверит применимые нормы РК.",
+            reply_markup=main_menu(),
+        )
+        return
+
+    service = base_bot.service
+    research_contract = getattr(service, "research_contract", None) if service is not None else None
+    draft_contract = getattr(service, "draft_contract", None) if service is not None else None
+    if research_contract is None or draft_contract is None:
+        await message.answer("Функция договоров ещё не загружена в текущую версию сервиса.", reply_markup=main_menu())
+        return
+
+    await state.update_data(mode="main")
+    data = await state.get_data()
+    lang = str(data.get("language", "ru"))
+    await message.answer("Проверяю вид договора и актуальные нормы РК, затем формирую Word-документ…")
+    await message.bot.send_chat_action(message.chat.id, "typing")
+
+    try:
+        research = await research_contract(context, language=lang)
+        draft = await draft_contract(context, research, language=lang)
+        file_bytes = build_contract_docx(draft)
+    except Exception:
+        LOGGER.exception("Contract generation failed")
+        await message.answer(
+            "Не удалось безопасно сформировать договор. KORGAN не будет выдавать юридически неподтверждённый текст. Проверьте исходные условия и повторите запрос.",
+            reply_markup=main_menu(),
+        )
+        return
+
+    marker = "✅ VERIFIED" if draft.status == VerificationStatus.VERIFIED else "⚠️ NEEDS_VERIFICATION"
+    caption = f"{marker}\nПроект договора сформирован в Word (.docx)."
+    if draft.verification_notes:
+        notes = "\n".join(f"• {x}" for x in draft.verification_notes[:8])
+        caption += f"\n\nПеред подписанием проверьте:\n{notes[:700]}"
+
+    await message.answer_document(
+        BufferedInputFile(file_bytes, filename="KORGAN_dogovor.docx"),
+        caption=caption[:1000],
+        reply_markup=main_menu(),
+    )
+
+
+@router.message(ContractDetailsFilter())
+async def contract_details_reply(message: Message, state: FSMContext) -> None:
+    await _save_user_text_as_facts(message, state, min_length=1)
+    await state.update_data(mode="main")
+    await _send_contract_as_word(message, state)
 
 
 @router.message(ClaimRequestFilter())
@@ -63,16 +144,44 @@ async def natural_language_claim_request(message: Message, state: FSMContext) ->
     await _send_claim_as_word(message, state)
 
 
+@router.message(ContractRequestFilter())
+async def natural_language_contract_request(message: Message, state: FSMContext) -> None:
+    await _send_contract_as_word(message, state)
+
+
 @router.message(F.text == "📄 Документ")
 async def document_button(message: Message, state: FSMContext) -> None:
     await state.update_data(mode="main")
-    await _send_claim_as_word(message, state)
+    await message.answer(
+        "📄 Что нужно подготовить?\n\nKORGAN сам определит точный вид иска или договора по вашим фактам и проверит актуальное право РК.",
+        reply_markup=documents_menu(),
+    )
+
+
+@router.callback_query(F.data == "doc:claim")
+async def document_claim_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.message is not None:
+        await _send_claim_as_word(callback.message, state)
+
+
+@router.callback_query(F.data == "doc:contract")
+async def document_contract_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.message is not None:
+        await _send_contract_as_word(callback.message, state)
+
+
+@router.callback_query(F.data == "menu:main")
+async def document_back_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.update_data(mode="main")
+    if callback.message is not None:
+        await callback.message.answer("🏠 Главное меню", reply_markup=main_menu())
 
 
 @router.message(F.text == "⚖️ Консультация")
 async def consultation_button(message: Message, state: FSMContext) -> None:
-    # One-shot explicit mode: the next text must reach consultation even if it
-    # contains words such as «составь иск» inside the user's narrative.
     await state.update_data(mode="consultation")
     await message.answer(
         "⚖️ Опишите ситуацию одним сообщением. Если есть документы или сканы — просто отправьте их в этот чат.",
@@ -87,9 +196,8 @@ async def case_button(message: Message, state: FSMContext) -> None:
     docs = data.get("documents", []) or []
     facts = data.get("facts", []) or []
     await message.answer(
-        f"📦 Моё дело\n\nДокументов / сканов: {len(docs)}\nТекстовых описаний: {len(facts)}\n\n"
-        "Чтобы добавить материал — просто отправьте файл, фото или текст. Для генерации нажмите «📄 Документ» "
-        "или попросите KORGAN подготовить/составить иск обычным сообщением.",
+        f"📦 Моё дело\n\nДокументов / сканов: {len(docs)}\nТекстовых описаний: {len(facts)}.\n\n"
+        "Добавляйте файлы, фото или текст. Затем нажмите «📄 Документ» и выберите иск или договор — либо напишите запрос обычным сообщением.",
         reply_markup=main_menu(),
     )
 
@@ -111,11 +219,11 @@ async def help_button(message: Message, state: FSMContext) -> None:
     await state.update_data(mode="main")
     await message.answer(
         "❓ Как работать с KORGAN:\n"
-        "1. Опишите ситуацию.\n"
-        "2. При необходимости отправьте PDF/DOCX/TXT, фото или сканы.\n"
-        "3. Напишите, например, «подготовь мне иск» или нажмите «📄 Документ».\n"
-        "4. KORGAN проверит правовую основу и пришлёт готовый файл Word (.docx).\n"
-        "5. Если часть нормы нельзя подтвердить, это будет отдельно отмечено как NEEDS_VERIFICATION.\n\n"
+        "1. Опишите ситуацию и при необходимости прикрепите материалы.\n"
+        "2. Для иска напишите, например, «подготовь иск о взыскании долга». KORGAN определит тип требования и проверит профильные нормы.\n"
+        "3. Для договора напишите, например, «составь договор оказания услуг…» либо выберите «📄 Документ» → «🤝 Договор».\n"
+        "4. Документ придёт файлом Word (.docx).\n"
+        "5. Неподтверждённые или отсутствующие данные отмечаются как NEEDS_VERIFICATION, а не придумываются.\n\n"
         "Условия: /terms\nКонфиденциальность: /privacy",
         reply_markup=main_menu(),
     )
