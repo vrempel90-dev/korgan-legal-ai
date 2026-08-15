@@ -8,12 +8,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     telegram_bot_token: str
     openai_api_key: str
-    openai_model: str = "gpt-5.6-terra"
-    openai_embedding_model: str = "text-embedding-3-small"
-    pinecone_api_key: str
-    pinecone_index_name: str = "korgan-legal-kz"
-    rag_top_k: int = 8
-    rag_min_score: float = 0.45
+    openai_model: str = "gpt-5.1"
+    openai_vision_model: str = "gpt-5.1"
+    openai_validation_model: str = "gpt-5.1"
+    official_legal_domains: str = "adilet.zan.kz"
+    max_case_documents: int = 12
+    max_case_text_chars: int = 60000
     admin_telegram_ids: str = ""
 
     model_config = SettingsConfigDict(
@@ -22,6 +22,10 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @property
+    def legal_domains(self) -> list[str]:
+        return [item.strip().lower() for item in self.official_legal_domains.split(",") if item.strip()]
 
     @property
     def admin_ids(self) -> set[int]:
