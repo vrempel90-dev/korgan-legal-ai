@@ -42,6 +42,7 @@ class TelegramBotAPI:
         if not token.strip():
             raise ValueError("Telegram bot token is required")
         self._base_url = f"https://api.telegram.org/bot{token}"
+        self._file_base_url = f"https://api.telegram.org/file/bot{token}"
         self._request_timeout_seconds = request_timeout_seconds
         self._client = client or httpx.Client()
 
@@ -115,6 +116,70 @@ class TelegramBotAPI:
             if index == len(chunks) - 1 and reply_markup is not None:
                 payload["reply_markup"] = reply_markup
             self._call("sendMessage", payload)
+
+    def send_chat_action(self, chat_id: int, action: str) -> None:
+        self._call("sendChatAction", {"chat_id": chat_id, "action": action})
+
+    def get_file(self, file_id: str) -> dict[str, Any]:
+        result = self._call("getFile", {"file_id": file_id})
+        if not isinstance(result, dict):
+            raise TelegramAPIError("Telegram API returned invalid getFile result")
+        return result
+
+    def download_file(self, file_id: str, *, max_bytes: int) -> bytes:
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        metadata = self.get_file(file_id)
+        reported_size = metadata.get("file_size")
+        if isinstance(reported_size, int) and reported_size > max_bytes:
+            raise TelegramAPIError("Telegram document exceeds configured size limit")
+        file_path = metadata.get("file_path")
+        if not isinstance(file_path, str) or not file_path:
+            raise TelegramAPIError("Telegram file path is unavailable")
+        try:
+            response = self._client.get(
+                f"{self._file_base_url}/{file_path}",
+                timeout=self._request_timeout_seconds,
+            )
+            response.raise_for_status()
+            data = response.content
+        except httpx.HTTPError:
+            # The original URL contains the bot token; never chain it into logs.
+            raise TelegramAPIError("Telegram file download failed") from None
+        if len(data) > max_bytes:
+            raise TelegramAPIError("Telegram document exceeds configured size limit")
+        return data
+
+    def send_document(
+        self,
+        chat_id: int,
+        *,
+        filename: str,
+        data: bytes,
+        caption: str | None = None,
+    ) -> None:
+        fields: dict[str, str] = {"chat_id": str(chat_id)}
+        if caption:
+            fields["caption"] = caption
+        try:
+            response = self._client.post(
+                f"{self._base_url}/sendDocument",
+                data=fields,
+                files={
+                    "document": (
+                        filename,
+                        data,
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )
+                },
+                timeout=self._request_timeout_seconds,
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, ValueError):
+            raise TelegramAPIError("Telegram API request failed: sendDocument") from None
+        if not body.get("ok"):
+            raise TelegramAPIError("Telegram API rejected sendDocument")
 
     def answer_callback_query(self, callback_query_id: str) -> None:
         self._call("answerCallbackQuery", {"callback_query_id": callback_query_id})
