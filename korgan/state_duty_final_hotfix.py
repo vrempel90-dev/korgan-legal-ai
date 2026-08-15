@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from korgan.robust_production_legal import ProductionOpenAILegalService as _BaseProductionOpenAILegalService
+from korgan.civil_claim_hotfix import ProductionOpenAILegalService as _BaseProductionOpenAILegalService
 
 
 _STATE_DUTY_RE = re.compile(
@@ -41,7 +41,7 @@ def _enforce_single_state_duty_request(draft) -> None:
 
 
 class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
-    """Final guard: state-duty wording cannot create a false QA block."""
+    """Final guard layered on top of the corrected civil-claim research runtime."""
 
     async def validate_claim(self, case_context, research, draft):
         _enforce_single_state_duty_request(draft)
