@@ -9,9 +9,9 @@ from aiogram.types import BotCommand, MenuButtonCommands
 
 from korgan import bot as base_bot
 from korgan.config import get_settings
+from korgan.fast_production_legal import ProductionOpenAILegalService
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
-from korgan.repaired_production_legal import ProductionOpenAILegalService
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.ui import main_menu
 
@@ -51,7 +51,7 @@ async def main() -> None:
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN with consent gate and court-ready DOCX drafting")
+    LOGGER.info("Starting KORGAN fast source-bound runtime with consent gate and court-ready DOCX drafting")
     try:
         await dp.start_polling(bot)
     finally:
