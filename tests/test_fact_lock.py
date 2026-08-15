@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from typing import TypeVar
 
@@ -54,6 +55,34 @@ def test_contract_penalty_rate_and_cap_are_not_money_amounts():
     assert case.financials.penalty is None
     assert case.financials.penalty_rate_percent_per_day == Decimal("0.1")
     assert case.financials.penalty_cap_percent_of_principal == Decimal("10")
+
+
+def test_structured_fact_lock_normalizes_unambiguous_russian_date_formats():
+    extraction = FactLockExtraction.model_validate(
+        {
+            "parties": [
+                {"name": "A", "role": "creditor"},
+                {"name": "B", "role": "debtor"},
+            ],
+            "facts": [
+                {"statement": "Договор заключен", "event_date": "05.05.2026"},
+                {"statement": "Акт подписан", "event_date": "28 мая 2026 года"},
+                {"statement": "Оплата просрочена", "event_date": "2026-06-10T00:00:00"},
+            ],
+            "procedure": {
+                "obligation_due_date": "10.06.2026",
+                "pretrial_demand_sent_date": "1 августа 2026 года",
+            },
+        }
+    )
+
+    assert [fact.event_date for fact in extraction.facts] == [
+        date(2026, 5, 5),
+        date(2026, 5, 28),
+        date(2026, 6, 10),
+    ]
+    assert extraction.procedure.obligation_due_date == date(2026, 6, 10)
+    assert extraction.procedure.pretrial_demand_sent_date == date(2026, 8, 1)
 
 
 def test_ambiguity_stops_pipeline():

@@ -67,9 +67,10 @@ class OpenAIProvider(LLMProvider):
                         + "\n\nSTRUCTURED OUTPUT CORRECTION: Return only data that conforms exactly to "
                         "the supplied schema. Respect every field type and enum. Numeric/Decimal "
                         "fields must contain plain numeric values without currency symbols, percent "
-                        "signs or explanatory text. Use null for unknown optional values. Do not "
-                        "replace the structured response with prose or a refusal for this extraction "
-                        "task."
+                        "signs or explanatory text. Every typed date field must be an ISO calendar "
+                        "date in YYYY-MM-DD format only; do not use DD.MM.YYYY, month names or "
+                        "timestamps. Use null for unknown optional values. Do not replace the "
+                        "structured response with prose or a refusal for this extraction task."
                     )
                     continue
                 raise

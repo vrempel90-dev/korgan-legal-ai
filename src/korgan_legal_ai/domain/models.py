@@ -1,12 +1,72 @@
 from __future__ import annotations
 
-from datetime import date
+import re
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+_RU_MONTHS = {
+    "января": 1,
+    "февраля": 2,
+    "марта": 3,
+    "апреля": 4,
+    "мая": 5,
+    "июня": 6,
+    "июля": 7,
+    "августа": 8,
+    "сентября": 9,
+    "октября": 10,
+    "ноября": 11,
+    "декабря": 12,
+}
+_RU_DATE_RE = re.compile(
+    r"^\s*(?P<day>\d{1,2})\s+(?P<month>[а-яё]+)\s+(?P<year>\d{4})(?:\s*(?:г\.|года))?\s*$",
+    re.IGNORECASE,
+)
+_MIDNIGHT_DATETIME_RE = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})[T ]00:00(?::00(?:\.0+)?)?(?:Z|[+-]00:00)?$"
+)
+
+
+def _normalize_explicit_date(value):
+    """Normalize only unambiguous date literals without inferring missing information."""
+    if value is None or isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        if value.time().isoformat() == "00:00:00":
+            return value.date()
+        return value
+    if not isinstance(value, str):
+        return value
+
+    raw = value.strip()
+    if not raw:
+        return value
+
+    midnight = _MIDNIGHT_DATETIME_RE.fullmatch(raw)
+    if midnight:
+        raw = midnight.group("date")
+
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            pass
+
+    match = _RU_DATE_RE.fullmatch(raw)
+    if match:
+        month = _RU_MONTHS.get(match.group("month").lower())
+        if month is not None:
+            try:
+                return date(int(match.group("year")), month, int(match.group("day")))
+            except ValueError:
+                return value
+    return value
 
 
 class DocumentType(StrEnum):
@@ -91,6 +151,11 @@ class Fact(BaseModel):
     source: Literal["user"] = "user"
     locked: bool = True
 
+    @field_validator("event_date", mode="before")
+    @classmethod
+    def normalize_event_date(cls, value):
+        return _normalize_explicit_date(value)
+
 
 class Evidence(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)
@@ -132,6 +197,11 @@ class ProcedureFacts(BaseModel):
     filing_mode: FilingMode | None = None
     third_party_count: int = Field(default=0, ge=0)
     copies_prepared: bool | None = None
+
+    @field_validator("obligation_due_date", "pretrial_demand_sent_date", mode="before")
+    @classmethod
+    def normalize_procedure_dates(cls, value):
+        return _normalize_explicit_date(value)
 
 
 class LockedCase(BaseModel):
@@ -177,6 +247,11 @@ class ResearchCitation(BaseModel):
     effective_to: date | None = None
     status: VerificationStatus
     verification_note: str | None = None
+
+    @field_validator("effective_from", "effective_to", mode="before")
+    @classmethod
+    def normalize_effective_dates(cls, value):
+        return _normalize_explicit_date(value)
 
 
 class ProceduralItem(BaseModel):
