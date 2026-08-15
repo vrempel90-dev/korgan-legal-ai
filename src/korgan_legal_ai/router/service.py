@@ -11,9 +11,12 @@ class TaskRouter:
         self.model = model
 
     def route(self, case: LockedCase) -> RoutingDecision:
+        # Raw source text is needed only by Fact Lock. Downstream models receive the locked,
+        # structured case so instructions embedded in an uploaded document cannot become a second
+        # prompt channel after extraction.
         return self.provider.parse(
             model=self.model,
             system=ROUTER_SYSTEM,
-            user=case.model_dump_json(indent=2),
+            user=case.model_dump_json(indent=2, exclude={"raw_text"}),
             schema=RoutingDecision,
         )

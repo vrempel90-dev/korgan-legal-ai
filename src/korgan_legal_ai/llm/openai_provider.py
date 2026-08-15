@@ -47,6 +47,7 @@ class OpenAIProvider(LLMProvider):
             try:
                 response = self.client.responses.parse(
                     model=model,
+                    store=False,
                     input=[
                         {"role": "system", "content": current_system},
                         {"role": "user", "content": user},
