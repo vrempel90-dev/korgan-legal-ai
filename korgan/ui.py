@@ -8,7 +8,7 @@ def main_menu() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="⚖️ Консультация", callback_data="menu:consult"),
-                InlineKeyboardButton(text="📄 Документ", callback_data="menu:documents"),
+                InlineKeyboardButton(text="📄 Документ", callback_data="doc:claim"),
             ],
             [
                 InlineKeyboardButton(text="💰 Цены", callback_data="menu:prices"),
@@ -26,10 +26,6 @@ def main_menu() -> InlineKeyboardMarkup:
 def documents_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📄 Подготовить иск", callback_data="doc:claim")],
-            [InlineKeyboardButton(text="📎 Загрузить документы / сканы", callback_data="doc:upload")],
-            [InlineKeyboardButton(text="📂 Материалы текущего дела", callback_data="doc:case")],
-            [InlineKeyboardButton(text="🧹 Очистить текущее дело", callback_data="doc:clear")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main")],
         ]
     )
@@ -39,7 +35,6 @@ def case_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📎 Добавить документ / скан", callback_data="doc:upload")],
-            [InlineKeyboardButton(text="📄 Подготовить иск", callback_data="doc:claim")],
             [InlineKeyboardButton(text="🧹 Очистить дело", callback_data="doc:clear")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main")],
         ]
@@ -58,7 +53,6 @@ def help_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⚖️ Что умеет KORGAN", callback_data="help:capabilities")],
-            [InlineKeyboardButton(text="📄 Как подготовить иск", callback_data="help:claim")],
             [InlineKeyboardButton(text="📎 Как загрузить документ", callback_data="help:upload")],
             [InlineKeyboardButton(text="❗ Документ получился неполным", callback_data="help:incomplete")],
             [InlineKeyboardButton(text="🔐 Персональные данные", callback_data="help:privacy")],
@@ -90,7 +84,6 @@ WELCOME_TEXT = (
 MAIN_TEXT = "🏠 <b>Главное меню</b>\n\nВыберите нужный раздел 👇"
 
 DOCUMENTS_TEXT = (
-    "📄 <b>Документы</b>\n\n"
-    "Выберите действие: загрузите материалы дела или запустите подготовку иска. "
+    "📄 <b>Документ</b>\n\n"
     "Готовый иск KORGAN отправит отдельным файлом .docx."
 )
