@@ -9,7 +9,7 @@ from aiogram.types import BotCommand, MenuButtonCommands
 
 from korgan import bot as base_bot
 from korgan.config import get_settings
-from korgan.fast_v2_production_legal import ProductionOpenAILegalService
+from korgan.robust_production_legal import ProductionOpenAILegalService
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
@@ -48,7 +48,7 @@ async def main() -> None:
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN fast-v2 source-bound runtime with instant claim preflight and final QA")
+    LOGGER.info("Starting KORGAN robust fast-v2 runtime with strict preflight and final QA")
     try:
         await dp.start_polling(bot)
     finally:
