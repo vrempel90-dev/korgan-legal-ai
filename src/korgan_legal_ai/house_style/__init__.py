@@ -22,6 +22,12 @@ from korgan_legal_ai.house_style.rules import (
     load_rules,
 )
 from korgan_legal_ai.house_style.checklist import StyleFinding, review_claim_presentation
+from korgan_legal_ai.house_style.provenance import (
+    CorpusDocument,
+    CorpusProvenance,
+    RuleProvenance,
+    load_provenance,
+)
 
 __all__ = [
     "HouseStyleRule",
@@ -29,4 +35,8 @@ __all__ = [
     "load_rules",
     "StyleFinding",
     "review_claim_presentation",
+    "CorpusDocument",
+    "CorpusProvenance",
+    "RuleProvenance",
+    "load_provenance",
 ]
