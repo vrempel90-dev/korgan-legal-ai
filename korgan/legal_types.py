@@ -75,3 +75,5 @@ class ClaimDraft:
     attachments: list[str]
     verification_notes: list[str]
     source_urls: list[str]
+    # Filled deterministically by korgan.legal_calc, never by the model.
+    state_duty: str = ""

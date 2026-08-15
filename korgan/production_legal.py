@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 
+from korgan.legal_calc import NEEDS_CALCULATION_MARKER, gosposhlina_line
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.openai_legal import _CLAIM_SCHEMA, _VALIDATION_SCHEMA
 from korgan.verified_openai import VerifiedOpenAILegalService
@@ -141,6 +142,99 @@ def _known_party_data_issues(case_context: str, draft: ClaimDraft) -> list[str]:
     return issues
 
 
+COURT_PLACEHOLDER = "[ТРЕБУЕТ УТОЧНЕНИЯ: точное наименование суда по месту жительства ответчика]"
+
+COURT_NOTE = (
+    "Точное наименование суда не выводится расчётом: требуется привязка адреса ответчика "
+    "к конкретному судебному участку и специализации — NEEDS_VERIFICATION."
+)
+
+STATE_DUTY_NOTE = (
+    "Государственная пошлина не рассчитана детерминированно: из материалов не установлены "
+    "цена иска и/или статус истца (физическое либо юридическое лицо) — NEEDS_VERIFICATION."
+)
+
+# «Медеуский районный суд города Алматы», «СМЭС города Астаны» и т. п.
+_COURT_NAME_PATTERN = re.compile(
+    r"(?:районн\w*|городск\w*|межрайонн\w*|специализированн\w*|областн\w*|верховн\w*)\s+суд|\bсмэс\b",
+    re.IGNORECASE,
+)
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[0-9a-zа-яё]{3,}", text.lower())
+
+
+def _named_in_materials(court: str, case_context: str) -> bool:
+    """True when every word of the court name also occurs in the materials.
+
+    Russian declension («Медеускому суду» vs «Медеуский суд») rules out exact
+    comparison, so each word is matched by its stem. Requiring *all* words —
+    the toponym included — keeps this from accepting an unrelated mention.
+    """
+    court_words = _words(court)
+    if not court_words:
+        return False
+    context_words = _words(case_context)
+    return all(
+        any(candidate.startswith(word[: min(5, len(word))]) for candidate in context_words)
+        for word in court_words
+    )
+
+
+def _enforce_court_verification(case_context: str, draft: ClaimDraft) -> None:
+    """A concrete court name is never derivable from law alone.
+
+    It may only survive when the case materials themselves name the court;
+    otherwise the model guessed it, and a guessed court sends the claim to the
+    wrong forum. Such a guess is replaced by an explicit verification marker.
+    """
+    court = draft.court.strip()
+    if not court or "[ТРЕБУЕТ" in court.upper():
+        return
+    if not _COURT_NAME_PATTERN.search(court):
+        return
+
+    if _named_in_materials(court.replace("В суд", "", 1), case_context):
+        return
+
+    draft.court = COURT_PLACEHOLDER
+    if COURT_NOTE not in draft.verification_notes:
+        draft.verification_notes.append(COURT_NOTE)
+
+
+_STALE_DUTY_NOTE_MARKERS = (
+    "не подтверж",
+    "не указан",
+    "не рассчит",
+    "needs_verification",
+    "требует расчёт",
+    "требует расчет",
+    "требует уточнени",
+)
+
+
+def _is_stale_duty_note(note: str) -> bool:
+    """A model note saying the duty is unknown, now that code has computed it."""
+    lowered = note.lower()
+    return "пошлин" in lowered and any(marker in lowered for marker in _STALE_DUTY_NOTE_MARKERS)
+
+
+def _apply_state_duty(case_context: str, draft: ClaimDraft) -> None:
+    """Compute the state duty in code; the model never supplies this number."""
+    draft.state_duty = gosposhlina_line(case_context, draft.price_of_claim)
+    if draft.state_duty == NEEDS_CALCULATION_MARKER:
+        if STATE_DUTY_NOTE not in draft.verification_notes:
+            draft.verification_notes.append(STATE_DUTY_NOTE)
+        return
+
+    # The amount is now deterministic, so notes claiming it is unknown would
+    # contradict the document the user receives.
+    draft.verification_notes[:] = [
+        note for note in draft.verification_notes if not _is_stale_duty_note(note)
+    ]
+
+
 def _hard_quality_issues(case_context: str, draft: ClaimDraft) -> list[str]:
     body = _court_body_text(draft)
     lowered = body.lower()
@@ -190,7 +284,8 @@ class ProductionOpenAILegalService(VerifiedOpenAILegalService):
             "9. Не включай доверенность, расходы представителя, претензию, копию удостоверения или иные условные документы, если материалы не подтверждают их наличие/необходимость.\n"
             "10. Известную цену иска заполняй точно.\n"
             "11. Если точный суд не подтвержден, court = '[ТРЕБУЕТ УТОЧНЕНИЯ: точное наименование суда по месту жительства ответчика]'. Не выдумывай суд.\n"
-            "12. Если госпошлина не VERIFIED, не вставляй ее размер или служебное пояснение в тело иска; вынеси вопрос в verification_notes.\n\n"
+            "12. Размер госпошлины не указывай вообще: он рассчитывается системой детерминированно по действующей ставке "
+            "и подставляется в документ автоматически. Не пиши сумму пошлины и не добавляй пояснений о ней.\n\n"
             f"МАТЕРИАЛЫ ДЕЛА:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
             f"VERIFIED:\n{verified_block}\n\n"
             f"НЕ ПОДТВЕРЖДЕНО (только для verification_notes):\n{unverified_block}"
@@ -255,6 +350,11 @@ class ProductionOpenAILegalService(VerifiedOpenAILegalService):
             remaining = list(validation["missing_required_fields"])
             if remaining:
                 draft.verification_notes.extend(x for x in remaining if x not in draft.verification_notes)
+
+        # Deterministic fields are decided by code, after every model pass:
+        # the duty is calculated, the court is never guessed.
+        _apply_state_duty(case_context, draft)
+        _enforce_court_verification(case_context, draft)
 
         if research.unverified_claims or draft.verification_notes:
             draft.status = VerificationStatus.NEEDS_VERIFICATION
