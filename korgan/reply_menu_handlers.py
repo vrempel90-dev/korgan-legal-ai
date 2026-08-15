@@ -1,56 +1,48 @@
 from __future__ import annotations
 
-import re
-
 from aiogram import F, Router
 from aiogram.filters import BaseFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, ReplyKeyboardRemove
 
 from korgan import bot as base_bot
-from korgan.legal_safety import CLAIM_CONFIRM_TEXT, claim_confirmation_keyboard
+from korgan.claim_intent import is_claim_drafting_request
 from korgan.ui import main_menu
 
 router = Router(name="korgan-reply-main-menu")
 
 
 class ClaimRequestFilter(BaseFilter):
-    """Recognize a user's natural-language request to prepare a court claim."""
-
-    _pattern = re.compile(
-        r"^\s*(?:пожалуйста[,\s]*)?(?:подготов(?:ь|ьте)|состав(?:ь|ьте)|сделай(?:те)?|сформируй(?:те)?|напиши(?:те)?)\s+"
-        r"(?:мне\s+)?(?:исковое\s+заявление|иск)(?:\s+в\s+(?:ворде|word|docx))?[.!?\s]*$",
-        re.IGNORECASE,
-    )
+    """Recognize natural-language requests to actually prepare a court claim."""
 
     async def __call__(self, message: Message) -> bool:
-        return bool(message.text and self._pattern.match(message.text))
+        return is_claim_drafting_request(message.text)
 
 
-async def _start_claim_document_flow(message: Message, state: FSMContext) -> None:
-    """Start the protected claim-generation flow that ends with a DOCX file."""
+async def _send_claim_as_word(message: Message, state: FSMContext) -> None:
+    """A claim request must end in a DOCX file, never in a full chat-text claim."""
     context = await base_bot._case_context(state)
     if not context.strip():
         await message.answer(
-            "📄 Сначала опишите обстоятельства дела обычным сообщением или пришлите PDF/DOCX/TXT, фото либо скан. "
-            "После этого напишите «подготовить иск» или нажмите «📄 Документ».",
+            "📄 Сначала опишите обстоятельства дела или пришлите документы/сканы. После этого попросите подготовить иск — KORGAN пришлёт его файлом Word (.docx).",
             reply_markup=main_menu(),
         )
         return
 
-    await state.update_data(claim_confirmation_pending=True)
-    await message.answer(CLAIM_CONFIRM_TEXT, parse_mode="HTML", reply_markup=claim_confirmation_keyboard())
+    # The global consent gate has already protected this message. The generated
+    # file itself contains the KORGAN draft notice, while verification warnings
+    # are returned in the Telegram caption.
+    await base_bot.claim_handler(message, state)
 
 
 @router.message(ClaimRequestFilter())
 async def natural_language_claim_request(message: Message, state: FSMContext) -> None:
-    """Do not send a claim as chat text; route the request to Word generation."""
-    await _start_claim_document_flow(message, state)
+    await _send_claim_as_word(message, state)
 
 
 @router.message(F.text == "📄 Документ")
 async def document_button(message: Message, state: FSMContext) -> None:
-    await _start_claim_document_flow(message, state)
+    await _send_claim_as_word(message, state)
 
 
 @router.message(F.text == "⚖️ Консультация")
@@ -69,7 +61,7 @@ async def case_button(message: Message, state: FSMContext) -> None:
     await message.answer(
         f"📦 Моё дело\n\nДокументов / сканов: {len(docs)}\nТекстовых описаний: {len(facts)}\n\n"
         "Чтобы добавить материал — просто отправьте файл, фото или текст. Для генерации нажмите «📄 Документ» "
-        "или напишите «подготовить иск».",
+        "или попросите KORGAN подготовить/составить иск обычным сообщением.",
         reply_markup=main_menu(),
     )
 
@@ -90,9 +82,9 @@ async def help_button(message: Message) -> None:
         "❓ Как работать с KORGAN:\n"
         "1. Опишите ситуацию.\n"
         "2. При необходимости отправьте PDF/DOCX/TXT, фото или сканы.\n"
-        "3. Напишите «подготовить иск» или нажмите «📄 Документ».\n"
-        "4. Подтвердите предупреждение перед формированием.\n"
-        "5. KORGAN проверит правовую основу и отправит готовый .docx либо укажет NEEDS_VERIFICATION.\n\n"
+        "3. Напишите, например, «подготовь мне иск» или нажмите «📄 Документ».\n"
+        "4. KORGAN проверит правовую основу и пришлёт готовый файл Word (.docx).\n"
+        "5. Если часть нормы нельзя подтвердить, это будет отдельно отмечено как NEEDS_VERIFICATION.\n\n"
         "Условия: /terms\nКонфиденциальность: /privacy",
         reply_markup=main_menu(),
     )
