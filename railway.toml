@@ -3,7 +3,7 @@ builder = "RAILPACK"
 buildCommand = "pip install ."
 
 [deploy]
-preDeployCommand = ["alembic upgrade head"]
+preDeployCommand = ["python -m alembic upgrade head"]
 startCommand = "korgan-telegram"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
