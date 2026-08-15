@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.production_legal import (
@@ -54,6 +55,26 @@ _STATE_DUTY_ATTACHMENT = (
 _STATE_DUTY_ATTACHMENT_NOTE = (
     "В материалах нет документа, подтверждающего уплату государственной пошлины, либо ходатайства об отсрочке; "
     "его необходимо добавить к иску перед подачей."
+)
+
+_DATE_PATTERN = re.compile(r"(?<!\d)(\d{2}[./-]\d{2}[./-]\d{4})(?!\d)")
+_DUE_LINE_MARKERS = (
+    "срок возврат",
+    "срок исполн",
+    "обязался вернуть",
+    "обязана вернуть",
+    "обязан вернуть",
+    "возвратить до",
+    "вернуть до",
+    "не позднее",
+)
+_LIMITATION_MARKERS = (
+    "исковая давност",
+    "исковой давност",
+    "статьи 178",
+    "ст. 178",
+    "статьи 180",
+    "ст. 180",
 )
 
 
@@ -148,7 +169,7 @@ def _restore_claimant_dob(case_context: str, draft: ClaimDraft) -> None:
                 continue
             if not any(marker in lowered for marker in _CLAIMANT_ROLE_MARKERS):
                 continue
-            match = re.search(r"(\d{2}[./-]\d{2}[./-]\d{4}|\d{4}[./-]\d{2}[./-]\d{2})", segment)
+            match = _DATE_PATTERN.search(segment)
             if match:
                 draft.claimant.append(f"Дата рождения: {match.group(1)}")
                 return
@@ -215,10 +236,47 @@ def _drop_nonstandard_party_summons(draft: ClaimDraft) -> None:
     draft.requests = cleaned
 
 
+def _recent_due_date(case_context: str) -> date | None:
+    candidates: list[date] = []
+    for line in case_context.splitlines():
+        lowered = line.lower()
+        if not any(marker in lowered for marker in _DUE_LINE_MARKERS):
+            continue
+        for match in _DATE_PATTERN.finditer(line):
+            try:
+                candidates.append(datetime.strptime(match.group(1).replace("/", ".").replace("-", "."), "%d.%m.%Y").date())
+            except ValueError:
+                continue
+    if not candidates:
+        return None
+    # The latest explicitly stated contractual due date is the conservative choice.
+    return max(candidates)
+
+
+def _drop_irrelevant_limitation_discussion(case_context: str, draft: ClaimDraft) -> None:
+    """Keep limitation analysis only when it can matter; do not pad fresh claims with it."""
+    due = _recent_due_date(case_context)
+    if due is None:
+        return
+    age_days = (date.today() - due).days
+    if age_days < 0 or age_days > 730:
+        return
+
+    draft.facts = [
+        item for item in draft.facts
+        if not any(marker in item.lower() for marker in _LIMITATION_MARKERS)
+    ]
+    draft.legal_basis = [
+        item for item in draft.legal_basis
+        if not any(marker in item.lower() for marker in _LIMITATION_MARKERS)
+    ]
+
+
 def _prepare_draft_for_validation(case_context: str, draft: ClaimDraft) -> None:
     _remove_unsupported_conditionals(draft)
     _drop_optional_unknown_contacts(draft)
     _drop_nonstandard_party_summons(draft)
+    _drop_irrelevant_limitation_discussion(case_context, draft)
 
     # Restore only requisites that the extractor explicitly bound to one party.
     _restore_role_bound_bucket(case_context, draft, "Адреса:", "Адрес")
@@ -257,7 +315,6 @@ def _sync_state_duty_request(draft: ClaimDraft) -> None:
     if not amount:
         return
 
-    # Remove only vague generic expense requests. Specific proven expenses stay intact.
     cleaned: list[str] = []
     for request in draft.requests:
         lowered = request.lower()
@@ -293,13 +350,7 @@ class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
     ) -> ClaimDraft:
         draft = await super().draft_claim(case_context, research, language=language)
 
-        # The base service refuses to guess a court. Restore it only when the
-        # source-bound research produced VERIFIED_COURT from an official page.
         _restore_verified_court(research, draft)
-
-        # The base service calculates the duty after model QA. Now reuse that
-        # deterministic amount in the prayer for relief and keep the filing
-        # attachment requirement explicit.
         _sync_state_duty_request(draft)
         _prepare_draft_for_validation(case_context, draft)
 
