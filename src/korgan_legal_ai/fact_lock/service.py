@@ -45,6 +45,8 @@ class FactLockWireFact(BaseModel):
     id: str = ""
     statement: str
     event_date: str | None = None
+    source_document_id: str | None = None
+    source_quote: str | None = None
 
 
 class FactLockWireEvidence(BaseModel):
@@ -52,6 +54,7 @@ class FactLockWireEvidence(BaseModel):
     description: str | None = None
     kind: str = "other"
     supports_fact_ids: list[str] = Field(default_factory=list)
+    source_document_id: str | None = None
 
 
 class FactLockWireFinancials(BaseModel):
@@ -141,6 +144,22 @@ _DATE_NUMERIC_RE = re.compile(
     r"^(?P<day>\d{1,2})[./](?P<month>\d{1,2})[./](?P<year>\d{4})$"
 )
 _DECIMAL_RE = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
+_CASE_SOURCE_MARKER_RE = re.compile(
+    r"(?m)^\[(?P<marker>DOCUMENT (?P<document_id>doc-\d+)|USER_NOTE)\]\s*$"
+)
+
+
+def _document_blocks(raw_text: str) -> dict[str, str]:
+    """Return transport-created document blocks without swallowing later user notes."""
+    matches = list(_CASE_SOURCE_MARKER_RE.finditer(raw_text))
+    blocks: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        document_id = match.group("document_id")
+        if document_id is None:
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(raw_text)
+        blocks[document_id] = raw_text[match.end():end].strip()
+    return blocks
 
 
 def _normalize_date(value: str | None, *, field_name: str, ambiguities: list[str]) -> date | None:
@@ -210,8 +229,9 @@ def _enum_value(enum_type, value: str | None, *, field_name: str, ambiguities: l
         return default
 
 
-def _normalize_extraction(wire: FactLockWireExtraction) -> FactLockExtraction:
+def _normalize_extraction(wire: FactLockWireExtraction, *, raw_text: str) -> FactLockExtraction:
     ambiguities = list(wire.ambiguities)
+    document_blocks = _document_blocks(raw_text)
 
     parties = [
         Party(
@@ -231,12 +251,35 @@ def _normalize_extraction(wire: FactLockWireExtraction) -> FactLockExtraction:
 
     facts: list[Fact] = []
     seen_fact_ids: set[str] = set()
+    fact_document_sources: dict[str, str] = {}
     for index, item in enumerate(wire.facts, start=1):
         fact_id = item.id.strip() or f"f{index}"
         if fact_id in seen_fact_ids:
             ambiguities.append("Не удалось надежно связать факты: обнаружены повторяющиеся идентификаторы.")
             continue
         seen_fact_ids.add(fact_id)
+
+        source_document_id = (item.source_document_id or "").strip() or None
+        source_quote = (item.source_quote or "").strip() or None
+        if source_document_id is not None:
+            block = document_blocks.get(source_document_id)
+            if block is None:
+                ambiguities.append(
+                    f"Факт {fact_id} ссылается на неизвестный источник {source_document_id}; требуется проверка."
+                )
+                continue
+            if source_quote is None or source_quote not in block:
+                ambiguities.append(
+                    f"Факт {fact_id} не подтвержден точной выдержкой из {source_document_id}; требуется проверка."
+                )
+                continue
+            fact_document_sources[fact_id] = source_document_id
+        elif source_quote is not None:
+            ambiguities.append(
+                f"Для факта {fact_id} указана выдержка без идентификатора документа; требуется проверка."
+            )
+            continue
+
         facts.append(
             Fact(
                 id=fact_id,
@@ -250,11 +293,20 @@ def _normalize_extraction(wire: FactLockWireExtraction) -> FactLockExtraction:
         )
 
     evidence: list[Evidence] = []
+    supported_document_facts: set[tuple[str, str]] = set()
     for item in wire.evidence:
         unknown_ids = set(item.supports_fact_ids) - seen_fact_ids
         if unknown_ids:
             ambiguities.append("Не удалось надежно связать доказательство с фактом; требуется уточнение.")
             continue
+
+        source_document_id = (item.source_document_id or "").strip() or None
+        if source_document_id is not None and source_document_id not in document_blocks:
+            ambiguities.append(
+                f"Доказательство ссылается на неизвестный источник {source_document_id}; требуется проверка."
+            )
+            continue
+
         evidence.append(
             Evidence(
                 title=item.title,
@@ -269,6 +321,16 @@ def _normalize_extraction(wire: FactLockWireExtraction) -> FactLockExtraction:
                 supports_fact_ids=item.supports_fact_ids,
             )
         )
+        if source_document_id is not None:
+            supported_document_facts.update(
+                (source_document_id, fact_id) for fact_id in item.supports_fact_ids
+            )
+
+    for fact_id, document_id in fact_document_sources.items():
+        if (document_id, fact_id) not in supported_document_facts:
+            ambiguities.append(
+                f"Факт {fact_id} из {document_id} не связан с доказательством этого документа; требуется проверка."
+            )
 
     money = wire.financials
     payments: list[Decimal] = []
@@ -353,7 +415,7 @@ class FactLockService:
             user=raw_text,
             schema=FactLockWireExtraction,
         )
-        extracted = _normalize_extraction(wire)
+        extracted = _normalize_extraction(wire, raw_text=raw_text)
         if extracted.ambiguities:
             raise ClarificationRequired(extracted.ambiguities)
         return LockedCase(raw_text=raw_text, **extracted.model_dump())
