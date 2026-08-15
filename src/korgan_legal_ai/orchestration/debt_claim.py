@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import date
+from typing import Callable
+
 from korgan_legal_ai.audit.hash_chain import HashChainAuditLog
 from korgan_legal_ai.calculations.service import CalculationLayer
 from korgan_legal_ai.domain.exceptions import LegalQABlocked
@@ -20,6 +23,7 @@ class DebtClaimWorkflow:
         calculations: CalculationLayer | None = None,
         qa: FinalLegalQA | None = None,
         audit: HashChainAuditLog | None = None,
+        as_of_date_provider: Callable[[], date] | None = None,
     ) -> None:
         self.procedural = procedural
         self.drafter = drafter
@@ -27,6 +31,7 @@ class DebtClaimWorkflow:
         self.calculations = calculations or CalculationLayer()
         self.qa = qa or FinalLegalQA()
         self.audit = audit or HashChainAuditLog()
+        self.as_of_date_provider = as_of_date_provider or date.today
 
     def run(self, case: LockedCase, routing: RoutingDecision) -> WorkflowResult:
         if routing.legal_area != LegalArea.DEBT_RECOVERY:
@@ -35,12 +40,19 @@ class DebtClaimWorkflow:
         self.audit.append("case_locked", case.model_dump(mode="json"))
         self.audit.append("task_routed", routing.model_dump(mode="json"))
 
-        procedural = self.procedural.check(case)
-        self.audit.append("procedural_checked", procedural.model_dump(mode="json"))
-
         evidence_map = self.evidence.build(case)
         calculation = self.calculations.calculate_money(case.financials)
         self.audit.append("calculation_completed", calculation.model_dump(mode="json"))
+
+        as_of_date = self.as_of_date_provider()
+        self.audit.append("procedural_reference_date", {"date": as_of_date.isoformat()})
+        procedural = self.procedural.check(
+            case,
+            routing=routing,
+            calculation=calculation,
+            as_of_date=as_of_date,
+        )
+        self.audit.append("procedural_checked", procedural.model_dump(mode="json"))
 
         document = self.drafter.draft(case, procedural, evidence_map, calculation)
         citations = [citation for item in procedural.items for citation in item.sources]

@@ -11,6 +11,7 @@ from korgan_legal_ai.domain.models import (
     PartyRole,
     ProceduralReport,
     ReadinessStatus,
+    VerificationStatus,
 )
 from korgan_legal_ai.llm.base import LLMProvider
 from korgan_legal_ai.prompts.debt_claim import DEBT_CLAIM_SYSTEM
@@ -44,7 +45,10 @@ class DebtClaimDrafter:
                 "procedural": procedural.model_dump(mode="json"),
                 "evidence_map": evidence_map.model_dump(mode="json"),
                 "calculation": calculation.model_dump(mode="json"),
-                "instruction": "Do not introduce exact article numbers unless status is VERIFIED.",
+                "instruction": (
+                    "Use VERIFIED procedural conclusions and exact citations as supplied. "
+                    "Do not introduce any article/amount/deadline/court rule whose status is not VERIFIED."
+                ),
             }
             generated = self.provider.parse(
                 model=self.model,
@@ -54,7 +58,7 @@ class DebtClaimDrafter:
             )
             text = generated.text
         else:
-            text = self._deterministic_draft(case, calculation)
+            text = self._deterministic_draft(case, calculation, procedural)
 
         readiness = (
             ReadinessStatus.LAWYER_REVIEW_DRAFT
@@ -70,7 +74,11 @@ class DebtClaimDrafter:
         )
 
     @staticmethod
-    def _deterministic_draft(case: LockedCase, calculation: CalculationResult) -> str:
+    def _deterministic_draft(
+        case: LockedCase,
+        calculation: CalculationResult,
+        procedural: ProceduralReport,
+    ) -> str:
         claimant = next(
             (p for p in case.parties if p.role in {PartyRole.CLAIMANT, PartyRole.CREDITOR}),
             case.parties[0],
@@ -79,8 +87,27 @@ class DebtClaimDrafter:
             (p for p in case.parties if p.role in {PartyRole.DEFENDANT, PartyRole.DEBTOR}),
             case.parties[1],
         )
-        facts = "\n".join(f"- {f.statement}" for f in case.facts)
+        facts = "\n".join(f"- {fact.statement}" for fact in case.facts)
         total = f"{calculation.total} {calculation.currency}"
+        procedural_lines = "\n".join(
+            f"- {item.name}: {item.conclusion} [{item.status}]"
+            for item in procedural.items
+        )
+        verified_citations = [
+            citation
+            for item in procedural.items
+            for citation in item.sources
+            if citation.status == VerificationStatus.VERIFIED
+        ]
+        citation_lines = "\n".join(
+            f"- {citation.law_name or citation.source_title}, статья {citation.article}: "
+            f"{citation.source_url}"
+            for citation in verified_citations
+            if citation.article and citation.source_url
+        )
+        if not citation_lines:
+            citation_lines = "- Точные нормы не добавлены: подтвержденных citations для этого проекта нет."
+
         return f"""В ______________________________ суд
 
 Истец: {claimant.name}
@@ -99,11 +126,17 @@ class DebtClaimDrafter:
 Иные суммы: {calculation.other} {calculation.currency}
 Итого: {total}
 
+ПРОЦЕССУАЛЬНАЯ ПРОВЕРКА
+{procedural_lines}
+
+ПОДТВЕРЖДЕННЫЕ НОРМЫ
+{citation_lines}
+
 ПРАВОВОЕ ОБОСНОВАНИЕ
-Требования основываются на обязательстве, описанном в зафиксированных фактах дела. Точные
-ссылки на нормы законодательства, подсудность, государственная пошлина, сроки и необходимость
-досудебного порядка подлежат отдельной верификации по официальным источникам до финальной
-проверки юристом.
+Требования основываются на обязательстве, описанном в зафиксированных фактах дела. В проект
+включены только те точные процессуальные нормы и расчеты, которые имеют статус VERIFIED.
+Вопросы со статусом NEEDS_VERIFICATION не заменяются предположениями и подлежат проверке
+до финальной юридической проверки человеком.
 
 ПРОШУ СУД:
 1. Взыскать с {defendant.name} в пользу {claimant.name} сумму требований в размере {total}.
