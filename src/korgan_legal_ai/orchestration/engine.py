@@ -7,7 +7,7 @@ from korgan_legal_ai.router.service import TaskRouter
 
 
 class LegalEngine:
-    """Single public orchestration entry point for raw user text."""
+    """Single public orchestration entry point for raw user/evidence text."""
 
     def __init__(
         self,
@@ -23,8 +23,15 @@ class LegalEngine:
     def process(self, raw_text: str) -> WorkflowResult:
         case = self.fact_lock.lock(raw_text)
         routing = self.router.route(case)
+
+        # Raw text has served its only trusted purpose once Fact Lock and routing are complete.
+        # The workflow receives structured locked facts only. This keeps instructions embedded in
+        # uploaded evidence out of drafting/QA model prompts and also prevents raw document text
+        # from being copied into the in-memory hash-chain audit payload.
+        downstream_case = case.model_copy(update={"raw_text": ""})
+
         if routing.document_type == DocumentType.CLAIM and routing.legal_area == LegalArea.DEBT_RECOVERY:
-            return self.debt_claim.run(case, routing)
+            return self.debt_claim.run(downstream_case, routing)
         raise NotImplementedError(
             f"Workflow is not implemented yet: {routing.document_type}/{routing.legal_area}"
         )
