@@ -9,9 +9,9 @@ from aiogram.types import BotCommand, MenuButtonCommands
 
 from korgan import bot as base_bot
 from korgan.config import get_settings
+from korgan.robust_production_legal import ProductionOpenAILegalService
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
-from korgan.repaired_production_legal import ProductionOpenAILegalService
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.ui import main_menu
 
@@ -41,17 +41,14 @@ async def main() -> None:
     await configure_telegram_menu(bot)
 
     dp = Dispatcher(storage=MemoryStorage())
-    # Fail closed before any legal text/file processing.
     dp.message.outer_middleware(ConsentMiddleware())
 
-    # /start and consent callbacks first, then persistent keyboard actions,
-    # then the generic legal text/file handlers.
     dp.include_router(start_router)
     dp.include_router(safety_router)
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN with consent gate and court-ready DOCX drafting")
+    LOGGER.info("Starting KORGAN robust fast-v2 runtime with strict preflight and final QA")
     try:
         await dp.start_polling(bot)
     finally:

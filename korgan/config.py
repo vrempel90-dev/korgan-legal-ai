@@ -11,7 +11,9 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-5.1"
     openai_vision_model: str = "gpt-5.1"
     openai_validation_model: str = "gpt-5.1"
-    official_legal_domains: str = "adilet.zan.kz"
+    # Legal rules still come from Adilet. gov.kz / sud.gov.kz are allowed only
+    # for official court-name / court-structure verification.
+    official_legal_domains: str = "adilet.zan.kz,gov.kz,sud.gov.kz"
     max_case_documents: int = 12
     max_case_text_chars: int = 60000
     admin_telegram_ids: str = ""

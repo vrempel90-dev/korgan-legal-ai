@@ -12,6 +12,7 @@ from aiogram.types import BufferedInputFile, KeyboardButton, Message, ReplyKeybo
 
 from korgan.claim_docx import build_claim_docx
 from korgan.claim_intent import is_claim_drafting_request
+from korgan.claim_preflight import inspect_claim_context
 from korgan.config import get_settings
 from korgan.legal_types import ExtractedDocument, VerificationStatus
 from korgan.openai_legal import OpenAILegalService
@@ -74,7 +75,7 @@ async def _save_document(state: FSMContext, extracted: ExtractedDocument) -> int
 
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext) -> None:
-    await state.set_data({"language": "ru", "documents": [], "facts": []})
+    await state.set_data({"language": "ru", "documents": [], "facts": [], "mode": "main"})
     await message.answer(
         "⚖️ KORGAN Legal AI\n\n"
         "Я работаю по законодательству Республики Казахстан. Можно отправить PDF/DOCX/TXT, фото или скан документа — "
@@ -111,7 +112,7 @@ async def help_command(message: Message) -> None:
 @router.message(F.text == "🗑 Очистить дело")
 async def clear_case(message: Message, state: FSMContext) -> None:
     lang = await _language(state)
-    await state.set_data({"language": lang, "documents": [], "facts": []})
+    await state.set_data({"language": lang, "documents": [], "facts": [], "mode": "main"})
     await message.answer("Материалы текущего дела удалены из сессии.", reply_markup=MENU)
 
 
@@ -173,16 +174,29 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
     global service
     if service is None:
         return
+
     context = await _case_context(state)
     if not context.strip():
+        await state.update_data(mode="main")
         await message.answer(
             "Сначала опишите ситуацию или пришлите документы/сканы. Без фактов я не буду придумывать иск.",
             reply_markup=MENU,
         )
         return
 
+    # Instant deterministic completeness gate. Do this BEFORE legal web search
+    # and drafting so an obviously incomplete case does not burn 40–70 seconds
+    # only to be rejected by FINAL QA.
+    preflight = inspect_claim_context(context)
+    if not preflight.ready:
+        LOGGER.info("CLAIM_PREFLIGHT_MISSING fields=%s", list(preflight.missing))
+        await state.update_data(mode="claim_details")
+        await message.answer(preflight.user_message(), reply_markup=MENU)
+        return
+
+    await state.update_data(mode="main")
     lang = await _language(state)
-    await message.answer("Проверяю материалы и формирую Word-документ…")
+    await message.answer("Проверяю право и формирую Word-документ…")
     await message.bot.send_chat_action(message.chat.id, "typing")
     try:
         research = await service.research_case(context, language=lang)
@@ -209,7 +223,8 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
 
 
 @router.message(F.text == "⚖️ Консультация")
-async def consultation_prompt(message: Message) -> None:
+async def consultation_prompt(message: Message, state: FSMContext) -> None:
+    await state.update_data(mode="consultation")
     await message.answer("Опишите вопрос одним сообщением. Если по делу уже загружены документы, я учту их.", reply_markup=MENU)
 
 
@@ -221,17 +236,31 @@ async def legal_question(message: Message, state: FSMContext) -> None:
     if message.text.startswith("/"):
         return
 
-    # Final fail-safe: a request to PREPARE a claim must never reach the
-    # consultation model. It always goes to the DOCX generator.
-    if is_claim_drafting_request(message.text):
+    data = await state.get_data()
+
+    # The previous claim preflight asked for missing requisites. Save this reply
+    # as case facts and immediately retry the claim — do not waste a consultation
+    # API call and do not make the user press the document button again.
+    if data.get("mode") == "claim_details":
+        facts = list(data.get("facts", []) or [])
+        facts.append(message.text)
+        await state.update_data(facts=facts[-20:], mode="main")
+        await claim_handler(message, state)
+        return
+
+    explicit_consultation = data.get("mode") == "consultation"
+
+    # A direct claim request from the main mode must produce DOCX. But when the
+    # user explicitly pressed «Консультация», their next message belongs to the
+    # consultation agent even if the narrative contains words like «составь иск».
+    if is_claim_drafting_request(message.text) and not explicit_consultation:
         LOGGER.info("CLAIM_INTENT_FORCED_TO_DOCX telegram_user_id=%s", message.from_user.id if message.from_user else None)
         await claim_handler(message, state)
         return
 
-    data = await state.get_data()
     facts = list(data.get("facts", []) or [])
     facts.append(message.text)
-    await state.update_data(facts=facts[-20:])
+    await state.update_data(facts=facts[-20:], mode="main")
     context = await _case_context(state)
     lang = await _language(state)
     await message.bot.send_chat_action(message.chat.id, "typing")

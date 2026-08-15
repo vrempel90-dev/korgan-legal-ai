@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import io
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -11,7 +12,7 @@ from docx.shared import Cm, Pt
 from docx.text.paragraph import Paragraph
 
 from korgan.legal_calc import NEEDS_CALCULATION_MARKER
-from korgan.legal_types import ClaimDraft
+from korgan.legal_types import ClaimDraft, VerificationStatus
 
 
 DRAFT_NOTICE = (
@@ -21,12 +22,13 @@ DRAFT_NOTICE = (
 )
 
 
-def _strip_label(value: str, label: str) -> str:
-    """Drop a header label the model already put inside the value itself.
+QA_PRELIMINARY = "PRELIMINARY DRAFT"
+QA_LAWYER_REVIEW = "LAWYER-REVIEW DRAFT"
+QA_READY = "READY FOR FINAL HUMAN REVIEW"
 
-    The template prints «Истец:» once; when the draft field also starts with it,
-    the header renders «Истец: Истец: Иванов И.И.» — a QA section H failure.
-    """
+
+def _strip_label(value: str, label: str) -> str:
+    """Drop a header label the model already put inside the value itself."""
     text = value.strip()
     if text.lower().startswith(label.lower()):
         text = text[len(label):].lstrip(" : \t")
@@ -39,11 +41,7 @@ def _party_lines(items: list[str], label: str, fallback: str) -> list[str]:
 
 
 def _restarted_num_id(doc, style_id: str) -> int | None:
-    """Clone the style's numbering with startOverride=1.
-
-    Every «List Number» paragraph shares one numId, so the annex list would
-    otherwise continue the prayer-for-relief numbering instead of starting at 1.
-    """
+    """Clone the style's numbering with startOverride=1."""
     style_num_id = None
     for style in doc.styles.element.findall(qn("w:style")):
         if style.get(qn("w:styleId")) != style_id:
@@ -93,8 +91,41 @@ def _apply_num_id(paragraph: Paragraph, num_id: int) -> None:
     num_pr.get_or_add_numId().val = num_id
 
 
+def _document_status(draft: ClaimDraft) -> str:
+    court_text = "\n".join(
+        [
+            draft.court,
+            *draft.claimant,
+            *draft.defendant,
+            draft.price_of_claim,
+            draft.state_duty,
+            *draft.facts,
+            *draft.legal_basis,
+            *draft.requests,
+            *draft.attachments,
+        ]
+    ).upper()
+
+    if (
+        "[ТРЕБУЕТ УТОЧНЕНИЯ" in court_text
+        or "[ТРЕБУЕТ ДОБАВИТЬ" in court_text
+        or NEEDS_CALCULATION_MARKER.upper() in court_text
+    ):
+        return QA_PRELIMINARY
+
+    if draft.status == VerificationStatus.NEEDS_VERIFICATION or draft.verification_notes:
+        return QA_LAWYER_REVIEW
+
+    return QA_READY
+
+
+def _kazakhstan_today() -> str:
+    # Railway runs in UTC; court documents must not roll over a day late.
+    return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
+
+
 def build_claim_docx(draft: ClaimDraft) -> bytes:
-    """Build a clean court-facing DOCX; verification details stay in Telegram caption."""
+    """Build a clean court-facing DOCX with a visible KORGAN QA readiness status."""
     doc = Document()
 
     section = doc.sections[0]
@@ -110,13 +141,19 @@ def build_claim_docx(draft: ClaimDraft) -> bytes:
         if style_name in styles:
             styles[style_name].font.name = "Times New Roman"
 
-    # Service/legal notice is intentionally unobtrusive and not mixed into the claim body.
     for current_section in doc.sections:
         footer = current_section.footer.paragraphs[0]
         footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = footer.add_run(DRAFT_NOTICE)
         run.font.name = "Times New Roman"
         run.font.size = Pt(8)
+
+    qa = doc.add_paragraph()
+    qa.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    qa_run = qa.add_run(f"KORGAN QA STATUS: {_document_status(draft)}")
+    qa_run.bold = True
+    qa_run.font.name = "Times New Roman"
+    qa_run.font.size = Pt(9)
 
     court = _strip_label(draft.court, "В суд") or "[ТРЕБУЕТ УТОЧНЕНИЯ: точное наименование суда]"
     price = _strip_label(draft.price_of_claim, "Цена иска") or "[ТРЕБУЕТ УТОЧНЕНИЯ: цена иска]"
@@ -131,7 +168,6 @@ def build_claim_docx(draft: ClaimDraft) -> bytes:
     for item in _party_lines(draft.defendant, "Ответчик", "[ТРЕБУЕТ УТОЧНЕНИЯ: данные ответчика]"):
         right.add_run(f"{item}\n")
     right.add_run(f"Цена иска: {price}\n")
-    # Never absent: either a computed amount or the explicit calculation marker.
     duty = _strip_label(draft.state_duty, "Госпошлина") or NEEDS_CALCULATION_MARKER
     right.add_run(f"Госпошлина: {duty}")
 
@@ -167,7 +203,7 @@ def build_claim_docx(draft: ClaimDraft) -> bytes:
             _apply_num_id(paragraph, annex_num_id)
 
     doc.add_paragraph()
-    doc.add_paragraph(f"Дата: {date.today().strftime('%d.%m.%Y')}")
+    doc.add_paragraph(f"Дата: {_kazakhstan_today()}")
     doc.add_paragraph("Подпись: ____________________")
 
     stream = io.BytesIO()
