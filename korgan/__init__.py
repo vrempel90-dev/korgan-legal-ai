@@ -1,0 +1,1 @@
+"""KORGAN Legal AI."""
