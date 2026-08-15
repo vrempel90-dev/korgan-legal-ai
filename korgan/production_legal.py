@@ -138,6 +138,17 @@ def _hard_quality_issues(case_context: str, draft: ClaimDraft) -> list[str]:
     return list(dict.fromkeys(issues))
 
 
+def _sanitize_model_validation_issues(items: list[str]) -> list[str]:
+    """Remove a known validator false-positive: contract location treated as party address."""
+    clean: list[str] = []
+    for item in items:
+        lowered = item.lower()
+        if "адрес" in lowered and any(marker in lowered for marker in _NON_PARTY_LOCATION_MARKERS):
+            continue
+        clean.append(item)
+    return clean
+
+
 class ProductionOpenAILegalService(VerifiedOpenAILegalService):
     """Source-bound service with strict court-document quality gates."""
 
@@ -263,8 +274,9 @@ class ProductionOpenAILegalService(VerifiedOpenAILegalService):
             "1) факты, которых нет в материалах (включая выдуманные претензии, переписку или платежи);\n"
             "2) правовые утверждения, которых нет в VERIFIED;\n"
             "3) известные в материалах ФИО/ИИН/адрес/контакт/сумму, которые проект потерял или заменил заглушкой;\n"
-            "При этом место заключения, подписания или исполнения договора само по себе НЕ является адресом стороны. "
-            "Считай адрес известным только при явной привязке к месту жительства, регистрации, нахождения или конкретной стороне.\n"
+            "КРИТИЧЕСКОЕ ПРАВИЛО: место заключения, подписания, исполнения договора, передачи денег или совершения сделки само по себе НЕ является адресом стороны. "
+            "НИКОГДА не сообщай о потере адреса только потому, что в материалах указано такое место. Считай адрес известным только при явной привязке "
+            "к месту жительства, регистрации, нахождения либо к реквизитам конкретной стороны.\n"
             "4) загруженный/подтвержденный документ, ошибочно названный 'при наличии';\n"
             "5) прямо применимую VERIFIED-норму материального права, необоснованно отсутствующую в legal_basis;\n"
             "6) любой служебный/чатовый текст: NEEDS_VERIFICATION, советы, URL, Markdown, 'можно адаптировать', 'если нужно', 'при наличии';\n"
@@ -283,7 +295,7 @@ class ProductionOpenAILegalService(VerifiedOpenAILegalService):
             schema=_VALIDATION_SCHEMA,
         )
         return {
-            "critical_errors": list(payload.get("critical_errors", [])),
-            "unsupported_legal_claims": list(payload.get("unsupported_legal_claims", [])),
-            "missing_required_fields": list(payload.get("missing_required_fields", [])),
+            "critical_errors": _sanitize_model_validation_issues(list(payload.get("critical_errors", []))),
+            "unsupported_legal_claims": _sanitize_model_validation_issues(list(payload.get("unsupported_legal_claims", []))),
+            "missing_required_fields": _sanitize_model_validation_issues(list(payload.get("missing_required_fields", []))),
         }
