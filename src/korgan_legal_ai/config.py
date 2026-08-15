@@ -14,7 +14,8 @@ class Settings(BaseSettings):
     korgan_default_language: str = "ru"
 
     telegram_bot_token: str | None = None
-    telegram_privacy_version: str = "2026-08-15"
+    telegram_session_master_key: str | None = None
+    telegram_privacy_version: str = "2026-08-15-v2"
     telegram_poll_timeout_seconds: int = 30
     telegram_request_timeout_seconds: float = 45.0
     telegram_session_ttl_seconds: int = 86400

@@ -8,8 +8,8 @@ from korgan_legal_ai.domain.exceptions import ClarificationRequired, LegalQABloc
 from korgan_legal_ai.orchestration.engine import LegalEngine
 from korgan_legal_ai.telegram.localization import text
 from korgan_legal_ai.telegram.session import (
-    InMemorySessionStore,
     SessionState,
+    SessionStore,
     TelegramSession,
 )
 
@@ -33,14 +33,16 @@ class TelegramRuntime:
         *,
         api: Any,
         engine: LegalEngine,
-        sessions: InMemorySessionStore | None = None,
+        sessions: SessionStore,
         privacy_version: str = PRIVACY_VERSION_DEFAULT,
         poll_timeout_seconds: int = 30,
         max_case_chars: int = 16000,
     ) -> None:
         self.api = api
         self.engine = engine
-        self.sessions = sessions or InMemorySessionStore()
+        # The backend is always chosen explicitly by the caller. There is no default, so a
+        # misconfigured deployment can never quietly downgrade to in-memory sessions.
+        self.sessions = sessions
         self.privacy_version = privacy_version
         self.poll_timeout_seconds = poll_timeout_seconds
         self.max_case_chars = max_case_chars
@@ -69,41 +71,54 @@ class TelegramRuntime:
             ]]
         }
 
-    def _send_language(self, chat_id: int, session: TelegramSession) -> None:
+    def _send_language(self, user_id: int, chat_id: int, session: TelegramSession) -> None:
         session.state = SessionState.LANGUAGE
+        self.sessions.save(user_id, session)
         self.api.send_message(
             chat_id,
             text(session.language, "choose_language"),
             reply_markup=self._language_markup(),
         )
 
-    def _send_privacy(self, chat_id: int, session: TelegramSession) -> None:
+    def _send_privacy(self, user_id: int, chat_id: int, session: TelegramSession) -> None:
         session.state = SessionState.PRIVACY
+        self.sessions.save(user_id, session)
         self.api.send_message(
             chat_id,
             text(session.language, "privacy"),
             reply_markup=self._privacy_markup(session.language),
         )
 
-    def _send_menu(self, chat_id: int, session: TelegramSession) -> None:
-        if session.consent_version != self.privacy_version:
-            self.api.send_message(chat_id, text(session.language, "consent_required"))
-            self._send_privacy(chat_id, session)
+    def _require_consent(self, user_id: int, chat_id: int, session: TelegramSession) -> bool:
+        """Gate every legal action behind consent to the *current* privacy version.
+
+        A superseded policy version must not keep holding unfinished case text, so the buffer
+        is dropped before the session is written back and the user is asked to accept again.
+        """
+        if session.consent_version == self.privacy_version:
+            return True
+        session.case_buffer = None
+        self.api.send_message(chat_id, text(session.language, "consent_required"))
+        self._send_privacy(user_id, chat_id, session)
+        return False
+
+    def _send_menu(self, user_id: int, chat_id: int, session: TelegramSession) -> None:
+        if not self._require_consent(user_id, chat_id, session):
             return
         session.state = SessionState.MENU
+        self.sessions.save(user_id, session)
         self.api.send_message(
             chat_id,
             text(session.language, "menu"),
             reply_markup=self._menu_markup(session.language),
         )
 
-    def _start_claim(self, chat_id: int, session: TelegramSession) -> None:
-        if session.consent_version != self.privacy_version:
-            self.api.send_message(chat_id, text(session.language, "consent_required"))
-            self._send_privacy(chat_id, session)
+    def _start_claim(self, user_id: int, chat_id: int, session: TelegramSession) -> None:
+        if not self._require_consent(user_id, chat_id, session):
             return
         session.case_buffer = None
         session.state = SessionState.AWAITING_CLAIM
+        self.sessions.save(user_id, session)
         self.api.send_message(chat_id, text(session.language, "claim_prompt"))
 
     @staticmethod
@@ -123,18 +138,18 @@ class TelegramRuntime:
         if command == "/start":
             language = session.language
             session = self.sessions.reset(user_id, language=language)
-            self._send_language(chat_id, session)
+            self._send_language(user_id, chat_id, session)
         elif command == "/language":
-            self._send_language(chat_id, session)
+            self._send_language(user_id, chat_id, session)
         elif command == "/privacy":
-            self._send_privacy(chat_id, session)
+            self._send_privacy(user_id, chat_id, session)
         elif command == "/menu":
-            self._send_menu(chat_id, session)
+            self._send_menu(user_id, chat_id, session)
         elif command == "/cancel":
             session = self.sessions.clear_case(user_id)
             self.api.send_message(chat_id, text(session.language, "cancelled"))
             if session.consent_version == self.privacy_version:
-                self._send_menu(chat_id, session)
+                self._send_menu(user_id, chat_id, session)
         elif command == "/help":
             self.api.send_message(chat_id, text(session.language, "help"))
         else:
@@ -169,16 +184,14 @@ class TelegramRuntime:
             )
             return
 
-        if session.consent_version != self.privacy_version:
-            self.api.send_message(chat_id, text(session.language, "consent_required"))
-            self._send_privacy(chat_id, session)
+        if not self._require_consent(user_id, chat_id, session):
             return
 
         if session.state not in {
             SessionState.AWAITING_CLAIM,
             SessionState.AWAITING_CLARIFICATION,
         }:
-            self._send_menu(chat_id, session)
+            self._send_menu(user_id, chat_id, session)
             return
 
         existing = session.case_buffer or ""
@@ -191,11 +204,13 @@ class TelegramRuntime:
             return
 
         session.case_buffer = candidate
+        self.sessions.save(user_id, session)
         self.api.send_message(chat_id, text(session.language, "processing"))
         try:
             result = self.engine.process(candidate)
         except ClarificationRequired as exc:
             session.state = SessionState.AWAITING_CLARIFICATION
+            self.sessions.save(user_id, session)
             questions = "\n".join(f"• {question}" for question in exc.questions)
             self.api.send_message(
                 chat_id,
@@ -211,16 +226,12 @@ class TelegramRuntime:
             self.api.send_message(chat_id, text(session.language, "unsupported"))
             return
         except Exception as exc:
-            logger.error(
-                "Telegram legal request failed safely: %s",
-                type(exc).__name__,
-                extra={"telegram_user_id": user_id},
-            )
+            logger.error("Telegram legal request failed safely: %s", type(exc).__name__)
             self.sessions.clear_case(user_id)
             self.api.send_message(chat_id, text(session.language, "internal_error"))
             return
 
-        self.sessions.clear_case(user_id)
+        session = self.sessions.clear_case(user_id)
         document = result.document
         self.api.send_message(
             chat_id,
@@ -238,7 +249,7 @@ class TelegramRuntime:
         else:
             self.api.send_message(chat_id, text(session.language, "no_needs"))
         self.api.send_message(chat_id, document.text)
-        self._send_menu(chat_id, session)
+        self._send_menu(user_id, chat_id, session)
 
     def _handle_callback(self, callback: dict[str, Any]) -> None:
         query_id = callback.get("id")
@@ -260,12 +271,12 @@ class TelegramRuntime:
 
         if data in {"lang:ru", "lang:kk"}:
             session.language = data.split(":", maxsplit=1)[1]
-            self._send_privacy(chat_id, session)
+            self._send_privacy(user_id, chat_id, session)
             return
         if data == "consent:accept":
             session.consent_version = self.privacy_version
             session.case_buffer = None
-            self._send_menu(chat_id, session)
+            self._send_menu(user_id, chat_id, session)
             return
         if data == "consent:decline":
             language = session.language
@@ -273,10 +284,10 @@ class TelegramRuntime:
             self.api.send_message(chat_id, text(language, "privacy_declined"))
             return
         if data == "flow:claim":
-            self._start_claim(chat_id, session)
+            self._start_claim(user_id, chat_id, session)
             return
         if data == "menu":
-            self._send_menu(chat_id, session)
+            self._send_menu(user_id, chat_id, session)
 
     def handle_update(self, update: dict[str, Any]) -> None:
         message = update.get("message")
@@ -291,8 +302,6 @@ class TelegramRuntime:
         stopper = stop_event or Event()
         me = self.api.get_me()
         logger.info("Telegram runtime starting", extra={"bot_id": me.get("id")})
-        # getUpdates and webhooks are mutually exclusive. We explicitly choose long polling and
-        # preserve pending updates rather than silently discarding user messages.
         self.api.delete_webhook(drop_pending_updates=False)
         self.api.set_my_commands(BOT_COMMANDS)
 
@@ -305,12 +314,20 @@ class TelegramRuntime:
                 )
                 for update in updates:
                     update_id = update.get("update_id")
-                    self.handle_update(update)
-                    if isinstance(update_id, int):
-                        offset = update_id + 1
+                    try:
+                        self.handle_update(update)
+                    except Exception as exc:
+                        # One update that cannot be handled must never block the queue: without
+                        # confirming the offset Telegram redelivers it forever and the bot stops
+                        # serving every other user. Nothing is released to the user here, so the
+                        # legal path stays fail-closed while the transport keeps running.
+                        logger.error(
+                            "Telegram update failed safely: %s",
+                            type(exc).__name__,
+                        )
+                    finally:
+                        if isinstance(update_id, int):
+                            offset = update_id + 1
             except Exception as exc:
-                logger.error(
-                    "Telegram polling iteration failed safely: %s",
-                    type(exc).__name__,
-                )
+                logger.error("Telegram polling iteration failed safely: %s", type(exc).__name__)
                 stopper.wait(2.0)

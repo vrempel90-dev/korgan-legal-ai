@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from threading import RLock
+from typing import Protocol
 
 
 class SessionState(StrEnum):
@@ -23,11 +24,23 @@ class TelegramSession:
     updated_at: float = 0.0
 
 
-class InMemorySessionStore:
-    """Ephemeral Telegram state.
+class SessionStore(Protocol):
+    def get(self, user_id: int) -> TelegramSession: ...
 
-    No case text is persisted to PostgreSQL or disk. Case buffers exist only in process memory
-    while a user is completing one request and are cleared on success, cancellation or expiry.
+    def save(self, user_id: int, session: TelegramSession) -> None: ...
+
+    def reset(self, user_id: int, *, language: str = "ru") -> TelegramSession: ...
+
+    def clear_case(self, user_id: int) -> TelegramSession: ...
+
+    def delete(self, user_id: int) -> None: ...
+
+
+class InMemorySessionStore:
+    """Development/test session backend.
+
+    Production entrypoints use the encrypted PostgreSQL repository explicitly and do not silently
+    downgrade to this in-memory backend when secure persistence is misconfigured.
     """
 
     def __init__(self, *, ttl_seconds: int = 86400, max_sessions: int = 5000) -> None:
@@ -61,20 +74,24 @@ class InMemorySessionStore:
             session.updated_at = now
             return session
 
-    def reset(self, user_id: int, *, language: str = "ru") -> TelegramSession:
+    def save(self, user_id: int, session: TelegramSession) -> None:
         now = self._now()
         with self._lock:
-            session = TelegramSession(language=language, updated_at=now)
+            self._purge_expired(now)
+            session.updated_at = now
             self._items[user_id] = session
-            return session
+
+    def reset(self, user_id: int, *, language: str = "ru") -> TelegramSession:
+        session = TelegramSession(language=language, updated_at=self._now())
+        self.save(user_id, session)
+        return session
 
     def clear_case(self, user_id: int) -> TelegramSession:
         session = self.get(user_id)
-        with self._lock:
-            session.case_buffer = None
-            session.state = SessionState.MENU if session.consent_version else SessionState.PRIVACY
-            session.updated_at = self._now()
-            return session
+        session.case_buffer = None
+        session.state = SessionState.MENU if session.consent_version else SessionState.PRIVACY
+        self.save(user_id, session)
+        return session
 
     def delete(self, user_id: int) -> None:
         with self._lock:

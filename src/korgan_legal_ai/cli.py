@@ -134,10 +134,8 @@ def review_reject(
 ) -> None:
     """Reject a candidate; it cannot be silently reopened by another fallback search."""
     engine = _database_engine()
-    settings = Settings()
-    # Rejection does not call OpenAI, but the service interface requires a provider.
-    # Use the production provider only when configured; otherwise a tiny provider is unnecessary,
-    # so perform the repository transition directly.
+    # Rejection never calls OpenAI, so no provider is built here; the repository transition is
+    # performed directly.
     repository = ResearchCandidateRepository(engine)
     rejected = repository.mark_rejected(
         candidate_id,

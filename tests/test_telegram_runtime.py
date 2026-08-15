@@ -117,7 +117,7 @@ def test_clarification_keeps_case_only_until_followup_then_clears_it() -> None:
 def test_private_chat_boundary_prevents_group_case_processing() -> None:
     api = FakeAPI()
     engine = FakeEngine()
-    runtime = TelegramRuntime(api=api, engine=engine)
+    runtime = TelegramRuntime(api=api, engine=engine, sessions=InMemorySessionStore())
 
     runtime.handle_update(message("секретное дело", chat_type="group"))
 
@@ -128,7 +128,7 @@ def test_private_chat_boundary_prevents_group_case_processing() -> None:
 def test_claim_button_without_consent_does_not_call_engine() -> None:
     api = FakeAPI()
     engine = FakeEngine()
-    runtime = TelegramRuntime(api=api, engine=engine)
+    runtime = TelegramRuntime(api=api, engine=engine, sessions=InMemorySessionStore())
 
     runtime.handle_update(callback("flow:claim"))
 
