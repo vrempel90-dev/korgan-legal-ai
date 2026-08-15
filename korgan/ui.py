@@ -1,25 +1,34 @@
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 
-def main_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+def main_menu() -> ReplyKeyboardMarkup:
+    """Persistent Telegram keyboard like the original KORGAN interface."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
             [
-                InlineKeyboardButton(text="⚖️ Консультация", callback_data="menu:consult"),
-                InlineKeyboardButton(text="📄 Документ", callback_data="doc:claim"),
+                KeyboardButton(text="⚖️ Консультация"),
+                KeyboardButton(text="📄 Документ"),
             ],
             [
-                InlineKeyboardButton(text="💰 Цены", callback_data="menu:prices"),
-                InlineKeyboardButton(text="📦 Моё дело", callback_data="menu:case"),
+                KeyboardButton(text="💰 Цены"),
+                KeyboardButton(text="📦 Моё дело"),
             ],
-            [InlineKeyboardButton(text="👨‍⚖️ Ваш персональный юрист", callback_data="menu:lawyer")],
-            [InlineKeyboardButton(text="❓ Помощь и частые вопросы", callback_data="menu:help")],
-            [InlineKeyboardButton(text="🆘 Техподдержка", callback_data="menu:support")],
-            [InlineKeyboardButton(text="⭐ Оставить отзыв", callback_data="menu:feedback")],
-            [InlineKeyboardButton(text="🗑 Удалить мои данные", callback_data="menu:delete")],
-        ]
+            [KeyboardButton(text="👨‍⚖️ Ваш персональный юрист")],
+            [KeyboardButton(text="❓ Помощь и частые вопросы")],
+            [KeyboardButton(text="🆘 Техподдержка")],
+            [KeyboardButton(text="⭐ Оставить отзыв")],
+            [KeyboardButton(text="🗑 Удалить мои данные")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Выберите действие или напишите сообщение…",
     )
 
 
