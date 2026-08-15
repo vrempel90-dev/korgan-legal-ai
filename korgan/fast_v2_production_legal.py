@@ -4,6 +4,7 @@ import json
 import re
 
 from korgan.fast_production_legal import ProductionOpenAILegalService as _FastBase
+from korgan.legal_routing import detect_claim_profile
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.openai_legal import _CLAIM_SCHEMA
 from korgan.production_legal import (
@@ -50,6 +51,7 @@ _DATE_WORD_RE = re.compile(
     re.IGNORECASE,
 )
 _DATE_NUM_RE = re.compile(r"(?<!\d)(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?!\d)")
+_AMOUNT_RE = re.compile(r"(?<!\d)(\d[\d\s ]{2,})(?:\s*(?:тенге|тг))", re.IGNORECASE)
 
 
 def _uncertain_date_variants(case_context: str) -> list[tuple[str, tuple[str, ...]]]:
@@ -89,12 +91,15 @@ def _mark_uncertain_dates(case_context: str, draft: ClaimDraft) -> None:
     def clean(text: str) -> str:
         updated = text
         for canonical, variants in uncertain:
-            if "ориентировочно" in updated.lower() and canonical in updated:
+            # Do not recursively replace the canonical date inside the marker we
+            # just inserted; that previously produced «ориентировочно» 2–3 times.
+            if "точная дата требует сверки" in updated.lower() and canonical in updated:
                 continue
             replacement = f"ориентировочно {canonical} (точная дата требует сверки по подтверждающему документу)"
             for variant in sorted(set(variants), key=len, reverse=True):
                 if variant in updated:
-                    updated = updated.replace(variant, replacement)
+                    updated = updated.replace(variant, replacement, 1)
+                    break
         return updated
 
     draft.facts = [clean(item) for item in draft.facts]
@@ -102,21 +107,11 @@ def _mark_uncertain_dates(case_context: str, draft: ClaimDraft) -> None:
 
 
 def _remove_false_state_duty_evidence(case_context: str, draft: ClaimDraft) -> None:
-    """Do not let the draft pretend a state-duty receipt exists when it was not supplied."""
+    """Do not let a draft pretend a state-duty receipt exists before upload."""
     if _has_state_duty_payment_proof(case_context):
         return
 
-    cleaned_attachments: list[str] = []
-    for item in draft.attachments:
-        lowered = item.lower()
-        if "пошлин" in lowered and "[требует добавить" not in lowered and "[ТРЕБУЕТ ДОБАВИТЬ" not in item:
-            # Generic «document confirming payment» is an assertion that the
-            # attachment exists. The deterministic filing layer will add the
-            # correct missing-document marker instead.
-            continue
-        cleaned_attachments.append(item)
-    draft.attachments = cleaned_attachments
-
+    draft.attachments = [item for item in draft.attachments if "пошлин" not in item.lower()]
     draft.legal_basis = [
         item for item in draft.legal_basis
         if not (
@@ -127,10 +122,43 @@ def _remove_false_state_duty_evidence(case_context: str, draft: ClaimDraft) -> N
     ]
 
 
+def _normalize_state_duty_request(draft: ClaimDraft) -> None:
+    """The model never controls the amount of state duty in the prayer."""
+    duty = (draft.state_duty or "").strip()
+    cleaned = [request for request in draft.requests if "госпошлин" not in request.lower()]
+    draft.requests = cleaned
+
+    if not duty or duty.startswith("[ТРЕБУЕТ"):
+        return
+
+    amount = duty.split("(", 1)[0].strip()
+    if amount:
+        draft.requests.append(
+            f"Взыскать с ответчика в пользу истца расходы по уплате государственной пошлины в размере {amount}."
+        )
+
+
+def _remove_unsupported_cost_amounts(case_context: str, draft: ClaimDraft) -> None:
+    """Drop invented court-cost numbers while preserving factual/verified ones."""
+    context_digits = {re.sub(r"\D", "", match.group(1)) for match in _AMOUNT_RE.finditer(case_context)}
+    cleaned: list[str] = []
+    for request in draft.requests:
+        lowered = request.lower()
+        if "госпошлин" in lowered:
+            cleaned.append(request)
+            continue
+        if "судебн" not in lowered or "расход" not in lowered:
+            cleaned.append(request)
+            continue
+        amounts = {re.sub(r"\D", "", match.group(1)) for match in _AMOUNT_RE.finditer(request)}
+        if amounts and not amounts.issubset(context_digits):
+            continue
+        cleaned.append(request)
+    draft.requests = cleaned
+
+
 def _deterministic_pre_qa(case_context: str, research: LegalResearch, draft: ClaimDraft) -> None:
-    # Apply the fields that used to be added only after model QA. Doing this
-    # before validation prevents false contradictions and often avoids the
-    # expensive repair pass entirely.
+    # Apply everything deterministically before the expensive independent QA.
     _apply_state_duty(case_context, draft)
     _restore_verified_court(research, draft)
     _sync_state_duty_request(draft)
@@ -138,9 +166,15 @@ def _deterministic_pre_qa(case_context: str, research: LegalResearch, draft: Cla
     _mark_uncertain_dates(case_context, draft)
     _prepare_draft_for_validation(case_context, draft)
 
+    # _prepare_draft_for_validation may add a missing-duty placeholder to the
+    # annex list. It belongs in the Telegram QA notes, not in the court annexes.
+    _remove_false_state_duty_evidence(case_context, draft)
+    _remove_unsupported_cost_amounts(case_context, draft)
+    _normalize_state_duty_request(draft)
+
 
 class ProductionOpenAILegalService(_FastBase):
-    """Fast runtime v2: deterministic pre-QA repairs, then one strict validation."""
+    """Fast runtime v3: profile-aware drafting, deterministic cleanup, one strict QA in normal cases."""
 
     async def draft_claim(
         self,
@@ -148,21 +182,25 @@ class ProductionOpenAILegalService(_FastBase):
         research: LegalResearch,
         language: str = "ru",
     ) -> ClaimDraft:
+        profile = detect_claim_profile(case_context)
         verified_block = "\n".join(f"- {x}" for x in research.verified_claims) or "нет подтвержденных выводов"
         unverified_block = "\n".join(f"- {x}" for x in research.unverified_claims) or "нет"
 
         prompt = (
             "Сформируй судебный проект искового заявления по праву Республики Казахстан. "
             "Верни только структуру документа для Word, без чатовых пояснений.\n\n"
+            f"ПРЕДВАРИТЕЛЬНЫЙ ПРОФИЛЬ СПОРА: {profile.label}. Это поисковая маршрутизация, а не установленный юридический факт.\n"
+            f"ФОКУС: {profile.research_focus}\n\n"
             "ПРАВИЛА:\n"
             "1. Используй все известные реквизиты сторон и не выдумывай отсутствующие.\n"
             "2. Факты сохраняй ровно с той степенью точности, которая есть в материалах. Если пользователь пишет, что дата примерная или требует сверки, не превращай её в точную.\n"
-            "3. Правовое обоснование — только из VERIFIED.\n"
+            "3. Правовое обоснование и юридическая квалификация отношений — только из VERIFIED. Нельзя выдавать предполагаемый вид договора за установленный факт, если профильные нормы не подтверждены.\n"
             "4. Не утверждай наличие квитанции госпошлины или другого приложения, если его нет в материалах.\n"
             "5. Не придумывай суд. Неподтвержденный суд оставь как поле для уточнения.\n"
-            "6. Не указывай сумму госпошлины самостоятельно — её считает код.\n"
-            "7. В attachments перечисляй только реально имеющиеся документы; отсутствующее обязательное приложение помечай как требующее добавления.\n"
-            "8. В теле иска запрещены URL, Markdown, NEEDS_VERIFICATION и чатовые советы.\n\n"
+            "6. Не указывай сумму госпошлины самостоятельно — её считает код. Вообще не придумывай суммы судебных расходов.\n"
+            "7. В attachments перечисляй ТОЛЬКО реально имеющиеся документы. Отсутствующее обязательное приложение укажи только в verification_notes, но не вставляй служебную заглушку в список приложений.\n"
+            "8. В теле иска запрещены URL, Markdown, NEEDS_VERIFICATION, 'подлежит уточнению' и чатовые советы.\n"
+            "9. Название иска должно соответствовать фактическому способу защиты: взыскание долга, расторжение, признание, возмещение вреда и т.д. Не используй универсальное название, если VERIFIED и факты позволяют определить требование точнее.\n\n"
             f"МАТЕРИАЛЫ:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
             f"VERIFIED:\n{verified_block}\n\n"
             f"НЕ ПОДТВЕРЖДЕНО (только для verification_notes):\n{unverified_block}"
@@ -171,7 +209,8 @@ class ProductionOpenAILegalService(_FastBase):
         payload, _ = await self._structured_response(
             model=self.settings.openai_model,
             instructions=(
-                "Ты старший судебный юрист KORGAN. Составляй точный проект иска без фактических догадок. "
+                "Ты старший судебный юрист KORGAN. Сначала правильно квалифицируй требуемый вид иска по подтвержденным нормам, "
+                "затем составляй точный проект без фактических догадок. "
                 f"Язык: {'казахский' if language == 'kk' else 'русский'}."
             ),
             content=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
@@ -191,7 +230,7 @@ class ProductionOpenAILegalService(_FastBase):
 
         # Missing fields alone do not justify a costly model rewrite. The
         # preflight catches filing-critical party data before research; any
-        # remaining missing field is surfaced as a review note.
+        # remaining filing item is surfaced as a review note.
         if not blocking:
             for item in validation["missing_required_fields"]:
                 if item not in draft.verification_notes:
@@ -199,7 +238,9 @@ class ProductionOpenAILegalService(_FastBase):
         else:
             repair_prompt = (
                 "Исправь только перечисленные дефекты. Не добавляй новых фактов или права. "
-                "Сохрани приблизительные даты приблизительными и не утверждай наличие квитанции госпошлины, если её нет.\n\n"
+                "Сохрани приблизительные даты приблизительными, не утверждай наличие отсутствующих документов, "
+                "не придумывай судебные расходы и используй юридическую квалификацию только из VERIFIED.\n\n"
+                f"ПРОФИЛЬ: {profile.label}\n"
                 f"МАТЕРИАЛЫ:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
                 f"VERIFIED:\n{verified_block}\n\n"
                 f"ЗАМЕЧАНИЯ:\n{json.dumps(blocking, ensure_ascii=False)}\n\n"

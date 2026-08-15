@@ -77,3 +77,56 @@ class ClaimDraft:
     source_urls: list[str]
     # Filled deterministically by korgan.legal_calc, never by the model.
     state_duty: str = ""
+
+
+@dataclass(slots=True)
+class ContractSection:
+    heading: str
+    clauses: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ContractDraft:
+    status: VerificationStatus
+    contract_type: str
+    title: str
+    place_and_date: str
+    party_a: list[str]
+    party_b: list[str]
+    preamble: list[str]
+    sections: list[ContractSection]
+    requisites_a: list[str]
+    requisites_b: list[str]
+    verification_notes: list[str]
+    source_urls: list[str]
+
+    @classmethod
+    def from_payload(
+        cls,
+        *,
+        status: VerificationStatus,
+        source_urls: list[str],
+        payload: dict,
+    ) -> "ContractDraft":
+        sections = [
+            ContractSection(
+                heading=str(item.get("heading", "")).strip(),
+                clauses=[str(x).strip() for x in item.get("clauses", []) if str(x).strip()],
+            )
+            for item in payload.get("sections", [])
+            if isinstance(item, dict)
+        ]
+        return cls(
+            status=status,
+            contract_type=str(payload.get("contract_type", "")).strip(),
+            title=str(payload.get("title", "")).strip(),
+            place_and_date=str(payload.get("place_and_date", "")).strip(),
+            party_a=[str(x).strip() for x in payload.get("party_a", []) if str(x).strip()],
+            party_b=[str(x).strip() for x in payload.get("party_b", []) if str(x).strip()],
+            preamble=[str(x).strip() for x in payload.get("preamble", []) if str(x).strip()],
+            sections=sections,
+            requisites_a=[str(x).strip() for x in payload.get("requisites_a", []) if str(x).strip()],
+            requisites_b=[str(x).strip() for x in payload.get("requisites_b", []) if str(x).strip()],
+            verification_notes=[str(x).strip() for x in payload.get("verification_notes", []) if str(x).strip()],
+            source_urls=list(source_urls),
+        )
