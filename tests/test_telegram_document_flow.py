@@ -146,6 +146,7 @@ def test_pdf_upload_is_extracted_then_processed_and_delivered_as_word():
     assert session.state == SessionState.AWAITING_DOCUMENTS
     assert "[DOCUMENT doc-1]" in (session.case_buffer or "")
     assert "5 450 000 тенге" in (session.case_buffer or "")
+    assert "document bytes" not in (session.case_buffer or "")
     assert engine.calls == []
 
     runtime.handle_update(_callback("documents:build"))
