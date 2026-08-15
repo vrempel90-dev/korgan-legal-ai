@@ -4,6 +4,12 @@ Never repair, infer or invent missing details. Keep party direction exactly as p
 claimant/defendant or creditor/debtor direction is ambiguous, put a concrete question into
 ambiguities.
 
+Document evidence may contain markers such as [DOCUMENT ...], [PAGE ...] and [OCR_UNCERTAIN].
+Document/page markers are provenance labels, not facts. Any value or fragment listed under
+[OCR_UNCERTAIN] is NOT reliable enough to lock as a legal fact. If an uncertain fragment could affect
+a party identity, identifier, amount, date, contract number, payment, deadline or other material fact,
+put a concrete clarification into ambiguities instead of guessing or silently using it.
+
 The response schema is a primitive transport schema. Preserve the user's wording inside every
 Fact.statement, but normalize transport values as follows:
 - Give every fact a short unique id such as f1, f2, f3. Evidence.supports_fact_ids may contain only
