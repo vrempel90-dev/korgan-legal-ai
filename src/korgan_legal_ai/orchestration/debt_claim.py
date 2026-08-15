@@ -9,6 +9,7 @@ from korgan_legal_ai.domain.exceptions import LegalQABlocked
 from korgan_legal_ai.domain.models import LegalArea, LockedCase, RoutingDecision, WorkflowResult
 from korgan_legal_ai.drafting.debt_claim import DebtClaimDrafter
 from korgan_legal_ai.evidence.service import EvidenceMapBuilder
+from korgan_legal_ai.house_style import load_rules, review_claim_presentation
 from korgan_legal_ai.procedural.checker import ProceduralChecker
 from korgan_legal_ai.qa.service import FinalLegalQA
 
@@ -49,6 +50,26 @@ class DebtClaimWorkflow:
         """Expose verification compatibility without keeping any prior case/audit entries."""
         return _AuditVerificationSnapshot(self._last_audit_verified)
 
+    @staticmethod
+    def _audit_house_style(audit: HashChainAuditLog, document, calculation, *, event: str) -> None:
+        """Run presentation-only checks without changing legal content or verification state.
+
+        The audit stores only rule ids and booleans. It never stores the document text or a style
+        finding detail, so client facts cannot leak through this new layer.
+        """
+        rule_set = load_rules()
+        findings = review_claim_presentation(document, calculation, rule_set=rule_set)
+        audit.append(
+            event,
+            {
+                "rule_set_version": rule_set.version,
+                "findings": [
+                    {"rule_id": finding.rule_id, "satisfied": finding.satisfied}
+                    for finding in findings
+                ],
+            },
+        )
+
     def run(self, case: LockedCase, routing: RoutingDecision) -> WorkflowResult:
         if routing.legal_area != LegalArea.DEBT_RECOVERY:
             raise ValueError("DebtClaimWorkflow only accepts debt_recovery routing")
@@ -79,6 +100,8 @@ class DebtClaimWorkflow:
         audit.append("procedural_checked", procedural.model_dump(mode="json"))
 
         document = self.drafter.draft(case, procedural, evidence_map, calculation)
+        self._audit_house_style(audit, document, calculation, event="house_style_review")
+
         citations = [citation for item in procedural.items for citation in item.sources]
         qa_result = self.qa.check(
             case,
@@ -100,6 +123,12 @@ class DebtClaimWorkflow:
                 {"violation_codes": [violation.code for violation in qa_result.violations]},
             )
             fallback = self.drafter.safe_fallback(case, procedural, evidence_map, calculation)
+            self._audit_house_style(
+                audit,
+                fallback,
+                calculation,
+                event="safe_fallback_house_style_review",
+            )
             fallback_qa = self.qa.check(
                 case,
                 fallback,
