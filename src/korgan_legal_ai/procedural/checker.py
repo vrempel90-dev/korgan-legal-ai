@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from korgan_legal_ai.blueprints.models import STYLE_SUPPORT_ITEM, DocumentBlueprint
 from korgan_legal_ai.domain.models import (
     CalculationResult,
     EvidenceKind,
@@ -461,6 +462,37 @@ class ProceduralChecker:
             sources=citations,
         )
 
+    def _style_support_item(
+        self,
+        blueprint: DocumentBlueprint,
+        *,
+        as_of_date: date | None,
+    ) -> ProceduralItem:
+        """Resolve norms quoted for presentation only.
+
+        The result is deliberately never NEEDS_VERIFICATION. A house-style quote the corpus cannot
+        confirm is simply not printed, and reporting it as a legal gap would put a false
+        NEEDS_VERIFICATION on a document whose actual legal content is fully determined.
+        """
+        citations, verified = self._exact_sources(
+            list(blueprint.style_norm_locators),
+            as_of_date=as_of_date,
+        )
+        return ProceduralItem(
+            name=STYLE_SUPPORT_ITEM,
+            status=VerificationStatus.VERIFIED if verified else VerificationStatus.NOT_APPLICABLE,
+            conclusion=(
+                "Формулировки фирменного стиля подтверждены по canonical-корпусу."
+                if verified
+                else "Стилевые цитаты недоступны в канoническом корпусе и не выводятся в документ."
+            ),
+            sources=[
+                citation
+                for citation in citations
+                if citation.status == VerificationStatus.VERIFIED
+            ],
+        )
+
     def check(
         self,
         case: LockedCase,
@@ -468,9 +500,14 @@ class ProceduralChecker:
         routing: RoutingDecision | None = None,
         calculation: CalculationResult | None = None,
         as_of_date: date | None = None,
+        blueprint: DocumentBlueprint | None = None,
     ) -> ProceduralReport:
+        issues = (
+            blueprint.procedural_issues if blueprint is not None else tuple(PROCEDURAL_ISSUES)
+        )
         items: list[ProceduralItem] = []
-        for name, issue in PROCEDURAL_ISSUES.items():
+        for name in issues:
+            issue = PROCEDURAL_ISSUES.get(name, name)
             if name == "state_duty":
                 item = self._state_duty_item(case, routing, calculation, as_of_date=as_of_date)
             elif name == "jurisdiction":
@@ -486,4 +523,6 @@ class ProceduralChecker:
             else:
                 item = self._generic_item(name, issue, as_of_date=as_of_date)
             items.append(item)
+        if blueprint is not None and blueprint.style_norm_locators:
+            items.append(self._style_support_item(blueprint, as_of_date=as_of_date))
         return ProceduralReport(items=items)

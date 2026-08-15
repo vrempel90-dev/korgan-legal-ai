@@ -75,6 +75,9 @@ class DocumentType(StrEnum):
     CONTRACT = "contract"
     MOTION = "motion"
     CONSULTATION = "consultation"
+    PRETRIAL_DEMAND = "pretrial_demand"
+    COMPLAINT = "complaint"
+    APPEAL = "appeal"
 
 
 class LegalArea(StrEnum):
@@ -165,6 +168,23 @@ class Evidence(BaseModel):
     supports_fact_ids: list[str] = Field(default_factory=list)
 
 
+class Payment(BaseModel):
+    """One payment credited against the debt, with the date it was actually made.
+
+    The date is what lets the penalty accrue on the balance that was really outstanding in each
+    period instead of on today's remainder. A payment without a date is still counted against the
+    debt; it simply cannot narrow the accrual window.
+    """
+
+    amount: Decimal
+    paid_on: date | None = None
+
+    @field_validator("paid_on", mode="before")
+    @classmethod
+    def normalize_paid_on(cls, value):
+        return _normalize_explicit_date(value)
+
+
 class Financials(BaseModel):
     """Explicit monetary facts and contractual penalty parameters.
 
@@ -174,6 +194,7 @@ class Financials(BaseModel):
 
     contract_amount: Decimal | None = None
     payments: list[Decimal] = Field(default_factory=list)
+    payment_schedule: list[Payment] = Field(default_factory=list)
     principal: Decimal | None = None
     penalty: Decimal | None = None
     interest: Decimal | None = None
@@ -285,6 +306,14 @@ class EvidenceMap(BaseModel):
         return [link.fact_id for link in self.links if not link.supported]
 
 
+class PenaltyPeriod(BaseModel):
+    start: date
+    end: date
+    days: int = Field(ge=0)
+    outstanding: Decimal
+    amount: Decimal
+
+
 class CalculationResult(BaseModel):
     contract_amount: Decimal | None = None
     payments_total: Decimal = Decimal("0")
@@ -300,6 +329,11 @@ class CalculationResult(BaseModel):
     penalty_days: int | None = Field(default=None, ge=0)
     penalty_rate_percent_per_day: Decimal | None = Field(default=None, ge=0)
     penalty_cap_amount: Decimal | None = Field(default=None, ge=0)
+    penalty_cap_applied: bool = False
+    # Every accrual period the penalty was built from: start, end, days and the balance that was
+    # actually outstanding during that period. This is what makes a period-based penalty auditable
+    # by a human instead of being a single unexplained number.
+    penalty_periods: list["PenaltyPeriod"] = Field(default_factory=list)
 
 
 class DraftDocument(BaseModel):

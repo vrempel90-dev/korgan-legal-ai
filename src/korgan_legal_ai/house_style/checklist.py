@@ -8,13 +8,39 @@ from korgan_legal_ai.house_style.rules import HouseStyleRuleSet, load_rules
 
 # Presentation probes only. Each one asks "is the verified content laid out the KORGAN way?",
 # never "is this legally correct?" — the latter belongs to Legal RAG and Final Legal QA.
+#
+# Some rules describe a layout the firm can always produce (a heading, a numbered attachment list).
+# Others describe quoting a specific norm, and those can only be satisfied when the canonical corpus
+# supplied that norm's effective wording. Reporting the second group as unsatisfied on an empty
+# corpus is the correct outcome, not a defect: the alternative would be reciting law from memory.
 _PROBES: dict[str, re.Pattern[str]] = {
     "header.court_then_parties_then_price": re.compile(r"ЦЕНА ИСКА", re.I),
     "heading.isk_with_subject": re.compile(r"ИСКОВОЕ ЗАЯВЛЕНИЕ|И\s?С\s?К\b"),
     "calc.explicit_formula": re.compile(r"РАСЧЕТ ТРЕБОВАНИЙ", re.I),
     "pretrial.factual_block": re.compile(r"ДОСУДЕБН", re.I),
-    "closing.rukovodstvuyas_proshu_sud": re.compile(r"ПРОШУ|ТРЕБОВАНИ", re.I),
-    "attachments.numbered_from_text": re.compile(r"ПРИЛОЖЕНИ", re.I),
+    "closing.rukovodstvuyas_proshu_sud": re.compile(r"(?is)Руководствуясь.*?(ПРОШУ|ТРЕБУЮ)"),
+    "attachments.numbered_from_text": re.compile(r"(?is)ПРИЛОЖЕНИ.*?^\s*1\.\s+\S", re.M),
+    # The opening formula is a verbatim ГПК ст. 8 quote; it appears only when the corpus verified it.
+    "opening.gpk8_verbatim": re.compile(r"(?s)«.+?»\s*\n\(.*?стать[яеи]\s*8\b", re.I),
+    # The profile norm is cited right where the contractual relationship is described.
+    "facts.norm_after_contract": re.compile(
+        r"(?is)ПРАВОВОЕ ОБОСНОВАНИЕ.*?^-\s+.*,\s*статья\s+\d+", re.M
+    ),
+    "costs.representative_113": re.compile(r"(?i)представител\w*.*стать\w*\s*113"),
+    "duty.state_fee_separate_demand": re.compile(
+        r"(?im)^\s*\d+\.\s+.*государственн\w+\s+пошлин", re.U
+    ),
+    "signature.representative_ecp": re.compile(
+        r"(?i)(Подписант\s*:|ЭЦП|Подпись\s*:\s*_+)"
+    ),
+}
+
+# Why a rule that depends on verified law could not be satisfied. Shown as finding detail so a
+# reviewer can tell "the corpus lacks this norm" apart from "the drafter forgot the house style".
+_CORPUS_DEPENDENT = {
+    "opening.gpk8_verbatim": "Дословная вступительная цитата печатается только при VERIFIED ст. 8 ГПК РК.",
+    "facts.norm_after_contract": "Профильная норма приводится только при наличии VERIFIED-источника.",
+    "costs.representative_113": "Требование о расходах на представителя приводится только при VERIFIED ст. 113 ГПК РК.",
 }
 
 _DUPLICATE_ROW = re.compile(r"^\s*Иные суммы:\s*0*[.,]?0*\s+\w+\s*$", re.M)
@@ -48,11 +74,13 @@ def review_claim_presentation(
         probe = _PROBES.get(rule.id)
         if probe is None:
             continue
+        satisfied = bool(probe.search(text))
         findings.append(
             StyleFinding(
                 rule_id=rule.id,
                 title=rule.title,
-                satisfied=bool(probe.search(text)),
+                satisfied=satisfied,
+                detail="" if satisfied else _CORPUS_DEPENDENT.get(rule.id, ""),
             )
         )
 

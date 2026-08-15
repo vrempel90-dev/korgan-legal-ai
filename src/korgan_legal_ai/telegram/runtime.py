@@ -5,12 +5,13 @@ import traceback
 from threading import Event
 from typing import Any
 
+from korgan_legal_ai.blueprints.registry import CLAIM_DEBT_RECOVERY, resolve_blueprint
 from korgan_legal_ai.documents import DocumentExtractionError, OpenAIDocumentExtractor
 from korgan_legal_ai.domain.exceptions import ClarificationRequired, LegalQABlocked
 from korgan_legal_ai.orchestration.engine import LegalEngine
 from korgan_legal_ai.telegram.localization import text
 from korgan_legal_ai.telegram.session import SessionState, SessionStore, TelegramSession
-from korgan_legal_ai.telegram.word_export import build_claim_docx
+from korgan_legal_ai.telegram.word_export import build_document_docx
 
 logger = logging.getLogger(__name__)
 
@@ -282,12 +283,24 @@ class TelegramRuntime:
         if not hasattr(self.api, "send_document"):
             return
         try:
-            data = build_claim_docx(result.document.text)
+            routing = getattr(result, "routing", None)
+            if routing is not None:
+                blueprint = resolve_blueprint(routing.document_type, routing.legal_area)
+            else:
+                document_type = getattr(result.document, "document_type", None)
+                blueprint = (
+                    resolve_blueprint(document_type) if document_type is not None else None
+                )
+            # Word delivery is presentation. If the document type cannot be identified, fall back to
+            # the default layout rather than withholding a file the legal pipeline already approved.
+            blueprint = blueprint or CLAIM_DEBT_RECOVERY
+            data = build_document_docx(result.document.text, blueprint=blueprint)
             case_id = getattr(getattr(result, "locked_case", None), "case_id", "")
             suffix = str(case_id)[:8] if case_id else "draft"
+            slug = blueprint.file_slug
             self.api.send_document(
                 chat_id,
-                filename=f"KORGAN_isk_{suffix}.docx",
+                filename=f"KORGAN_{slug}_{suffix}.docx",
                 data=data,
                 caption=text(session.language, "word_ready"),
             )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from korgan_legal_ai.blueprints.models import DocumentBlueprint
 from korgan_legal_ai.domain.models import (
     CalculationResult,
     DraftDocument,
@@ -39,6 +40,7 @@ class FinalLegalQA:
         *,
         procedural: ProceduralReport | None = None,
         calculation: CalculationResult | None = None,
+        blueprint: DocumentBlueprint | None = None,
     ) -> QAResult:
         violations = []
         for policy in self.policies:
@@ -49,6 +51,7 @@ class FinalLegalQA:
                     citations=citations,
                     procedural=procedural,
                     calculation=calculation,
+                    blueprint=blueprint,
                 )
             )
         return QAResult(passed=not any(violation.blocking for violation in violations), violations=violations)

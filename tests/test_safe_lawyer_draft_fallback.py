@@ -21,7 +21,7 @@ from korgan_legal_ai.orchestration.debt_claim import DebtClaimWorkflow
 
 
 class NeedsVerificationProcedural:
-    def check(self, case, *, routing, calculation, as_of_date):
+    def check(self, case, *, routing, calculation, as_of_date, blueprint=None):
         return ProceduralReport(
             items=[
                 ProceduralItem(
