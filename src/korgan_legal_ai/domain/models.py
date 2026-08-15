@@ -101,12 +101,20 @@ class Evidence(BaseModel):
 
 
 class Financials(BaseModel):
+    """Explicit monetary facts and contractual penalty parameters.
+
+    ``penalty`` is a monetary amount only. Percentage clauses must be represented in the dedicated
+    rate/cap fields so a percentage can never be mis-parsed as KZT.
+    """
+
     principal: Decimal | None = None
     penalty: Decimal | None = None
     interest: Decimal | None = None
     other: Decimal | None = None
     user_stated_total: Decimal | None = None
     currency: str = "KZT"
+    penalty_rate_percent_per_day: Decimal | None = Field(default=None, ge=0)
+    penalty_cap_percent_of_principal: Decimal | None = Field(default=None, ge=0)
 
 
 class ProcedureFacts(BaseModel):
@@ -208,6 +216,9 @@ class CalculationResult(BaseModel):
     total: Decimal
     currency: str
     mismatch_with_user_total: bool = False
+    penalty_days: int | None = Field(default=None, ge=0)
+    penalty_rate_percent_per_day: Decimal | None = Field(default=None, ge=0)
+    penalty_cap_amount: Decimal | None = Field(default=None, ge=0)
 
 
 class DraftDocument(BaseModel):

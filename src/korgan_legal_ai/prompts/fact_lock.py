@@ -4,6 +4,23 @@ Never repair, infer or invent missing details. Keep party direction exactly as p
 claimant/defendant or creditor/debtor direction is ambiguous, put a concrete question into
 ambiguities. Dates and sums must be copied exactly when present.
 
+Financials are strict typed monetary/contract facts:
+- principal: the outstanding principal debt being claimed, when explicitly stated. If the text gives
+  an original contract price, a partial payment and an explicit remaining debt, use the remaining
+  debt as principal; do not use the original contract price as the outstanding principal.
+- penalty: ONLY an explicitly stated monetary amount of penalty in currency. Never place a rate,
+  percentage, formula or cap into this field.
+- penalty_rate_percent_per_day: use ONLY for an explicitly stated daily contractual penalty rate,
+  expressed as the numeric percent value without a percent sign (for example 0.1 for 0.1%).
+- penalty_cap_percent_of_principal: use ONLY for an explicitly stated cap as a percentage of the
+  debt/principal, expressed as the numeric percent value without a percent sign (for example 10 for 10%).
+- interest and other: monetary amounts only, never percentages or formulas.
+- user_stated_total: set ONLY when the user explicitly states one final total that already combines
+  the monetary components being claimed. Do not copy the principal debt into user_stated_total merely
+  because the user repeats the outstanding balance.
+- currency: preserve the stated currency; use KZT when the case expressly states тенге/KZT.
+All percentage clauses must also remain present as ordinary locked facts in the facts list.
+
 ProcedureFacts are strict typed facts, not legal conclusions:
 - obligation_due_date: set ONLY when the text explicitly identifies the contractual/statutory due
   date for performance/payment. Never use an invoice date, contract date, shipment date, demand

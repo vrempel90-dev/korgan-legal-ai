@@ -62,10 +62,13 @@ class DebtClaimWorkflow:
         audit.append("task_routed", routing.model_dump(mode="json"))
 
         evidence_map = self.evidence.build(case)
-        calculation = self.calculations.calculate_money(case.financials)
-        audit.append("calculation_completed", calculation.model_dump(mode="json"))
-
         as_of_date = self.as_of_date_provider()
+        calculation = self.calculations.calculate_money(
+            case.financials,
+            obligation_due_date=case.procedure.obligation_due_date,
+            as_of_date=as_of_date,
+        )
+        audit.append("calculation_completed", calculation.model_dump(mode="json"))
         audit.append("procedural_reference_date", {"date": as_of_date.isoformat()})
         procedural = self.procedural.check(
             case,
