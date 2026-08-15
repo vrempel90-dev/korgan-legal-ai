@@ -86,6 +86,36 @@ class DebtClaimWorkflow:
         )
         audit.append("final_qa", qa_result.model_dump(mode="json"))
 
+        # The legal safety rule is "do not release an unsafe draft", not "withhold every useful
+        # document when the LLM made a formatting or citation mistake". If an LLM draft is blocked,
+        # build a deterministic lawyer-review draft from the already locked facts and verified
+        # procedural output. The fallback contains explicit NEEDS_VERIFICATION markers and must pass
+        # the exact same Final Legal QA before anything is released.
+        if not qa_result.passed and self.drafter.provider is not None and self.drafter.model:
+            audit.append(
+                "llm_draft_blocked_by_final_qa",
+                {"violation_codes": [violation.code for violation in qa_result.violations]},
+            )
+            fallback = self.drafter.safe_fallback(case, procedural, evidence_map, calculation)
+            fallback_qa = self.qa.check(
+                case,
+                fallback,
+                citations,
+                calculation=calculation,
+                procedural=procedural,
+            )
+            audit.append("safe_fallback_final_qa", fallback_qa.model_dump(mode="json"))
+            if fallback_qa.passed:
+                document = fallback
+                qa_result = fallback_qa
+                audit.append(
+                    "safe_fallback_selected",
+                    {
+                        "readiness": document.readiness,
+                        "needs_verification": document.needs_verification,
+                    },
+                )
+
         if not qa_result.passed:
             self._last_audit_verified = audit.verify()
             raise LegalQABlocked("Final Legal QA blocked document output")

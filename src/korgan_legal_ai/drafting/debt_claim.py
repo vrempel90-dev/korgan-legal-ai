@@ -27,6 +27,43 @@ class DebtClaimDrafter:
         self.provider = provider
         self.model = model
 
+    @staticmethod
+    def _verification_needs(
+        procedural: ProceduralReport,
+        evidence_map: EvidenceMap,
+        calculation: CalculationResult,
+    ) -> list[str]:
+        needs = list(dict.fromkeys(procedural.needs_verification))
+        if evidence_map.unsupported_fact_ids:
+            needs.append("evidence_gaps")
+        if calculation.mismatch_with_user_total:
+            needs.append("claim_total_mismatch")
+        return list(dict.fromkeys(needs))
+
+    @classmethod
+    def _document(
+        cls,
+        *,
+        text: str,
+        procedural: ProceduralReport,
+        evidence_map: EvidenceMap,
+        calculation: CalculationResult,
+        summary: str,
+    ) -> DraftDocument:
+        needs = cls._verification_needs(procedural, evidence_map, calculation)
+        readiness = (
+            ReadinessStatus.LAWYER_REVIEW_DRAFT
+            if needs
+            else ReadinessStatus.READY_FOR_FINAL_HUMAN_REVIEW
+        )
+        return DraftDocument(
+            document_type=DocumentType.CLAIM,
+            text=text,
+            readiness=readiness,
+            needs_verification=needs,
+            summary=summary,
+        )
+
     def draft(
         self,
         case: LockedCase,
@@ -34,12 +71,6 @@ class DebtClaimDrafter:
         evidence_map: EvidenceMap,
         calculation: CalculationResult,
     ) -> DraftDocument:
-        needs = list(dict.fromkeys(procedural.needs_verification))
-        if evidence_map.unsupported_fact_ids:
-            needs.append("evidence_gaps")
-        if calculation.mismatch_with_user_total:
-            needs.append("claim_total_mismatch")
-
         if self.provider is not None and self.model:
             payload = {
                 "locked_case": case.model_dump(mode="json"),
@@ -47,11 +78,14 @@ class DebtClaimDrafter:
                 "evidence_map": evidence_map.model_dump(mode="json"),
                 "calculation": calculation.model_dump(mode="json"),
                 "instruction": (
-                    "Use VERIFIED procedural conclusions and exact citations as supplied. "
-                    "Do not introduce any article, amount, date, deadline, court rule, attachment "
-                    "or representative power whose status/fact is not explicitly VERIFIED/locked. "
-                    "The debt prayer amount must exactly equal calculation.total. If state duty is "
-                    "VERIFIED, state it separately as court costs and never add it to the claim price."
+                    "Produce a polished lawyer-review claim. Use VERIFIED procedural conclusions "
+                    "and exact citations as supplied. For every NEEDS_VERIFICATION procedural item, "
+                    "keep the claim useful but put a visible `NEEDS_VERIFICATION — ...` marker in "
+                    "the relevant field or section. Do not introduce any article, amount, date, "
+                    "deadline, court rule, attachment or representative power whose status/fact is "
+                    "not explicitly VERIFIED/locked. The debt prayer amount must exactly equal "
+                    "calculation.total. If state duty is VERIFIED, state it separately as court "
+                    "costs and never add it to the claim price."
                 ),
             }
             generated = self.provider.parse(
@@ -64,17 +98,35 @@ class DebtClaimDrafter:
         else:
             text = self._deterministic_draft(case, calculation, procedural)
 
-        readiness = (
-            ReadinessStatus.LAWYER_REVIEW_DRAFT
-            if needs
-            else ReadinessStatus.READY_FOR_FINAL_HUMAN_REVIEW
-        )
-        return DraftDocument(
-            document_type=DocumentType.CLAIM,
+        return self._document(
             text=text,
-            readiness=readiness,
-            needs_verification=needs,
+            procedural=procedural,
+            evidence_map=evidence_map,
+            calculation=calculation,
             summary="Сформирован проект иска о взыскании задолженности на основе зафиксированных фактов.",
+        )
+
+    def safe_fallback(
+        self,
+        case: LockedCase,
+        procedural: ProceduralReport,
+        evidence_map: EvidenceMap,
+        calculation: CalculationResult,
+    ) -> DraftDocument:
+        """Build a deterministic fail-closed claim after an LLM draft fails Final Legal QA.
+
+        The fallback deliberately contains visible NEEDS_VERIFICATION markers instead of guessing.
+        It is still a lawyer-review draft and must pass the same Final Legal QA before release.
+        """
+        return self._document(
+            text=self._deterministic_draft(case, calculation, procedural),
+            procedural=procedural,
+            evidence_map=evidence_map,
+            calculation=calculation,
+            summary=(
+                "Сформирован безопасный резервный проект иска после отклонения первоначального "
+                "текста Final Legal QA. Неподтвержденные вопросы оставлены как NEEDS_VERIFICATION."
+            ),
         )
 
     @staticmethod
@@ -89,6 +141,14 @@ class DebtClaimDrafter:
     @staticmethod
     def _item(procedural: ProceduralReport, name: str):
         return next((item for item in procedural.items if item.name == name), None)
+
+    @staticmethod
+    def _verified_or_need(item, *, verified_prefix: str = "") -> str:
+        if item is None:
+            return "NEEDS_VERIFICATION — вопрос не был проверен."
+        if item.status == VerificationStatus.VERIFIED:
+            return f"{verified_prefix}{item.conclusion}"
+        return f"NEEDS_VERIFICATION — {item.conclusion}"
 
     @staticmethod
     def _deterministic_draft(
@@ -109,6 +169,16 @@ class DebtClaimDrafter:
         facts = "\n".join(f"- {fact.statement}" for fact in case.facts)
         total = f"{calculation.total} {calculation.currency}"
 
+        jurisdiction = DebtClaimDrafter._item(procedural, "jurisdiction")
+        if jurisdiction is not None and jurisdiction.status == VerificationStatus.VERIFIED:
+            addressee = (
+                "В ______________________________ суд\n"
+                f"Подсудность: {jurisdiction.conclusion}"
+            )
+        else:
+            reason = jurisdiction.conclusion if jurisdiction is not None else "определить компетентный суд и территориальную подсудность."
+            addressee = f"В: NEEDS_VERIFICATION — {reason}"
+
         due_line = ""
         if case.procedure.obligation_due_date is not None:
             due_line = (
@@ -117,7 +187,7 @@ class DebtClaimDrafter:
             )
 
         pretrial = DebtClaimDrafter._item(procedural, "pretrial")
-        pretrial_text = pretrial.conclusion if pretrial else "Не проверено."
+        pretrial_text = DebtClaimDrafter._verified_or_need(pretrial)
         if case.procedure.pretrial_demand_sent_date is not None:
             pretrial_text += (
                 " Дата направления претензии: "
@@ -126,9 +196,11 @@ class DebtClaimDrafter:
             )
 
         state_duty = DebtClaimDrafter._item(procedural, "state_duty")
-        court_costs_section = ""
         if state_duty is not None and state_duty.status == VerificationStatus.VERIFIED:
-            court_costs_section = f"\n\nСУДЕБНЫЕ РАСХОДЫ\n{state_duty.conclusion}"
+            state_duty_line = f"Государственная пошлина: {state_duty.conclusion}"
+        else:
+            reason = state_duty.conclusion if state_duty is not None else "определить размер по действующему законодательству Республики Казахстан."
+            state_duty_line = f"Государственная пошлина: NEEDS_VERIFICATION — {reason}"
 
         verified_citations = [
             citation
@@ -151,25 +223,45 @@ class DebtClaimDrafter:
             if citation.article and citation.source_url
         )
         if not citation_lines:
-            citation_lines = "- Точные нормы не добавлены: подтвержденных citations для этого проекта нет."
+            citation_lines = (
+                "NEEDS_VERIFICATION — конкретные нормы материального и процессуального права "
+                "должны быть определены только после проверки действующей редакции по "
+                "верифицированному источнику."
+            )
 
         attachments = [evidence.title for evidence in case.evidence]
         if case.procedure.filing_mode == FilingMode.PAPER and case.procedure.copies_prepared is True:
             attachments.append("Копии иска и приложений по числу ответчиков и третьих лиц")
-        attachment_lines = "\n".join(
+        attachment_lines_list = [
             f"{index}. {title}" for index, title in enumerate(dict.fromkeys(attachments), start=1)
-        ) or "1. Перечень фактически предоставленных приложений отсутствует."
+        ]
+        attachments_item = DebtClaimDrafter._item(procedural, "attachments")
+        if attachments_item is not None and attachments_item.status != VerificationStatus.VERIFIED:
+            attachment_lines_list.append(
+                f"{len(attachment_lines_list) + 1}. NEEDS_VERIFICATION — {attachments_item.conclusion}"
+            )
+        if not attachment_lines_list:
+            attachment_lines_list.append(
+                "1. NEEDS_VERIFICATION — перечень фактически предоставленных приложений отсутствует."
+            )
+        attachment_lines = "\n".join(attachment_lines_list)
 
-        return f"""В ______________________________ суд
+        authority = DebtClaimDrafter._item(procedural, "authority")
+        authority_line = ""
+        if authority is not None and authority.status != VerificationStatus.VERIFIED:
+            authority_line = f"\n\nПОДПИСАНТ / ПРЕДСТАВИТЕЛЬ\nNEEDS_VERIFICATION — {authority.conclusion}"
+
+        return f"""{addressee}
 
 {claimant_block}
 
 {defendant_block}
 
-ИСК
+ИСКОВОЕ ЗАЯВЛЕНИЕ
 о взыскании задолженности
 
 ЦЕНА ИСКА: {total}
+{state_duty_line}
 
 ОБСТОЯТЕЛЬСТВА ДЕЛА
 {facts}{due_line}
@@ -182,12 +274,12 @@ class DebtClaimDrafter:
 Неустойка: {calculation.penalty} {calculation.currency}
 Проценты: {calculation.interest} {calculation.currency}
 Иные суммы: {calculation.other} {calculation.currency}
-Итого: {total}{court_costs_section}
+Итого: {total}
 
 ПРАВОВОЕ ОБОСНОВАНИЕ
-Требования основываются на обязательстве и доказательствах, изложенных выше. В настоящий
-проект включаются только точные нормы, прошедшие проверку по canonical-корпусу и официальному
-источнику.
+Истец основывает требования на зафиксированных договорных обязательствах, факте их исполнения
+со своей стороны и наличии непогашенной задолженности. Точные нормы указываются только при наличии
+VERIFIED-источника.
 {citation_lines}
 
 ПРОШУ СУД:
@@ -195,5 +287,5 @@ class DebtClaimDrafter:
 2. Взыскать судебные расходы в подтвержденном размере в соответствии с применимым законодательством.
 
 ПРИЛОЖЕНИЯ:
-{attachment_lines}
+{attachment_lines}{authority_line}
 """
