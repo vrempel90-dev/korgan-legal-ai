@@ -11,6 +11,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BufferedInputFile, KeyboardButton, Message, ReplyKeyboardMarkup
 
 from korgan.claim_docx import build_claim_docx
+from korgan.claim_intent import is_claim_drafting_request
 from korgan.config import get_settings
 from korgan.legal_types import ExtractedDocument, VerificationStatus
 from korgan.openai_legal import OpenAILegalService
@@ -77,7 +78,7 @@ async def start(message: Message, state: FSMContext) -> None:
     await message.answer(
         "⚖️ KORGAN Legal AI\n\n"
         "Я работаю по законодательству Республики Казахстан. Можно отправить PDF/DOCX/TXT, фото или скан документа — "
-        "я извлеку факты и сохраню их в материалах текущего дела. Затем нажмите «📄 Подготовить иск».\n\n"
+        "я извлеку факты и сохраню их в материалах текущего дела. Затем попросите подготовить иск.\n\n"
         "Точные статьи, сроки, госпошлина и подсудность используются только после проверки официального источника; "
         "если подтверждения нет — будет NEEDS_VERIFICATION.\n\n"
         "/ru — русский, /kk — қазақша, /claim — подготовить иск, /clear — очистить дело.",
@@ -100,8 +101,8 @@ async def set_kk(message: Message, state: FSMContext) -> None:
 @router.message(Command("help"))
 async def help_command(message: Message) -> None:
     await message.answer(
-        "1) Опишите ситуацию. 2) Прикрепите материалы дела. 3) Нажмите «📄 Подготовить иск». "
-        "Поддерживаются PDF, DOCX, TXT, JPG, JPEG, PNG, WEBP.",
+        "1) Опишите ситуацию. 2) Прикрепите материалы дела. 3) Напишите «подготовить иск». "
+        "KORGAN пришлёт готовый файл Word (.docx). Поддерживаются PDF, DOCX, TXT, JPG, JPEG, PNG, WEBP.",
         reply_markup=MENU,
     )
 
@@ -121,7 +122,7 @@ async def show_case(message: Message, state: FSMContext) -> None:
     facts = data.get("facts", []) or []
     await message.answer(
         f"Сейчас в деле: документов/сканов — {len(docs)}, текстовых описаний — {len(facts)}.\n"
-        "Пришлите дополнительные материалы или нажмите «📄 Подготовить иск».",
+        "Пришлите дополнительные материалы или попросите подготовить иск.",
         reply_markup=MENU,
     )
 
@@ -144,7 +145,7 @@ async def _analyze_upload(message: Message, state: FSMContext, data: bytes, file
     preview = extracted.as_context()
     await message.answer(
         f"✅ Материал разобран и добавлен в дело ({count}).\n\n{preview[:3200]}\n\n"
-        "Если всё верно, можно добавить ещё документы или нажать «📄 Подготовить иск».",
+        "Если всё верно, можно добавить ещё документы или попросить подготовить иск — он придёт файлом Word (.docx).",
         reply_markup=MENU,
     )
 
@@ -181,7 +182,7 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
         return
 
     lang = await _language(state)
-    await message.answer("Проверяю факты и правовую основу по официальным источникам РК…")
+    await message.answer("Проверяю материалы и формирую Word-документ…")
     await message.bot.send_chat_action(message.chat.id, "typing")
     try:
         research = await service.research_case(context, language=lang)
@@ -189,12 +190,15 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
         file_bytes = build_claim_docx(draft)
     except Exception:
         LOGGER.exception("Claim generation failed")
-        await message.answer("Не удалось подготовить проект иска. Повторите запрос после проверки материалов.", reply_markup=MENU)
+        await message.answer(
+            "Не удалось безопасно сформировать Word-документ. KORGAN не будет отправлять сырой текст иска в чат. Проверьте материалы и повторите запрос.",
+            reply_markup=MENU,
+        )
         return
 
     marker = "✅ VERIFIED" if draft.status == VerificationStatus.VERIFIED else "⚠️ NEEDS_VERIFICATION"
     notes = "\n".join(f"• {x}" for x in draft.verification_notes[:10])
-    caption = f"{marker}\nПроект иска сформирован из материалов текущего дела."
+    caption = f"{marker}\nГотовый проект иска — файл Word (.docx)."
     if notes:
         caption += f"\n\nПеред подачей проверьте:\n{notes[:2500]}"
     await message.answer_document(
@@ -216,6 +220,14 @@ async def legal_question(message: Message, state: FSMContext) -> None:
         return
     if message.text.startswith("/"):
         return
+
+    # Final fail-safe: a request to PREPARE a claim must never reach the
+    # consultation model. It always goes to the DOCX generator.
+    if is_claim_drafting_request(message.text):
+        LOGGER.info("CLAIM_INTENT_FORCED_TO_DOCX telegram_user_id=%s", message.from_user.id if message.from_user else None)
+        await claim_handler(message, state)
+        return
+
     data = await state.get_data()
     facts = list(data.get("facts", []) or [])
     facts.append(message.text)
