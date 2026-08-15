@@ -74,7 +74,7 @@ async def _save_document(state: FSMContext, extracted: ExtractedDocument) -> int
 
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext) -> None:
-    await state.set_data({"language": "ru", "documents": [], "facts": []})
+    await state.set_data({"language": "ru", "documents": [], "facts": [], "mode": "main"})
     await message.answer(
         "⚖️ KORGAN Legal AI\n\n"
         "Я работаю по законодательству Республики Казахстан. Можно отправить PDF/DOCX/TXT, фото или скан документа — "
@@ -111,7 +111,7 @@ async def help_command(message: Message) -> None:
 @router.message(F.text == "🗑 Очистить дело")
 async def clear_case(message: Message, state: FSMContext) -> None:
     lang = await _language(state)
-    await state.set_data({"language": lang, "documents": [], "facts": []})
+    await state.set_data({"language": lang, "documents": [], "facts": [], "mode": "main"})
     await message.answer("Материалы текущего дела удалены из сессии.", reply_markup=MENU)
 
 
@@ -173,6 +173,7 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
     global service
     if service is None:
         return
+    await state.update_data(mode="main")
     context = await _case_context(state)
     if not context.strip():
         await message.answer(
@@ -209,7 +210,8 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
 
 
 @router.message(F.text == "⚖️ Консультация")
-async def consultation_prompt(message: Message) -> None:
+async def consultation_prompt(message: Message, state: FSMContext) -> None:
+    await state.update_data(mode="consultation")
     await message.answer("Опишите вопрос одним сообщением. Если по делу уже загружены документы, я учту их.", reply_markup=MENU)
 
 
@@ -221,17 +223,22 @@ async def legal_question(message: Message, state: FSMContext) -> None:
     if message.text.startswith("/"):
         return
 
-    # Final fail-safe: a request to PREPARE a claim must never reach the
-    # consultation model. It always goes to the DOCX generator.
-    if is_claim_drafting_request(message.text):
+    data = await state.get_data()
+    explicit_consultation = data.get("mode") == "consultation"
+
+    # A direct claim request from the main mode must produce DOCX. But when the
+    # user explicitly pressed «Консультация», their next message belongs to the
+    # consultation agent even if the narrative contains words like «составь иск».
+    if is_claim_drafting_request(message.text) and not explicit_consultation:
         LOGGER.info("CLAIM_INTENT_FORCED_TO_DOCX telegram_user_id=%s", message.from_user.id if message.from_user else None)
         await claim_handler(message, state)
         return
 
-    data = await state.get_data()
     facts = list(data.get("facts", []) or [])
     facts.append(message.text)
-    await state.update_data(facts=facts[-20:])
+    # Consultation mode is intentionally one-shot. Further messages still go to
+    # ordinary consultation unless they explicitly request document generation.
+    await state.update_data(facts=facts[-20:], mode="main")
     context = await _case_context(state)
     lang = await _language(state)
     await message.bot.send_chat_action(message.chat.id, "typing")
