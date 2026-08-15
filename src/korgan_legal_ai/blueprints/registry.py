@@ -25,12 +25,16 @@ _RESPONSE_SIDES = PartyPresentation(
     opponent_label="Истец",
     author_roles=_DEFENDANT_ROLES,
     opponent_roles=_CLAIMANT_ROLES,
+    author_role=PartyRole.DEFENDANT,
+    opponent_role=PartyRole.CLAIMANT,
 )
 _DEBT_SIDES = PartyPresentation(
     author_label="Кредитор",
     opponent_label="Должник",
     author_roles=_CLAIMANT_ROLES,
     opponent_roles=_DEFENDANT_ROLES,
+    author_role=PartyRole.CREDITOR,
+    opponent_role=PartyRole.DEBTOR,
 )
 _APPLICANT_SIDES = PartyPresentation(
     author_label="Заявитель",

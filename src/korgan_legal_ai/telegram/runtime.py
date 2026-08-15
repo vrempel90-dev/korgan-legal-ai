@@ -5,9 +5,22 @@ import traceback
 from threading import Event
 from typing import Any
 
-from korgan_legal_ai.blueprints.registry import CLAIM_DEBT_RECOVERY, resolve_blueprint
+from korgan_legal_ai.blueprints.interview import UNKNOWN, field_by_id
+from korgan_legal_ai.blueprints.registry import (
+    BLUEPRINTS,
+    CLAIM_DEBT_RECOVERY,
+    blueprint_by_key,
+    resolve_blueprint,
+)
 from korgan_legal_ai.documents import DocumentExtractionError, OpenAIDocumentExtractor
 from korgan_legal_ai.domain.exceptions import ClarificationRequired, LegalQABlocked
+from korgan_legal_ai.domain.verification import verification_label
+from korgan_legal_ai.interview import (
+    InterviewState,
+    build_locked_case,
+    build_routing,
+    parse_answer,
+)
 from korgan_legal_ai.orchestration.engine import LegalEngine
 from korgan_legal_ai.telegram.localization import text
 from korgan_legal_ai.telegram.session import SessionState, SessionStore, TelegramSession
@@ -22,6 +35,7 @@ BOT_COMMANDS = [
     {"command": "menu", "description": "Главное меню"},
     {"command": "language", "description": "Язык интерфейса"},
     {"command": "privacy", "description": "Обработка данных"},
+    {"command": "back", "description": "Вернуться к предыдущему вопросу"},
     {"command": "cancel", "description": "Отменить текущий запрос"},
     {"command": "help", "description": "Помощь"},
 ]
@@ -134,6 +148,9 @@ class TelegramRuntime:
         return {
             "inline_keyboard": [
                 [
+                    {"text": text(language, "interview_button"), "callback_data": "flow:interview"},
+                ],
+                [
                     {"text": text(language, "claim_button"), "callback_data": "flow:claim"},
                     {"text": text(language, "claim_docs_button"), "callback_data": "flow:documents"},
                 ],
@@ -152,6 +169,26 @@ class TelegramRuntime:
             "inline_keyboard": [
                 [{"text": text(language, "documents_actions_build"), "callback_data": "documents:build"}],
                 [{"text": text(language, "documents_actions_clear"), "callback_data": "documents:clear"}],
+            ]
+        }
+
+    @staticmethod
+    def _document_type_markup() -> dict[str, Any]:
+        """One button per registered blueprint.
+
+        The list is derived from the registry, so a newly supported document type appears in the
+        dialogue without touching the transport layer.
+        """
+        return {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": f"{blueprint.title.capitalize()} — {blueprint.subject}",
+                        "callback_data": f"doctype:{blueprint.key}",
+                    }
+                ]
+                for blueprint in BLUEPRINTS
+                if blueprint.interview_fields
             ]
         }
 
@@ -211,6 +248,201 @@ class TelegramRuntime:
             text(session.language, "documents_prompt"),
             reply_markup=self._documents_markup(session.language),
         )
+
+    def _start_interview_picker(
+        self, user_id: int, chat_id: int, session: TelegramSession
+    ) -> None:
+        if not self._require_consent(user_id, chat_id, session):
+            return
+        session.case_buffer = None
+        session.state = SessionState.AWAITING_DOCUMENT_TYPE
+        self.sessions.save(user_id, session)
+        self.api.send_message(
+            chat_id,
+            text(session.language, "interview_choose_type"),
+            reply_markup=self._document_type_markup(),
+        )
+
+    def _begin_interview(
+        self, user_id: int, chat_id: int, session: TelegramSession, blueprint_key: str
+    ) -> None:
+        try:
+            blueprint = blueprint_by_key(blueprint_key)
+        except KeyError:
+            self.api.send_message(chat_id, text(session.language, "unsupported"))
+            self._send_menu(user_id, chat_id, session)
+            return
+
+        state = InterviewState(blueprint_key=blueprint.key)
+        session.state = SessionState.AWAITING_INTERVIEW
+        session.case_buffer = state.serialize()
+        self.sessions.save(user_id, session)
+        self.api.send_message(
+            chat_id,
+            text(
+                session.language,
+                "interview_started",
+                title=f"{blueprint.title.capitalize()} {blueprint.subject}",
+            ),
+        )
+        self._ask_next_question(user_id, chat_id, session, state)
+
+    def _ask_next_question(
+        self,
+        user_id: int,
+        chat_id: int,
+        session: TelegramSession,
+        state: InterviewState,
+    ) -> None:
+        field = state.next_field()
+        if field is None:
+            self._finish_interview(user_id, chat_id, session, state)
+            return
+
+        answered, total = state.progress()
+        language = session.language
+        prompt = field.prompt_ru if language != "kk" else field.prompt_kk
+        message = text(
+            language,
+            "interview_question",
+            index=answered + 1,
+            total=total,
+            question=prompt,
+        )
+        hint = field.hint_ru if language != "kk" else field.hint_kk
+        if hint:
+            message += text(language, "interview_hint", hint=hint)
+
+        markup = None
+        if field.choices:
+            markup = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": choice.label_ru if language != "kk" else choice.label_kk,
+                            "callback_data": f"answer:{field.id}:{choice.value}",
+                        }
+                    ]
+                    for choice in field.choices
+                ]
+            }
+        self.api.send_message(chat_id, message, reply_markup=markup)
+
+    def _record_interview_answer(
+        self,
+        user_id: int,
+        chat_id: int,
+        session: TelegramSession,
+        state: InterviewState,
+        field,
+        raw: str,
+    ) -> None:
+        parsed = parse_answer(field, raw)
+        if not parsed.ok:
+            self.api.send_message(
+                chat_id, text(session.language, "interview_invalid", error=parsed.error)
+            )
+            self._ask_next_question(user_id, chat_id, session, state)
+            return
+
+        state.record(field.id, parsed.value)
+        session.case_buffer = state.serialize()
+        self.sessions.save(user_id, session)
+        self._ask_next_question(user_id, chat_id, session, state)
+
+    def _finish_interview(
+        self,
+        user_id: int,
+        chat_id: int,
+        session: TelegramSession,
+        state: InterviewState,
+    ) -> None:
+        # Completeness is checked before any text is produced. An incomplete matter never reaches
+        # the drafting stage, so the system cannot "fill in" what it was not told.
+        missing = state.missing_required()
+        if missing:
+            self.api.send_message(
+                chat_id, text(session.language, "interview_incomplete", count=len(missing))
+            )
+            return
+
+        answered, total = state.progress()
+        unknown = [
+            field_by_id(key).prompt_ru.rstrip("?.")
+            for key, value in state.answers.items()
+            if value == UNKNOWN
+        ]
+        if unknown:
+            self.api.send_message(
+                chat_id,
+                text(session.language, "interview_unknown_summary", items="; ".join(unknown)),
+            )
+        self.api.send_message(
+            chat_id, text(session.language, "interview_ready", answered=answered, total=total)
+        )
+
+        blueprint = state.blueprint
+        try:
+            case = build_locked_case(blueprint, state.answers)
+            routing = build_routing(blueprint)
+            result = self.engine.process_prepared(case, routing)
+        except LegalQABlocked:
+            logger.warning("guided_request_blocked stage=final_qa reason=qa_blocked")
+            self.sessions.clear_case(user_id)
+            self.api.send_message(chat_id, text(session.language, "qa_blocked"))
+            return
+        except NotImplementedError:
+            logger.warning("guided_request_blocked stage=routing reason=unsupported_workflow")
+            self.sessions.clear_case(user_id)
+            self.api.send_message(chat_id, text(session.language, "unsupported"))
+            return
+        except Exception as exc:
+            stage, location, cause_type = self._safe_exception_diagnostics(exc)
+            logger.error(
+                "guided_request_failed stage=%s exception_type=%s cause_type=%s location=%s",
+                stage,
+                type(exc).__name__,
+                cause_type,
+                location,
+            )
+            self.sessions.clear_case(user_id)
+            self.api.send_message(chat_id, text(session.language, "internal_error"))
+            return
+
+        session = self.sessions.clear_case(user_id)
+        self._deliver_result(user_id, chat_id, session, result)
+
+    def _handle_interview_message(
+        self,
+        *,
+        user_id: int,
+        chat_id: int,
+        session: TelegramSession,
+        value: str,
+    ) -> None:
+        state = InterviewState.deserialize(session.case_buffer)
+        if state is None:
+            # Unreadable interview state is restarted rather than partially trusted.
+            self._start_interview_picker(user_id, chat_id, session)
+            return
+
+        if value == "/back":
+            if not state.asked:
+                self.api.send_message(chat_id, text(session.language, "interview_back_first"))
+                self._ask_next_question(user_id, chat_id, session, state)
+                return
+            last = state.asked.pop()
+            state.answers.pop(last, None)
+            session.case_buffer = state.serialize()
+            self.sessions.save(user_id, session)
+            self._ask_next_question(user_id, chat_id, session, state)
+            return
+
+        field = state.next_field()
+        if field is None:
+            self._finish_interview(user_id, chat_id, session, state)
+            return
+        self._record_interview_answer(user_id, chat_id, session, state, field, value)
 
     @staticmethod
     def _command(value: str) -> str | None:
@@ -274,6 +506,13 @@ class TelegramRuntime:
             self.api.send_message(chat_id, text(session.language, "cancelled"))
             if session.consent_version == self.privacy_version:
                 self._send_menu(user_id, chat_id, session)
+        elif command == "/back" and session.state == SessionState.AWAITING_INTERVIEW:
+            self._handle_interview_message(
+                user_id=user_id,
+                chat_id=chat_id,
+                session=session,
+                value="/back",
+            )
         elif command == "/help":
             self.api.send_message(chat_id, text(session.language, "help"))
         else:
@@ -355,6 +594,21 @@ class TelegramRuntime:
             return
 
         session = self.sessions.clear_case(user_id)
+        self._deliver_result(user_id, chat_id, session, result)
+
+    def _deliver_result(
+        self,
+        user_id: int,
+        chat_id: int,
+        session: TelegramSession,
+        result: Any,
+    ) -> None:
+        """Send the approved document, its verification queue and the Word file.
+
+        The NEEDS_VERIFICATION list is delivered as its own message, separate from the document
+        text, so the reviewer sees the outstanding checks as a work list rather than having to find
+        the markers inside the draft.
+        """
         document = result.document
         qa = getattr(result, "qa", None)
         qa_passed = getattr(qa, "passed", "unknown")
@@ -371,7 +625,14 @@ class TelegramRuntime:
         if document.needs_verification:
             self.api.send_message(
                 chat_id,
-                text(session.language, "needs", items=", ".join(document.needs_verification)),
+                text(
+                    session.language,
+                    "needs",
+                    items=", ".join(
+                        verification_label(item, session.language)
+                        for item in document.needs_verification
+                    ),
+                ),
             )
         else:
             self.api.send_message(chat_id, text(session.language, "no_needs"))
@@ -413,6 +674,15 @@ class TelegramRuntime:
             return False
 
         if not self._require_consent(user_id, chat_id, session):
+            return True
+
+        # The guided dialogue owns the encrypted buffer while it runs, so a file cannot be merged
+        # into it without silently discarding collected answers.
+        if session.state in {
+            SessionState.AWAITING_INTERVIEW,
+            SessionState.AWAITING_DOCUMENT_TYPE,
+        }:
+            self.api.send_message(chat_id, text(session.language, "interview_no_documents"))
             return True
 
         # If a user adds evidence while already describing/clarifying a case, keep the locked input
@@ -558,6 +828,23 @@ class TelegramRuntime:
         if not self._require_consent(user_id, chat_id, session):
             return
 
+        if session.state == SessionState.AWAITING_INTERVIEW:
+            self._handle_interview_message(
+                user_id=user_id,
+                chat_id=chat_id,
+                session=session,
+                value=value,
+            )
+            return
+
+        if session.state == SessionState.AWAITING_DOCUMENT_TYPE:
+            self.api.send_message(
+                chat_id,
+                text(session.language, "interview_choose_type"),
+                reply_markup=self._document_type_markup(),
+            )
+            return
+
         if session.state == SessionState.AWAITING_DOCUMENTS:
             safe_note = self._safe_user_note(value)
             if not self._append_case_text(session, f"[USER_NOTE]\n{safe_note}"):
@@ -630,6 +917,32 @@ class TelegramRuntime:
             language = session.language
             self.sessions.delete(user_id)
             self.api.send_message(chat_id, text(language, "privacy_declined"))
+            return
+        if data == "flow:interview":
+            self._start_interview_picker(user_id, chat_id, session)
+            return
+        if data.startswith("doctype:"):
+            if not self._require_consent(user_id, chat_id, session):
+                return
+            self._begin_interview(user_id, chat_id, session, data.split(":", maxsplit=1)[1])
+            return
+        if data.startswith("answer:"):
+            if not self._require_consent(user_id, chat_id, session):
+                return
+            state = InterviewState.deserialize(session.case_buffer)
+            if state is None or session.state != SessionState.AWAITING_INTERVIEW:
+                self._start_interview_picker(user_id, chat_id, session)
+                return
+            _, _, payload = data.partition(":")
+            field_id, _, choice = payload.partition(":")
+            pending = state.next_field()
+            # A tapped button from an earlier question must not overwrite a later answer.
+            if pending is None or pending.id != field_id:
+                self._ask_next_question(user_id, chat_id, session, state)
+                return
+            self._record_interview_answer(
+                user_id, chat_id, session, state, pending, choice
+            )
             return
         if data == "flow:claim":
             self._start_claim(user_id, chat_id, session)

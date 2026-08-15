@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from korgan_legal_ai.blueprints.registry import CLAIM_DEBT_RECOVERY, resolve_blueprint
 from korgan_legal_ai.domain.exceptions import ClarificationRequired
-from korgan_legal_ai.domain.models import WorkflowResult
+from korgan_legal_ai.domain.models import LockedCase, RoutingDecision, WorkflowResult
 from korgan_legal_ai.fact_lock.grounding import validate_locked_case_grounding
 from korgan_legal_ai.fact_lock.service import FactLockService
 from korgan_legal_ai.orchestration.document import DocumentWorkflow
@@ -30,6 +30,22 @@ class LegalEngine:
     @property
     def debt_claim(self) -> DocumentWorkflow:
         return self.workflows[CLAIM_DEBT_RECOVERY.key]
+
+    def process_prepared(self, case: LockedCase, routing: RoutingDecision) -> WorkflowResult:
+        """Run the pipeline on a case that was already collected deterministically.
+
+        The guided dialogue produces the locked case itself from validated answers, so Fact Lock
+        and the router have nothing to add: the facts were typed by the user and the document type
+        was chosen, not inferred. Everything after this point — verification, calculation, drafting
+        and Final Legal QA — is the same pipeline the free-text path runs.
+        """
+        blueprint = resolve_blueprint(routing.document_type, routing.legal_area)
+        workflow = self.workflows.get(blueprint.key) if blueprint is not None else None
+        if workflow is None:
+            raise NotImplementedError(
+                f"Workflow is not implemented yet: {routing.document_type}/{routing.legal_area}"
+            )
+        return workflow.run(case, routing)
 
     def process(self, raw_text: str) -> WorkflowResult:
         case = self.fact_lock.lock(raw_text)

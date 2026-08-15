@@ -205,6 +205,16 @@ class DateConsistencyPolicy(FinalQAPolicy):
             return []
 
         allowed = {fact.event_date for fact in case.facts if fact.event_date is not None}
+        # A date written inside a locked fact — "договор № 14 от 12.02.2026" — is part of LockedCase
+        # even when it was not extracted into a separate event_date field. This policy exists to
+        # catch dates the drafter invented, and flagging one the user typed would be a false alarm
+        # on determined data.
+        for fact in case.facts:
+            stated, _ = _dates_in_text(fact.statement)
+            allowed.update(stated)
+        for evidence in case.evidence:
+            stated, _ = _dates_in_text(f"{evidence.title} {evidence.description or ''}")
+            allowed.update(stated)
         if case.procedure.obligation_due_date is not None:
             allowed.add(case.procedure.obligation_due_date)
         if case.procedure.pretrial_demand_sent_date is not None:

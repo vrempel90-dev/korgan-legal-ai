@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 from korgan_legal_ai.domain.exceptions import LegalQABlocked
 from korgan_legal_ai.domain.models import ReadinessStatus
+from korgan_legal_ai.domain.verification import verification_label
 from korgan_legal_ai.telegram.runtime import TelegramRuntime
 from korgan_legal_ai.telegram.session import InMemorySessionStore, SessionState
 
@@ -166,8 +167,12 @@ def test_transport_forwards_user_text_verbatim_and_relays_engine_verdict() -> No
 
     # The handler adds no legal content of its own to the engine input.
     assert engine.calls == ["ТОО А не оплатило услуги."]
-    # NEEDS_VERIFICATION items are relayed, never resolved by the transport.
-    assert any("state_duty, jurisdiction" in value for value in api.sent)
+    # NEEDS_VERIFICATION items are relayed, never resolved by the transport. The transport renames
+    # them into the domain's own reader-facing wording; it does not drop, merge or answer any of them.
+    relayed = next(value for value in api.sent if "Требует проверки" in value)
+    assert verification_label("state_duty") in relayed
+    assert verification_label("jurisdiction") in relayed
+    assert len(relayed.split(",")) == 2
     assert any(ReadinessStatus.LAWYER_REVIEW_DRAFT.value in value for value in api.sent)
 
 

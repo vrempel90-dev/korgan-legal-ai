@@ -70,8 +70,13 @@ class PartyPresentation:
 
     author_label: str
     opponent_label: str
+    # Roles that may appear under each label. Used to match an already-locked party to its side.
     author_roles: frozenset[PartyRole]
     opponent_roles: frozenset[PartyRole]
+    # The role assigned when this system creates the parties itself, as it does in the guided
+    # dialogue. Matching accepts several roles; creation must pick exactly one.
+    author_role: PartyRole = PartyRole.CLAIMANT
+    opponent_role: PartyRole = PartyRole.DEFENDANT
 
 
 @dataclass(frozen=True)

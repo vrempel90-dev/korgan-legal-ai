@@ -15,6 +15,8 @@ class SessionState(StrEnum):
     AWAITING_CLARIFICATION = "awaiting_clarification"
     AWAITING_DOCUMENTS = "awaiting_documents"
     AWAITING_DOCUMENT_CLARIFICATION = "awaiting_document_clarification"
+    AWAITING_DOCUMENT_TYPE = "awaiting_document_type"
+    AWAITING_INTERVIEW = "awaiting_interview"
 
 
 @dataclass
