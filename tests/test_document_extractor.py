@@ -62,18 +62,21 @@ def test_docx_is_read_locally_including_tables() -> None:
     assert "Договор поставки №15" in result.text
     assert "Сумма | 5 450 000 тенге" in result.text
     assert result.uncertain_fragments == ()
+    assert "VISUAL_TRANSCRIPTION" not in result.as_case_context()
 
 
-def test_image_transcription_is_store_false_and_marks_uncertain_ocr() -> None:
+def test_image_transcription_is_store_false_and_confirmation_gated() -> None:
     client = CapturingVisionClient()
     extractor = OpenAIDocumentExtractor(api_key="", client=client)  # type: ignore[arg-type]
 
     result = extractor.extract(source_id="doc-2", data=b"fake-jpeg", mime_type="image/jpeg")
+    context = result.as_case_context()
 
     assert result.method == "vision"
     assert "Договор №15" in result.text
     assert result.uncertain_fragments == ("БИН: 1234?6789012",)
-    assert "[OCR_UNCERTAIN]" in result.as_case_context()
+    assert "[VISUAL_TRANSCRIPTION_REQUIRES_CONFIRMATION]" in context
+    assert "[OCR_UNCERTAIN]" in context
     assert client.calls[0]["store"] is False
     image_item = client.calls[0]["input"][1]["content"][1]
     assert image_item["type"] == "input_image"
