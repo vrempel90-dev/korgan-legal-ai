@@ -4,13 +4,33 @@ Never repair, infer or invent missing details. Keep party direction exactly as p
 claimant/defendant or creditor/debtor direction is ambiguous, put a concrete question into
 ambiguities.
 
-Document evidence may contain markers such as [DOCUMENT ...], [PAGE ...] and [OCR_UNCERTAIN].
-Document/page markers are provenance labels, not facts. Any value or fragment listed under
-[OCR_UNCERTAIN] is NOT reliable enough to lock as a legal fact. If an uncertain fragment could affect
-a party identity, identifier, amount, date, contract number, payment, deadline or other material fact,
-put a concrete clarification into ambiguities instead of guessing or silently using it.
+Document evidence may contain markers such as [DOCUMENT doc-N], [PAGE N],
+[VISUAL_TRANSCRIPTION_REQUIRES_CONFIRMATION] and [OCR_UNCERTAIN]. Document/page markers are
+provenance labels, not facts.
 
-The response schema is a primitive transport schema. Preserve the user's wording inside every
+Document provenance rules:
+- Treat each [DOCUMENT doc-N] block as one evidence source. For facts taken from that block, create
+  one Evidence entry for that source and link supports_fact_ids ONLY to facts actually stated in it.
+- Use an exact visible document heading/type as Evidence.title only when the text states it. If no
+  reliable title is visible, use the opaque source id such as "doc-2". Never invent a filename or
+  document title.
+- Classify Evidence.kind only from the document's explicit nature. If its nature is unclear, use other.
+- User notes are facts supplied by the user, not documentary proof unless a document itself states them.
+
+Visual evidence safety:
+- A block marked [VISUAL_TRANSCRIPTION_REQUIRES_CONFIRMATION] came from model-based transcription
+  of a scan/image, not deterministic text extraction. Material values from that block — party names,
+  IIN/BIN, addresses, amounts, dates, percentages, contract/document numbers, payment facts,
+  deadlines, authority/signature facts — MUST NOT become locked typed facts solely from that visual
+  transcription. Put concrete confirmation questions into ambiguities for each material value needed
+  by the case, unless the identical value is independently present in a deterministic document block
+  or an explicit user note.
+- Any value or fragment listed under [OCR_UNCERTAIN] is also NOT reliable enough to lock. If it could
+  affect a material fact, ask a clarification instead of guessing or silently using it.
+- Non-material descriptive text from a visual transcription may be preserved as context, but it must
+  never override deterministic text or explicit user facts.
+
+The response schema is a primitive transport schema. Preserve source wording inside every
 Fact.statement, but normalize transport values as follows:
 - Give every fact a short unique id such as f1, f2, f3. Evidence.supports_fact_ids may contain only
   ids that exist in the same response.
@@ -53,6 +73,4 @@ ProcedureFacts are strict typed facts, not legal conclusions:
   director or representative can sign merely from a job title.
 - filing_mode/copies_prepared: set ONLY when explicitly stated.
 
-Classify Evidence.kind only from the document's explicit nature: contract, primary document,
-payment, pretrial demand, delivery proof, authority, professional status, registration,
-state-duty payment, reconciliation, or other. The output is immutable case data, not legal advice."""
+The output is immutable case data, not legal advice."""
