@@ -1,0 +1,61 @@
+{
+  "verified_on": "2026-08-17",
+  "entries": [
+    {
+      "city": "Алматы",
+      "district": "Алатауский",
+      "court": "Алатауский районный суд",
+      "jurisdiction": "general",
+      "source_url": "https://www.gov.kz/memleket/entities/vss/press/news/details/816852?lang=ru"
+    },
+    {
+      "city": "Алматы",
+      "district": "Алмалинский",
+      "court": "районный суд № 2 Алмалинского района",
+      "jurisdiction": "civil",
+      "source_url": "https://www.gov.kz/memleket/entities/vss/press/news/details/908697?lang=ru"
+    },
+    {
+      "city": "Алматы",
+      "district": "Ауэзовский",
+      "court": "районный суд № 2 Ауэзовского района",
+      "jurisdiction": "civil",
+      "source_url": "https://www.gov.kz/memleket/entities/vss/press/news/details/908697?lang=ru"
+    },
+    {
+      "city": "Алматы",
+      "district": "Бостандыкский",
+      "court": "Бостандыкский районный суд",
+      "jurisdiction": "civil",
+      "source_url": "https://www.gov.kz/memleket/entities/vss/press/news/details/908697?lang=ru"
+    },
+    {
+      "city": "Алматы",
+      "district": "Жетысуский",
+      "court": "Жетысуский районный суд",
+      "jurisdiction": "civil",
+      "source_url": "https://www.gov.kz/memleket/entities/vss/press/news/details/816852?lang=ru"
+    },
+    {
+      "city": "Алматы",
+      "district": "Медеуский",
+      "court": "Медеуский районный суд",
+      "jurisdiction": "civil",
+      "source_url": "https://www.gov.kz/memleket/entities/vss/press/news/details/989854?lang=ru"
+    },
+    {
+      "city": "Алматы",
+      "district": "Наурызбайский",
+      "court": "Наурызбайский районный суд",
+      "jurisdiction": "general",
+      "source_url": "https://www.gov.kz/memleket/entities/vss/press/news/details/816852?lang=ru"
+    },
+    {
+      "city": "Алматы",
+      "district": "Турксибский",
+      "court": "Турксибский районный суд",
+      "jurisdiction": "general",
+      "source_url": "https://www.gov.kz/memleket/entities/vss/press/news/details/908697?lang=ru"
+    }
+  ]
+}
