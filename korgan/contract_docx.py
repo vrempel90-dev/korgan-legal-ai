@@ -9,8 +9,8 @@ from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Pt
 
-from korgan.contract_numbering import iter_numbered_paragraphs
 from korgan.contract_preamble import ensure_identified_preamble
+from korgan.docx_blocks import Block, Heading, NumberedItem, Prose, render_blocks
 from korgan.legal_types import ContractDraft, VerificationStatus
 
 
@@ -31,6 +31,18 @@ def _status(draft: ContractDraft, preamble: list[str]) -> str:
 
 def _today_kz() -> str:
     return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
+
+
+def _body_blocks(draft: ContractDraft, preamble: list[str]) -> list[Block]:
+    blocks: list[Block] = [Prose(item) for item in preamble]
+    for section in draft.sections:
+        blocks.append(NumberedItem(section.heading, level=0, bold=True))
+        for clause in section.clauses:
+            blocks.append(NumberedItem(clause.text, level=1))
+            blocks.extend(NumberedItem(sub, level=2) for sub in clause.subclauses)
+    if not draft.sections:
+        blocks.append(Heading("[ТРЕБУЕТ УТОЧНЕНИЯ: существенные и иные условия договора]"))
+    return blocks
 
 
 def build_contract_docx(draft: ContractDraft) -> bytes:
@@ -54,14 +66,7 @@ def build_contract_docx(draft: ContractDraft) -> bytes:
     run.font.name = "Times New Roman"
     run.font.size = Pt(8)
 
-    # The identification block is mandatory: when the model omitted it, the
-    # export inserts the structure with visible gaps instead of shipping a
-    # contract whose parties are only named in the requisites table.
-    preamble = ensure_identified_preamble(
-        draft.preamble,
-        party_a=draft.party_a,
-        party_b=draft.party_b,
-    )
+    preamble = ensure_identified_preamble(draft.preamble, party_a=draft.party_a, party_b=draft.party_b)
 
     qa = doc.add_paragraph()
     qa.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -79,29 +84,7 @@ def build_contract_docx(draft: ContractDraft) -> bytes:
     date_line.alignment = WD_ALIGN_PARAGRAPH.CENTER
     date_line.add_run(draft.place_and_date or f"[ТРЕБУЕТ УТОЧНЕНИЯ: место заключения], {_today_kz()}")
 
-    for item in preamble:
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        p.paragraph_format.first_line_indent = Cm(0.8)
-        p.add_run(item)
-
-    # Numbers exist only here. The draft itself stores headings and clauses
-    # without them, so a number can never be rendered twice.
-    for number, text, level in iter_numbered_paragraphs(draft.sections):
-        p = doc.add_paragraph()
-        if level == 0:
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            p.paragraph_format.space_before = Pt(10)
-            p.add_run(f"{number} {text}").bold = True
-            continue
-        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        p.paragraph_format.first_line_indent = Cm(0.8)
-        p.paragraph_format.left_indent = Cm(0.8) if level >= 2 else None
-        p.add_run(f"{number} {text}")
-
-    if not draft.sections:
-        p = doc.add_paragraph()
-        p.add_run("[ТРЕБУЕТ УТОЧНЕНИЯ: существенные и иные условия договора]")
+    render_blocks(doc, _body_blocks(draft, preamble))
 
     doc.add_paragraph()
     req_heading = doc.add_paragraph()
