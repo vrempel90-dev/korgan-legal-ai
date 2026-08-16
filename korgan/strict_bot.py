@@ -9,6 +9,7 @@ from aiogram.types import BotCommand, MenuButtonCommands
 
 from korgan import bot as base_bot
 from korgan.config import get_settings
+from korgan.contact_handlers import router as contact_router
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
@@ -46,13 +47,16 @@ async def main() -> None:
 
     dp.include_router(start_router)
     dp.include_router(safety_router)
+    # Contact handlers must run before the legacy menu handlers that still
+    # contain placeholder responses for these two buttons.
+    dp.include_router(contact_router)
     # Response-to-claim must run before the generic claim router so phrases such
     # as «подготовь отзыв на иск» are never mistaken for a new plaintiff claim.
     dp.include_router(response_router)
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN: claims + responses to claims + truncation-safe contracts")
+    LOGGER.info("Starting KORGAN: claims + responses to claims + truncation-safe contracts + WhatsApp contacts")
     try:
         await dp.start_polling(bot)
     finally:
