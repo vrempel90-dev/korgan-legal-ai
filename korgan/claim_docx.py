@@ -19,9 +19,11 @@ DRAFT_NOTICE = (
     "Формирование проекта не гарантирует принятие документа или исход дела."
 )
 
+
 QA_PRELIMINARY = "PRELIMINARY DRAFT"
 QA_LAWYER_REVIEW = "LAWYER-REVIEW DRAFT"
 QA_READY = "READY FOR FINAL HUMAN REVIEW"
+
 
 REQUIRED_DOCUMENT_FIELDS: tuple[tuple[str, str], ...] = (
     ("claimant", "данные истца (ФИО, ИИН, адрес)"),
@@ -40,7 +42,11 @@ def _is_blank(value: object) -> bool:
 
 
 def missing_required_fields(draft: ClaimDraft) -> list[str]:
-    return [label for attribute, label in REQUIRED_DOCUMENT_FIELDS if _is_blank(getattr(draft, attribute, None))]
+    return [
+        label
+        for attribute, label in REQUIRED_DOCUMENT_FIELDS
+        if _is_blank(getattr(draft, attribute, None))
+    ]
 
 
 def _strip_label(value: str, label: str) -> str:
@@ -56,18 +62,21 @@ def _party_lines(items: list[str], label: str, fallback: str) -> list[str]:
 
 
 def _document_status(draft: ClaimDraft) -> str:
-    court_text = "\n".join([
-        draft.court,
-        *draft.claimant,
-        *draft.defendant,
-        draft.price_of_claim,
-        draft.state_duty,
-        draft.late_interest,
-        *draft.facts,
-        *draft.legal_basis,
-        *draft.requests,
-        *draft.attachments,
-    ]).upper()
+    court_text = "\n".join(
+        [
+            draft.court,
+            *draft.claimant,
+            *draft.defendant,
+            draft.price_of_claim,
+            draft.state_duty,
+            draft.late_interest,
+            *draft.facts,
+            *draft.legal_basis,
+            *draft.requests,
+            *draft.attachments,
+        ]
+    ).upper()
+
     if (
         "[ТРЕБУЕТ УТОЧНЕНИЯ" in court_text
         or "[ТРЕБУЕТ ДОБАВИТЬ" in court_text
@@ -75,8 +84,10 @@ def _document_status(draft: ClaimDraft) -> str:
         or NEEDS_CALCULATION_MARKER.upper() in court_text
     ):
         return QA_PRELIMINARY
+
     if draft.status == VerificationStatus.NEEDS_VERIFICATION or draft.verification_notes:
         return QA_LAWYER_REVIEW
+
     return QA_READY
 
 
@@ -85,22 +96,34 @@ def _kazakhstan_today() -> str:
 
 
 def _body_blocks(draft: ClaimDraft) -> list[Block]:
+    """Describe the claim body.
+
+    Facts and legal reasoning are narrative: they are `Prose` and therefore can
+    never pick up a list number. Only просительная часть and приложения are real
+    numbered lists, and приложения restart at 1.
+    """
     blocks: list[Block] = [Prose(fact) for fact in draft.facts]
+
     if draft.legal_basis:
         blocks.append(Heading("Правовое обоснование"))
         blocks.extend(Prose(basis) for basis in draft.legal_basis)
+
     if draft.late_interest:
         blocks.append(Heading("Расчёт неустойки по статье 353 ГК РК"))
         blocks.append(Prose(draft.late_interest))
+
     blocks.append(Heading("На основании изложенного ПРОШУ СУД:"))
     blocks.append(AutoNumberedList(list(draft.requests)))
+
     blocks.append(Heading("Приложения:"))
     blocks.append(AutoNumberedList(list(draft.attachments), restart=True))
     return blocks
 
 
 def build_claim_docx(draft: ClaimDraft) -> bytes:
+    """Build a clean court-facing DOCX with a visible KORGAN QA readiness status."""
     doc = Document()
+
     section = doc.sections[0]
     section.top_margin = Cm(2)
     section.bottom_margin = Cm(2)

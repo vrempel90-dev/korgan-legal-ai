@@ -34,14 +34,19 @@ def _today_kz() -> str:
 
 
 def _body_blocks(draft: ContractDraft, preamble: list[str]) -> list[Block]:
+    """Describe the contract body; numbering is left entirely to the renderer."""
     blocks: list[Block] = [Prose(item) for item in preamble]
+
     for section in draft.sections:
         blocks.append(NumberedItem(section.heading, level=0, bold=True))
         for clause in section.clauses:
             blocks.append(NumberedItem(clause.text, level=1))
             blocks.extend(NumberedItem(sub, level=2) for sub in clause.subclauses)
+
     if not draft.sections:
-        blocks.append(Heading("[ТРЕБУЕТ УТОЧНЕНИЯ: существенные и иные условия договора]"))
+        blocks.append(
+            Heading("[ТРЕБУЕТ УТОЧНЕНИЯ: существенные и иные условия договора]")
+        )
     return blocks
 
 
@@ -66,7 +71,14 @@ def build_contract_docx(draft: ContractDraft) -> bytes:
     run.font.name = "Times New Roman"
     run.font.size = Pt(8)
 
-    preamble = ensure_identified_preamble(draft.preamble, party_a=draft.party_a, party_b=draft.party_b)
+    # The identification block is mandatory: when the model omitted it, the
+    # export inserts the structure with visible gaps instead of shipping a
+    # contract whose parties are only named in the requisites table.
+    preamble = ensure_identified_preamble(
+        draft.preamble,
+        party_a=draft.party_a,
+        party_b=draft.party_b,
+    )
 
     qa = doc.add_paragraph()
     qa.alignment = WD_ALIGN_PARAGRAPH.CENTER

@@ -16,6 +16,7 @@ from korgan.fast_v2_production_legal import ProductionOpenAILegalService as _Fas
 from korgan.legal_routing import ClaimProfile, detect_claim_profile, detect_contract_profile
 from korgan.legal_types import ContractDraft, LegalResearch, VerificationStatus
 from korgan.openai_legal import _VALIDATION_SCHEMA
+from korgan.provision_check import paraphrase_defects, verified_claim_line
 from korgan.verified_openai import (
     _VERIFIED_RESEARCH_SCHEMA,
     _actual_response_urls,
@@ -313,6 +314,7 @@ class ProductionOpenAILegalService(_FastV2):
         for point in payload.get("verified_points", []):
             statement = str(point.get("statement", "")).strip()
             article = str(point.get("article", "")).strip()
+            provision_text = str(point.get("provision_text", "")).strip()
             claimed_url = str(point.get("source_url", "")).strip()
             actual_url = actual_by_canonical.get(_canonical_url(claimed_url))
             if not statement or not article or not actual_url:
@@ -325,7 +327,16 @@ class ProductionOpenAILegalService(_FastV2):
             if not _is_court_source(actual_url) and not _is_adilet_source(actual_url):
                 rejected.append(f"{statement} — не принят как VERIFIED: недопустимый источник нормы права.")
                 continue
-            verified_claims.append(f"{statement} [основание: {article}; источник: {actual_url}]")
+            # An official court listing confirms a court's name, not a provision,
+            # so it is the one case with no provision text to compare against.
+            if not _is_court_source(actual_url):
+                drift = paraphrase_defects(statement, provision_text)
+                if drift:
+                    rejected.append(f"{statement} — не принят как VERIFIED: {'; '.join(drift[:3])}")
+                    continue
+                verified_claims.append(verified_claim_line(statement, article, provision_text, actual_url))
+            else:
+                verified_claims.append(f"{statement} [основание: {article}; источник: {actual_url}]")
             if actual_url not in used_urls:
                 used_urls.append(actual_url)
 
@@ -428,12 +439,17 @@ class ProductionOpenAILegalService(_FastV2):
         for point in payload.get("verified_points", []):
             statement = str(point.get("statement", "")).strip()
             article = str(point.get("article", "")).strip()
+            provision_text = str(point.get("provision_text", "")).strip()
             actual_url = actual_by_canonical.get(_canonical_url(str(point.get("source_url", "")).strip()))
             if not statement or not article or not actual_url:
                 if statement:
                     rejected.append(f"{statement} — не принят как VERIFIED: нет source-bound Adilet источника.")
                 continue
-            verified.append(f"{statement} [основание: {article}; источник: {actual_url}]")
+            drift = paraphrase_defects(statement, provision_text)
+            if drift:
+                rejected.append(f"{statement} — не принят как VERIFIED: {'; '.join(drift[:3])}")
+                continue
+            verified.append(verified_claim_line(statement, article, provision_text, actual_url))
             if actual_url not in used:
                 used.append(actual_url)
 

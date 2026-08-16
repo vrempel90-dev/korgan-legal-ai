@@ -32,22 +32,25 @@ class ExtractedDocument:
     def as_context(self) -> str:
         def line(label: str, values: list[str]) -> str:
             return f"{label}: {'; '.join(values) if values else 'не установлено'}"
-        return "\n".join([
-            f"Файл: {self.filename}",
-            f"Тип: {self.document_type or 'не установлен'}",
-            f"Кратко: {self.text_summary or 'нет'}",
-            line("Стороны", self.parties),
-            line("Идентификаторы", self.identifiers),
-            line("Адреса", self.addresses),
-            line("Контакты", self.contacts),
-            line("Даты", self.dates),
-            line("Суммы", self.amounts),
-            line("Обязательства", self.obligations),
-            line("Возможные нарушения по фактам документа", self.violations),
-            line("Доказательства", self.evidence),
-            line("Важные факты", self.important_facts),
-            line("Неясно/отсутствует", self.missing_or_unclear),
-        ])
+
+        return "\n".join(
+            [
+                f"Файл: {self.filename}",
+                f"Тип: {self.document_type or 'не установлен'}",
+                f"Кратко: {self.text_summary or 'нет'}",
+                line("Стороны", self.parties),
+                line("Идентификаторы", self.identifiers),
+                line("Адреса", self.addresses),
+                line("Контакты", self.contacts),
+                line("Даты", self.dates),
+                line("Суммы", self.amounts),
+                line("Обязательства", self.obligations),
+                line("Возможные нарушения по фактам документа", self.violations),
+                line("Доказательства", self.evidence),
+                line("Важные факты", self.important_facts),
+                line("Неясно/отсутствует", self.missing_or_unclear),
+            ]
+        )
 
 
 @dataclass(slots=True)
@@ -75,19 +78,34 @@ class ClaimDraft:
     attachments: list[str]
     verification_notes: list[str]
     source_urls: list[str]
+    # Filled deterministically by korgan.legal_calc, never by the model.
     state_duty: str = ""
+    # Deterministic calculation under Article 353, when explicitly claimed and
+    # source-bound research has confirmed the provision.
     late_interest: str = ""
 
 
 @dataclass(slots=True)
 class ArgumentClause:
+    """A numbered argument in an adversarial filing.
+
+    Adversarial documents mix structure and narrative: a numbered objection is
+    usually followed by free paragraphs that develop it. ``prose`` holds those
+    paragraphs, and they are rendered as ordinary text — they must never pick up
+    a number of their own.
+    """
+
     text: str
     subclauses: list[str] = field(default_factory=list)
     prose: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.text = strip_leading_number(self.text)
-        self.subclauses = [cleaned for cleaned in (strip_leading_number(x) for x in self.subclauses) if cleaned]
+        self.subclauses = [
+            cleaned for cleaned in (strip_leading_number(x) for x in self.subclauses) if cleaned
+        ]
+        # Prose keeps its wording; only a leading clause number is removed, since
+        # that number would otherwise be a second, competing numbering scheme.
         self.prose = [cleaned for cleaned in (strip_leading_number(x) for x in self.prose) if cleaned]
 
     def text_lines(self) -> list[str]:
@@ -95,6 +113,7 @@ class ArgumentClause:
 
 
 def normalize_argument_clauses(raw: Any) -> list[ArgumentClause]:
+    """Turn raw model objections into numberless, properly nested arguments."""
     clauses: list[ArgumentClause] = []
     for item in raw or []:
         if isinstance(item, ArgumentClause):
@@ -121,11 +140,17 @@ def normalize_argument_clauses(raw: Any) -> list[ArgumentClause]:
 
 @dataclass(slots=True)
 class ContractClause:
+    """A numbered clause and its subclauses, both stored WITHOUT numbers.
+
+    Numbering belongs to the export layer only — see korgan.contract_numbering.
+    """
+
     text: str
     subclauses: list[str] = field(default_factory=list)
 
 
 def _normalize_clause(item: Any) -> tuple[int, str, list[str]]:
+    """Read one raw clause and strip every literal number the model wrote."""
     if isinstance(item, ContractClause):
         raw_text, raw_subs = item.text, list(item.subclauses)
     elif isinstance(item, dict):
@@ -133,12 +158,19 @@ def _normalize_clause(item: Any) -> tuple[int, str, list[str]]:
         raw_subs = [str(x) for x in item.get("subclauses", []) or []]
     else:
         raw_text, raw_subs = str(item), []
+
     depth, text = split_leading_number(raw_text)
     subclauses = [cleaned for cleaned in (strip_leading_number(sub) for sub in raw_subs) if cleaned]
     return depth, text.strip(), subclauses
 
 
 def normalize_clauses(raw: Any) -> list[ContractClause]:
+    """Turn raw model clauses into numberless, properly nested clauses.
+
+    A flat clause whose literal number was three levels deep ("3.1.1. ...")
+    is folded into the preceding clause as a subclause, so the model's nesting
+    intent survives even when it ignores the `subclauses` field.
+    """
     clauses: list[ContractClause] = []
     for item in raw or []:
         depth, text, subclauses = _normalize_clause(item)
@@ -158,6 +190,8 @@ class ContractSection:
     clauses: list[ContractClause] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        # Every construction path — model payload, tests, repair loop — lands
+        # here, so numbers can never leak into the stored text.
         self.heading = strip_leading_number(self.heading)
         self.clauses = normalize_clauses(self.clauses)
 
@@ -185,7 +219,15 @@ class ContractDraft:
     source_urls: list[str]
 
     def body_lines(self) -> list[str]:
-        lines = [self.contract_type, self.title, self.place_and_date, *self.party_a, *self.party_b, *self.preamble]
+        """Every human-readable line of the contract, numbering excluded."""
+        lines = [
+            self.contract_type,
+            self.title,
+            self.place_and_date,
+            *self.party_a,
+            *self.party_b,
+            *self.preamble,
+        ]
         for section in self.sections:
             lines.append(section.heading)
             lines.extend(section.text_lines())
@@ -194,10 +236,22 @@ class ContractDraft:
         return lines
 
     @classmethod
-    def from_payload(cls, *, status: VerificationStatus, source_urls: list[str], payload: dict) -> "ContractDraft":
+    def from_payload(
+        cls,
+        *,
+        status: VerificationStatus,
+        source_urls: list[str],
+        payload: dict,
+    ) -> "ContractDraft":
+        # Clause items may be plain strings or {"text": ..., "subclauses": [...]};
+        # ContractSection normalizes both and strips any literal numbering.
         sections = [
-            ContractSection(heading=str(item.get("heading", "")).strip(), clauses=list(item.get("clauses", []) or []))
-            for item in payload.get("sections", []) if isinstance(item, dict)
+            ContractSection(
+                heading=str(item.get("heading", "")).strip(),
+                clauses=list(item.get("clauses", []) or []),
+            )
+            for item in payload.get("sections", [])
+            if isinstance(item, dict)
         ]
         return cls(
             status=status,
@@ -217,6 +271,8 @@ class ContractDraft:
 
 @dataclass(slots=True)
 class ResponseDraft:
+    """Отзыв на исковое заявление — an adversarial filing by the defendant."""
+
     status: VerificationStatus
     title: str
     court: str
@@ -236,7 +292,15 @@ class ResponseDraft:
         self.objections = normalize_argument_clauses(self.objections)
 
     def body_lines(self) -> list[str]:
-        lines = [self.title, self.court, self.case_reference, *self.plaintiff, *self.defendant, *self.introduction, *self.circumstances]
+        lines = [
+            self.title,
+            self.court,
+            self.case_reference,
+            *self.plaintiff,
+            *self.defendant,
+            *self.introduction,
+            *self.circumstances,
+        ]
         for objection in self.objections:
             lines.extend(objection.text_lines())
         lines.extend(self.legal_basis)
@@ -245,9 +309,16 @@ class ResponseDraft:
         return lines
 
     @classmethod
-    def from_payload(cls, *, status: VerificationStatus, source_urls: list[str], payload: dict) -> "ResponseDraft":
+    def from_payload(
+        cls,
+        *,
+        status: VerificationStatus,
+        source_urls: list[str],
+        payload: dict,
+    ) -> "ResponseDraft":
         def strings(key: str) -> list[str]:
             return [str(x).strip() for x in payload.get(key, []) or [] if str(x).strip()]
+
         return cls(
             status=status,
             title=str(payload.get("title", "")).strip(),
