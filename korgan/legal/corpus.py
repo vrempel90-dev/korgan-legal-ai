@@ -39,6 +39,15 @@ KNOWN_ACTS: dict[str, tuple[str, str]] = {
     ACT_CONSUMER: ("Z100000274_", "Закон Республики Казахстан «О защите прав потребителей»"),
 }
 
+# Abbreviations used when citing a provision inside a court document.
+ACT_SHORT_TITLES: dict[str, str] = {
+    ACT_GK_GENERAL: "ГК РК (Общая часть)",
+    ACT_GK_SPECIAL: "ГК РК (Особенная часть)",
+    ACT_GPK: "ГПК РК",
+    ACT_TAX_DUTY: "НК РК",
+    ACT_CONSUMER: "Закона РК «О защите прав потребителей»",
+}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS acts (
     act_id       TEXT PRIMARY KEY,
@@ -106,8 +115,13 @@ class Provision:
     url: str
 
     def label(self) -> str:
-        """«ст. 353 ГК РК (Общая часть), п. 1» — for citations in a document."""
-        base = f"ст. {self.article_no} {self.act_title}"
+        """«ст. 630 ГК РК (Особенная часть), п. 2» — for citations in a document.
+
+        The abbreviation is deliberate: a full act title would have to be
+        declined («в соответствии со ст. 630 Гражданского кодекса…»), and an
+        abbreviation stays correct in any position.
+        """
+        base = f"ст. {self.article_no} {ACT_SHORT_TITLES.get(self.act_id, self.act_title)}"
         return f"{base}, п. {self.item_no}" if self.item_no else base
 
 

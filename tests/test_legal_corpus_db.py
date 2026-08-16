@@ -170,8 +170,8 @@ def test_provision_label_names_article_and_item(loaded_corpus: LegalCorpus) -> N
     provision = loaded_corpus.get(make_article_id(ACT_GK_SPECIAL, "621", "2"))
 
     assert provision is not None
-    assert provision.label().startswith("ст. 621 Гражданский кодекс")
-    assert provision.label().endswith("п. 2")
+    # Сокращение, а не полное имя акта: в судебном тексте оно не склоняется.
+    assert provision.label() == "ст. 621 ГК РК (Особенная часть), п. 2"
 
 
 def test_readiness_query_returns_profile_articles(loaded_corpus: LegalCorpus) -> None:
