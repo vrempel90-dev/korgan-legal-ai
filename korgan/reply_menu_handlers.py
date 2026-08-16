@@ -59,8 +59,6 @@ async def _save_user_text_as_facts(message: Message, state: FSMContext, *, min_l
 
 async def _send_claim_as_word(message: Message, state: FSMContext) -> None:
     """A claim request must end in DOCX and the user's requested claim type must enter case context."""
-    # Save even when documents already exist: «составь иск о расторжении ...» is
-    # part of the task and must not disappear merely because case files were loaded.
     await _save_user_text_as_facts(message, state)
     context = await base_bot._case_context(state)
 
@@ -212,8 +210,7 @@ async def prices_button(message: Message, state: FSMContext) -> None:
         "• Жалоба — 1 000 ₸\n"
         "• Договор — 1 000 ₸\n"
         "• Отзыв на иск — 1 000 ₸\n"
-        "• Досудебная претензия — 1 000 ₸\n"
-        "• Другой юридический документ — 1 000 ₸\n\n"
+        "• Досудебная претензия — 1 000 ₸\n\n"
         "🧪 Пока мы проверяем генерацию документов, оплата временно отключена. "
         "1 000 ₸ — текущая акционная цена для клиентов, а не постоянный тариф.",
         reply_markup=main_menu(),
