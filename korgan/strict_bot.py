@@ -9,7 +9,7 @@ from aiogram.types import BotCommand, MenuButtonCommands
 
 from korgan import bot as base_bot
 from korgan.config import get_settings
-from korgan.state_duty_final_hotfix import ProductionOpenAILegalService
+from korgan.late_interest_hotfix import ProductionOpenAILegalService
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
@@ -48,7 +48,7 @@ async def main() -> None:
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN final civil-claim hotfix: single deterministic state duty request before QA")
+    LOGGER.info("Starting KORGAN source-bound civil runtime with deterministic Article 353 calculation")
     try:
         await dp.start_polling(bot)
     finally:
