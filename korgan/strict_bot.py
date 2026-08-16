@@ -8,6 +8,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
+from korgan.admin import router as admin_router
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
@@ -39,6 +40,9 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.outer_middleware(ConsentMiddleware())
 
+    # Admin must be registered before generic user routers. Every admin handler
+    # independently re-checks ADMIN_TELEGRAM_IDS and fails closed.
+    dp.include_router(admin_router)
     dp.include_router(start_router)
     dp.include_router(safety_router)
     dp.include_router(contact_router)
@@ -46,7 +50,7 @@ async def main() -> None:
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN: Article 353 + claims + responses to claims + truncation-safe contracts + WhatsApp contacts")
+    LOGGER.info("Starting KORGAN: verified provision text + admin access + claims + responses + contracts")
     try:
         await dp.start_polling(bot)
     finally:
