@@ -3,15 +3,28 @@ from korgan.senior_claim_preflight import deterministic_claim_preflight
 from korgan.senior_litigation_service import _senior_research_prompt
 
 
-def _research(*, court: str = "") -> LegalResearch:
+ARTICLE_27_RULE = (
+    "Специализированные межрайонные экономические суды рассматривают споры, сторонами в которых являются "
+    "физические лица, осуществляющие индивидуальную предпринимательскую деятельность без образования юридического лица, "
+    "юридические лица. [основание: статья 27 ГПК РК; текст нормы: «Специализированные межрайонные экономические суды "
+    "рассматривают и разрешают гражданские дела по имущественным и неимущественным спорам, сторонами в которых являются "
+    "физические лица, осуществляющие индивидуальную предпринимательскую деятельность без образования юридического лица, "
+    "юридические лица, а также по корпоративным спорам»; источник: https://adilet.zan.kz/rus/docs/K1500000377]"
+)
+
+
+def _research(*, court: str = "", economic_rule: bool = False) -> LegalResearch:
     notes = [f"VERIFIED_COURT: {court}"] if court else []
+    claims = ["Проверенная норма права [основание: статья X; текст нормы: «достаточно длинный проверенный текст нормы для теста»; источник: https://adilet.zan.kz/rus/docs/TEST]"]
+    if economic_rule:
+        claims.append(ARTICLE_27_RULE)
     return LegalResearch(
         status=VerificationStatus.VERIFIED,
         applicable_law=[],
         procedural_requirements=[],
-        verified_claims=["Проверенная норма права [основание: статья X; текст нормы: «достаточно длинный проверенный текст нормы для теста»; источник: https://adilet.zan.kz/rus/docs/TEST]"],
+        verified_claims=claims,
         unverified_claims=[],
-        source_urls=["https://adilet.zan.kz/rus/docs/TEST"],
+        source_urls=["https://adilet.zan.kz/rus/docs/TEST", "https://adilet.zan.kz/rus/docs/K1500000377"],
         notes=notes,
     )
 
@@ -34,18 +47,22 @@ def _draft(*, court: str, claimant: list[str], defendant: list[str]) -> ClaimDra
     )
 
 
-def test_economic_court_is_blocked_when_ordinary_individual_is_party():
+def test_economic_court_is_blocked_when_ordinary_individual_is_party_under_verified_rule():
     court = "Специализированный межрайонный экономический суд города Алматы"
     draft = _draft(
         court=court,
         claimant=["Ахметова Гульнара Сериковна, дата рождения 12.05.1988, ИИН 880512400156"],
         defendant=["ТОО «Компания», БИН 150640012233"],
     )
-    errors = deterministic_claim_preflight("Потребительский спор о ремонте квартиры.", _research(court=court), draft)
+    errors = deterministic_claim_preflight(
+        "Потребительский спор о ремонте квартиры.",
+        _research(court=court, economic_rule=True),
+        draft,
+    )
     assert any("экономический суд" in item.lower() for item in errors)
 
 
-def test_economic_court_not_blocked_only_by_subject_composition_when_both_are_legal_entities():
+def test_economic_court_choice_is_not_release_ready_without_verified_subject_rule():
     court = "Специализированный межрайонный экономический суд города Алматы"
     draft = _draft(
         court=court,
@@ -53,7 +70,22 @@ def test_economic_court_not_blocked_only_by_subject_composition_when_both_are_le
         defendant=["ТОО «Ответчик», БИН 150640012244"],
     )
     errors = deterministic_claim_preflight("Спор двух юридических лиц.", _research(court=court), draft)
-    assert not any("экономический суд" in item.lower() for item in errors)
+    assert any("субъектный состав" in item.lower() for item in errors)
+
+
+def test_economic_court_not_blocked_by_subject_composition_when_both_legal_and_rule_verified():
+    court = "Специализированный межрайонный экономический суд города Алматы"
+    draft = _draft(
+        court=court,
+        claimant=["ТОО «Истец», БИН 150640012233"],
+        defendant=["ТОО «Ответчик», БИН 150640012244"],
+    )
+    errors = deterministic_claim_preflight(
+        "Спор двух юридических лиц.",
+        _research(court=court, economic_rule=True),
+        draft,
+    )
+    assert not any("экономический суд" in item.lower() or "субъектный состав" in item.lower() for item in errors)
 
 
 def test_model_may_not_invent_subjective_moral_harm_facts():
