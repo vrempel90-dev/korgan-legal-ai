@@ -56,7 +56,10 @@ OPENAI_MODEL=gpt-5.1
 OPENAI_VISION_MODEL=gpt-5.1
 OPENAI_VALIDATION_MODEL=gpt-5.1
 OFFICIAL_LEGAL_DOMAINS=adilet.zan.kz
+ADMIN_TELEGRAM_IDS=123456789
 ```
+
+`ADMIN_TELEGRAM_IDS` is a comma-separated allow-list of Telegram user IDs, for example `123456789,987654321`. If it is empty or malformed, administrator access is denied.
 
 ## Run
 
@@ -73,6 +76,14 @@ python -m korgan.bot
 - `/clear`
 - Send text for consultation / facts
 - Send PDF/DOCX/TXT or photo/scan to add evidence to current case
+
+### Administrator menu
+
+- `/admin` opens the KORGAN administrator panel only for IDs listed in `ADMIN_TELEGRAM_IDS`.
+- Every administrator callback is re-authorized by Telegram user ID; possession of callback data alone does not grant access.
+- API keys are never rendered in Telegram.
+- The legal fail-closed policy cannot be disabled from the administrator panel.
+- Users who are not administrators receive only `Команда недоступна.` and never receive the panel or its data.
 
 ## Privacy note
 
