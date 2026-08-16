@@ -197,3 +197,41 @@ def missing_required_clauses(document_type: str, text: str) -> list[str]:
     if spec is None:
         raise KeyError(f"нет golden-спецификации для типа документа: {document_type}")
     return spec.missing(text)
+
+
+@dataclass(frozen=True, slots=True)
+class GoldenCase:
+    """A pinned example plus the date its legal citations were last reconciled."""
+
+    document_type: str
+    cited_acts: tuple[str, ...]
+    citations_checked_on: str
+    note: str = ""
+
+    @property
+    def cites_law(self) -> bool:
+        return bool(self.cited_acts)
+
+    @property
+    def citations_need_check(self) -> bool:
+        return self.cites_law and not self.citations_checked_on
+
+
+def golden_cases() -> list[GoldenCase]:
+    """Read the golden case registry (data, refreshed independently of code)."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).with_name("data") / "golden_cases.json"
+    if not path.exists():
+        return []
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return [
+        GoldenCase(
+            document_type=str(item["document_type"]),
+            cited_acts=tuple(str(x) for x in item.get("cited_acts", [])),
+            citations_checked_on=str(item.get("citations_checked_on", "")),
+            note=str(item.get("note", "")),
+        )
+        for item in raw.get("cases", [])
+    ]

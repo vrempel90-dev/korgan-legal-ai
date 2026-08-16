@@ -22,7 +22,10 @@ from docx.oxml.ns import qn
 
 from korgan.claim_docx import build_claim_docx
 from korgan.contract_docx import build_contract_docx
-from korgan.golden_documents import SPECS, missing_required_clauses
+from korgan.citation_audit import audit_citations
+from korgan.document_release import review_document
+from korgan.golden_documents import SPECS, golden_cases, missing_required_clauses
+from korgan.text_integrity import integrity_findings
 from korgan.response_docx import build_response_docx
 from tests import golden_fixtures
 
@@ -109,6 +112,47 @@ def test_response_objections_are_numbered_but_their_prose_is_not() -> None:
     numbered = [line for line in lines if _LEADING_NUMBER.match(line)]
     assert not any("Согласно позиции Ответчика" in line for line in numbered)
     assert not any("С учётом принятых работ" in line for line in numbered)
+
+
+@pytest.mark.parametrize("document_type", ALL_TYPES)
+def test_every_golden_document_passes_the_release_gate(document_type: str) -> None:
+    """Citations and text integrity are checked for every type, not just one."""
+    report = review_document(_text(document_type))
+    assert report.released, f"{document_type}: релизный гейт заблокировал: {report.blocking}"
+
+
+@pytest.mark.parametrize("document_type", ALL_TYPES)
+def test_no_golden_document_carries_glued_or_truncated_text(document_type: str) -> None:
+    findings = integrity_findings(_text(document_type))
+    assert not findings, f"{document_type}: обрывы текста: {[f.as_note() for f in findings]}"
+
+
+def test_regeneration_is_stable_across_repeated_runs() -> None:
+    """Repeated regeneration must not introduce truncation artefacts."""
+    for document_type in ALL_TYPES:
+        renders = [_text(document_type) for _ in range(4)]
+        assert len(set(renders)) == 1, f"{document_type}: регенерация нестабильна"
+        assert not integrity_findings(renders[0])
+
+
+def test_response_case_exercises_three_codes_and_judges_each_citation() -> None:
+    audit = audit_citations(_text("response"))
+    acts = {finding.act for finding in audit.findings}
+    assert {"ГПК РК", "ГК РК", "НК РК"} <= acts
+    # часть 2 статьи 166 ГПК РК is the amended article the corpus pins.
+    part_two = next(f for f in audit.findings if f.act == "ГПК РК" and f.part == "2")
+    assert part_two.quoted
+    assert not part_two.blocks_release
+
+
+def test_golden_registry_covers_every_pinned_type() -> None:
+    cases = {case.document_type: case for case in golden_cases()}
+    assert set(cases) == set(SPECS)
+    response = cases["response"]
+    assert response.cites_law
+    # Fails loudly once a date is set but goes stale is a manual QA concern; here
+    # we only assert the registry records the obligation at all.
+    assert "ГПК РК" in response.cited_acts
 
 
 def test_it_contract_keeps_the_personal_data_clause() -> None:
