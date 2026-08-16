@@ -5,7 +5,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand, MenuButtonCommands
+from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
 from korgan.config import get_settings
@@ -21,17 +21,11 @@ LOGGER = logging.getLogger(__name__)
 
 
 async def configure_telegram_menu(bot: Bot) -> None:
-    await bot.set_my_commands(
-        [
-            BotCommand(command="start", description="Открыть KORGAN"),
-            BotCommand(command="menu", description="Главное меню"),
-            BotCommand(command="terms", description="Условия использования"),
-            BotCommand(command="privacy", description="Конфиденциальность"),
-            BotCommand(command="help", description="Помощь"),
-            BotCommand(command="clear", description="Очистить текущее дело"),
-        ]
-    )
-    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    # KORGAN already has its own persistent reply keyboard. Keeping Telegram's
+    # command list creates a second blue «Меню» button next to the input field,
+    # so clear bot commands and restore the default menu-button state.
+    await bot.delete_my_commands()
+    await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
 
 
 async def main() -> None:
