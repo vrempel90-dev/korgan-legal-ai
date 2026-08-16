@@ -93,6 +93,10 @@ Before the result is released, run [reference/final-legal-qa.md](reference/final
 
 If QA fails, revise before release.
 
+When a prompt, template or reference file changed, also regenerate the pinned
+examples of the affected document types and diff them against their required
+clauses — [reference/golden-documents.md](reference/golden-documents.md).
+
 ## Specialist routing
 
 - Consultation: [reference/consultation-workflow.md](reference/consultation-workflow.md)
@@ -109,6 +113,7 @@ If QA fails, revise before release.
 - Russian/Kazakh legal language: [reference/ru-kk-style.md](reference/ru-kk-style.md)
 - Human escalation: [reference/escalation-and-safety.md](reference/escalation-and-safety.md)
 - Final QA: [reference/final-legal-qa.md](reference/final-legal-qa.md)
+- Required clauses per document type: [reference/golden-documents.md](reference/golden-documents.md)
 - Host output format: [reference/output-contract.md](reference/output-contract.md)
 
 ## Production source policy

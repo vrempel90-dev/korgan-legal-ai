@@ -86,6 +86,59 @@ class ClaimDraft:
 
 
 @dataclass(slots=True)
+class ArgumentClause:
+    """A numbered argument in an adversarial filing.
+
+    Adversarial documents mix structure and narrative: a numbered objection is
+    usually followed by free paragraphs that develop it. ``prose`` holds those
+    paragraphs, and they are rendered as ordinary text — they must never pick up
+    a number of their own.
+    """
+
+    text: str
+    subclauses: list[str] = field(default_factory=list)
+    prose: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.text = strip_leading_number(self.text)
+        self.subclauses = [
+            cleaned for cleaned in (strip_leading_number(x) for x in self.subclauses) if cleaned
+        ]
+        # Prose keeps its wording; only a leading clause number is removed, since
+        # that number would otherwise be a second, competing numbering scheme.
+        self.prose = [cleaned for cleaned in (strip_leading_number(x) for x in self.prose) if cleaned]
+
+    def text_lines(self) -> list[str]:
+        return [self.text, *self.subclauses, *self.prose]
+
+
+def normalize_argument_clauses(raw: Any) -> list[ArgumentClause]:
+    """Turn raw model objections into numberless, properly nested arguments."""
+    clauses: list[ArgumentClause] = []
+    for item in raw or []:
+        if isinstance(item, ArgumentClause):
+            clauses.append(item)
+            continue
+        if isinstance(item, dict):
+            text = str(item.get("text", ""))
+            subclauses = [str(x) for x in item.get("subclauses", []) or []]
+            prose = [str(x) for x in item.get("prose", []) or []]
+        else:
+            text, subclauses, prose = str(item), [], []
+        depth, _ = split_leading_number(text)
+        clause = ArgumentClause(text=text, subclauses=subclauses, prose=prose)
+        if not clause.text:
+            continue
+        if depth >= 3 and clauses:
+            clauses[-1].subclauses.append(clause.text)
+            clauses[-1].subclauses.extend(clause.subclauses)
+            clauses[-1].prose.extend(clause.prose)
+            continue
+        clauses.append(clause)
+    return clauses
+
+
+@dataclass(slots=True)
 class ContractClause:
     """A numbered clause and its subclauses, both stored WITHOUT numbers.
 
@@ -212,5 +265,73 @@ class ContractDraft:
             requisites_a=[str(x).strip() for x in payload.get("requisites_a", []) if str(x).strip()],
             requisites_b=[str(x).strip() for x in payload.get("requisites_b", []) if str(x).strip()],
             verification_notes=[str(x).strip() for x in payload.get("verification_notes", []) if str(x).strip()],
+            source_urls=list(source_urls),
+        )
+
+
+@dataclass(slots=True)
+class ResponseDraft:
+    """Отзыв на исковое заявление — an adversarial filing by the defendant."""
+
+    status: VerificationStatus
+    title: str
+    court: str
+    case_reference: str
+    plaintiff: list[str]
+    defendant: list[str]
+    introduction: list[str]
+    circumstances: list[str]
+    objections: list[ArgumentClause]
+    legal_basis: list[str]
+    requests: list[str]
+    attachments: list[str]
+    verification_notes: list[str]
+    source_urls: list[str]
+
+    def __post_init__(self) -> None:
+        self.objections = normalize_argument_clauses(self.objections)
+
+    def body_lines(self) -> list[str]:
+        lines = [
+            self.title,
+            self.court,
+            self.case_reference,
+            *self.plaintiff,
+            *self.defendant,
+            *self.introduction,
+            *self.circumstances,
+        ]
+        for objection in self.objections:
+            lines.extend(objection.text_lines())
+        lines.extend(self.legal_basis)
+        lines.extend(self.requests)
+        lines.extend(self.attachments)
+        return lines
+
+    @classmethod
+    def from_payload(
+        cls,
+        *,
+        status: VerificationStatus,
+        source_urls: list[str],
+        payload: dict,
+    ) -> "ResponseDraft":
+        def strings(key: str) -> list[str]:
+            return [str(x).strip() for x in payload.get(key, []) or [] if str(x).strip()]
+
+        return cls(
+            status=status,
+            title=str(payload.get("title", "")).strip(),
+            court=str(payload.get("court", "")).strip(),
+            case_reference=str(payload.get("case_reference", "")).strip(),
+            plaintiff=strings("plaintiff"),
+            defendant=strings("defendant"),
+            introduction=strings("introduction"),
+            circumstances=strings("circumstances"),
+            objections=normalize_argument_clauses(payload.get("objections", []) or []),
+            legal_basis=strings("legal_basis"),
+            requests=strings("requests"),
+            attachments=strings("attachments"),
+            verification_notes=strings("verification_notes"),
             source_urls=list(source_urls),
         )

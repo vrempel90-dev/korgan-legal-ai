@@ -6,11 +6,9 @@ from zoneinfo import ZoneInfo
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
-from docx.text.paragraph import Paragraph
 
+from korgan.docx_blocks import AutoNumberedList, Block, Heading, Prose, render_blocks
 from korgan.legal_calc import NEEDS_CALCULATION_MARKER
 from korgan.legal_types import ClaimDraft, VerificationStatus
 
@@ -63,57 +61,6 @@ def _party_lines(items: list[str], label: str, fallback: str) -> list[str]:
     return [line for line in lines if line] or [fallback]
 
 
-def _restarted_num_id(doc, style_id: str) -> int | None:
-    """Clone the style's numbering with startOverride=1."""
-    style_num_id = None
-    for style in doc.styles.element.findall(qn("w:style")):
-        if style.get(qn("w:styleId")) != style_id:
-            continue
-        found = style.find(f'{qn("w:pPr")}/{qn("w:numPr")}/{qn("w:numId")}')
-        if found is not None:
-            style_num_id = found.get(qn("w:val"))
-        break
-
-    if style_num_id is None:
-        return None
-
-    numbering = doc.part.numbering_part.element
-    abstract_id = None
-    used_ids = set()
-    for num in numbering.findall(qn("w:num")):
-        current = num.get(qn("w:numId"))
-        if current is not None and current.isdigit():
-            used_ids.add(int(current))
-        if current == style_num_id:
-            reference = num.find(qn("w:abstractNumId"))
-            if reference is not None:
-                abstract_id = reference.get(qn("w:val"))
-
-    if abstract_id is None:
-        return None
-
-    new_id = max(used_ids, default=0) + 1
-    num = OxmlElement("w:num")
-    num.set(qn("w:numId"), str(new_id))
-    reference = OxmlElement("w:abstractNumId")
-    reference.set(qn("w:val"), abstract_id)
-    num.append(reference)
-    override = OxmlElement("w:lvlOverride")
-    override.set(qn("w:ilvl"), "0")
-    start_override = OxmlElement("w:startOverride")
-    start_override.set(qn("w:val"), "1")
-    override.append(start_override)
-    num.append(override)
-    numbering.append(num)
-    return new_id
-
-
-def _apply_num_id(paragraph: Paragraph, num_id: int) -> None:
-    num_pr = paragraph._p.get_or_add_pPr().get_or_add_numPr()
-    num_pr.get_or_add_ilvl().val = 0
-    num_pr.get_or_add_numId().val = num_id
-
-
 def _document_status(draft: ClaimDraft) -> str:
     court_text = "\n".join(
         [
@@ -146,6 +93,31 @@ def _document_status(draft: ClaimDraft) -> str:
 
 def _kazakhstan_today() -> str:
     return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
+
+
+def _body_blocks(draft: ClaimDraft) -> list[Block]:
+    """Describe the claim body.
+
+    Facts and legal reasoning are narrative: they are `Prose` and therefore can
+    never pick up a list number. Only просительная часть and приложения are real
+    numbered lists, and приложения restart at 1.
+    """
+    blocks: list[Block] = [Prose(fact) for fact in draft.facts]
+
+    if draft.legal_basis:
+        blocks.append(Heading("Правовое обоснование"))
+        blocks.extend(Prose(basis) for basis in draft.legal_basis)
+
+    if draft.late_interest:
+        blocks.append(Heading("Расчёт неустойки по статье 353 ГК РК"))
+        blocks.append(Prose(draft.late_interest))
+
+    blocks.append(Heading("На основании изложенного ПРОШУ СУД:"))
+    blocks.append(AutoNumberedList(list(draft.requests)))
+
+    blocks.append(Heading("Приложения:"))
+    blocks.append(AutoNumberedList(list(draft.attachments), restart=True))
+    return blocks
 
 
 def build_claim_docx(draft: ClaimDraft) -> bytes:
@@ -202,35 +174,7 @@ def build_claim_docx(draft: ClaimDraft) -> bytes:
     title_run.font.name = "Times New Roman"
     title_run.font.size = Pt(14)
 
-    for fact in draft.facts:
-        paragraph = doc.add_paragraph(fact)
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-
-    if draft.legal_basis:
-        heading = doc.add_paragraph()
-        heading.add_run("Правовое обоснование").bold = True
-        for basis in draft.legal_basis:
-            paragraph = doc.add_paragraph(basis)
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-
-    if draft.late_interest:
-        interest_heading = doc.add_paragraph()
-        interest_heading.add_run("Расчёт неустойки по статье 353 ГК РК").bold = True
-        interest_paragraph = doc.add_paragraph(draft.late_interest)
-        interest_paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-
-    request_heading = doc.add_paragraph()
-    request_heading.add_run("На основании изложенного ПРОШУ СУД:").bold = True
-    for request in draft.requests:
-        doc.add_paragraph(request, style="List Number")
-
-    attachments_heading = doc.add_paragraph()
-    attachments_heading.add_run("Приложения:").bold = True
-    annex_num_id = _restarted_num_id(doc, "ListNumber")
-    for attachment in draft.attachments:
-        paragraph = doc.add_paragraph(attachment, style="List Number")
-        if annex_num_id is not None:
-            _apply_num_id(paragraph, annex_num_id)
+    render_blocks(doc, _body_blocks(draft))
 
     doc.add_paragraph()
     doc.add_paragraph(f"Дата: {_kazakhstan_today()}")

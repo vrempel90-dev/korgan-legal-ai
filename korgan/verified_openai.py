@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from korgan.legal_types import LegalResearch, VerificationStatus
+from korgan.provision_check import paraphrase_defects, verified_claim_line
 from korgan.strict_openai import StrictOpenAILegalService
 
 LOGGER = logging.getLogger(__name__)
@@ -23,9 +24,13 @@ _VERIFIED_RESEARCH_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "statement": {"type": "string"},
                     "article": {"type": "string"},
+                    # The provision's own words. A paraphrase that cannot be
+                    # checked against them can never be VERIFIED — see
+                    # korgan.provision_check and reference/source-verification.md.
+                    "provision_text": {"type": "string"},
                     "source_url": {"type": "string"},
                 },
-                "required": ["statement", "article", "source_url"],
+                "required": ["statement", "article", "provision_text", "source_url"],
                 "additionalProperties": False,
             },
         },
@@ -177,7 +182,11 @@ class VerifiedOpenAILegalService(StrictOpenAILegalService):
             "Не угадывай название суда. Если оба элемента подтверждены, добавь verified_point с точным названием суда и в notes добавь РОВНО одну строку "
             "формата 'VERIFIED_COURT: <точное официальное наименование суда>'. Если точный суд не подтвержден — такой строки быть не должно.\n"
             "12. Не включай в итоговый иск неизвестные телефон/e-mail ответчика как обязательные placeholders: такие сведения указываются только если известны истцу.\n"
-            "13. Если точная норма не подтверждена — она запрещена в verified_points.\n\n"
+            "13. Если точная норма не подтверждена — она запрещена в verified_points.\n"
+            "14. provision_text — ДОСЛОВНАЯ выдержка именно той части/пункта, на которую ссылаешься, скопированная с открытой страницы. "
+            "Не пересказ, не сокращение до вывода: без этого текста пересказ нельзя сверить, и вывод будет отклонён. "
+            "statement обязан следовать из provision_text построчно: нельзя добавлять требование, которого там нет, "
+            "и нельзя расширять узкое условие (например, правило для документа, подписанного представителем) до общего правила.\n\n"
             f"МАТЕРИАЛЫ ДЕЛА:\n{case_context[:self.settings.max_case_text_chars]}"
         )
 
@@ -211,6 +220,7 @@ class VerifiedOpenAILegalService(StrictOpenAILegalService):
         for point in payload.get("verified_points", []):
             statement = str(point.get("statement", "")).strip()
             article = str(point.get("article", "")).strip()
+            provision_text = str(point.get("provision_text", "")).strip()
             claimed_url = str(point.get("source_url", "")).strip()
             canonical = _canonical_url(claimed_url)
             actual_url = actual_by_canonical.get(canonical)
@@ -222,7 +232,14 @@ class VerifiedOpenAILegalService(StrictOpenAILegalService):
                     )
                 continue
 
-            verified_claims.append(f"{statement} [основание: {article}; источник: {actual_url}]")
+            # A correct article number is not a correct paraphrase: the wording
+            # is checked against the provision's own text before it is trusted.
+            drift = paraphrase_defects(statement, provision_text)
+            if drift:
+                rejected.append(f"{statement} — не принят как VERIFIED: {'; '.join(drift[:3])}")
+                continue
+
+            verified_claims.append(verified_claim_line(statement, article, provision_text, actual_url))
             if actual_url not in used_urls:
                 used_urls.append(actual_url)
 
