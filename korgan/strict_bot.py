@@ -11,12 +11,12 @@ from korgan import bot as base_bot
 from korgan.admin import router as admin_router
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
-from korgan.instant_claim_runtime import router as instant_claim_router
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.response_menu_handlers import router as response_router
 from korgan.ui import main_menu
+from korgan.universal_claim_runtime import router as universal_claim_router
 from korgan.universal_quality_service import UniversalQualityProductionService
 
 LOGGER = logging.getLogger(__name__)
@@ -52,15 +52,14 @@ async def main() -> None:
     dp.include_router(contact_router)
     dp.include_router(response_router)
 
-    # Claim requests are intercepted before the legacy questionnaire/release
-    # handlers. Missing source facts remain fail-closed placeholders instead of
-    # being invented; quality repair is automatic and defect-driven.
-    dp.include_router(instant_claim_router)
+    # Claims use the clean universal quality runtime: no legacy preflight or
+    # questionnaire layer is allowed to re-write a repaired document afterwards.
+    dp.include_router(universal_claim_router)
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
     LOGGER.info(
-        "Starting KORGAN: universal 8.5 document quality + instant claims + verified law + responses + contracts"
+        "Starting KORGAN: universal 8.5 document quality + verified law + claims + responses + contracts"
     )
     try:
         await dp.start_polling(bot)
