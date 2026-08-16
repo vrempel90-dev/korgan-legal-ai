@@ -47,6 +47,10 @@ class ContractRequestFilter(BaseFilter):
 
 
 async def _save_user_text_as_facts(message: Message, state: FSMContext, *, min_length: int = 24) -> None:
+    # Callback queries carry the bot's own menu message in callback.message.
+    # Never persist that service text as if it were a fact supplied by the user.
+    if message.from_user is not None and message.from_user.is_bot:
+        return
     text = (message.text or "").strip()
     if not text or text in {"📄 Документ", "⚖️ Исковое заявление", "🤝 Договор"} or len(text) < min_length:
         return
@@ -165,9 +169,22 @@ async def document_claim_callback(callback: CallbackQuery, state: FSMContext) ->
 
 @router.callback_query(F.data == "doc:contract")
 async def document_contract_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    # Selecting a document type is not contract input. Always wait for an
+    # actual user message before legal research / drafting starts.
     await callback.answer()
+    await state.update_data(mode="contract_details")
     if callback.message is not None:
-        await _send_contract_as_word(callback.message, state)
+        await callback.message.answer(
+            "🤝 Опишите договор одним сообщением:\n"
+            "• какой договор нужен;\n"
+            "• кто стороны и их роли;\n"
+            "• предмет договора;\n"
+            "• цена/оплата, если есть;\n"
+            "• срок;\n"
+            "• важные особые условия.\n\n"
+            "Можно также прикрепить документы или переписку. После вашего сообщения KORGAN проверит применимые нормы РК и сформирует договор в Word (.docx).",
+            reply_markup=main_menu(),
+        )
 
 
 @router.callback_query(F.data == "menu:main")
