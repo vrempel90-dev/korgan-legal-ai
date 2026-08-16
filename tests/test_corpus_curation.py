@@ -190,7 +190,12 @@ class TestAgainstDatabase:
     def test_overdue_norms_appear_in_the_review_queue(self, curator) -> None:
         curator.add(_submission(next_review_date=date(2026, 9, 1)))
 
-        assert curator.due_for_review(as_of=date(2026, 8, 20)) == []
+        # Other batches in the corpus may already be due; this norm is not, until its date passes.
+        assert not [
+            norm
+            for norm in curator.due_for_review(as_of=date(2026, 8, 20))
+            if norm.code_id == "TEST_CODE"
+        ]
 
         overdue = curator.due_for_review(as_of=date(2026, 10, 1))
         assert [norm.article_number for norm in overdue if norm.code_id == "TEST_CODE"] == ["1000"]

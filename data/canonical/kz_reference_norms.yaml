@@ -1,6 +1,13 @@
 review_batch: "manual-reference-review-2026-08-15"
 reviewed_by: "KORGAN legal corpus manual review"
 reviewed_at: "2026-08-15T00:00:00+06:00"
+# Provenance of this batch is not established: the wording was recorded before the curation
+# tooling existed and no named reviewer stands behind an individual entry. The past
+# re-verification date is deliberate — every norm here shows up in `korgan-legal list-pending`
+# and carries a "требует переверификации" note in drafted documents until a lawyer re-confirms
+# it through `korgan-legal update-norm --reviewed-by "<имя>"`.
+next_review_date: "2026-01-01"
+
 norms:
   - code_id: "GK_RK_GENERAL"
     law_name: "Гражданский кодекс Республики Казахстан (Общая часть)"
