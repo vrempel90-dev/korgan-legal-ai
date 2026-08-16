@@ -77,6 +77,9 @@ class ClaimDraft:
     source_urls: list[str]
     # Filled deterministically by korgan.legal_calc, never by the model.
     state_duty: str = ""
+    # Deterministic calculation under Article 353, when explicitly claimed and
+    # source-bound research has confirmed the provision.
+    late_interest: str = ""
 
 
 @dataclass(slots=True)
