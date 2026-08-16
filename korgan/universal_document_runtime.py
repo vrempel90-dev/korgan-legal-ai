@@ -12,6 +12,7 @@ from korgan import bot as base_bot
 from korgan.contract_docx import build_contract_docx
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
+from korgan.legal_types import VerificationStatus
 from korgan.response_docx import build_response_to_claim_docx
 from korgan.response_intent import is_response_to_claim_request
 from korgan.telegram_text import bullets, fit_caption
@@ -121,6 +122,7 @@ async def _send_contract(message: Message, state: FSMContext) -> None:
         research = await research_method(context, language=lang)
         draft = await draft_method(context, research, language=lang)
         quality = assess_document_quality("contract", context, research, draft)
+        draft.status = VerificationStatus.VERIFIED if quality.ready else VerificationStatus.NEEDS_VERIFICATION
         file_bytes = build_contract_docx(draft)
     except Exception:
         LOGGER.exception("Universal contract generation failed")
@@ -174,6 +176,7 @@ async def _send_response(message: Message, state: FSMContext) -> None:
         research = await research_method(context, language=lang)
         draft = await draft_method(context, research, language=lang)
         quality = assess_document_quality("response_to_claim", context, research, draft)
+        draft.status = VerificationStatus.VERIFIED if quality.ready else VerificationStatus.NEEDS_VERIFICATION
         file_bytes = build_response_to_claim_docx(draft)
     except Exception:
         LOGGER.exception("Universal response-to-claim generation failed")
