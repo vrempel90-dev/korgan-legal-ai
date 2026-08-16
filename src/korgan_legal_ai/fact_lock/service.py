@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from pydantic import BaseModel, Field
 
 from korgan_legal_ai.domain.exceptions import ClarificationRequired
+from korgan_legal_ai.fact_lock.vocabulary import expected_values, normalize_enum
 from korgan_legal_ai.domain.models import (
     Evidence,
     EvidenceKind,
@@ -220,13 +221,22 @@ def _normalize_decimal(
 
 
 def _enum_value(enum_type, value: str | None, *, field_name: str, ambiguities: list[str], default=None):
-    if value is None or not value.strip():
+    """Map an extracted value onto an enum, telling the user what is accepted when it does not fit.
+
+    The question and the answer have to speak the same language. Rejecting "истец" while asking
+    "уточните роль стороны" made the dialogue unanswerable: no reply phrased in the question's own
+    terms could ever pass, so the same question came back unchanged.
+    """
+    if value is None or not str(value).strip():
         return default
-    try:
-        return enum_type(value.strip())
-    except ValueError:
-        ambiguities.append(f"Уточните значение поля {field_name}: получено неподдерживаемое значение.")
-        return default
+    resolved = normalize_enum(enum_type, value)
+    if resolved is not None:
+        return resolved
+    ambiguities.append(
+        f"Уточните {field_name}: значение «{str(value).strip()}» не распознано — "
+        f"{expected_values(enum_type)}."
+    )
+    return default
 
 
 def _normalize_extraction(wire: FactLockWireExtraction, *, raw_text: str) -> FactLockExtraction:
@@ -314,7 +324,7 @@ def _normalize_extraction(wire: FactLockWireExtraction, *, raw_text: str) -> Fac
                 kind=_enum_value(
                     EvidenceKind,
                     item.kind,
-                    field_name=f"тип доказательства {item.title}",
+                    field_name=f"вид документа «{item.title}»",
                     ambiguities=ambiguities,
                     default=EvidenceKind.OTHER,
                 ),
@@ -378,7 +388,7 @@ def _normalize_extraction(wire: FactLockWireExtraction, *, raw_text: str) -> Fac
         representative_kind=_enum_value(
             RepresentativeKind,
             procedure_wire.representative_kind,
-            field_name="representative_kind",
+            field_name="кто подписывает документ",
             ambiguities=ambiguities,
         ),
         representative_name=procedure_wire.representative_name,
@@ -386,7 +396,7 @@ def _normalize_extraction(wire: FactLockWireExtraction, *, raw_text: str) -> Fac
         filing_mode=_enum_value(
             FilingMode,
             procedure_wire.filing_mode,
-            field_name="filing_mode",
+            field_name="способ подачи документа",
             ambiguities=ambiguities,
         ),
         third_party_count=procedure_wire.third_party_count,
