@@ -11,7 +11,7 @@ from korgan import bot as base_bot
 from korgan.admin import router as admin_router
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
-from korgan.fast_professional_litigation import FastProfessionalLitigationService
+from korgan.finalized_litigation import FinalizedProfessionalLitigationService
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
@@ -32,10 +32,9 @@ async def configure_telegram_menu(bot: Bot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    # Telegram/UI stays unchanged. The legal core is latency-bounded:
-    # one official-source research pass -> professional draft -> deterministic
-    # pre-filing check -> at most one targeted repair.
-    base_bot.service = FastProfessionalLitigationService(settings)
+    # Telegram/UI stays unchanged. The legal core is latency-bounded and now has
+    # a zero-call deterministic finalizer after research/draft/optional repair.
+    base_bot.service = FinalizedProfessionalLitigationService(settings)
     base_bot.MENU = main_menu()
 
     bot = Bot(token=settings.telegram_bot_token)
@@ -56,7 +55,7 @@ async def main() -> None:
     dp.include_router(base_bot.router)
 
     LOGGER.info(
-        "Starting KORGAN: fast professional RK litigation + unchanged Telegram UI + one-research pre-filing gate"
+        "Starting KORGAN: finalized professional RK litigation + unchanged Telegram UI + zero-call claim finalizer"
     )
     try:
         await dp.start_polling(bot)
