@@ -37,6 +37,7 @@ def documents_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⚖️ Исковое заявление", callback_data="doc:claim")],
+            [InlineKeyboardButton(text="🛡 Отзыв на иск", callback_data="doc:response")],
             [InlineKeyboardButton(text="🤝 Договор", callback_data="doc:contract")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main")],
         ]
@@ -86,7 +87,7 @@ WELCOME_TEXT = (
     "⚖️ <b>KORGAN Legal AI</b>\n\n"
     "Юридический AI‑ассистент по законодательству Республики Казахстан.\n\n"
     "Можно получить консультацию, загрузить PDF/DOCX/TXT, фото или скан, "
-    "подготовить исковое заявление или профессиональный договор.\n\n"
+    "подготовить исковое заявление, отзыв на иск или профессиональный договор.\n\n"
     "🔎 Точные нормы, сроки, госпошлина и подсудность используются только после "
     "проверки официальных источников. Если подтверждения недостаточно — KORGAN "
     "покажет <b>NEEDS_VERIFICATION</b>, а не будет угадывать.\n\n"
@@ -97,5 +98,5 @@ MAIN_TEXT = "🏠 <b>Главное меню</b>\n\nВыберите нужны�
 
 DOCUMENTS_TEXT = (
     "📄 <b>Документ</b>\n\n"
-    "Выберите: исковое заявление или договор. Готовый документ придёт отдельным файлом .docx."
+    "Выберите: исковое заявление, отзыв на иск или договор. Готовый документ придёт отдельным файлом .docx."
 )
