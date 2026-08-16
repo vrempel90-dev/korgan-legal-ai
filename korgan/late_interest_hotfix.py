@@ -132,13 +132,26 @@ def _extract_due_date(case_context: str) -> date | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
+def _principal_amount(draft: ClaimDraft) -> int | None:
+    """Prefer the standalone principal request over a model-written total claim price."""
+    for request in draft.requests:
+        if _PENALTY_LINE_RE.search(request):
+            continue
+        lowered = request.lower()
+        if any(marker in lowered for marker in ("основн", "долг", "задолж")):
+            amount = parse_amount_kzt(request)
+            if amount:
+                return amount
+    return parse_amount_kzt(draft.price_of_claim)
+
+
 def _remove_model_penalty(draft: ClaimDraft, case_context: str) -> None:
     """Do not let the model add an unrequested or unverified monetary claim."""
+    principal = _principal_amount(draft)
     draft.requests = [item for item in draft.requests if not _PENALTY_LINE_RE.search(item)]
     draft.legal_basis = [item for item in draft.legal_basis if not _PENALTY_LINE_RE.search(item)]
     draft.late_interest = ""
 
-    principal = parse_amount_kzt(draft.price_of_claim)
     if principal:
         draft.price_of_claim = format_kzt(principal)
         draft.state_duty = gosposhlina_line(case_context, draft.price_of_claim)
@@ -171,7 +184,7 @@ def _apply_verified_article_353(
         return
 
     due_date = _extract_due_date(case_context)
-    principal = parse_amount_kzt(draft.price_of_claim)
+    principal = _principal_amount(draft)
     if due_date is None or principal is None:
         _remove_model_penalty(draft, case_context)
         if DUE_DATE_MISSING_NOTE not in draft.verification_notes:
