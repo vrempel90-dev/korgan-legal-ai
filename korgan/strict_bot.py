@@ -9,10 +9,11 @@ from aiogram.types import BotCommand, MenuButtonCommands
 
 from korgan import bot as base_bot
 from korgan.config import get_settings
-from korgan.contract_generation_hotfix import ProductionOpenAILegalService
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
+from korgan.response_legal import ProductionOpenAILegalService
+from korgan.response_menu_handlers import router as response_router
 from korgan.ui import main_menu
 
 LOGGER = logging.getLogger(__name__)
@@ -45,10 +46,13 @@ async def main() -> None:
 
     dp.include_router(start_router)
     dp.include_router(safety_router)
+    # Response-to-claim must run before the generic claim router so phrases such
+    # as «подготовь отзыв на иск» are never mistaken for a new plaintiff claim.
+    dp.include_router(response_router)
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN: civil-claim safeguards + truncation-safe contract generation")
+    LOGGER.info("Starting KORGAN: claims + responses to claims + truncation-safe contracts")
     try:
         await dp.start_polling(bot)
     finally:
