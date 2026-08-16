@@ -51,6 +51,10 @@ _AMOUNT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_ROLE_LINE_RE = re.compile(
+    r"(?im)^\s*(истец|заявитель|ответчик|должник|взыскатель|кредитор)\s*:\s*(.*)$"
+)
+
 
 def calc_gosposhlina_claim(amount: int, is_individual: bool) -> int:
     """State duty for a monetary claim, in tenge."""
@@ -83,16 +87,56 @@ def format_kzt(value: int) -> str:
     return f"{value:,}".replace(",", " ") + " тенге"
 
 
-def claimant_is_individual(case_context: str) -> bool | None:
-    """Decide the duty rate from the case materials, fail-closed."""
+def _claimant_segment(case_context: str) -> str:
+    """Return text bound to the claimant role without leaking defendant data.
+
+    The old implementation scanned the whole case and therefore saw a TОО/BIN
+    defendant as evidence that the claimant was a legal entity.  This extractor
+    is role-bound: it starts at an «Истец/Заявитель» line and stops at the next
+    named party role.  A short inline fallback is used only when line structure
+    is absent.
+    """
     if not case_context:
+        return ""
+
+    lines = case_context.splitlines()
+    collected: list[str] = []
+    active = False
+    for line in lines:
+        match = _ROLE_LINE_RE.match(line)
+        if match:
+            role = match.group(1).lower()
+            if role in {"истец", "заявитель"}:
+                active = True
+                collected = [match.group(2).strip()]
+                continue
+            if active:
+                break
+        elif active:
+            if line.strip():
+                collected.append(line.strip())
+    segment = "\n".join(item for item in collected if item).strip()
+    if segment:
+        return segment
+
+    match = re.search(
+        r"(?is)\b(?:истец|заявитель)\s*:\s*(.{1,500}?)(?=\b(?:ответчик|должник|взыскатель|кредитор)\s*:|$)",
+        case_context,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def claimant_is_individual(case_context: str) -> bool | None:
+    """Decide the duty rate from claimant-bound case materials, fail-closed."""
+    segment = _claimant_segment(case_context)
+    if not segment:
         return None
-    lowered = f" {case_context.lower()} "
+    lowered = f" {segment.lower()} "
     if any(marker in lowered for marker in _LEGAL_ENTITY_MARKERS):
-        return None
-    if "иин" not in lowered:
-        return None
-    return True
+        return False
+    if "иин" in lowered and re.search(r"(?<!\d)\d{12}(?!\d)", segment):
+        return True
+    return None
 
 
 def gosposhlina_line(case_context: str, price_of_claim: str) -> str:
