@@ -5,7 +5,6 @@ import re
 from zoneinfo import ZoneInfo
 
 from korgan.legal_calc import (
-    ARTICLE_353_LABEL,
     NEEDS_RATE_MARKER,
     calc_late_payment_penalty,
     format_kzt,
@@ -17,6 +16,11 @@ from korgan.legal_types import ClaimDraft, LegalResearch
 from korgan.state_duty_final_hotfix import (
     ProductionOpenAILegalService as _BaseProductionOpenAILegalService,
     _enforce_single_state_duty_request,
+)
+from korgan.verified_openai import (
+    _VERIFIED_RESEARCH_SCHEMA,
+    _actual_response_urls,
+    _canonical_url,
 )
 
 
@@ -95,8 +99,6 @@ def _research_has_article_353(research: LegalResearch) -> bool:
     for claim in research.verified_claims:
         if _ARTICLE_353_RE.search(claim) and _GK_GENERAL_MARKER.lower() in claim.lower():
             return True
-    # Some source-bound claims retain the article in text while the URL is kept
-    # separately in research.source_urls.
     has_article = any(_ARTICLE_353_RE.search(claim) for claim in research.verified_claims)
     has_source = any(_GK_GENERAL_MARKER.lower() in url.lower() for url in research.source_urls)
     return has_article and has_source
@@ -136,8 +138,6 @@ def _remove_model_penalty(draft: ClaimDraft, case_context: str) -> None:
     draft.legal_basis = [item for item in draft.legal_basis if not _PENALTY_LINE_RE.search(item)]
     draft.late_interest = ""
 
-    # A model often writes «800 000 + проценты» into the claim price.  When the
-    # extra claim is removed, restore the deterministic principal-only price.
     principal = parse_amount_kzt(draft.price_of_claim)
     if principal:
         draft.price_of_claim = format_kzt(principal)
@@ -196,9 +196,6 @@ def _apply_verified_article_353(
             draft.verification_notes.append(RATE_MISSING_NOTE)
         return
 
-    # Replace any model-written variant with one deterministic, source-backed
-    # formulation.  The research pass, not this module, is what verified that
-    # Article 353 is current and applicable.
     draft.requests = [item for item in draft.requests if not _PENALTY_LINE_RE.search(item)]
     draft.legal_basis = [item for item in draft.legal_basis if not _PENALTY_LINE_RE.search(item)]
     draft.legal_basis.append(
@@ -216,8 +213,6 @@ def _apply_verified_article_353(
         "за последующий период — по день фактической уплаты суммы долга в порядке статьи 353 ГК РК."
     )
 
-    # Monetary penalty stated as of filing is part of the quantified monetary
-    # relief; update the total claim price and then recompute state duty.
     total = principal + penalty.amount
     draft.price_of_claim = (
         f"{format_kzt(total)} (основной долг {format_kzt(principal)} + "
@@ -229,6 +224,74 @@ def _apply_verified_article_353(
 
 class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
     """Claude 353/citation idea adapted to the current source-bound runtime."""
+
+    async def _targeted_article_353_research(
+        self,
+        case_context: str,
+        language: str,
+    ) -> tuple[list[str], list[str]]:
+        """Verify Article 353 through the same actual-search-URL binding as KORGAN."""
+        tools = [{
+            "type": "web_search",
+            "filters": {"allowed_domains": self.settings.legal_domains},
+            "search_context_size": "low",
+        }]
+        prompt = (
+            "Отдельная узкая проверка для денежного требования в иске. Открой действующую Общую часть "
+            "Гражданского кодекса Республики Казахстан на Adilet (K940001000_) и проверь статью 353. "
+            "Установи, применима ли она к описанной просрочке денежного обязательства. "
+            "Если применима, верни один verified_point с точным выводом, article='353' и URL реально открытой "
+            "официальной страницы. Если нет или источник не подтверждён — только unverified_claims.\n\n"
+            f"МАТЕРИАЛЫ:\n{case_context[:24000]}"
+        )
+        payload, response = await self._structured_response(
+            model=self.settings.openai_model,
+            instructions=(
+                "Ты source-bound юридический исследователь KORGAN. Не отвечай по памяти. "
+                f"Язык: {'казахский' if language == 'kk' else 'русский'}."
+            ),
+            content=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+            schema_name="korgan_verified_legal_research",
+            schema=_VERIFIED_RESEARCH_SCHEMA,
+            tools=tools,
+        )
+
+        actual_urls = [
+            url for url in _actual_response_urls(response)
+            if self._is_current_official_source(url) and _GK_GENERAL_MARKER.lower() in url.lower()
+        ]
+        actual_by_canonical = {
+            _canonical_url(url): url
+            for url in actual_urls
+            if _canonical_url(url)
+        }
+        claims: list[str] = []
+        used_urls: list[str] = []
+        for point in payload.get("verified_points", []):
+            statement = str(point.get("statement", "")).strip()
+            article = str(point.get("article", "")).strip()
+            claimed_url = str(point.get("source_url", "")).strip()
+            actual_url = actual_by_canonical.get(_canonical_url(claimed_url))
+            if not statement or not _ARTICLE_353_RE.search(article) or not actual_url:
+                continue
+            claims.append(f"{statement} [основание: {article}; источник: {actual_url}]")
+            if actual_url not in used_urls:
+                used_urls.append(actual_url)
+        return claims, used_urls
+
+    async def research_case(self, case_context: str, language: str = "ru") -> LegalResearch:
+        research = await super().research_case(case_context, language=language)
+        if not _explicit_penalty_requested(case_context) or _research_has_article_353(research):
+            return research
+
+        claims, urls = await self._targeted_article_353_research(case_context, language)
+        for claim in claims:
+            if claim not in research.verified_claims:
+                research.verified_claims.append(claim)
+        for url in urls:
+            if url not in research.source_urls:
+                research.source_urls.append(url)
+        return research
 
     async def draft_claim(
         self,
