@@ -10,9 +10,12 @@ _ADDRESS_MARKERS = (
     "адрес", "место жительства", "место нахождения", "проживает", "проживаю", "живу ", "живет", "живёт",
     "ул.", " улица ", "дом ", "д. ", "квартира", "кв.", "мкр", "проспект",
 )
-_LEGAL_ENTITY_MARKERS = ("тоо", "ао ", "акционерное общество", "юридическое лицо", "бин")
+_LEGAL_ENTITY_MARKERS = (
+    "тоо", "ао ", "акционерное общество", "юридическое лицо", "бин",
+    "ргп", "ргу", "кгу", "кгп", "ип ",
+)
 _DATE_RE = re.compile(r"(?<!\d)(?:\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})(?!\d)")
-_IIN_RE = re.compile(r"(?<!\d)\d{12}(?!\d)")
+_TWELVE_DIGIT_RE = re.compile(r"(?<!\d)\d{12}(?!\d)")
 _NAME_RE = re.compile(r"[А-ЯЁA-Z][а-яёa-z'-]{1,}(?:\s+[А-ЯЁA-Z][а-яёa-z'-]{1,}){1,2}")
 
 
@@ -48,6 +51,28 @@ def _windows(text: str, markers: tuple[str, ...], radius: int = 220) -> list[str
     return result
 
 
+def _segments(text: str) -> list[str]:
+    return [part.strip() for part in re.split(r"[;\n]+", text) if part.strip()]
+
+
+def _party_segments(text: str, markers: tuple[str, ...]) -> list[str]:
+    result: list[str] = []
+    for segment in _segments(text):
+        lowered = segment.lower()
+        if any(marker in lowered for marker in markers):
+            result.append(segment)
+    return result
+
+
+def _party_is_legal_entity(text: str, markers: tuple[str, ...]) -> bool:
+    for segment in _party_segments(text, markers):
+        lowered = f" {segment.lower()} "
+        if any(marker in lowered for marker in _LEGAL_ENTITY_MARKERS):
+            return True
+    windows = "\n".join(_windows(text, markers, 180)).lower()
+    return any(marker in windows for marker in _LEGAL_ENTITY_MARKERS)
+
+
 def _has_role_bound_name(text: str, markers: tuple[str, ...]) -> bool:
     for window in _windows(text, markers, 120):
         for candidate in _NAME_RE.findall(window):
@@ -58,15 +83,42 @@ def _has_role_bound_name(text: str, markers: tuple[str, ...]) -> bool:
     return False
 
 
-def _has_role_bound_iin(text: str, markers: tuple[str, ...]) -> bool:
-    for window in _windows(text, markers, 180):
-        if _IIN_RE.search(window) and "иин" in window.lower():
+def _has_role_bound_legal_name(text: str, markers: tuple[str, ...]) -> bool:
+    """Require the organisation marker and a non-empty name in the same party segment/window."""
+    prefixes = (
+        r"\bТОО\b", r"\bАО\b", r"\bРГП\b", r"\bРГУ\b", r"\bКГУ\b", r"\bКГП\b", r"\bИП\b",
+        r"акционерное\s+общество", r"товарищество\s+с\s+ограниченной\s+ответственностью",
+    )
+    org_re = re.compile(
+        rf"(?:{'|'.join(prefixes)})\s*(?:[«\"“][^»\"”]{{2,}}[»\"”]|[А-ЯЁA-Z0-9][^,;\n]{{2,}})",
+        re.IGNORECASE,
+    )
+    for segment in _party_segments(text, markers):
+        if org_re.search(segment):
+            return True
+    for window in _windows(text, markers, 140):
+        if org_re.search(window):
             return True
     return False
 
 
-def _segments(text: str) -> list[str]:
-    return [part.strip() for part in re.split(r"[;\n]+", text) if part.strip()]
+def _has_role_bound_identifier(text: str, markers: tuple[str, ...], label: str) -> bool:
+    label_re = re.compile(rf"\b{re.escape(label)}\b", re.IGNORECASE)
+    for segment in _party_segments(text, markers):
+        if label_re.search(segment) and _TWELVE_DIGIT_RE.search(segment):
+            return True
+    for window in _windows(text, markers, 180):
+        if label_re.search(window) and _TWELVE_DIGIT_RE.search(window):
+            return True
+    return False
+
+
+def _has_role_bound_iin(text: str, markers: tuple[str, ...]) -> bool:
+    return _has_role_bound_identifier(text, markers, "иин")
+
+
+def _has_role_bound_bin(text: str, markers: tuple[str, ...]) -> bool:
+    return _has_role_bound_identifier(text, markers, "бин")
 
 
 def _looks_like_address(segment: str) -> bool:
@@ -90,6 +142,7 @@ def _has_role_bound_address(text: str, markers: tuple[str, ...]) -> bool:
             r"\bмой\s+адрес\b",
             r"\bадрес\s+истц[а-яё]*\b",
             r"\bместо\s+жительства\s+истц[а-яё]*\b",
+            r"\bместо\s+нахождения\s+истц[а-яё]*\b",
             r"\bя\s+проживаю\b",
             r"\bя\s+живу\b",
             r"\bпроживаю\s+по\s+адресу\b",
@@ -98,6 +151,7 @@ def _has_role_bound_address(text: str, markers: tuple[str, ...]) -> bool:
         patterns = (
             r"\bадрес\s+ответчик[а-яё]*\b",
             r"\bместо\s+жительства\s+ответчик[а-яё]*\b",
+            r"\bместо\s+нахождения\s+ответчик[а-яё]*\b",
             r"\bответчик[а-яё]*.{0,80}\b(?:живет|живёт|проживает)\b",
             r"\bон\s+(?:живет|живёт|проживает)\b",
         )
@@ -118,15 +172,16 @@ def inspect_claim_context(case_context: str) -> ClaimPreflight:
     if not text:
         return ClaimPreflight(("описание обстоятельств дела или материалы",))
 
+    claimant_is_legal_entity = _party_is_legal_entity(text, _CLAIMANT_MARKERS)
+    defendant_is_legal_entity = _party_is_legal_entity(text, _DEFENDANT_MARKERS)
     claimant_windows = "\n".join(_windows(text, _CLAIMANT_MARKERS, 260)).lower()
-    claimant_is_legal_entity = any(marker in claimant_windows for marker in _LEGAL_ENTITY_MARKERS)
 
     missing: list[str] = []
 
     if claimant_is_legal_entity:
-        if not _has_role_bound_name(text, _CLAIMANT_MARKERS):
+        if not _has_role_bound_legal_name(text, _CLAIMANT_MARKERS):
             missing.append("полное наименование истца")
-        if not _has_role_bound_iin(text, _CLAIMANT_MARKERS):
+        if not _has_role_bound_bin(text, _CLAIMANT_MARKERS):
             missing.append("БИН истца")
         if not _has_role_bound_address(text, _CLAIMANT_MARKERS):
             missing.append("место нахождения истца")
@@ -142,9 +197,17 @@ def inspect_claim_context(case_context: str) -> ClaimPreflight:
         if not _has_role_bound_address(text, _CLAIMANT_MARKERS):
             missing.append("адрес места жительства истца")
 
-    if not _has_role_bound_name(text, _DEFENDANT_MARKERS):
-        missing.append("ФИО ответчика полностью")
-    if not _has_role_bound_address(text, _DEFENDANT_MARKERS):
-        missing.append("адрес места жительства ответчика")
+    if defendant_is_legal_entity:
+        if not _has_role_bound_legal_name(text, _DEFENDANT_MARKERS):
+            missing.append("полное наименование ответчика")
+        if not _has_role_bound_bin(text, _DEFENDANT_MARKERS):
+            missing.append("БИН ответчика")
+        if not _has_role_bound_address(text, _DEFENDANT_MARKERS):
+            missing.append("место нахождения ответчика")
+    else:
+        if not _has_role_bound_name(text, _DEFENDANT_MARKERS):
+            missing.append("ФИО ответчика полностью")
+        if not _has_role_bound_address(text, _DEFENDANT_MARKERS):
+            missing.append("адрес места жительства ответчика")
 
     return ClaimPreflight(tuple(dict.fromkeys(missing)))
