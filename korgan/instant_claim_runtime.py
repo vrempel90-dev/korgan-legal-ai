@@ -11,10 +11,10 @@ from aiogram.types import BufferedInputFile, Message
 
 from korgan import bot as base_bot
 from korgan.claim_docx import build_claim_docx, missing_required_fields
-from korgan.claim_failure import ClaimFailure, ClaimFailureCode, ClaimStage, failure_from_exception
+from korgan.claim_failure import ClaimStage, failure_from_exception
 from korgan.claim_intake_policy import apply_formal_placeholders, inspect_claim_gaps, placeholder_notes
 from korgan.claim_intent import is_claim_drafting_request
-from korgan.citation_audit import ProvisionReference
+from korgan.citation_audit import ProvisionReference, extract_references
 from korgan.civil_claim_hotfix import _sanitize_civil_research
 from korgan.document_release import review_lines
 from korgan.gate_instructions import keep_accepted_provisions
@@ -33,7 +33,7 @@ class InstantClaimProductionService(_StrictProductionService):
 
     Source-bound legal research remains mandatory. If the one search pass cannot
     confirm a proposition, the draft is downgraded to NEEDS_VERIFICATION instead
-    of making the user wait for another 20-40 second web-search round.
+    of making the user wait for another web-search round.
 
     Model QA is not run for every claim. The inherited claim builder still runs
     deterministic hard checks and can repair a genuinely broken draft, while the
@@ -146,7 +146,11 @@ def _strip_reference_token(text: str, reference: ProvisionReference) -> str:
         "КАС РК": r"(?:КАС\s*РК)",
         "КоАП РК": r"(?:КоАП\s*РК)",
     }.get(reference.act, re.escape(reference.act))
-    part = rf"(?:(?:част[ьи]|ч\.)\s*{re.escape(reference.part)}\s*)?" if reference.part else r"(?:(?:част[ьи]|ч\.)\s*\d+\s*)?"
+    part = (
+        rf"(?:(?:част[ьи]|ч\.)\s*{re.escape(reference.part)}\s*)?"
+        if reference.part
+        else r"(?:(?:част[ьи]|ч\.)\s*\d+\s*)?"
+    )
     pattern = re.compile(
         rf"{part}(?:стать[ьяиюеё]\w*|ст\.)\s*{re.escape(reference.article)}\s*(?:{act_pattern})?",
         re.IGNORECASE,
@@ -157,7 +161,7 @@ def _strip_reference_token(text: str, reference: ProvisionReference) -> str:
     return cleaned.strip(" ,;:")
 
 
-def _downgrade_unverified_citations(draft: ClaimDraft) -> object:
+def _downgrade_unverified_citations(draft: ClaimDraft):
     """Turn citation defects into visible NEEDS_VERIFICATION instead of a dialogue gate."""
     report = review_lines(_claim_lines(draft))
     refs = _blocking_references(report)
@@ -167,32 +171,16 @@ def _downgrade_unverified_citations(draft: ClaimDraft) -> object:
     # Legal reasoning keeps the article number but stops asserting its content.
     draft.legal_basis, kept = keep_accepted_provisions(list(draft.legal_basis), refs)
 
-    # A citation in a fact/request/attachment is not needed to preserve the
-    # requested relief. Remove the label and surface the verification warning in
-    # the checklist instead of wrapping the prayer in service text.
-    for attribute in ("facts", "requests", "attachments"):
-        values = list(getattr(draft, attribute, []) or [])
-        setattr(
-            draft,
-            attribute,
-            [
-                _strip_reference_token(value, ref)
-                for value in values
-                for ref in [next((r for r in refs if any(r.matches(x) for x in base_bot.extract_references(value))), None)]
-                if ref is not None
-            ] if any(any(r.matches(x) for x in base_bot.extract_references(value)) for r in refs for value in values) else values,
-        )
-
-    # The comprehension above handles lines carrying a blocking reference. Lines
-    # without one must remain untouched; rebuild each list explicitly to preserve
-    # every line and avoid accidental data loss.
+    # Citations outside legal_basis are not needed to preserve the factual
+    # narrative or requested relief. Remove only the citation token there; every
+    # original line remains in place.
     for attribute in ("facts", "requests", "attachments"):
         original = list(getattr(draft, attribute, []) or [])
         rebuilt: list[str] = []
         for value in original:
             updated = value
             for ref in refs:
-                if any(ref.matches(found) for found in base_bot.extract_references(updated)):
+                if any(ref.matches(found) for found in extract_references(updated)):
                     updated = _strip_reference_token(updated, ref)
             if updated.strip():
                 rebuilt.append(updated)
@@ -201,7 +189,7 @@ def _downgrade_unverified_citations(draft: ClaimDraft) -> object:
     if draft.late_interest:
         updated = draft.late_interest
         for ref in refs:
-            if any(ref.matches(found) for found in base_bot.extract_references(updated)):
+            if any(ref.matches(found) for found in extract_references(updated)):
                 updated = _strip_reference_token(updated, ref)
         draft.late_interest = updated
 
@@ -228,23 +216,31 @@ async def _send_claim(message: Message, state: FSMContext, draft: ClaimDraft) ->
 
     report = _downgrade_unverified_citations(draft)
 
-    # Citation defects should have been converted to visible markers. If any
-    # remain, do not start a chat loop: fail once, keep the case in memory.
+    # NEEDS_VERIFICATION never starts a dialogue gate. Citation defects are
+    # automatically downgraded. A residual defect means the rewrite itself was
+    # unsafe; report it once without asking the user to choose a branch.
     if report.citations.blocking:
-        LOGGER.error("INSTANT_CLAIM_CITATION_BLOCK residual=%s", [x.as_note() for x in report.citations.blocking])
-        await state.update_data(mode="main")
+        LOGGER.error(
+            "INSTANT_CLAIM_CITATION_BLOCK residual=%s",
+            [x.as_note() for x in report.citations.blocking],
+        )
+        await state.update_data(mode="main", gate_issues=[], claim_draft=None)
         await message.answer(
-            "Не удалось безопасно выпустить Word: одна из правовых ссылок осталась неподтверждённой после автоматической пометки. "
-            "Данные дела сохранены — повторите команду подготовки иска.",
+            "Не удалось безопасно выпустить Word: одна правовая ссылка не прошла автоматическую пометку. "
+            "Данные дела сохранены — повторите подготовку иска.",
             reply_markup=base_bot.MENU,
         )
         return
 
     if report.integrity:
-        LOGGER.error("INSTANT_CLAIM_INTEGRITY_BLOCK findings=%s", [x.as_note() for x in report.integrity])
-        await state.update_data(mode="main")
+        LOGGER.error(
+            "INSTANT_CLAIM_INTEGRITY_BLOCK findings=%s",
+            [x.as_note() for x in report.integrity],
+        )
+        await state.update_data(mode="main", gate_issues=[], claim_draft=None)
         await message.answer(
-            "Не удалось безопасно выпустить Word из-за технического дефекта текста. Данные дела сохранены — повторите подготовку иска.",
+            "Не удалось безопасно выпустить Word из-за технического дефекта текста. "
+            "Данные дела сохранены — повторите подготовку иска.",
             reply_markup=base_bot.MENU,
         )
         return
@@ -252,7 +248,10 @@ async def _send_claim(message: Message, state: FSMContext, draft: ClaimDraft) ->
     try:
         file_bytes = build_claim_docx(draft)
     except Exception as exc:
-        await base_bot._report_claim_failure(message, failure_from_exception(exc, stage=ClaimStage.RENDER))
+        await base_bot._report_claim_failure(
+            message,
+            failure_from_exception(exc, stage=ClaimStage.RENDER),
+        )
         return
 
     await state.update_data(mode="main", gate_issues=[], claim_draft=None, pending_fields=[])
@@ -285,7 +284,14 @@ async def _generate_now(message: Message, state: FSMContext) -> None:
     # Nothing from claim_preflight is allowed to block drafting. Every missing
     # field becomes a visible placeholder in the delivered Word project.
     gaps = inspect_claim_gaps(context).after_the_single_question()
-    await state.update_data(mode="main", pending_fields=[], intake_repeats=0, critical_answered=False)
+    await state.update_data(
+        mode="main",
+        pending_fields=[],
+        intake_repeats=0,
+        critical_answered=False,
+        gate_issues=[],
+        claim_draft=None,
+    )
     lang = await base_bot._language(state)
     await message.answer("Формирую проект иска…", reply_markup=base_bot.MENU)
     await message.bot.send_chat_action(message.chat.id, "typing")
@@ -294,13 +300,19 @@ async def _generate_now(message: Message, state: FSMContext) -> None:
     try:
         research = await service.research_case(context, language=lang)
     except Exception as exc:
-        await base_bot._report_claim_failure(message, failure_from_exception(exc, stage=ClaimStage.RESEARCH))
+        await base_bot._report_claim_failure(
+            message,
+            failure_from_exception(exc, stage=ClaimStage.RESEARCH),
+        )
         return
 
     try:
         draft = await service.draft_claim(context, research, language=lang)
     except Exception as exc:
-        await base_bot._report_claim_failure(message, failure_from_exception(exc, stage=ClaimStage.DRAFT))
+        await base_bot._report_claim_failure(
+            message,
+            failure_from_exception(exc, stage=ClaimStage.DRAFT),
+        )
         return
 
     marked = apply_formal_placeholders(draft, gaps)
@@ -310,7 +322,7 @@ async def _generate_now(message: Message, state: FSMContext) -> None:
                 draft.verification_notes.append(note)
         draft.status = VerificationStatus.NEEDS_VERIFICATION
 
-    # Missing template blocks no longer send the user back into intake. Fill the
+    # Missing template blocks never send the user back into intake. Fill the
     # court-facing placeholders and deliver a preliminary project instead.
     absent = missing_required_fields(draft)
     if absent:
@@ -327,7 +339,11 @@ async def _generate_now(message: Message, state: FSMContext) -> None:
         if note not in draft.verification_notes:
             draft.verification_notes.append(note)
 
-    LOGGER.info("INSTANT_CLAIM_READY seconds=%.2f status=%s", time.perf_counter() - started, draft.status.value)
+    LOGGER.info(
+        "INSTANT_CLAIM_READY seconds=%.2f status=%s",
+        time.perf_counter() - started,
+        draft.status.value,
+    )
     await _send_claim(message, state, draft)
 
 
