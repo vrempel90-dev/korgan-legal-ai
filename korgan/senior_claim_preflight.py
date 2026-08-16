@@ -54,6 +54,11 @@ _ECONOMIC_COURT_RE = re.compile(
     r"специализированн\w*\s+межрайонн\w*\s+экономическ\w*\s+суд|\bСМЭС\b",
     re.IGNORECASE,
 )
+_ARTICLE_27_RE = re.compile(r"(?:статья|ст\.)\s*27\b", re.IGNORECASE)
+_ARTICLE_27_SUBJECT_RE = re.compile(
+    r"физическ\w*\s+лиц\w*[^\n]{0,220}индивидуальн\w*\s+предпринимательск\w*\s+деятельност\w*[^\n]{0,260}юридическ\w*\s+лиц\w*",
+    re.IGNORECASE,
+)
 _MORAL_REQUEST_RE = re.compile(r"моральн\w*\s+вред", re.IGNORECASE)
 _MORAL_FACT_RE = re.compile(
     r"нервн\w*|стресс\w*|переживан\w*|моральн\w*\s+страдан\w*|"
@@ -88,8 +93,6 @@ class SeniorClaimReview:
     ) -> "SeniorClaimReview":
         errors = list(dict.fromkeys(deterministic_errors or []))
         score = float(payload.get("score", 0.0) or 0.0)
-        # A deterministic filing/legal contradiction is a major defect, not an
-        # artificial 8.4 ceiling. This keeps the displayed score meaningful.
         if errors:
             score = min(score, 6.9)
         return cls(
@@ -149,18 +152,25 @@ def _ordinary_individual(values: list[str]) -> bool:
     return bool(_INDIVIDUAL_RE.search(text))
 
 
+def _economic_subject_rule_verified(research: LegalResearch) -> bool:
+    """Require the current case research itself to carry the Article 27 subject rule."""
+    for claim in research.verified_claims:
+        if _ARTICLE_27_RE.search(claim) and _ARTICLE_27_SUBJECT_RE.search(claim):
+            return True
+    return False
+
+
 def deterministic_claim_preflight(
     case_context: str,
     research: LegalResearch,
     draft: ClaimDraft,
 ) -> list[str]:
-    """High-confidence legal/fact contradictions that must never reach release.
+    """High-confidence contradictions that must never reach claim release.
 
-    These are generic invariants, not case-name or article-specific patches.
-    Current RK procedural law limits economic-court subject composition to
-    statutory business/legal-person categories (with separate corporate/investor
-    exceptions). Therefore an ordinary natural person in a non-corporate dispute
-    is a hard contradiction when the draft selects an economic court.
+    Court-competence logic is source-bound to the Article 27 wording verified in
+    the current case. If that rule was not verified, an economic-court choice is
+    itself not release-ready instead of silently relying on a stale hard-coded
+    legal rule.
     """
     errors: list[str] = []
     context = case_context or ""
@@ -176,9 +186,13 @@ def deterministic_claim_preflight(
     )
 
     if _ECONOMIC_COURT_RE.search(draft.court or "") and not _CORPORATE_RE.search(context + "\n" + body):
-        if _ordinary_individual(draft.claimant) or _ordinary_individual(draft.defendant):
+        if not _economic_subject_rule_verified(research):
             errors.append(
-                "Выбран специализированный межрайонный экономический суд, хотя в споре участвует обычное физическое лицо без установленного статуса ИП; предметная компетенция суда противоречит составу сторон и требует исправления."
+                "Выбран специализированный межрайонный экономический суд, но субъектный состав его компетенции не подтвержден source-bound нормой ГПК в текущем research."
+            )
+        elif _ordinary_individual(draft.claimant) or _ordinary_individual(draft.defendant):
+            errors.append(
+                "Выбран специализированный межрайонный экономический суд, хотя в споре участвует обычное физическое лицо без установленного статуса ИП; подтвержденная норма о субъектном составе экономического суда этому не соответствует."
             )
 
     requests_text = "\n".join(draft.requests)
@@ -190,17 +204,12 @@ def deterministic_claim_preflight(
             errors.append("Заявлено денежное требование о компенсации морального вреда без определенного размера.")
             break
 
-    # Subjective suffering is a source fact. Legal availability of moral damages
-    # does not authorize the model to invent stress, insomnia or suffering.
     draft_subjective = "\n".join(draft.facts)
     if _MORAL_FACT_RE.search(draft_subjective) and not _MORAL_FACT_RE.search(context):
         errors.append(
             "В фактическую часть добавлены субъективные последствия (страдания/стресс/переживания), которых пользователь не сообщал. Такие факты должны быть удалены или подтверждены материалами."
         )
 
-    # A court can be named only when the source-bound research carried the same
-    # official court identity into VERIFIED_COURT. A court name present only in
-    # model prose is not enough for a filing-ready document.
     court = (draft.court or "").strip()
     if court:
         normalized = _normalize(court)
