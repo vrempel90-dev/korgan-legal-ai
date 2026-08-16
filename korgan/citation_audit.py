@@ -1,25 +1,18 @@
 """Post-processing audit of every legal citation in a finished document.
 
-Verification that happens "along the way", inside a long generation with several
-citations, is verification that happens sometimes. In the reported documents the
-same model quoted статьи 953 и 960 ГК РК perfectly and часть 2 статьи 166 ГПК РК
-from a repealed edition — in one document. The step did not fail as a rule; it
-failed per citation.
+The release audit has two verified sources, in this order:
 
-So it is not a step of drafting any more. Once a draft exists, this module walks
-the finished text, finds every reference to a provision, and re-checks each one
-on its own against korgan.provision_corpus:
+1. source-bound provisions verified for the current document by the live legal
+   research pass (official Adilet URL + provision text + paraphrase check);
+2. the dated local provision corpus as a reusable fallback/cache.
 
-* a verbatim quotation must match the corpus text symmetrically — normalized for
-  spacing, ё and quote glyphs, and nothing else. Partial overlap is not a pass;
-* a paraphrase is screened by korgan.provision_check against the corpus text;
-* a provision absent from the corpus may not be quoted or asserted at all — the
-  document may name the article number and must mark it NEEDS_VERIFICATION;
-* a corpus record that was never read from the official source (REPORTED) may be
-  used only with a visible verification marker in the document.
+A model cannot promote its own citation into the first source: runtime records
+are built only from ``LegalResearch.verified_claims`` after the research layer
+has already matched an actually opened official URL and checked the statement
+against the provision's own words.
 
-The audit is document-type agnostic: it reads text, so it applies to all eight
-document types rather than to the one where the defect was noticed.
+Anything absent from both sources may not be asserted confidently. The document
+may name the article number only with an explicit verification marker.
 """
 
 from __future__ import annotations
@@ -27,17 +20,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
+from urllib.parse import urlparse
 
-from korgan.provision_check import paraphrase_defects
-from korgan.provision_corpus import (
-    ProvisionRecord,
-    lookup,
-    normalize_text,
-)
+from korgan.provision_check import paraphrase_defects, quote_is_usable
+from korgan.provision_corpus import ProvisionRecord, lookup, normalize_text
 
 # «часть 4 статьи 166 ГПК РК», «ст. 953 ГК РК», «пункт 1 статьи 960 ГК РК»
 _REFERENCE_RE = re.compile(
-    # Any case form of часть/пункт/подпункт, then the article number.
     r"(?:(?:част[ьияею]\w*|ч\.|подпункт\w*|пп\.|пункт\w*|п\.)\s*(?P<part>\d+)\s*)?"
     r"(?:стать[ияеёю]\w*|ст\.)\s*(?P<article>\d+)"
     r"(?P<tail>[^.;)\n]{0,60})",
@@ -46,6 +35,12 @@ _REFERENCE_RE = re.compile(
 
 # «... текст ...» — a verbatim quotation.
 _QUOTE_RE = re.compile(r"[«\"]([^«»\"]{25,})[»\"]")
+
+# verified_claim_line() format from korgan.provision_check.
+_RUNTIME_TEXT_RE = re.compile(
+    r"текст\s+нормы\s*:\s*«(?P<text>.*?)»\s*;\s*источник\s*:\s*(?P<url>https?://[^\]\s]+)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 _ACT_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"гпк\s*рк|гражданск\w*\s+процессуальн\w*\s+кодекс", "ГПК РК"),
@@ -56,7 +51,6 @@ _ACT_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"коап\s*рк|об\s+административных\s+правонарушениях", "КоАП РК"),
 )
 
-# The visible marker a document must carry when it relies on unverified wording.
 VERIFICATION_MARKERS = ("[ТРЕБУЕТ ПРОВЕРКИ", "[ТРЕБУЕТ УТОЧНЕНИЯ", "NEEDS_VERIFICATION")
 
 
@@ -107,39 +101,11 @@ class CitationAudit:
         return [finding for finding in self.findings if finding.blocks_release]
 
     def notes(self) -> list[str]:
-        return [finding.as_note() for finding in self.findings if finding.verdict is not CitationVerdict.QUOTE_MATCHES]
-
-
-def _detect_act(window: str) -> str:
-    lowered = normalize_text(window)
-    for pattern, act in _ACT_PATTERNS:
-        if re.search(pattern, lowered):
-            return act
-    return ""
-
-
-def _paragraph_around(text: str, position: int) -> str:
-    """The paragraph a reference sits in.
-
-    Paragraph, not sentence: a quotation contains full stops of its own, and a
-    `[ТРЕБУЕТ ПРОВЕРКИ: ...]` marker spans several sentences. Scoping to the
-    paragraph also stops a reference from borrowing the quotation that belongs
-    to a different provision further down the document.
-    """
-    start = text.rfind("\n", 0, position) + 1
-    end = text.find("\n", position)
-    return text[start : end if end != -1 else len(text)]
-
-
-def _marked_for_verification(context: str) -> bool:
-    upper = context.upper()
-    return any(marker in upper for marker in VERIFICATION_MARKERS)
-
-
-def _quote_in(paragraph: str) -> str:
-    """Return the verbatim quotation carried by this paragraph, if any."""
-    matches = _QUOTE_RE.findall(paragraph)
-    return max(matches, key=len) if matches else ""
+        return [
+            finding.as_note()
+            for finding in self.findings
+            if finding.verdict not in {CitationVerdict.QUOTE_MATCHES, CitationVerdict.PARAPHRASE_OK}
+        ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,28 +120,47 @@ class ProvisionReference:
         return f"{'часть ' + self.part + ' ' if self.part else ''}статья {self.article} {self.act}".strip()
 
     def genitive(self) -> str:
-        """«статьи 616 ГК РК» — форма для встраивания в текст документа.
-
-        `label` — ярлык для служебных сообщений; подставленный в предложение он
-        даёт «содержание статья 616 ГК РК», что в судебном документе читается
-        как брак вёрстки.
-        """
         return f"{'части ' + self.part + ' ' if self.part else ''}статьи {self.article} {self.act}".strip()
 
     def matches(self, other: "ProvisionReference") -> bool:
-        """Same act and article; a reference without a part matches any part."""
         if self.act != other.act or self.article != other.article:
             return False
         return not self.part or not other.part or self.part == other.part
 
 
-def extract_references(text: str) -> list[ProvisionReference]:
-    """Every provision named in ``text``, in order of appearance.
+@dataclass(frozen=True, slots=True)
+class RuntimeProvision:
+    reference: ProvisionReference
+    text: str
+    source_url: str
 
-    Shared with the instruction router: when a user writes «пометь статью 616
-    ГК РК», the article they mean is found exactly the way the audit finds the
-    articles it complained about.
-    """
+
+def _detect_act(window: str) -> str:
+    lowered = normalize_text(window)
+    for pattern, act in _ACT_PATTERNS:
+        if re.search(pattern, lowered):
+            return act
+    return ""
+
+
+def _paragraph_around(text: str, position: int) -> str:
+    start = text.rfind("\n", 0, position) + 1
+    end = text.find("\n", position)
+    return text[start : end if end != -1 else len(text)]
+
+
+def _marked_for_verification(context: str) -> bool:
+    upper = context.upper()
+    return any(marker in upper for marker in VERIFICATION_MARKERS)
+
+
+def _quote_in(paragraph: str) -> str:
+    matches = _QUOTE_RE.findall(paragraph)
+    return max(matches, key=len) if matches else ""
+
+
+def extract_references(text: str) -> list[ProvisionReference]:
+    """Every provision named in ``text``, in order of appearance."""
     found: list[ProvisionReference] = []
     for match in _REFERENCE_RE.finditer(text or ""):
         act = _detect_act(match.group(0) + " " + (match.group("tail") or ""))
@@ -189,15 +174,141 @@ def extract_references(text: str) -> list[ProvisionReference]:
     return found
 
 
+def _is_adilet(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host == "adilet.zan.kz" or host.endswith(".adilet.zan.kz")
+
+
+def runtime_provisions(verified_claims: list[str] | None) -> list[RuntimeProvision]:
+    """Build per-document provision records from source-bound VERIFIED research.
+
+    Only the canonical verified_claim_line shape with an Adilet URL and a usable
+    provision quote is accepted. Arbitrary model/user strings are ignored.
+    """
+    records: list[RuntimeProvision] = []
+    for line in verified_claims or []:
+        match = _RUNTIME_TEXT_RE.search(line or "")
+        if not match:
+            continue
+        provision_text = " ".join(match.group("text").split())
+        source_url = match.group("url").rstrip(".,;)")
+        if not _is_adilet(source_url) or not quote_is_usable(provision_text):
+            continue
+        references = extract_references(line)
+        if not references:
+            continue
+        for reference in references:
+            item = RuntimeProvision(reference, provision_text, source_url)
+            if item not in records:
+                records.append(item)
+    return records
+
+
+def _runtime_lookup(
+    records: list[RuntimeProvision],
+    act: str,
+    article: str,
+    part: str,
+) -> RuntimeProvision | None:
+    exact = [
+        record
+        for record in records
+        if record.reference.act == act
+        and record.reference.article == article
+        and record.reference.part == part
+    ]
+    if exact:
+        return exact[0]
+
+    article_level = [
+        record
+        for record in records
+        if record.reference.act == act
+        and record.reference.article == article
+        and not record.reference.part
+    ]
+    if article_level:
+        return article_level[0]
+
+    if not part:
+        same_article = [
+            record
+            for record in records
+            if record.reference.act == act and record.reference.article == article
+        ]
+        if len(same_article) == 1:
+            return same_article[0]
+    return None
+
+
 def _record_detail(record: ProvisionRecord) -> str:
     when = record.verified_on or "дата сверки не зафиксирована"
     return f"источник: {record.source_url or 'не указан'}; сверено: {when}"
 
 
-def audit_citations(text: str) -> CitationAudit:
+def _audit_against_runtime(
+    *,
+    reference_label: str,
+    act: str,
+    article: str,
+    part: str,
+    context: str,
+    quote: str,
+    runtime: RuntimeProvision,
+) -> CitationFinding:
+    if quote:
+        if normalize_text(quote) == normalize_text(runtime.text):
+            return CitationFinding(
+                reference_label,
+                act,
+                article,
+                part,
+                CitationVerdict.QUOTE_MATCHES,
+                f"дословная цитата совпадает с source-bound текстом нормы ({runtime.source_url})",
+                quoted=True,
+            )
+        return CitationFinding(
+            reference_label,
+            act,
+            article,
+            part,
+            CitationVerdict.QUOTE_MISMATCH,
+            "дословная цитата не совпадает с текстом нормы, проверенным для текущего документа",
+            quoted=True,
+        )
+
+    drift = paraphrase_defects(context, runtime.text)
+    if drift:
+        return CitationFinding(
+            reference_label,
+            act,
+            article,
+            part,
+            CitationVerdict.PARAPHRASE_DRIFT,
+            "; ".join(drift[:3]),
+        )
+    return CitationFinding(
+        reference_label,
+        act,
+        article,
+        part,
+        CitationVerdict.PARAPHRASE_OK,
+        f"пересказ сверен с source-bound текстом нормы ({runtime.source_url})",
+    )
+
+
+def audit_citations(
+    text: str,
+    *,
+    verified_claims: list[str] | None = None,
+) -> CitationAudit:
     """Re-check every provision reference in a finished document, one by one."""
     audit = CitationAudit()
     seen: set[tuple[str, str, str, bool]] = set()
+    runtime_records = runtime_provisions(verified_claims)
 
     for match in _REFERENCE_RE.finditer(text or ""):
         article = match.group("article")
@@ -206,7 +317,6 @@ def audit_citations(text: str) -> CitationAudit:
         if not act:
             act = _detect_act(_paragraph_around(text, match.start()))
         if not act:
-            # Без указания акта это не ссылка на норму (например, «пункт 3 договора»).
             continue
 
         context = _paragraph_around(text, match.start())
@@ -217,19 +327,35 @@ def audit_citations(text: str) -> CitationAudit:
         seen.add(signature)
 
         reference = f"{'часть ' + part + ' ' if part else ''}статья {article} {act}"
-        record = lookup(act, article, part)
 
+        # Live source-bound verification is more current than the static cache
+        # and is scoped to this exact document.
+        runtime = _runtime_lookup(runtime_records, act, article, part)
+        if runtime is not None:
+            audit.findings.append(
+                _audit_against_runtime(
+                    reference_label=reference,
+                    act=act,
+                    article=article,
+                    part=part,
+                    context=context,
+                    quote=quote,
+                    runtime=runtime,
+                )
+            )
+            continue
+
+        record = lookup(act, article, part)
         if record is None:
             verdict = CitationVerdict.UNVERIFIABLE
             detail = (
-                "текста нормы нет в проверенном корпусе KORGAN — содержание не подтверждено; "
+                "текста нормы нет ни в source-bound VERIFIED текущего документа, ни в проверенном корпусе KORGAN; "
                 "допустимо указать только номер статьи и пометить NEEDS_VERIFICATION"
             )
             if not quote and _marked_for_verification(context):
                 verdict = CitationVerdict.UNVERIFIED_SOURCE
                 detail = (
-                    "текста нормы нет в корпусе; в документе содержание не утверждается и стоит "
-                    "пометка о необходимости сверки"
+                    "содержание нормы не утверждается и явно помечено для дополнительной сверки"
                 )
             audit.findings.append(
                 CitationFinding(reference, act, article, part, verdict, detail, quoted=bool(quote))
