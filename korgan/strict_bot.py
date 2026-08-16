@@ -9,9 +9,10 @@ from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
-from korgan.claim_quality_hotfix import ProductionClaimService, install_runtime_hotfix
+from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
+from korgan.finalized_litigation import FinalizedProductionClaimService
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
@@ -37,10 +38,9 @@ async def configure_telegram_menu(bot: Bot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    # One source-bound research pass -> professional draft -> deterministic
-    # pre-filing checks. Filing prerequisites remain visible without being
-    # misrepresented as poor substantive legal quality.
-    base_bot.service = ProductionClaimService(settings)
+    # Preserve the current filing-vs-substance quality layer and add only a
+    # zero-call deterministic professional finalizer before Word release.
+    base_bot.service = FinalizedProductionClaimService(settings)
     base_bot.MENU = main_menu()
 
     bot = Bot(token=settings.telegram_bot_token)
@@ -60,7 +60,7 @@ async def main() -> None:
     dp.include_router(base_bot.router)
 
     LOGGER.info(
-        "Starting KORGAN: fast professional RK litigation + claim quality filing separation + unchanged Telegram UI"
+        "Starting KORGAN: finalized professional RK litigation + claim quality filing separation + unchanged Telegram UI"
     )
     try:
         await dp.start_polling(bot)
