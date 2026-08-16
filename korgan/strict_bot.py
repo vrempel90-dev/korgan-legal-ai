@@ -9,6 +9,7 @@ from aiogram.types import BotCommand, MenuButtonCommands
 
 from korgan import bot as base_bot
 from korgan.config import get_settings
+from korgan.contact_handlers import router as contact_router
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
@@ -46,11 +47,12 @@ async def main() -> None:
 
     dp.include_router(start_router)
     dp.include_router(safety_router)
+    dp.include_router(contact_router)
     dp.include_router(response_router)
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN: Article 353 + claims + responses to claims + truncation-safe contracts")
+    LOGGER.info("Starting KORGAN: Article 353 + claims + responses to claims + truncation-safe contracts + WhatsApp contacts")
     try:
         await dp.start_polling(bot)
     finally:
