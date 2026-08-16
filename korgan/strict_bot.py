@@ -11,8 +11,8 @@ from korgan import bot as base_bot
 from korgan.admin import router as admin_router
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
+from korgan.fast_professional_litigation import FastProfessionalLitigationService
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
-from korgan.litigation_production import LitigationProductionService
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.ui import main_menu
@@ -32,10 +32,10 @@ async def configure_telegram_menu(bot: Bot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    # Telegram/UI stays unchanged. Only the internal legal reasoning core is
-    # upgraded: primary research -> adversarial senior research -> professional
-    # strategy -> draft -> independent pre-filing review -> repair/release gate.
-    base_bot.service = LitigationProductionService(settings)
+    # Telegram/UI stays unchanged. The legal core is latency-bounded:
+    # one official-source research pass -> professional draft -> deterministic
+    # pre-filing check -> at most one targeted repair.
+    base_bot.service = FastProfessionalLitigationService(settings)
     base_bot.MENU = main_menu()
 
     bot = Bot(token=settings.telegram_bot_token)
@@ -44,8 +44,6 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.outer_middleware(ConsentMiddleware())
 
-    # Admin must be registered before generic user routers. Every admin handler
-    # independently re-checks ADMIN_TELEGRAM_IDS and fails closed.
     dp.include_router(admin_router)
     dp.include_router(start_router)
     dp.include_router(safety_router)
@@ -58,7 +56,7 @@ async def main() -> None:
     dp.include_router(base_bot.router)
 
     LOGGER.info(
-        "Starting KORGAN: senior litigation RK core + unchanged Telegram UI + adversarial pre-filing review"
+        "Starting KORGAN: fast professional RK litigation + unchanged Telegram UI + one-research pre-filing gate"
     )
     try:
         await dp.start_polling(bot)
