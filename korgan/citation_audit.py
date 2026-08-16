@@ -142,6 +142,44 @@ def _quote_in(paragraph: str) -> str:
     return max(matches, key=len) if matches else ""
 
 
+@dataclass(frozen=True, slots=True)
+class ProvisionReference:
+    """A provision named in free text — act, article and optional part."""
+
+    act: str
+    article: str
+    part: str = ""
+
+    def label(self) -> str:
+        return f"{'часть ' + self.part + ' ' if self.part else ''}статья {self.article} {self.act}".strip()
+
+    def matches(self, other: "ProvisionReference") -> bool:
+        """Same act and article; a reference without a part matches any part."""
+        if self.act != other.act or self.article != other.article:
+            return False
+        return not self.part or not other.part or self.part == other.part
+
+
+def extract_references(text: str) -> list[ProvisionReference]:
+    """Every provision named in ``text``, in order of appearance.
+
+    Shared with the instruction router: when a user writes «пометь статью 616
+    ГК РК», the article they mean is found exactly the way the audit finds the
+    articles it complained about.
+    """
+    found: list[ProvisionReference] = []
+    for match in _REFERENCE_RE.finditer(text or ""):
+        act = _detect_act(match.group(0) + " " + (match.group("tail") or ""))
+        if not act:
+            act = _detect_act(_paragraph_around(text, match.start()))
+        if not act:
+            continue
+        reference = ProvisionReference(act, match.group("article"), (match.group("part") or "").strip())
+        if reference not in found:
+            found.append(reference)
+    return found
+
+
 def _record_detail(record: ProvisionRecord) -> str:
     when = record.verified_on or "дата сверки не зафиксирована"
     return f"источник: {record.source_url or 'не указан'}; сверено: {when}"
