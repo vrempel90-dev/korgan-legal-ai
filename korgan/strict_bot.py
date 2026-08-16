@@ -13,8 +13,8 @@ from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
-from korgan.professional_service import ProfessionalRKProductionService
 from korgan.reply_menu_handlers import router as reply_menu_router
+from korgan.senior_litigation_service import SeniorLitigationProductionService
 from korgan.ui import main_menu
 from korgan.universal_claim_runtime import router as universal_claim_router
 from korgan.universal_document_runtime import router as universal_document_router
@@ -32,10 +32,10 @@ async def configure_telegram_menu(bot: Bot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    # Telegram/UI stays unchanged. Only the legal reasoning core is replaced:
-    # issue analysis -> source-bound RK research -> professional drafting ->
-    # deterministic quality/release gate.
-    base_bot.service = ProfessionalRKProductionService(settings)
+    # Telegram/UI stays unchanged. Only the internal legal reasoning core is
+    # upgraded: primary research -> adversarial senior research -> professional
+    # draft -> independent senior pre-filing review -> repair/release gate.
+    base_bot.service = SeniorLitigationProductionService(settings)
     base_bot.MENU = main_menu()
 
     bot = Bot(token=settings.telegram_bot_token)
@@ -51,15 +51,14 @@ async def main() -> None:
     dp.include_router(safety_router)
     dp.include_router(contact_router)
 
-    # Universal document routes come before the legacy menu router, so natural
-    # text and document-menu callbacks cannot bypass the same quality pipeline.
+    # Existing user-facing routes and menu are intentionally unchanged.
     dp.include_router(universal_claim_router)
     dp.include_router(universal_document_router)
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
     LOGGER.info(
-        "Starting KORGAN: professional RK legal core + unchanged Telegram UI + verified law + quality gate"
+        "Starting KORGAN: senior litigation RK core + unchanged Telegram UI + adversarial pre-filing review"
     )
     try:
         await dp.start_polling(bot)
