@@ -7,6 +7,7 @@ from korgan_legal_ai.domain.models import (
     Payment,
     PenaltyPeriod,
 )
+from korgan_legal_ai.positions import PositionRegistry, load_positions
 
 
 ZERO = Decimal("0")
@@ -15,6 +16,16 @@ MONEY_QUANT = Decimal("0.01")
 
 
 class CalculationLayer:
+    """Deterministic money and period arithmetic.
+
+    Where a contractual phrase has more than one defensible reading, the choice is not decided here:
+    it is read from the recorded firm position, so changing the firm's view is an edit to that
+    record rather than a change to this code.
+    """
+
+    def __init__(self, positions: PositionRegistry | None = None) -> None:
+        self.positions = positions or load_positions()
+
     @staticmethod
     def _payments_total(financials: Financials) -> Decimal:
         scheduled = sum((payment.amount for payment in financials.payment_schedule), ZERO)
@@ -168,21 +179,27 @@ class CalculationLayer:
 
             cap_percent = financials.penalty_cap_percent_of_principal
             if cap_percent is not None:
-                # The contractual ceiling is a share of the debt the penalty accrued on, not of
-                # whatever happens to be left after payments, otherwise a repaid debt would cap its
-                # own penalty at zero.
-                cap_base = base - undated_total
+                # "Не более N% от суммы задолженности" can be read against the debt as it stood when
+                # the delay began, or against whatever remains today. Both readings are computed;
+                # which one applies is the recorded firm position, not a choice made here.
+                defaulted_debt = base - undated_total
+                remaining_balance = principal
+                chosen = self.positions.decision("penalty_cap_base")
+                cap_base = remaining_balance if chosen == "remaining_balance" else defaulted_debt
+                other_base = defaulted_debt if chosen == "remaining_balance" else remaining_balance
+                # A ceiling of zero would erase a penalty that genuinely accrued, so a fully repaid
+                # debt falls back to the base that is still positive.
                 if cap_base <= ZERO:
-                    cap_base = principal
+                    cap_base = other_base if other_base > ZERO else defaulted_debt
+
                 penalty_cap_amount = (cap_base * cap_percent / HUNDRED).quantize(
                     MONEY_QUANT,
                     rounding=ROUND_HALF_UP,
                 )
-                # "Не более N% от суммы задолженности" can be read against the defaulted debt or
-                # against what remains today. The readings only diverge once a payment lands during
-                # the delay, and only matter when the ceiling actually binds under one of them.
-                # That is a question about contract wording, so it is surfaced rather than decided.
-                alternative_cap = (principal * cap_percent / HUNDRED).quantize(
+                # The readings only diverge once a payment lands during the delay, and only matter
+                # when the ceiling actually binds under one of them. That is a question about the
+                # contract's wording for this matter, so it is surfaced rather than settled here.
+                alternative_cap = (other_base * cap_percent / HUNDRED).quantize(
                     MONEY_QUANT,
                     rounding=ROUND_HALF_UP,
                 )

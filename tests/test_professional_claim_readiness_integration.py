@@ -13,6 +13,7 @@ from korgan_legal_ai.corpus.embeddings import EMBEDDING_DIMENSIONS, EmbeddingPro
 from korgan_legal_ai.corpus.repository import LegalNormRepository
 from korgan_legal_ai.corpus.search import HybridSearchService
 from korgan_legal_ai.corpus.seed import load_canonical_seed
+from korgan_legal_ai.blueprints.models import STYLE_SUPPORT_ITEM
 from korgan_legal_ai.domain.models import (
     DocumentType,
     Evidence,
@@ -150,7 +151,9 @@ def test_complete_company_debt_case_reaches_final_human_review_without_guesses()
     result = workflow.run(case, routing)
 
     status_by_name = {item.name: item.status for item in result.procedural.items}
-    assert status_by_name == {
+    assert {
+        name: status for name, status in status_by_name.items() if name != STYLE_SUPPORT_ITEM
+    } == {
         "jurisdiction": VerificationStatus.VERIFIED,
         "pretrial": VerificationStatus.VERIFIED,
         "limitation": VerificationStatus.VERIFIED,
@@ -158,6 +161,9 @@ def test_complete_company_debt_case_reaches_final_human_review_without_guesses()
         "authority": VerificationStatus.VERIFIED,
         "attachments": VerificationStatus.VERIFIED,
     }
+    # House-style citations ride along as an advisory item. They are never a verification gap, so
+    # their absence must not stop this case from reaching final human review.
+    assert status_by_name[STYLE_SUPPORT_ITEM] != VerificationStatus.NEEDS_VERIFICATION
     assert result.document.needs_verification == []
     assert result.document.readiness == ReadinessStatus.READY_FOR_FINAL_HUMAN_REVIEW
     assert result.qa.passed is True

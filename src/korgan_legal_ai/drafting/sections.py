@@ -207,12 +207,19 @@ def render_terms(ctx: DraftContext) -> str:
 
 def render_legal_grounds(ctx: DraftContext) -> str:
     citations = ctx.verified_citations()
-    lines = [
-        f"- {citation.law_name or citation.source_title}, статья {citation.article}: "
-        f"{citation.source_url}"
-        for citation in citations
-        if citation.article and citation.source_url
-    ]
+    lines = []
+    for citation in citations:
+        if not citation.article or not citation.source_url:
+            continue
+        line = (
+            f"- {citation.law_name or citation.source_title}, статья {citation.article}: "
+            f"{citation.source_url}"
+        )
+        # A norm past its planned re-verification date is still the wording the corpus holds, but
+        # the reader is told so rather than being left to assume it was checked recently.
+        if citation.review_overdue:
+            line += " (требует переверификации: плановый срок проверки истёк)"
+        lines.append(line)
     if lines:
         return "\n".join(lines)
     return _need(

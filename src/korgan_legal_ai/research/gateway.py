@@ -99,6 +99,12 @@ class CanonicalHybridResearchBackend(LegalResearchBackend):
         if not (norm.effective_from <= target_date and (norm.effective_to is None or norm.effective_to >= target_date)):
             return cls._needs(norm.article_number, "Candidate edition is not effective for the supplied event date.")
         article = cls._article_locator(norm.article_number, norm.part, norm.point)
+        overdue = norm.review_overdue(target_date)
+        if overdue:
+            note = (
+                f"{note} Плановая переверификация нормы просрочена с "
+                f"{norm.next_review_date.isoformat()}."
+            )
         return [ResearchCitation(
             source_url=norm.source_url,
             source_title=norm.title or norm.law_name or f"Статья {article}",
@@ -109,6 +115,8 @@ class CanonicalHybridResearchBackend(LegalResearchBackend):
             effective_to=norm.effective_to,
             status=VerificationStatus.VERIFIED,
             verification_note=note,
+            review_overdue=overdue,
+            next_review_date=norm.next_review_date,
         )]
 
     def verify_locator(

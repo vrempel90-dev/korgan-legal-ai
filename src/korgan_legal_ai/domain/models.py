@@ -270,6 +270,11 @@ class ResearchCitation(BaseModel):
     effective_to: date | None = None
     status: VerificationStatus
     verification_note: str | None = None
+    # The corpus holds a planned re-verification date for each norm. A passed date does not make
+    # the wording wrong, so the citation stays usable — but it must not be presented as freshly
+    # confirmed either, so the fact travels with the citation instead of being dropped.
+    review_overdue: bool = False
+    next_review_date: date | None = None
 
     @field_validator("effective_from", "effective_to", mode="before")
     @classmethod

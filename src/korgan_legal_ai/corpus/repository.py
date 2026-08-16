@@ -13,11 +13,11 @@ _UPSERT = text(
     INSERT INTO legal_norms (
         id, code_id, law_name, article_number, title, part, point, text,
         effective_from, effective_to, source_url, status,
-        reviewed_by, reviewed_at
+        reviewed_by, reviewed_at, applicable_document_types, next_review_date
     ) VALUES (
         :id, :code_id, :law_name, :article_number, :title, :part, :point, :text,
         :effective_from, :effective_to, :source_url, :status,
-        :reviewed_by, :reviewed_at
+        :reviewed_by, :reviewed_at, :applicable_document_types, :next_review_date
     )
     ON CONFLICT (
         code_id, article_number, part, point, effective_from, source_url
@@ -29,6 +29,8 @@ _UPSERT = text(
         status = EXCLUDED.status,
         reviewed_by = EXCLUDED.reviewed_by,
         reviewed_at = EXCLUDED.reviewed_at,
+        applicable_document_types = EXCLUDED.applicable_document_types,
+        next_review_date = EXCLUDED.next_review_date,
         retrieved_at = CURRENT_TIMESTAMP
     RETURNING id
     """
@@ -43,6 +45,7 @@ class LegalNormRepository:
     def _norm_from_mapping(row: dict) -> LegalNorm:
         data = dict(row)
         data["status"] = CorpusStatus(data["status"])
+        data["applicable_document_types"] = list(data.get("applicable_document_types") or [])
         return LegalNorm.model_validate(data)
 
     def upsert(self, norm: LegalNorm) -> UUID:
@@ -65,7 +68,8 @@ class LegalNormRepository:
             """
             SELECT id, code_id, law_name, article_number, title, part, point, text,
                    effective_from, effective_to, source_url, retrieved_at,
-                   status, reviewed_by, reviewed_at
+                   status, reviewed_by, reviewed_at,
+                   applicable_document_types, next_review_date
             FROM legal_norms
             WHERE code_id = :code_id
               AND article_number = :article_number
@@ -105,7 +109,8 @@ class LegalNormRepository:
             """
             SELECT id, code_id, law_name, article_number, title, part, point, text,
                    effective_from, effective_to, source_url, retrieved_at,
-                   status, reviewed_by, reviewed_at
+                   status, reviewed_by, reviewed_at,
+                   applicable_document_types, next_review_date
             FROM legal_norms
             WHERE code_id = :code_id AND article_number = :article_number
               AND part = :part AND point = :point
@@ -124,7 +129,8 @@ class LegalNormRepository:
             """
             SELECT id, code_id, law_name, article_number, title, part, point, text,
                    effective_from, effective_to, source_url, retrieved_at,
-                   status, reviewed_by, reviewed_at
+                   status, reviewed_by, reviewed_at,
+                   applicable_document_types, next_review_date
             FROM legal_norms
             WHERE status = 'canonical' AND embedding IS NULL
             ORDER BY code_id, article_number, part, point, effective_from
@@ -172,6 +178,7 @@ class LegalNormRepository:
             SELECT id, code_id, law_name, article_number, title, part, point, text,
                    effective_from, effective_to, source_url, retrieved_at,
                    status, reviewed_by, reviewed_at,
+                   applicable_document_types, next_review_date,
                    1 - (embedding <=> CAST(:embedding AS vector)) AS score
             FROM legal_norms
             WHERE status = 'canonical'
@@ -273,3 +280,88 @@ class LegalNormRepository:
     def count(self) -> int:
         with self.engine.connect() as connection:
             return int(connection.execute(text("SELECT count(*) FROM legal_norms")).scalar_one())
+
+    def supersede_open_version(
+        self,
+        *,
+        code_id: str,
+        article_number: str,
+        part: str,
+        point: str,
+        new_effective_from: date,
+    ) -> LegalNorm | None:
+        """Close the currently open version so a new redaction takes over without overlap.
+
+        The corpus versions a norm by effective-date range, and this is the only way a wording is
+        replaced: the previous row keeps its text and gains an end date, so a document produced
+        last month can still be reproduced against the wording that was in force then.
+        """
+        query = text(
+            """
+            UPDATE legal_norms
+            SET effective_to = (CAST(:new_effective_from AS date) - INTERVAL '1 day')::date
+            WHERE code_id = :code_id
+              AND article_number = :article_number
+              AND part = :part
+              AND point = :point
+              AND effective_to IS NULL
+              AND effective_from < :new_effective_from
+            RETURNING id, code_id, law_name, article_number, title, part, point, text,
+                      effective_from, effective_to, source_url, retrieved_at,
+                      status, reviewed_by, reviewed_at,
+                      applicable_document_types, next_review_date
+            """
+        )
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                query,
+                {
+                    "code_id": code_id,
+                    "article_number": article_number,
+                    "part": part,
+                    "point": point,
+                    "new_effective_from": new_effective_from,
+                },
+            ).mappings().first()
+        return None if row is None else self._norm_from_mapping(dict(row))
+
+    def list_due_for_review(self, *, as_of: date, limit: int = 200) -> list[LegalNorm]:
+        """Canonical norms whose planned re-verification date has passed."""
+        query = text(
+            """
+            SELECT id, code_id, law_name, article_number, title, part, point, text,
+                   effective_from, effective_to, source_url, retrieved_at,
+                   status, reviewed_by, reviewed_at,
+                   applicable_document_types, next_review_date
+            FROM legal_norms
+            WHERE status = 'canonical'
+              AND next_review_date IS NOT NULL
+              AND next_review_date < :as_of
+              AND (effective_to IS NULL OR effective_to >= :as_of)
+            ORDER BY next_review_date, code_id, article_number, part, point
+            LIMIT :limit
+            """
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(query, {"as_of": as_of, "limit": limit}).mappings().all()
+        return [self._norm_from_mapping(dict(row)) for row in rows]
+
+    def list_canonical(self, *, as_of: date, limit: int = 500) -> list[LegalNorm]:
+        """Every canonical norm effective on the given date."""
+        query = text(
+            """
+            SELECT id, code_id, law_name, article_number, title, part, point, text,
+                   effective_from, effective_to, source_url, retrieved_at,
+                   status, reviewed_by, reviewed_at,
+                   applicable_document_types, next_review_date
+            FROM legal_norms
+            WHERE status = 'canonical'
+              AND effective_from <= :as_of
+              AND (effective_to IS NULL OR effective_to >= :as_of)
+            ORDER BY code_id, article_number, part, point
+            LIMIT :limit
+            """
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(query, {"as_of": as_of, "limit": limit}).mappings().all()
+        return [self._norm_from_mapping(dict(row)) for row in rows]
