@@ -20,6 +20,8 @@ from korgan.claim_failure import (
 from korgan.claim_intent import is_claim_drafting_request
 from korgan.claim_preflight import inspect_claim_context
 from korgan.config import get_settings
+from korgan.document_release import review_lines
+from korgan.telegram_text import bullets, fit_caption
 from korgan.legal_corpus import extract_cited_articles
 from korgan.legal_types import ExtractedDocument, VerificationStatus
 from korgan.openai_legal import OpenAILegalService
@@ -254,14 +256,39 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
         len(draft.source_urls),
     )
 
+    # Release gate: re-verify every citation in the finished text and check the
+    # text for truncation damage before the file reaches the user.
+    report = review_lines(
+        [
+            draft.title,
+            *draft.facts,
+            *draft.legal_basis,
+            draft.late_interest,
+            *draft.requests,
+            *draft.attachments,
+        ]
+    )
+    if not report.released:
+        LOGGER.warning("CLAIM_RELEASE_BLOCKED issues=%s", report.blocking[:5])
+        await state.update_data(mode="claim_details")
+        await _report_claim_failure(
+            message,
+            ClaimFailure(
+                stage=ClaimStage.RENDER,
+                code=ClaimFailureCode.QA_BLOCKED,
+                issues=report.blocking[:6],
+            ),
+        )
+        return
+
     marker = "✅ VERIFIED" if draft.status == VerificationStatus.VERIFIED else "⚠️ NEEDS_VERIFICATION"
-    notes = "\n".join(f"• {x}" for x in draft.verification_notes[:10])
+    checklist = report.checklist(draft.verification_notes)
     caption = f"{marker}\nГотовый проект иска — файл Word (.docx)."
-    if notes:
-        caption += f"\n\nПеред подачей проверьте:\n{notes[:2500]}"
+    if checklist:
+        caption += "\n\nПеред подачей проверьте:\n" + bullets(checklist)
     await message.answer_document(
         BufferedInputFile(file_bytes, filename="KORGAN_iskovoe_zayavlenie.docx"),
-        caption=caption[:1000],
+        caption=fit_caption(caption),
         reply_markup=MENU,
     )
 

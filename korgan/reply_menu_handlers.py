@@ -10,6 +10,8 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message, ReplyKeyboa
 from korgan import bot as base_bot
 from korgan.claim_intent import is_claim_drafting_request
 from korgan.contract_docx import build_contract_docx
+from korgan.document_release import review_lines
+from korgan.telegram_text import bullets, fit_caption
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.legal_types import VerificationStatus
 from korgan.ui import documents_menu, main_menu
@@ -121,15 +123,26 @@ async def _send_contract_as_word(message: Message, state: FSMContext) -> None:
         )
         return
 
+    report = review_lines(draft.body_lines())
+    if not report.released:
+        LOGGER.warning("CONTRACT_RELEASE_BLOCKED issues=%s", report.blocking[:5])
+        await message.answer(
+            "Договор не выпущен: обнаружены дефекты правовых ссылок или целостности текста.\n\n"
+            + bullets(report.blocking[:6])
+            + "\n\nУточните условия и повторите запрос.",
+            reply_markup=main_menu(),
+        )
+        return
+
     marker = "✅ VERIFIED" if draft.status == VerificationStatus.VERIFIED else "⚠️ NEEDS_VERIFICATION"
     caption = f"{marker}\nПроект договора сформирован в Word (.docx)."
-    if draft.verification_notes:
-        notes = "\n".join(f"• {x}" for x in draft.verification_notes[:8])
-        caption += f"\n\nПеред подписанием проверьте:\n{notes[:700]}"
+    checklist = report.checklist(draft.verification_notes)
+    if checklist:
+        caption += "\n\nПеред подписанием проверьте:\n" + bullets(checklist)
 
     await message.answer_document(
         BufferedInputFile(file_bytes, filename="KORGAN_dogovor.docx"),
-        caption=caption[:1000],
+        caption=fit_caption(caption),
         reply_markup=main_menu(),
     )
 

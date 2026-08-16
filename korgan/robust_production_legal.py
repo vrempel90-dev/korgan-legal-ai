@@ -99,6 +99,21 @@ def _today_kz() -> str:
     return datetime.now(ZoneInfo("Asia/Almaty")).date().isoformat()
 
 
+def _truncation_reason(response: Any) -> str:
+    details = getattr(response, "incomplete_details", None)
+    reason = getattr(details, "reason", None) if details is not None else None
+    if reason is None and isinstance(details, dict):
+        reason = details.get("reason")
+    return str(reason or "")
+
+
+def _is_truncated(response: Any) -> bool:
+    """True when the API itself says the response was cut short."""
+    if str(getattr(response, "status", "") or "") == "incomplete":
+        return True
+    return _truncation_reason(response) == "max_output_tokens"
+
+
 def _host(url: str) -> str:
     try:
         return (urlparse(url).hostname or "").lower()
@@ -191,8 +206,9 @@ class ProductionOpenAILegalService(_FastV2):
         response = await self.client.responses.create(**kwargs)
         first_elapsed = time.perf_counter() - started
 
+        truncated = _is_truncated(response)
         try:
-            payload = json.loads(response.output_text)
+            payload = None if truncated else json.loads(response.output_text)
         except json.JSONDecodeError as exc:
             if schema_name not in output_limits:
                 raise
@@ -202,12 +218,34 @@ class ProductionOpenAILegalService(_FastV2):
                 len(response.output_text or ""),
                 exc,
             )
+            payload = None
+
+        if payload is None:
+            # A response cut at max_output_tokens can still parse as JSON: the
+            # model closes the structure and the damage stays *inside* a string,
+            # which is how a cut word ends up welded to a closing quote in the
+            # finished document. Truncation is therefore judged by the API's own
+            # status, not only by a parse failure.
+            if schema_name not in output_limits:
+                raise RuntimeError(f"KORGAN truncated response without a retry budget: {schema_name}")
+            if truncated:
+                LOGGER.warning(
+                    "KORGAN structured response incomplete: schema=%s reason=%s chars=%d; retrying step only",
+                    schema_name,
+                    _truncation_reason(response),
+                    len(response.output_text or ""),
+                )
             retry_kwargs = dict(kwargs)
             retry_kwargs["max_output_tokens"] = 6200 if "contract" in schema_name else 4800
             retry_started = time.perf_counter()
             response = await self.client.responses.create(**retry_kwargs)
             retry_elapsed = time.perf_counter() - retry_started
             payload = json.loads(response.output_text)
+            if _is_truncated(response):
+                raise RuntimeError(
+                    f"KORGAN structured response still truncated after retry: {schema_name}; "
+                    "выпуск документа с оборванным текстом запрещён"
+                )
             LOGGER.info(
                 "KORGAN structured retry: schema=%s seconds=%.2f chars=%d",
                 schema_name,
