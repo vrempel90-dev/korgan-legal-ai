@@ -153,6 +153,15 @@ class ProvisionReference:
     def label(self) -> str:
         return f"{'часть ' + self.part + ' ' if self.part else ''}статья {self.article} {self.act}".strip()
 
+    def genitive(self) -> str:
+        """«статьи 616 ГК РК» — форма для встраивания в текст документа.
+
+        `label` — ярлык для служебных сообщений; подставленный в предложение он
+        даёт «содержание статья 616 ГК РК», что в судебном документе читается
+        как брак вёрстки.
+        """
+        return f"{'части ' + self.part + ' ' if self.part else ''}статьи {self.article} {self.act}".strip()
+
     def matches(self, other: "ProvisionReference") -> bool:
         """Same act and article; a reference without a part matches any part."""
         if self.act != other.act or self.article != other.article:

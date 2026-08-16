@@ -28,12 +28,17 @@ from korgan.claim_failure import (
     failure_from_exception,
 )
 from korgan.claim_intent import is_claim_drafting_request
-from korgan.citation_audit import extract_references
-from korgan.claim_preflight import inspect_claim_context
+from korgan.citation_audit import ProvisionReference, extract_references
+from korgan.claim_intake_policy import (
+    apply_formal_placeholders,
+    inspect_claim_gaps,
+    placeholder_notes,
+)
 from korgan.config import get_settings
 from korgan.document_release import review_lines
 from korgan.field_intake import format_hint, normalize_answer
-from korgan.gate_instructions import ReplyIntent, apply_citation_waiver, classify_reply
+from korgan.gate_instructions import ReplyIntent, classify_reply, keep_accepted_provisions
+from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.telegram_text import bullets, fit_caption
 from korgan.legal_corpus import extract_cited_articles
 from korgan.legal_types import ClaimDraft, ExtractedDocument, VerificationStatus
@@ -229,6 +234,74 @@ def _claim_release_lines(draft: ClaimDraft) -> list[str]:
     ]
 
 
+def _reference_to_state(reference: ProvisionReference) -> dict:
+    return {"act": reference.act, "article": reference.article, "part": reference.part}
+
+
+def _references_from_state(data: dict) -> list[ProvisionReference]:
+    """Provisions the user already agreed to keep as NEEDS_VERIFICATION."""
+    references: list[ProvisionReference] = []
+    for item in data.get("accepted_provisions", []) or []:
+        try:
+            reference = ProvisionReference(
+                str(item["act"]), str(item["article"]), str(item.get("part", ""))
+            )
+        except (KeyError, TypeError):
+            continue
+        if reference not in references:
+            references.append(reference)
+    return references
+
+
+async def _remember_accepted(state: FSMContext, references: list[ProvisionReference]) -> None:
+    data = await state.get_data()
+    stored = list(data.get("accepted_provisions", []) or [])
+    known = _references_from_state(data)
+    for reference in references:
+        if reference not in known:
+            stored.append(_reference_to_state(reference))
+    await state.update_data(accepted_provisions=stored)
+
+
+async def _forget_accepted(state: FSMContext, references: list[ProvisionReference]) -> None:
+    data = await state.get_data()
+    kept = [
+        _reference_to_state(reference)
+        for reference in _references_from_state(data)
+        if not any(reference.matches(target) for target in references)
+    ]
+    await state.update_data(accepted_provisions=kept)
+
+
+async def _apply_accepted_provisions(state: FSMContext, draft: ClaimDraft) -> list[ProvisionReference]:
+    """Re-apply every provision waiver the user already granted.
+
+    The waiver is a decision, so it belongs to the case rather than to the draft
+    it was made on. Applying it here — on every path into the renderer, first
+    pass and rebuild alike — is what keeps an agreed article from disappearing
+    from the final document while the user is told nothing about it.
+    """
+    data = await state.get_data()
+    accepted = _references_from_state(data)
+    if not accepted:
+        return []
+
+    draft.legal_basis, kept = keep_accepted_provisions(list(draft.legal_basis), accepted)
+    if not kept:
+        return []
+
+    draft.status = VerificationStatus.NEEDS_VERIFICATION
+    for reference in kept:
+        note = (
+            f"{reference.label()}: содержание не подтверждено официальным источником — "
+            "сверьте норму до подачи."
+        )
+        if note not in draft.verification_notes:
+            draft.verification_notes.append(note)
+    LOGGER.info("CLAIM_ACCEPTED_PROVISIONS kept=%s", [ref.label() for ref in kept])
+    return kept
+
+
 async def _finalize_claim(message: Message, state: FSMContext, draft: ClaimDraft) -> None:
     """Render, re-run the release gate, and either send the file or block.
 
@@ -236,6 +309,15 @@ async def _finalize_claim(message: Message, state: FSMContext, draft: ClaimDraft
     blocking defect, so a waiver can never skip the gate — it only changes what
     the document claims, and the gate judges the result again.
     """
+    await _apply_accepted_provisions(state, draft)
+
+    # The provision must prove the relief actually asked for. A citation that
+    # passes the audit can still be the wrong article for the claim.
+    defects = enforce_legal_basis_fit(draft)
+    if defects:
+        LOGGER.warning("CLAIM_LEGAL_BASIS_MISMATCH defects=%s", defects)
+        draft.status = VerificationStatus.NEEDS_VERIFICATION
+
     try:
         file_bytes = build_claim_docx(draft)
     except Exception as exc:
@@ -352,7 +434,7 @@ async def _handle_verification_gate_reply(message: Message, state: FSMContext, d
 
     draft = _draft_from_state(stored)
     drop = decision.intent is ReplyIntent.DROP_PROVISION
-    basis, applied = apply_citation_waiver(list(draft.legal_basis), decision.targets)
+
     if drop:
         basis = [
             line
@@ -364,6 +446,14 @@ async def _handle_verification_gate_reply(message: Message, state: FSMContext, d
             )
         ]
         applied = decision.targets
+        # Dropping revokes an earlier «оставь с пометкой» for the same article,
+        # otherwise the restore step would put back what was just removed.
+        await _forget_accepted(state, decision.targets)
+    else:
+        # Записываем согласие до пересборки: решение относится к делу, а не к
+        # текущему черновику, и должно пережить любую последующую пересборку.
+        await _remember_accepted(state, decision.targets)
+        basis, applied = keep_accepted_provisions(list(draft.legal_basis), decision.targets)
 
     if not applied:
         await message.answer(
@@ -383,7 +473,7 @@ async def _handle_verification_gate_reply(message: Message, state: FSMContext, d
         if note not in draft.verification_notes:
             draft.verification_notes.append(note)
 
-    action = "исключена из документа" if drop else "помечена как NEEDS_VERIFICATION"
+    action = "исключена из документа" if drop else "сохранена с пометкой NEEDS_VERIFICATION"
     LOGGER.info("GATE_WAIVER_APPLIED action=%s refs=%s", action, [ref.label() for ref in applied])
     await message.answer(
         f"Принято: {', '.join(ref.label() for ref in applied)} — {action}. Пересобираю документ…",
@@ -404,12 +494,18 @@ def _intake_escape_menu() -> InlineKeyboardMarkup:
 
 
 async def _handle_missing_field_answer(message: Message, state: FSMContext, data: dict) -> None:
-    """Record an answer to the "missing fields" prompt, then re-check the case.
+    """Record an answer to the one critical-gaps question, then re-check the case.
 
     The order matters and is asserted by tests: parse → write to state → await
     the write → re-read the case → decide. Reusing the snapshot taken at the top
     of the handler would re-check the case as it was *before* the answer, which
     is one of the ways this loop can come back.
+
+    What decides here is the *case*, not the parser. A free answer — «меня зовут
+    Ахметов Руслан Маратович, подрядчик Садыков Тимур Ерланович» — carries both
+    names while matching no field template, and the old order rejected it as
+    unreadable. So the answer is recorded, the case is re-read, and only a gap
+    that survives that re-read is worth another word to the user.
     """
     pending = list(data.get("pending_fields", []) or [])
     answer = message.text or ""
@@ -419,10 +515,33 @@ async def _handle_missing_field_answer(message: Message, state: FSMContext, data
     facts.append(intake.as_case_text() or answer)
     await state.update_data(facts=facts[-20:])
 
-    if not intake.progressed:
-        # Nothing was recognised. Saying what could not be read — with an
-        # example — is the whole difference between a dialogue and the loop:
-        # repeating the original prompt here is what made the bot look deaf.
+    # Re-read the case only after the write completed, so the check sees the
+    # answer that was just recorded.
+    context = await _case_context(state)
+    gaps = inspect_claim_gaps(context)
+    LOGGER.info(
+        "CLAIM_INTAKE received=%r matched=%s recorded=%s errors=%s leftover=%s "
+        "pending_before=%s critical_after=%s formal_after=%s",
+        answer,
+        intake.matched,
+        intake.recorded,
+        intake.errors,
+        intake.leftover,
+        pending,
+        list(gaps.critical),
+        list(gaps.formal),
+    )
+
+    # The parser is not the judge of progress: an answer it cannot template —
+    # «Ахметов Руслан Маратович, подрядчик Садыков Тимур Ерланович» — still
+    # closed a critical gap. What counts is whether the case moved.
+    moved = intake.progressed or set(gaps.critical) != set(pending)
+
+    if gaps.blocks_drafting and not moved:
+        # The answer moved nothing and the document still cannot be written.
+        # Saying what could not be read — with an example — is the whole
+        # difference between a dialogue and the loop: repeating the original
+        # prompt here is what made the bot look deaf.
         failures = int(data.get("intake_failures", 0) or 0) + 1
         await state.update_data(intake_failures=failures)
         LOGGER.info(
@@ -445,25 +564,11 @@ async def _handle_missing_field_answer(message: Message, state: FSMContext, data
         await message.answer(text, reply_markup=MENU)
         return
 
-    await state.update_data(intake_failures=0)
+    # The single clarifying question has now been answered. Anything still
+    # missing is marked in the document rather than asked for again.
+    await state.update_data(intake_failures=0, critical_answered=True)
 
-    # Re-read the case only after the write completed, so the check sees the
-    # answer that was just recorded.
-    context = await _case_context(state)
-    remaining = inspect_claim_context(context).missing
-    LOGGER.info(
-        "CLAIM_INTAKE received=%r matched=%s recorded=%s errors=%s leftover=%s "
-        "pending_before=%s missing_after=%s",
-        answer,
-        intake.matched,
-        intake.recorded,
-        intake.errors,
-        intake.leftover,
-        pending,
-        list(remaining),
-    )
-
-    if intake.errors:
+    if intake.errors and gaps.blocks_drafting:
         await message.answer("\n".join(intake.errors[:3]), reply_markup=MENU)
 
     await claim_handler(message, state)
@@ -509,18 +614,28 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
         )
         return
 
-    preflight = inspect_claim_context(context)
-    if not preflight.ready:
-        data = await state.get_data()
-        missing = list(preflight.missing)
+    data = await state.get_data()
+    gaps = inspect_claim_gaps(context)
+    if gaps.blocks_drafting and data.get("critical_answered"):
+        # The one clarifying question has already been asked and answered.
+        # Whatever it did not produce is now marked in the document: a second
+        # round is the questionnaire this flow exists to remove.
+        LOGGER.info("CLAIM_CRITICAL_UNRESOLVED_AFTER_ANSWER fields=%s", list(gaps.critical))
+        gaps = gaps.after_the_single_question()
+
+    if gaps.blocks_drafting:
+        # Only a gap that makes the document meaningless stops drafting, and it
+        # is asked once, for everything at once. Formal requisites never reach
+        # this branch — they become placeholders inside the delivered draft.
+        missing = list(gaps.critical)
         # Asking for the same set again means the previous answer changed
         # nothing. That is a defect signal, not patience — a user who answered
         # twice will answer a third time to the same wall.
         repeats = int(data.get("intake_repeats", 0) or 0)
         repeats = repeats + 1 if list(data.get("pending_fields", []) or []) == missing else 0
         LOGGER.info(
-            "CLAIM_PREFLIGHT_MISSING fields=%s repeats=%d context_chars=%d",
-            missing, repeats, len(context),
+            "CLAIM_CRITICAL_GAPS fields=%s formal=%s repeats=%d context_chars=%d",
+            missing, list(gaps.formal), repeats, len(context),
         )
         await state.update_data(mode="claim_details", pending_fields=missing, intake_repeats=repeats)
 
@@ -535,10 +650,11 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
             )
             return
 
-        await message.answer(preflight.user_message(), reply_markup=MENU)
+        await message.answer(gaps.single_question(), reply_markup=MENU)
         return
 
-    await state.update_data(mode="main", pending_fields=[], intake_repeats=0)
+    LOGGER.info("CLAIM_DRAFTING_NOW formal_gaps=%s context_chars=%d", list(gaps.formal), len(context))
+    await state.update_data(mode="main", pending_fields=[], intake_repeats=0, critical_answered=False)
     lang = await _language(state)
     await message.answer("Проверяю право и формирую Word-документ…")
     await message.bot.send_chat_action(message.chat.id, "typing")
@@ -554,6 +670,16 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
     except Exception as exc:
         await _report_claim_failure(message, failure_from_exception(exc, stage=ClaimStage.DRAFT))
         return
+
+    # A formal requisite the case never carried is marked inside the document,
+    # not collected in another round of questions.
+    marked = apply_formal_placeholders(draft, gaps)
+    if marked:
+        LOGGER.info("CLAIM_PLACEHOLDERS fields=%s", marked)
+        for note in placeholder_notes(marked):
+            if note not in draft.verification_notes:
+                draft.verification_notes.append(note)
+        draft.status = VerificationStatus.NEEDS_VERIFICATION
 
     absent = missing_required_fields(draft)
     if absent:
