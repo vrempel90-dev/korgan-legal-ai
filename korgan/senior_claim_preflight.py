@@ -91,22 +91,41 @@ class SeniorClaimReview:
         *,
         deterministic_errors: list[str] | None = None,
     ) -> "SeniorClaimReview":
-        errors = list(dict.fromkeys(deterministic_errors or []))
+        deterministic = list(dict.fromkeys(deterministic_errors or []))
+        fact_errors = _strings(payload.get("fact_integrity_errors"))
+        jurisdiction_errors = _strings(payload.get("jurisdiction_errors"))
+        legal_errors = _strings(payload.get("legal_theory_errors"))
+        remedy_errors = _strings(payload.get("remedy_errors"))
+        evidence_errors = _strings(payload.get("evidence_errors"))
+        form_errors = _strings(payload.get("document_form_errors"))
+        all_hard = list(
+            dict.fromkeys(
+                [
+                    *deterministic,
+                    *fact_errors,
+                    *jurisdiction_errors,
+                    *legal_errors,
+                    *remedy_errors,
+                    *evidence_errors,
+                    *form_errors,
+                ]
+            )
+        )
         score = float(payload.get("score", 0.0) or 0.0)
-        if errors:
+        if all_hard:
             score = min(score, 6.9)
         return cls(
             score=round(max(0.0, min(10.0, score)), 1),
-            ready_for_document_release=bool(payload.get("ready_for_document_release")) and not errors,
-            fact_integrity_errors=_strings(payload.get("fact_integrity_errors")),
-            jurisdiction_errors=_strings(payload.get("jurisdiction_errors")),
-            legal_theory_errors=_strings(payload.get("legal_theory_errors")),
-            remedy_errors=_strings(payload.get("remedy_errors")),
-            evidence_errors=_strings(payload.get("evidence_errors")),
-            document_form_errors=_strings(payload.get("document_form_errors")),
+            ready_for_document_release=bool(payload.get("ready_for_document_release")) and not all_hard,
+            fact_integrity_errors=fact_errors,
+            jurisdiction_errors=jurisdiction_errors,
+            legal_theory_errors=legal_errors,
+            remedy_errors=remedy_errors,
+            evidence_errors=evidence_errors,
+            document_form_errors=form_errors,
             filing_actions=_strings(payload.get("filing_actions")),
             repair_instructions=_strings(payload.get("repair_instructions")),
-            deterministic_errors=errors,
+            deterministic_errors=deterministic,
         )
 
     @property
@@ -153,7 +172,6 @@ def _ordinary_individual(values: list[str]) -> bool:
 
 
 def _economic_subject_rule_verified(research: LegalResearch) -> bool:
-    """Require the current case research itself to carry the Article 27 subject rule."""
     for claim in research.verified_claims:
         if _ARTICLE_27_RE.search(claim) and _ARTICLE_27_SUBJECT_RE.search(claim):
             return True
