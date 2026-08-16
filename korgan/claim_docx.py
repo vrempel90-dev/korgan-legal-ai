@@ -27,14 +27,6 @@ QA_LAWYER_REVIEW = "LAWYER-REVIEW DRAFT"
 QA_READY = "READY FOR FINAL HUMAN REVIEW"
 
 
-# Единый источник правды о том, что шаблону реально нужно для сборки документа.
-# Раньше такого списка не было нигде, и набор полей, которые спрашивает
-# korgan.claim_preflight на входе, невозможно было сверить с тем, что требует
-# рендеринг. Названия совпадают с формулировками, которые видит пользователь.
-#
-# Суд сюда намеренно не входит: точное наименование суда не выводится из закона
-# (см. README и production_legal.COURT_PLACEHOLDER), поэтому его отсутствие
-# помечается внутри документа, а не блокирует сборку.
 REQUIRED_DOCUMENT_FIELDS: tuple[tuple[str, str], ...] = (
     ("claimant", "данные истца (ФИО, ИИН, адрес)"),
     ("defendant", "данные ответчика (ФИО, адрес)"),
@@ -52,11 +44,6 @@ def _is_blank(value: object) -> bool:
 
 
 def missing_required_fields(draft: ClaimDraft) -> list[str]:
-    """Поля, без которых собирать иск бессмысленно, в понятных пользователю словах.
-
-    Проверка детерминированная и выполняется до рендеринга, чтобы отказ называл
-    конкретное недостающее поле вместо generic-сообщения.
-    """
     return [
         label
         for attribute, label in REQUIRED_DOCUMENT_FIELDS
@@ -65,7 +52,6 @@ def missing_required_fields(draft: ClaimDraft) -> list[str]:
 
 
 def _strip_label(value: str, label: str) -> str:
-    """Drop a header label the model already put inside the value itself."""
     text = value.strip()
     if text.lower().startswith(label.lower()):
         text = text[len(label):].lstrip(" : \t")
@@ -136,6 +122,7 @@ def _document_status(draft: ClaimDraft) -> str:
             *draft.defendant,
             draft.price_of_claim,
             draft.state_duty,
+            draft.late_interest,
             *draft.facts,
             *draft.legal_basis,
             *draft.requests,
@@ -146,6 +133,7 @@ def _document_status(draft: ClaimDraft) -> str:
     if (
         "[ТРЕБУЕТ УТОЧНЕНИЯ" in court_text
         or "[ТРЕБУЕТ ДОБАВИТЬ" in court_text
+        or "[ТРЕБУЕТ ПРОВЕРКИ" in court_text
         or NEEDS_CALCULATION_MARKER.upper() in court_text
     ):
         return QA_PRELIMINARY
@@ -157,7 +145,6 @@ def _document_status(draft: ClaimDraft) -> str:
 
 
 def _kazakhstan_today() -> str:
-    # Railway runs in UTC; court documents must not roll over a day late.
     return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
 
 
@@ -225,6 +212,12 @@ def build_claim_docx(draft: ClaimDraft) -> bytes:
         for basis in draft.legal_basis:
             paragraph = doc.add_paragraph(basis)
             paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+
+    if draft.late_interest:
+        interest_heading = doc.add_paragraph()
+        interest_heading.add_run("Расчёт неустойки по статье 353 ГК РК").bold = True
+        interest_paragraph = doc.add_paragraph(draft.late_interest)
+        interest_paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
     request_heading = doc.add_paragraph()
     request_heading.add_run("На основании изложенного ПРОШУ СУД:").bold = True
