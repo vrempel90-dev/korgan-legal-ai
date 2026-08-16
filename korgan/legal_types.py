@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
+
+from korgan.contract_numbering import split_leading_number, strip_leading_number
 
 
 class VerificationStatus(StrEnum):
@@ -83,9 +86,68 @@ class ClaimDraft:
 
 
 @dataclass(slots=True)
+class ContractClause:
+    """A numbered clause and its subclauses, both stored WITHOUT numbers.
+
+    Numbering belongs to the export layer only — see korgan.contract_numbering.
+    """
+
+    text: str
+    subclauses: list[str] = field(default_factory=list)
+
+
+def _normalize_clause(item: Any) -> tuple[int, str, list[str]]:
+    """Read one raw clause and strip every literal number the model wrote."""
+    if isinstance(item, ContractClause):
+        raw_text, raw_subs = item.text, list(item.subclauses)
+    elif isinstance(item, dict):
+        raw_text = str(item.get("text", ""))
+        raw_subs = [str(x) for x in item.get("subclauses", []) or []]
+    else:
+        raw_text, raw_subs = str(item), []
+
+    depth, text = split_leading_number(raw_text)
+    subclauses = [cleaned for cleaned in (strip_leading_number(sub) for sub in raw_subs) if cleaned]
+    return depth, text.strip(), subclauses
+
+
+def normalize_clauses(raw: Any) -> list[ContractClause]:
+    """Turn raw model clauses into numberless, properly nested clauses.
+
+    A flat clause whose literal number was three levels deep ("3.1.1. ...")
+    is folded into the preceding clause as a subclause, so the model's nesting
+    intent survives even when it ignores the `subclauses` field.
+    """
+    clauses: list[ContractClause] = []
+    for item in raw or []:
+        depth, text, subclauses = _normalize_clause(item)
+        if not text:
+            continue
+        if depth >= 3 and clauses:
+            clauses[-1].subclauses.append(text)
+            clauses[-1].subclauses.extend(subclauses)
+            continue
+        clauses.append(ContractClause(text=text, subclauses=subclauses))
+    return clauses
+
+
+@dataclass(slots=True)
 class ContractSection:
     heading: str
-    clauses: list[str] = field(default_factory=list)
+    clauses: list[ContractClause] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # Every construction path — model payload, tests, repair loop — lands
+        # here, so numbers can never leak into the stored text.
+        self.heading = strip_leading_number(self.heading)
+        self.clauses = normalize_clauses(self.clauses)
+
+    def text_lines(self) -> list[str]:
+        lines: list[str] = []
+        for clause in self.clauses:
+            lines.append(clause.text)
+            lines.extend(clause.subclauses)
+        return lines
 
 
 @dataclass(slots=True)
@@ -103,6 +165,23 @@ class ContractDraft:
     verification_notes: list[str]
     source_urls: list[str]
 
+    def body_lines(self) -> list[str]:
+        """Every human-readable line of the contract, numbering excluded."""
+        lines = [
+            self.contract_type,
+            self.title,
+            self.place_and_date,
+            *self.party_a,
+            *self.party_b,
+            *self.preamble,
+        ]
+        for section in self.sections:
+            lines.append(section.heading)
+            lines.extend(section.text_lines())
+        lines.extend(self.requisites_a)
+        lines.extend(self.requisites_b)
+        return lines
+
     @classmethod
     def from_payload(
         cls,
@@ -111,10 +190,12 @@ class ContractDraft:
         source_urls: list[str],
         payload: dict,
     ) -> "ContractDraft":
+        # Clause items may be plain strings or {"text": ..., "subclauses": [...]};
+        # ContractSection normalizes both and strips any literal numbering.
         sections = [
             ContractSection(
                 heading=str(item.get("heading", "")).strip(),
-                clauses=[str(x).strip() for x in item.get("clauses", []) if str(x).strip()],
+                clauses=list(item.get("clauses", []) or []),
             )
             for item in payload.get("sections", [])
             if isinstance(item, dict)
