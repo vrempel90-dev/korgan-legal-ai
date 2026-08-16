@@ -9,10 +9,11 @@ from aiogram.types import BotCommand, MenuButtonCommands
 
 from korgan import bot as base_bot
 from korgan.config import get_settings
-from korgan.late_interest_hotfix import ProductionOpenAILegalService
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
+from korgan.response_legal import ProductionOpenAILegalService
+from korgan.response_menu_handlers import router as response_router
 from korgan.ui import main_menu
 
 LOGGER = logging.getLogger(__name__)
@@ -45,10 +46,11 @@ async def main() -> None:
 
     dp.include_router(start_router)
     dp.include_router(safety_router)
+    dp.include_router(response_router)
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN source-bound civil runtime with deterministic Article 353 calculation")
+    LOGGER.info("Starting KORGAN: Article 353 + claims + responses to claims + truncation-safe contracts")
     try:
         await dp.start_polling(bot)
     finally:
