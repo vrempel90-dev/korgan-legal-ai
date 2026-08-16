@@ -11,10 +11,10 @@ from korgan import bot as base_bot
 from korgan.admin import router as admin_router
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
+from korgan.instant_claim_runtime import InstantClaimProductionService, router as instant_claim_router
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
-from korgan.response_legal import ProductionOpenAILegalService
 from korgan.response_menu_handlers import router as response_router
 from korgan.ui import main_menu
 
@@ -31,7 +31,7 @@ async def configure_telegram_menu(bot: Bot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    base_bot.service = ProductionOpenAILegalService(settings)
+    base_bot.service = InstantClaimProductionService(settings)
     base_bot.MENU = main_menu()
 
     bot = Bot(token=settings.telegram_bot_token)
@@ -47,10 +47,18 @@ async def main() -> None:
     dp.include_router(safety_router)
     dp.include_router(contact_router)
     dp.include_router(response_router)
+
+    # Claim requests are intercepted before the legacy questionnaire/release
+    # handlers. The instant router generates immediately and converts missing
+    # fields / unverifiable law to placeholders and NEEDS_VERIFICATION instead
+    # of opening another dialogue loop.
+    dp.include_router(instant_claim_router)
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info("Starting KORGAN: verified provision text + admin access + claims + responses + contracts")
+    LOGGER.info(
+        "Starting KORGAN: instant claims + verified provision text + admin access + responses + contracts"
+    )
     try:
         await dp.start_polling(bot)
     finally:
