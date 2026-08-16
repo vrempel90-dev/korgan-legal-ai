@@ -77,8 +77,7 @@ async def prices_callback(callback: CallbackQuery) -> None:
         "• Жалоба — 1 000 ₸\n"
         "• Договор — 1 000 ₸\n"
         "• Отзыв на иск — 1 000 ₸\n"
-        "• Досудебная претензия — 1 000 ₸\n"
-        "• Другой юридический документ — 1 000 ₸\n\n"
+        "• Досудебная претензия — 1 000 ₸\n\n"
         "🧪 Пока мы проверяем генерацию документов, оплата временно отключена. "
         "Указанные 1 000 ₸ — текущая акционная цена для клиентов, а не постоянный тариф.",
         back_to_main(),
@@ -168,8 +167,6 @@ async def claim_callback(callback: CallbackQuery, state: FSMContext) -> None:
         )
         return
 
-    # Telegram may expose callback.message through a compatible message type;
-    # do not silently discard it with isinstance(Message) checks.
     try:
         await base_bot.claim_handler(message, state)  # type: ignore[arg-type]
     except Exception:
