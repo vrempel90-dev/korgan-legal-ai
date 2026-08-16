@@ -12,7 +12,7 @@ The fix is not to loosen the check — its markers are what stop a defendant's
 address from satisfying the claimant's. It is to record the answer in the form
 the check reads: «Дата рождения истца: 03.03.1999». This module does that
 translation, and it refuses quietly-wrong input loudly: a value that cannot be
-parsed as the field's type comes back as an explicit format error with an
+parsed as its field's type comes back as an explicit format error with an
 example, never as silence.
 """
 
@@ -30,6 +30,10 @@ _ISO_DATE_RE = re.compile(r"^\s*(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})\s*$")
 _DIGITS_RE = re.compile(r"\d")
 _IIN_RE = re.compile(r"^\s*(?:\d[\s-]?){12}\s*$")
 _NAME_RE = re.compile(r"^\s*[А-ЯЁA-Z][а-яёa-z'’-]+(?:\s+[А-ЯЁA-Z][а-яёa-z'’-]+){1,2}\s*$")
+_ENTITY_NAME_RE = re.compile(
+    r"^\s*(?:ТОО|АО|РГП|РГУ|КГУ|КГП|ИП|товарищество\s+с\s+ограниченной\s+ответственностью|акционерное\s+общество)\s+.+$",
+    re.IGNORECASE,
+)
 _IBAN_RE = re.compile(r"\bKZ[0-9A-Z]{16,18}\b", re.IGNORECASE)
 
 _ADDRESS_TOKENS = (
@@ -45,7 +49,7 @@ class FieldSpec:
 
     label: str          # exactly as claim_preflight reports it in `missing`
     canonical: str      # prefix written into the case so preflight finds it
-    kind: str           # date | iin | name | address | bank | text
+    kind: str           # date | iin | name | entity_name | address | bank | text
     example: str
     hint: str
 
@@ -63,7 +67,7 @@ FIELD_SPECS: tuple[FieldSpec, ...] = (
           "123456789012", "БИН — ровно 12 цифр"),
     _spec("ФИО истца полностью", "ФИО истца", "name",
           "Иванов Иван Иванович", "фамилия, имя и отчество полностью"),
-    _spec("полное наименование истца", "Полное наименование истца", "text",
+    _spec("полное наименование истца", "Полное наименование истца", "entity_name",
           "ТОО «Астана Логистик»", "организационно-правовая форма и наименование"),
     _spec("адрес места жительства истца", "Адрес места жительства истца", "address",
           "г. Алматы, ул. Абая, д. 15, кв. 3", "город, улица, дом, квартира"),
@@ -75,6 +79,12 @@ FIELD_SPECS: tuple[FieldSpec, ...] = (
           "Петров Пётр Петрович", "фамилия, имя и отчество полностью"),
     _spec("адрес места жительства ответчика", "Адрес места жительства ответчика", "address",
           "г. Астана, ул. Кенесары, д. 40, кв. 12", "город, улица, дом, квартира"),
+    _spec("полное наименование ответчика", "Полное наименование ответчика", "entity_name",
+          "ТОО «КурылысСтройИнвест»", "организационно-правовая форма и полное наименование"),
+    _spec("БИН ответчика", "БИН ответчика", "iin",
+          "150640012233", "БИН — ровно 12 цифр"),
+    _spec("место нахождения ответчика", "Место нахождения ответчика", "address",
+          "г. Алматы, Алатауский район, ул. Момышулы, 5", "город, район, улица и номер здания"),
 )
 
 SPEC_BY_LABEL: dict[str, FieldSpec] = {spec.label: spec for spec in FIELD_SPECS}
@@ -146,6 +156,8 @@ def detect_kind(value: str) -> str | None:
         return "date"
     if normalize_iin(value):
         return "iin"
+    if _ENTITY_NAME_RE.match(value):
+        return "entity_name"
     if _looks_like_bank(value) and not _looks_like_address(value):
         return "bank"
     if _looks_like_address(value):
@@ -181,6 +193,12 @@ def _normalize_for(spec: FieldSpec, value: str) -> tuple[str | None, str | None]
             f"Укажите {spec.hint}, например: {spec.example}"
         )
 
+    if spec.kind == "entity_name" and not _ENTITY_NAME_RE.match(value):
+        return None, (
+            f"Не получилось распознать «{spec.label}» в значении «{value}». "
+            f"Укажите {spec.hint}, например: {spec.example}"
+        )
+
     if spec.kind == "address" and not _looks_like_address(value):
         return None, (
             f"Не получилось распознать «{spec.label}» в значении «{value}». "
@@ -210,8 +228,6 @@ def normalize_answer(pending: list[str], text: str) -> Intake:
     for segment in segments:
         labelled = next((spec for spec in remaining if _already_labelled(segment, spec)), None)
         if labelled is not None:
-            # The user supplied the label; keep their wording, it already reads
-            # the way the preflight check expects.
             intake.recorded.append(segment)
             intake.matched.append(labelled.label)
             remaining.remove(labelled)
@@ -239,9 +255,6 @@ def normalize_answer(pending: list[str], text: str) -> Intake:
             remaining.remove(spec)
             continue
 
-        # Not recognizable on its own. When exactly one field is outstanding the
-        # answer can only be meant for it, so validate against that field and
-        # tell the user the format instead of silently repeating the question.
         if len(remaining) == 1 and len(segments) == 1:
             spec = remaining[0]
             value, error = _normalize_for(spec, segment)
