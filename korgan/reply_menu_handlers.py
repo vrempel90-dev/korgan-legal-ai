@@ -205,7 +205,19 @@ async def case_button(message: Message, state: FSMContext) -> None:
 @router.message(F.text == "💰 Цены")
 async def prices_button(message: Message, state: FSMContext) -> None:
     await state.update_data(mode="main")
-    await message.answer("💰 Сейчас идёт тестирование генерации документов. Оплата временно отключена.", reply_markup=main_menu())
+    await message.answer(
+        "💰 Акционные цены KORGAN\n\n"
+        "🔥 Любой юридический документ — 1 000 ₸\n\n"
+        "• Исковое заявление — 1 000 ₸\n"
+        "• Жалоба — 1 000 ₸\n"
+        "• Договор — 1 000 ₸\n"
+        "• Отзыв на иск — 1 000 ₸\n"
+        "• Досудебная претензия — 1 000 ₸\n"
+        "• Другой юридический документ — 1 000 ₸\n\n"
+        "🧪 Пока мы проверяем генерацию документов, оплата временно отключена. "
+        "1 000 ₸ — текущая акционная цена для клиентов, а не постоянный тариф.",
+        reply_markup=main_menu(),
+    )
 
 
 @router.message(F.text == "👨‍⚖️ Ваш персональный юрист")
