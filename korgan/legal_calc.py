@@ -11,9 +11,9 @@ State-duty source: статья 665 Налогового кодекса РК (К
 МРП source: Закон РК от 08.12.2025 № 239-VIII «О республиканском бюджете на
 2026 - 2028 годы» (adilet id Z2500000239) — 4 325 тенге с 01.01.2026.
 
-Article 353 calculation uses a versioned National Bank rate table.  The table
-is intentionally fail-closed: after the next scheduled rate decision it is not
-used until the project re-verifies the official National Bank schedule.
+Article 353 calculation uses a versioned National Bank rate table. The table is
+intentionally fail-closed: after the next scheduled rate decision it is not used
+until the project re-verifies the official National Bank schedule.
 """
 
 from __future__ import annotations
@@ -45,7 +45,6 @@ _LEGAL_ENTITY_MARKERS = (
     " ип ",
 )
 
-# «2 400 000 тенге», «2400000 тг», «2 400 000 (два миллиона...) тенге».
 _AMOUNT_PATTERN = re.compile(
     r"(\d[\d\s ]*(?:[.,]\d{1,2})?)\s*(?:\([^)]*\)\s*)?(?:тенге|тг\b|kzt)",
     re.IGNORECASE,
@@ -53,6 +52,10 @@ _AMOUNT_PATTERN = re.compile(
 
 _ROLE_LINE_RE = re.compile(
     r"(?im)^\s*(истец|заявитель|ответчик|должник|взыскатель|кредитор)\s*:\s*(.*)$"
+)
+_NEXT_PARTY_INLINE_RE = re.compile(
+    r"\b(?:ответчик|должник|взыскатель|кредитор)\s*:",
+    re.IGNORECASE,
 )
 
 
@@ -83,19 +86,19 @@ def parse_amount_kzt(text: str) -> int | None:
 
 
 def format_kzt(value: int) -> str:
-    """Render 24000 as «24 000 тенге»."""
     return f"{value:,}".replace(",", " ") + " тенге"
 
 
-def _claimant_segment(case_context: str) -> str:
-    """Return text bound to the claimant role without leaking defendant data.
+def _before_next_party(text: str) -> tuple[str, bool]:
+    """Clip an inline «Ответчик: ...» etc. from claimant-bound text."""
+    match = _NEXT_PARTY_INLINE_RE.search(text or "")
+    if match:
+        return text[: match.start()].strip(), True
+    return (text or "").strip(), False
 
-    The old implementation scanned the whole case and therefore saw a TОО/BIN
-    defendant as evidence that the claimant was a legal entity.  This extractor
-    is role-bound: it starts at an «Истец/Заявитель» line and stops at the next
-    named party role.  A short inline fallback is used only when line structure
-    is absent.
-    """
+
+def _claimant_segment(case_context: str) -> str:
+    """Return only claimant-bound text, never defendant/other-party data."""
     if not case_context:
         return ""
 
@@ -108,13 +111,20 @@ def _claimant_segment(case_context: str) -> str:
             role = match.group(1).lower()
             if role in {"истец", "заявитель"}:
                 active = True
-                collected = [match.group(2).strip()]
+                first, stopped = _before_next_party(match.group(2))
+                collected = [first] if first else []
+                if stopped:
+                    break
                 continue
             if active:
                 break
         elif active:
-            if line.strip():
-                collected.append(line.strip())
+            clipped, stopped = _before_next_party(line)
+            if clipped:
+                collected.append(clipped)
+            if stopped:
+                break
+
     segment = "\n".join(item for item in collected if item).strip()
     if segment:
         return segment
@@ -161,17 +171,12 @@ NB_RATE_SOURCE_URL = "https://nationalbank.kz/ru/news/grafik-prinyatiya-resheniy
 ARTICLE_353_LABEL = "статья 353 Гражданского кодекса РК (Общая часть)"
 NEEDS_RATE_MARKER = "[ТРЕБУЕТ ПРОВЕРКИ: базовая ставка Национального Банка РК]"
 
-# Дата установления ставки -> ставка, % годовых. Проверено по официальному
-# графику Национального Банка 16.08.2026. До 13.10.2025 таблица намеренно не
-# покрывает период: код должен вернуть NEEDS_VERIFICATION, а не угадывать.
 NB_BASE_RATES: tuple[tuple[date, float], ...] = (
     (date(2025, 10, 13), 18.0),
     (date(2026, 6, 8), 17.0),
     (date(2026, 7, 27), 16.75),
 )
 
-# Следующее плановое решение НБ РК заявлено на 04.09.2026. После 03.09.2026
-# справочник считается просроченным до нового подтверждения.
 NB_RATE_TABLE_VALID_THROUGH = date(2026, 9, 3)
 DAYS_IN_YEAR = 365
 
@@ -197,7 +202,6 @@ class LatePaymentPenalty:
 
 
 def base_rate_on(day: date) -> float | None:
-    """Official NB RK base rate effective on ``day`` within the verified table."""
     if day > NB_RATE_TABLE_VALID_THROUGH:
         return None
     rate: float | None = None
@@ -214,13 +218,6 @@ def calc_late_payment_penalty(
     *,
     rate_date: date,
 ) -> LatePaymentPenalty | None:
-    """Calculate Article 353 penalty using the creditor's filing-date rate choice.
-
-    Article 353 permits, in judicial recovery, use of the National Bank base
-    rate on the filing date, judgment date, or actual-payment date at the
-    creditor's choice.  KORGAN's deterministic court-draft path uses the
-    filing-date option because that date is known when the draft is created.
-    """
     if principal <= 0:
         raise ValueError("Сумма основного долга должна быть положительной")
     if end < start:
@@ -242,7 +239,6 @@ def calc_late_payment_penalty(
 
 
 def late_penalty_line(penalty: LatePaymentPenalty | None) -> str:
-    """Court-facing deterministic calculation or a fail-closed marker."""
     if penalty is None:
         return NEEDS_RATE_MARKER
     return (
