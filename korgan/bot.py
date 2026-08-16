@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BufferedInputFile, KeyboardButton, Message, ReplyKeyboardMarkup
 
+from korgan.admin import router as admin_router
 from korgan.claim_docx import build_claim_docx, missing_required_fields
 from korgan.claim_failure import (
     ClaimFailure,
@@ -334,6 +335,7 @@ async def main() -> None:
     service = OpenAILegalService(settings)
     bot = Bot(token=settings.telegram_bot_token)
     dp = Dispatcher(storage=MemoryStorage())
+    dp.include_router(admin_router)
     dp.include_router(router)
     LOGGER.info("Starting KORGAN Legal AI polling (OpenAI-only)")
     try:
