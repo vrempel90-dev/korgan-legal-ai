@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 from aiogram import F, Router
@@ -25,6 +26,7 @@ from korgan.telegram_text import bullets, fit_caption
 
 LOGGER = logging.getLogger(__name__)
 router = Router(name="universal-quality-claim")
+_SENIOR_SCORE_RE = re.compile(r"SENIOR_PREFLIGHT_SCORE:\s*(\d+(?:[.,]\d+)?)\s*/\s*10", re.IGNORECASE)
 
 
 class _ClaimWaiting(Filter):
@@ -92,12 +94,7 @@ def _downgrade_unverified_citations_live(
     draft: ClaimDraft,
     research: LegalResearch,
 ):
-    """Downgrade only citations absent from current live VERIFIED and corpus.
-
-    A provision verified in this case by an actual official Adilet web-search is
-    allowed to survive the release audit even when the local corpus has not yet
-    cached it. Unknown provisions still fail closed.
-    """
+    """Downgrade only citations absent from current live VERIFIED and corpus."""
     report = review_lines(
         _claim_release_lines(draft),
         verified_claims=research.verified_claims,
@@ -147,6 +144,27 @@ def _quality_note(score: float, issues: list[str]) -> str:
     return f"KORGAN QUALITY {score:.1f}/10: {details}"
 
 
+def _senior_score_from_notes(draft: ClaimDraft) -> float | None:
+    scores: list[float] = []
+    for note in draft.verification_notes:
+        match = _SENIOR_SCORE_RE.search(str(note))
+        if not match:
+            continue
+        try:
+            scores.append(float(match.group(1).replace(",", ".")))
+        except ValueError:
+            continue
+    return min(scores) if scores else None
+
+
+def _apply_senior_score_to_quality(draft: ClaimDraft, quality) -> None:
+    """Do not display the old synthetic 8.4 when senior counsel scored lower."""
+    senior_score = _senior_score_from_notes(draft)
+    if senior_score is None:
+        return
+    quality.score = round(min(float(quality.score), senior_score), 1)
+
+
 async def _send_claim(
     message: Message,
     state: FSMContext,
@@ -177,8 +195,8 @@ async def _send_claim(
         return
 
     quality = assess_document_quality("claim", context, research, draft)
+    _apply_senior_score_to_quality(draft, quality)
     if quality.ready:
-        # Readiness belongs to the document, not to unused research branches.
         draft.status = VerificationStatus.VERIFIED
     else:
         draft.status = VerificationStatus.NEEDS_VERIFICATION
