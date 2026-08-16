@@ -13,11 +13,11 @@ from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
+from korgan.professional_service import ProfessionalRKProductionService
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.ui import main_menu
 from korgan.universal_claim_runtime import router as universal_claim_router
 from korgan.universal_document_runtime import router as universal_document_router
-from korgan.universal_quality_service import UniversalQualityProductionService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,10 +32,10 @@ async def configure_telegram_menu(bot: Bot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    # One production service owns the same >=8.5 quality policy for every Word
-    # generator currently implemented: claim, contract and response to claim.
-    # Every future document generator must use korgan.document_quality too.
-    base_bot.service = UniversalQualityProductionService(settings)
+    # Telegram/UI stays unchanged. Only the legal reasoning core is replaced:
+    # issue analysis -> source-bound RK research -> professional drafting ->
+    # deterministic quality/release gate.
+    base_bot.service = ProfessionalRKProductionService(settings)
     base_bot.MENU = main_menu()
 
     bot = Bot(token=settings.telegram_bot_token)
@@ -59,7 +59,7 @@ async def main() -> None:
     dp.include_router(base_bot.router)
 
     LOGGER.info(
-        "Starting KORGAN: universal 8.5 document quality + verified law + claims + responses + contracts"
+        "Starting KORGAN: professional RK legal core + unchanged Telegram UI + verified law + quality gate"
     )
     try:
         await dp.start_polling(bot)
