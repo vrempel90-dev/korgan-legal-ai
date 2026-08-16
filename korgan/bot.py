@@ -20,6 +20,7 @@ from korgan.claim_failure import (
 from korgan.claim_intent import is_claim_drafting_request
 from korgan.claim_preflight import inspect_claim_context
 from korgan.config import get_settings
+from korgan.legal_corpus import extract_cited_articles
 from korgan.legal_types import ExtractedDocument, VerificationStatus
 from korgan.openai_legal import OpenAILegalService
 
@@ -63,9 +64,16 @@ async def _case_context(state: FSMContext) -> str:
     data = await state.get_data()
     docs = data.get("documents", []) or []
     facts = data.get("facts", []) or []
+    consulted_articles = data.get("consulted_articles", []) or []
     chunks = [str(item) for item in docs]
     if facts:
         chunks.append("Сообщения пользователя о фактах:\n" + "\n".join(str(x) for x in facts[-12:]))
+    if consulted_articles:
+        chunks.append(
+            "Нормы, упомянутые в предыдущей консультации KORGAN — ТОЛЬКО поисковые подсказки; "
+            "перед включением в документ их нужно заново подтвердить source-bound поиском по официальному источнику:\n"
+            + "; ".join(str(x) for x in consulted_articles[-20:])
+        )
     return "\n\n---\n\n".join(chunks)
 
 
@@ -81,7 +89,7 @@ async def _save_document(state: FSMContext, extracted: ExtractedDocument) -> int
 
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext) -> None:
-    await state.set_data({"language": "ru", "documents": [], "facts": [], "mode": "main"})
+    await state.set_data({"language": "ru", "documents": [], "facts": [], "consulted_articles": [], "mode": "main"})
     await message.answer(
         "⚖️ KORGAN Legal AI\n\n"
         "Я работаю по законодательству Республики Казахстан. Можно отправить PDF/DOCX/TXT, фото или скан документа — "
@@ -118,7 +126,7 @@ async def help_command(message: Message) -> None:
 @router.message(F.text == "🗑 Очистить дело")
 async def clear_case(message: Message, state: FSMContext) -> None:
     lang = await _language(state)
-    await state.set_data({"language": lang, "documents": [], "facts": [], "mode": "main"})
+    await state.set_data({"language": lang, "documents": [], "facts": [], "consulted_articles": [], "mode": "main"})
     await message.answer("Материалы текущего дела удалены из сессии.", reply_markup=MENU)
 
 
@@ -175,12 +183,7 @@ async def document_handler(message: Message, state: FSMContext) -> None:
 
 
 async def _report_claim_failure(message: Message, failure: ClaimFailure) -> None:
-    """Записать причину отказа в лог и назвать её пользователю.
-
-    Fail-closed обязан быть объяснимым: в логе остаётся одна структурированная
-    строка с этапом, кодом и полем, а пользователь получает конкретную причину
-    вместо «Проверьте материалы и повторите запрос».
-    """
+    """Записать причину отказа в лог и назвать её пользователю."""
     LOGGER.error(failure.log_line(), exc_info=True)
     await message.answer(failure.user_message(), reply_markup=MENU)
 
@@ -201,9 +204,6 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Instant deterministic completeness gate. Do this BEFORE legal web search
-    # and drafting so an obviously incomplete case does not burn 40–70 seconds
-    # only to be rejected by FINAL QA.
     preflight = inspect_claim_context(context)
     if not preflight.ready:
         LOGGER.info("CLAIM_PREFLIGHT_MISSING fields=%s", list(preflight.missing))
@@ -216,9 +216,6 @@ async def claim_handler(message: Message, state: FSMContext) -> None:
     await message.answer("Проверяю право и формирую Word-документ…")
     await message.bot.send_chat_action(message.chat.id, "typing")
 
-    # Каждый этап отвечает за свою причину отказа. Раньше все три были накрыты
-    # одним except, поэтому ни лог, ни пользователь не могли отличить сбой
-    # исследования от блокировки QA или от ошибки шаблонизации.
     try:
         research = await service.research_case(context, language=lang)
     except Exception as exc:
@@ -285,9 +282,6 @@ async def legal_question(message: Message, state: FSMContext) -> None:
 
     data = await state.get_data()
 
-    # The previous claim preflight asked for missing requisites. Save this reply
-    # as case facts and immediately retry the claim — do not waste a consultation
-    # API call and do not make the user press the document button again.
     if data.get("mode") == "claim_details":
         facts = list(data.get("facts", []) or [])
         facts.append(message.text)
@@ -297,9 +291,6 @@ async def legal_question(message: Message, state: FSMContext) -> None:
 
     explicit_consultation = data.get("mode") == "consultation"
 
-    # A direct claim request from the main mode must produce DOCX. But when the
-    # user explicitly pressed «Консультация», their next message belongs to the
-    # consultation agent even if the narrative contains words like «составь иск».
     if is_claim_drafting_request(message.text) and not explicit_consultation:
         LOGGER.info("CLAIM_INTENT_FORCED_TO_DOCX telegram_user_id=%s", message.from_user.id if message.from_user else None)
         await claim_handler(message, state)
@@ -317,6 +308,19 @@ async def legal_question(message: Message, state: FSMContext) -> None:
         LOGGER.exception("Consultation failed")
         await message.answer("Не удалось выполнить юридический поиск. Попробуйте повторить вопрос.", reply_markup=MENU)
         return
+
+    # Preserve only article labels as hints for the next research pass. They are
+    # never treated as VERIFIED merely because a previous consultation cited them.
+    if urls:
+        cited = extract_cited_articles(answer)
+        if cited:
+            refreshed = await state.get_data()
+            previous = list(refreshed.get("consulted_articles", []) or [])
+            for item in cited:
+                if item not in previous:
+                    previous.append(item)
+            await state.update_data(consulted_articles=previous[-20:])
+
     sources = ""
     if urls:
         sources = "\n\nОфициальные источники:\n" + "\n".join(f"• {url}" for url in urls[:5])
