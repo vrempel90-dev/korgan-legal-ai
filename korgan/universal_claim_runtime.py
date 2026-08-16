@@ -9,12 +9,15 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, Message
 
 from korgan import bot as base_bot
+from korgan.citation_audit import ProvisionReference, extract_references
 from korgan.claim_docx import build_claim_docx, missing_required_fields
 from korgan.claim_failure import ClaimStage, failure_from_exception
 from korgan.claim_intent import is_claim_drafting_request
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
-from korgan.instant_claim_runtime import _downgrade_unverified_citations
+from korgan.document_release import review_lines
+from korgan.gate_instructions import keep_accepted_provisions
+from korgan.instant_claim_runtime import _strip_reference_token
 from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.response_intent import is_response_to_claim_request
@@ -36,8 +39,6 @@ class _ClaimIntent(Filter):
         if data.get("mode") in {"consultation", "contract_details", "response_details"}:
             return False
         text = message.text or ""
-        # «подготовь отзыв на иск» contains both an action verb and the word
-        # «иск»; document type routing must win before generic claim detection.
         if is_response_to_claim_request(text) or is_contract_drafting_request(text):
             return False
         return bool(text and is_claim_drafting_request(text))
@@ -55,13 +56,7 @@ async def _append_fact_once(state: FSMContext, text: str) -> None:
 
 
 def _fill_only_empty_structural_blocks(draft: ClaimDraft) -> None:
-    """Never re-run the old field-intake policy after quality repair.
-
-    Only a completely empty court-document block gets a visible fail-closed
-    placeholder. Individual requisites are left to source-bound drafting and
-    the universal quality gate; stale intake heuristics cannot reintroduce
-    impossible requisites after a repaired draft.
-    """
+    """Never re-run legacy field-intake heuristics after quality repair."""
     if not draft.claimant:
         draft.claimant = ["[ТРЕБУЕТ УТОЧНЕНИЯ: данные истца]"]
     if not draft.defendant:
@@ -70,6 +65,81 @@ def _fill_only_empty_structural_blocks(draft: ClaimDraft) -> None:
         draft.facts = ["[ТРЕБУЕТ УТОЧНЕНИЯ: обстоятельства дела]"]
     if not draft.requests:
         draft.requests = ["[ТРЕБУЕТ УТОЧНЕНИЯ: требования к ответчику]"]
+
+
+def _claim_release_lines(draft: ClaimDraft) -> list[str]:
+    """Legal/model text only; deterministic state duty has its own verifier."""
+    return [
+        draft.title,
+        *draft.facts,
+        *draft.legal_basis,
+        draft.late_interest,
+        *draft.requests,
+        *draft.attachments,
+    ]
+
+
+def _blocking_references(report) -> list[ProvisionReference]:
+    refs: list[ProvisionReference] = []
+    for finding in report.citations.blocking:
+        ref = ProvisionReference(finding.act, finding.article, finding.part)
+        if ref not in refs:
+            refs.append(ref)
+    return refs
+
+
+def _downgrade_unverified_citations_live(
+    draft: ClaimDraft,
+    research: LegalResearch,
+):
+    """Downgrade only citations absent from current live VERIFIED and corpus.
+
+    A provision verified in this case by an actual official Adilet web-search is
+    allowed to survive the release audit even when the local corpus has not yet
+    cached it. Unknown provisions still fail closed.
+    """
+    report = review_lines(
+        _claim_release_lines(draft),
+        verified_claims=research.verified_claims,
+    )
+    refs = _blocking_references(report)
+    if not refs:
+        return report
+
+    draft.legal_basis, kept = keep_accepted_provisions(list(draft.legal_basis), refs)
+
+    for attribute in ("facts", "requests", "attachments"):
+        original = list(getattr(draft, attribute, []) or [])
+        rebuilt: list[str] = []
+        for value in original:
+            updated = value
+            for ref in refs:
+                if any(ref.matches(found) for found in extract_references(updated)):
+                    updated = _strip_reference_token(updated, ref)
+            if updated.strip():
+                rebuilt.append(updated)
+        setattr(draft, attribute, rebuilt)
+
+    if draft.late_interest:
+        updated = draft.late_interest
+        for ref in refs:
+            if any(ref.matches(found) for found in extract_references(updated)):
+                updated = _strip_reference_token(updated, ref)
+        draft.late_interest = updated
+
+    draft.status = VerificationStatus.NEEDS_VERIFICATION
+    for ref in kept or refs:
+        note = (
+            f"{ref.label()}: содержание не подтверждено ни source-bound исследованием текущего дела, "
+            "ни проверенным корпусом; требуется сверка до подачи."
+        )
+        if note not in draft.verification_notes:
+            draft.verification_notes.append(note)
+
+    return review_lines(
+        _claim_release_lines(draft),
+        verified_claims=research.verified_claims,
+    )
 
 
 def _quality_note(score: float, issues: list[str]) -> str:
@@ -85,8 +155,6 @@ async def _send_claim(
     research: LegalResearch,
     draft: ClaimDraft,
 ) -> None:
-    # Fit check is generic: the law must prove the requested remedy, not merely
-    # belong to the same legal topic.
     fit = enforce_legal_basis_fit(draft)
     if fit:
         draft.status = VerificationStatus.NEEDS_VERIFICATION
@@ -95,7 +163,7 @@ async def _send_claim(
             if note not in draft.verification_notes:
                 draft.verification_notes.append(note)
 
-    release = _downgrade_unverified_citations(draft)
+    release = _downgrade_unverified_citations_live(draft, research)
     if release.citations.blocking or release.integrity:
         LOGGER.error(
             "UNIVERSAL_CLAIM_RELEASE_BLOCK citations=%s integrity=%s",
@@ -109,7 +177,10 @@ async def _send_claim(
         return
 
     quality = assess_document_quality("claim", context, research, draft)
-    if not quality.ready:
+    if quality.ready:
+        # Readiness belongs to the document, not to unused research branches.
+        draft.status = VerificationStatus.VERIFIED
+    else:
         draft.status = VerificationStatus.NEEDS_VERIFICATION
         note = _quality_note(quality.score, quality.repair_issues())
         if note not in draft.verification_notes:
