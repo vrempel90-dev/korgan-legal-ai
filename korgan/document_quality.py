@@ -38,6 +38,15 @@ _SERVICE_MARKERS = (
     "###",
     "**",
 )
+_GENERIC_COURT_MARKERS = (
+    "требует уточнения",
+    "наименование суда",
+    "компетентного рассматривать",
+    "компетентный суд",
+    "по месту нахождения",
+    "по месту жительства",
+    "надлежащий суд",
+)
 
 
 @dataclass(slots=True)
@@ -87,6 +96,20 @@ def _claim_lines(draft: ClaimDraft) -> list[str]:
     )
 
 
+def _claim_citation_lines(draft: ClaimDraft) -> list[str]:
+    """Model/legal prose only; deterministic state duty is checked separately."""
+    return _clean_lines(
+        [
+            draft.title,
+            *draft.facts,
+            *draft.legal_basis,
+            draft.late_interest,
+            *draft.requests,
+            *draft.attachments,
+        ]
+    )
+
+
 def _contract_lines(draft: ContractDraft) -> list[str]:
     return _clean_lines(draft.body_lines())
 
@@ -105,7 +128,15 @@ def document_lines(kind: DocumentKind, draft: Any) -> list[str]:
     raise ValueError(f"Unsupported document kind: {kind}")
 
 
-def _common_hygiene(kind: DocumentKind, lines: list[str], blockers: list[str], issues: list[str]) -> float:
+def _common_hygiene(
+    kind: DocumentKind,
+    lines: list[str],
+    blockers: list[str],
+    issues: list[str],
+    *,
+    verified_claims: list[str] | None = None,
+    verification_notes: list[str] | None = None,
+) -> float:
     text = "\n".join(lines)
     lowered = text.lower()
     score = 1.0
@@ -117,18 +148,23 @@ def _common_hygiene(kind: DocumentKind, lines: list[str], blockers: list[str], i
 
     for marker in _SERVICE_MARKERS:
         if marker in lowered:
-            blockers.append(f"в судебном/договорном тексте осталась служебная фраза: {marker}")
+            blockers.append(f"в юридическом тексте осталась служебная фраза: {marker}")
             score -= 0.4
             break
+
+    unresolved = _clean_lines(verification_notes)
+    if unresolved:
+        blockers.append("остались нерешённые вопросы проверки: " + unresolved[0][:180])
+        score -= 0.35
 
     integrity = integrity_findings(text)
     if integrity:
         blockers.append("нарушена целостность текста: " + integrity[0].description)
         score -= 0.6
 
-    release = review_lines(lines)
+    release = review_lines(lines, verified_claims=verified_claims)
     if release.citations.blocking:
-        blockers.append("есть правовая ссылка, не прошедшая проверку корпуса/цитаты")
+        blockers.append("есть правовая ссылка, не прошедшая source-bound/corpus проверку")
         score -= 0.6
     if release.integrity:
         blockers.append("release-check обнаружил повреждение текста")
@@ -147,12 +183,41 @@ def _preserve_known_identifiers(case_context: str, lines: list[str], blockers: l
     return max(0.0, score)
 
 
+def _normalized(value: str) -> str:
+    return re.sub(r"[^0-9a-zа-яё]+", "", (value or "").lower())
+
+
+def _court_supported(case_context: str, research: LegalResearch, court: str) -> bool:
+    """Court name must come from user materials or verified official research."""
+    norm = _normalized(court)
+    if len(norm) < 8:
+        return False
+    if norm in _normalized(case_context):
+        return True
+    for note in research.notes:
+        if not str(note).startswith("VERIFIED_COURT:"):
+            continue
+        verified = str(note).split(":", 1)[1].strip()
+        verified_norm = _normalized(verified)
+        if verified_norm and (verified_norm in norm or norm in verified_norm):
+            return True
+    return False
+
+
+def _court_is_concrete(court: str) -> bool:
+    lowered = (court or "").lower()
+    if not lowered or "суд" not in lowered:
+        return False
+    if _PLACEHOLDER_RE.search(court):
+        return False
+    return not any(marker in lowered for marker in _GENERIC_COURT_MARKERS)
+
+
 def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) -> DocumentQualityReport:
     blockers: list[str] = []
     issues: list[str] = []
     lines = _claim_lines(draft)
 
-    # 1. Parties and fact lock — 2.0
     parties = 2.0
     if not _clean_lines(draft.claimant):
         blockers.append("не заполнены данные истца")
@@ -171,7 +236,6 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
         blockers.append("банковские реквизиты ошибочно сделаны обязательными для истца-физлица")
         parties -= 0.35
 
-    # 2. Facts / relief — 2.0
     facts = 2.0
     if len(_clean_lines(draft.facts)) < 3:
         issues.append("фактическая часть недостаточно раскрывает хронологию и нарушение")
@@ -183,7 +247,6 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
         blockers.append("не указана цена денежного иска при известной сумме")
         facts -= 0.5
 
-    # 3. Legal qualification — 2.5
     law = 2.5
     basis = "\n".join(draft.legal_basis)
     if not basis.strip():
@@ -202,18 +265,20 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
             blockers.append("нет source-bound подтвержденной материально-правовой основы")
             law -= 1.2
 
-    # 4. Procedure — 1.5
     procedure = 1.5
     court = (draft.court or "").strip()
-    if not court or _PLACEHOLDER_RE.search(court):
-        blockers.append("не определено точное наименование суда")
+    if not _court_is_concrete(court):
+        blockers.append("не определено конкретное наименование суда")
         procedure -= 0.75
+    elif not _court_supported(case_context, research, court):
+        blockers.append("наименование суда не подтверждено материалами дела или официальным source-bound исследованием")
+        procedure -= 0.55
+
     duty = (draft.state_duty or "").strip()
     if not duty or _PLACEHOLDER_RE.search(duty):
         blockers.append("не определена госпошлина или подтвержденная льгота")
         procedure -= 0.5
 
-    # 5. Evidence — 1.0
     evidence = 1.0
     attachments = "\n".join(draft.attachments).lower()
     for marker in ("договор", "квитанц", "претензи", "расписк", "акт"):
@@ -221,8 +286,14 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
             issues.append(f"в приложениях потеряно упомянутое доказательство: {marker}")
             evidence -= 0.18
 
-    # 6. Hygiene / citations / integrity — 1.0
-    hygiene = _common_hygiene("claim", lines, blockers, issues)
+    hygiene = _common_hygiene(
+        "claim",
+        _claim_citation_lines(draft),
+        blockers,
+        issues,
+        verified_claims=research.verified_claims,
+        verification_notes=draft.verification_notes,
+    )
 
     categories = {
         "fact_role_lock": max(0.0, parties),
@@ -277,15 +348,22 @@ def _score_contract(case_context: str, research: LegalResearch, draft: ContractD
         blockers.append("не заполнены место/дата заключения договора")
         execution -= 0.4
 
-    hygiene = _common_hygiene("contract", lines, blockers, issues)
-    evidence = _preserve_known_identifiers(case_context, lines, blockers)
+    hygiene = _common_hygiene(
+        "contract",
+        lines,
+        blockers,
+        issues,
+        verified_claims=research.verified_claims,
+        verification_notes=draft.verification_notes,
+    )
+    fact_lock = _preserve_known_identifiers(case_context, lines, blockers)
 
     categories = {
         "identity_preamble": max(0.0, identity),
         "essential_terms": max(0.0, terms),
         "legal_validity": max(0.0, legal),
         "execution": max(0.0, execution),
-        "fact_lock": evidence,
+        "fact_lock": fact_lock,
         "hygiene": hygiene,
     }
     score = round(sum(categories.values()), 1)
@@ -300,9 +378,13 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
     lines = _response_lines(draft)
 
     identity = 2.0
-    if not (draft.court or "").strip() or _PLACEHOLDER_RE.search(draft.court or ""):
-        blockers.append("в отзыве не указан суд")
+    court = (draft.court or "").strip()
+    if not _court_is_concrete(court):
+        blockers.append("в отзыве не указан конкретный суд")
         identity -= 0.6
+    elif not _court_supported(case_context, research, court):
+        blockers.append("суд в отзыве не подтвержден исходным иском/материалами")
+        identity -= 0.4
     if not _clean_lines(draft.claimant) or not _clean_lines(draft.defendant):
         blockers.append("в отзыве не идентифицированы истец и ответчик")
         identity -= 0.8
@@ -339,11 +421,19 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
         issues.append("не сформирован перечень приложений к отзыву")
         evidence -= 0.2
 
-    hygiene = _common_hygiene("response_to_claim", lines, blockers, issues)
     completeness = 1.0
     if not draft.case_number:
         issues.append("номер дела не указан; допустимо только если он действительно неизвестен")
         completeness -= 0.15
+
+    hygiene = _common_hygiene(
+        "response_to_claim",
+        lines,
+        blockers,
+        issues,
+        verified_claims=research.verified_claims,
+        verification_notes=draft.verification_notes,
+    )
 
     categories = {
         "identity_procedure": max(0.0, identity),
