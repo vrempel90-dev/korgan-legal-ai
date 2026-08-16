@@ -12,10 +12,12 @@ from korgan import bot as base_bot
 from korgan.claim_docx import build_claim_docx, missing_required_fields
 from korgan.claim_failure import ClaimStage, failure_from_exception
 from korgan.claim_intent import is_claim_drafting_request
+from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
 from korgan.instant_claim_runtime import _downgrade_unverified_citations
 from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
+from korgan.response_intent import is_response_to_claim_request
 from korgan.telegram_text import bullets, fit_caption
 
 LOGGER = logging.getLogger(__name__)
@@ -33,7 +35,12 @@ class _ClaimIntent(Filter):
         data = await state.get_data()
         if data.get("mode") in {"consultation", "contract_details", "response_details"}:
             return False
-        return bool(message.text and is_claim_drafting_request(message.text))
+        text = message.text or ""
+        # «подготовь отзыв на иск» contains both an action verb and the word
+        # «иск»; document type routing must win before generic claim detection.
+        if is_response_to_claim_request(text) or is_contract_drafting_request(text):
+            return False
+        return bool(text and is_claim_drafting_request(text))
 
 
 async def _append_fact_once(state: FSMContext, text: str) -> None:
@@ -51,9 +58,9 @@ def _fill_only_empty_structural_blocks(draft: ClaimDraft) -> None:
     """Never re-run the old field-intake policy after quality repair.
 
     Only a completely empty court-document block gets a visible fail-closed
-    placeholder.  Individual requisites are left to source-bound drafting and
-    the universal quality gate; this prevents stale intake heuristics from
-    reintroducing false fields such as «ФИО» for a legal entity.
+    placeholder. Individual requisites are left to source-bound drafting and
+    the universal quality gate; stale intake heuristics cannot reintroduce
+    impossible requisites after a repaired draft.
     """
     if not draft.claimant:
         draft.claimant = ["[ТРЕБУЕТ УТОЧНЕНИЯ: данные истца]"]
