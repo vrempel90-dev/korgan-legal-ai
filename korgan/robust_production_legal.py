@@ -10,6 +10,8 @@ from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
+from korgan.contract_numbering import count_literal_numbers
+from korgan.contract_preamble import PREAMBLE_TEMPLATE, preamble_defects
 from korgan.fast_v2_production_legal import ProductionOpenAILegalService as _FastV2
 from korgan.legal_routing import ClaimProfile, detect_claim_profile, detect_contract_profile
 from korgan.legal_types import ContractDraft, LegalResearch, VerificationStatus
@@ -37,8 +39,21 @@ _CONTRACT_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
+                    # Headings and clause texts carry NO numbers: numbering is
+                    # generated at export time by korgan.contract_numbering.
                     "heading": {"type": "string"},
-                    "clauses": {"type": "array", "items": {"type": "string"}},
+                    "clauses": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string"},
+                                "subclauses": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["text", "subclauses"],
+                            "additionalProperties": False,
+                        },
+                    },
                 },
                 "required": ["heading", "clauses"],
                 "additionalProperties": False,
@@ -108,25 +123,22 @@ def _profile_has_material_support(profile: ClaimProfile, verified_claims: list[s
 
 
 def _contract_body(draft: ContractDraft) -> str:
-    return "\n".join(
-        [
-            draft.contract_type,
-            draft.title,
-            draft.place_and_date,
-            *draft.party_a,
-            *draft.party_b,
-            *draft.preamble,
-            *(section.heading for section in draft.sections),
-            *(clause for section in draft.sections for clause in section.clauses),
-            *draft.requisites_a,
-            *draft.requisites_b,
-        ]
-    )
+    return "\n".join(draft.body_lines())
 
 
 def _contract_hard_issues(draft: ContractDraft) -> list[str]:
     lowered = _contract_body(draft).lower()
     return [f"служебный/чатовый текст попал в договор: {needle}" for needle in _FORBIDDEN_CONTRACT_TEXT if needle in lowered]
+
+
+def _contract_structure_issues(draft: ContractDraft) -> list[str]:
+    """Structural defects worth a repair round but never worth killing the draft.
+
+    A missing preamble is a document-integrity failure (final-legal-qa.md, H),
+    yet it is recoverable: the export can always fall back to the placeholder
+    identification block, so this must not fail the contract closed.
+    """
+    return [f"преамбула договора: {defect}" for defect in preamble_defects(draft.preamble)]
 
 
 class ProductionOpenAILegalService(_FastV2):
@@ -449,7 +461,13 @@ class ProductionOpenAILegalService(_FastV2):
             "party_a": draft.party_a,
             "party_b": draft.party_b,
             "preamble": draft.preamble,
-            "sections": [{"heading": s.heading, "clauses": s.clauses} for s in draft.sections],
+            "sections": [
+                {
+                    "heading": s.heading,
+                    "clauses": [{"text": c.text, "subclauses": c.subclauses} for c in s.clauses],
+                }
+                for s in draft.sections
+            ],
             "requisites_a": draft.requisites_a,
             "requisites_b": draft.requisites_b,
         }
@@ -458,7 +476,11 @@ class ProductionOpenAILegalService(_FastV2):
             "critical_errors: перепутанные стороны/роли, выдуманные суммы/сроки/штрафы, противоречивые условия, незаконная или внутренне невозможная конструкция.\n"
             "unsupported_legal_claims: ссылки/обязательные утверждения о праве, которых нет в VERIFIED.\n"
             "missing_essential_terms: только условия/реквизиты, без которых этот вид договора нельзя безопасно считать готовым к подписанию. "
-            "Не блокируй сам Word-проект из-за missing_essential_terms — он может быть PRELIMINARY DRAFT.\n\n"
+            "Не блокируй сам Word-проект из-за missing_essential_terms — он может быть PRELIMINARY DRAFT.\n"
+            "Отдельно проверь преамбулу: она обязана идентифицировать обе стороны, их роли по договору и основание полномочий "
+            "каждого подписанта (устав / доверенность / свидетельство о государственной регистрации ИП). Реквизиты в конце документа "
+            "преамбулу не заменяют. Неполная преамбула — missing_essential_terms.\n"
+            "Нумерация в heading и clauses отсутствует намеренно: её проставляет экспорт. Не считай это дефектом.\n\n"
             f"МАТЕРИАЛЫ:\n{case_context[:36000]}\n\n"
             f"VERIFIED:\n{json.dumps(research.verified_claims, ensure_ascii=False)}\n\n"
             f"ДОГОВОР:\n{json.dumps(payload_for_qa, ensure_ascii=False)}"
@@ -495,7 +517,19 @@ class ProductionOpenAILegalService(_FastV2):
             "5. Сделай договор полноценным: предмет; права/обязанности; порядок исполнения/приемки; цена/оплата если применимо; ответственность без выдуманных ставок; срок/прекращение; форс-мажор при уместности; споры; заключительные положения; реквизиты и подписи. "
             "Не добавляй раздел, который не подходит этому виду договора.\n"
             "6. В тексте договора запрещены URL, NEEDS_VERIFICATION, Markdown и чатовые советы.\n"
-            "7. Не вставляй статьи закона ради красоты: нормы используются как юридический контроль конструкции, а ссылки в тексте нужны только если действительно уместны.\n\n"
+            "7. Не вставляй статьи закона ради красоты: нормы используются как юридический контроль конструкции, а ссылки в тексте нужны только если действительно уместны.\n"
+            "8. НУМЕРАЦИЯ: её полностью проставляет экспорт в Word. Пиши без единого номера. "
+            "heading — только название раздела ('Предмет Договора', НЕ '1. Предмет Договора'). "
+            "clauses[].text — только текст пункта ('По настоящему Договору Исполнитель обязуется...', НЕ '1.1. По настоящему Договору...'). "
+            "Подпункт оформляй элементом clauses[].subclauses, а не номером '3.1.1.' внутри текста. "
+            "Любой номер, написанный тобой, будет отброшен и приведёт к потере структуры.\n"
+            "9. ПРЕАМБУЛА (поле preamble) обязательна и всегда идёт полным вводным абзацем, идентифицирующим обе стороны, "
+            "их роли по договору и основание полномочий каждого подписанта (устав — для директора ТОО/АО, "
+            "доверенность № и дата — для представителя, свидетельство о государственной регистрации ИП № и дата — для ИП). Формат:\n"
+            f"«{PREAMBLE_TEMPLATE}»\n"
+            "Если реквизиты стороны, ФИО подписанта или основание полномочий неизвестны — сохрани структуру абзаца целиком "
+            "и подставь на соответствующее место '[ТРЕБУЕТ УТОЧНЕНИЯ: ...]'. Сокращать преамбулу до "
+            "'совместно именуемые «Стороны», заключили настоящий Договор' запрещено: реквизиты в конце документа преамбулу не заменяют.\n\n"
             f"МАТЕРИАЛЫ:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
             f"VERIFIED:\n{verified_block}\n\n"
             f"НЕ ПОДТВЕРЖДЕНО:\n{unverified_block}"
@@ -510,17 +544,22 @@ class ProductionOpenAILegalService(_FastV2):
             schema_name="korgan_contract_draft",
             schema=_CONTRACT_SCHEMA,
         )
+        self._log_numbering_conflicts(payload, "draft")
         draft = ContractDraft.from_payload(status=research.status, source_urls=research.source_urls, payload=payload)
 
         hard = _contract_hard_issues(draft)
+        structural = _contract_structure_issues(draft)
         validation = await self.validate_contract(case_context, research, draft)
         blocking = list(dict.fromkeys(validation["critical_errors"] + validation["unsupported_legal_claims"] + hard))
-        if blocking:
+        if blocking or structural:
             repair_prompt = (
-                "Исправь договор только по перечисленным замечаниям. Не добавляй новых фактов, сумм, сроков, штрафов или правовых утверждений.\n\n"
+                "Исправь договор только по перечисленным замечаниям. Не добавляй новых фактов, сумм, сроков, штрафов или правовых утверждений.\n"
+                "Нумерацию не пиши: heading и clauses[].text идут без номеров, подпункты — только в clauses[].subclauses.\n"
+                "Преамбула должна полностью идентифицировать обе стороны, их роли и основание полномочий подписантов "
+                f"по формату: «{PREAMBLE_TEMPLATE}»\n\n"
                 f"МАТЕРИАЛЫ:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
                 f"VERIFIED:\n{verified_block}\n\n"
-                f"ЗАМЕЧАНИЯ:\n{json.dumps(blocking, ensure_ascii=False)}\n\n"
+                f"ЗАМЕЧАНИЯ:\n{json.dumps(blocking + structural, ensure_ascii=False)}\n\n"
                 f"ТЕКУЩИЙ ПРОЕКТ:\n{json.dumps(payload, ensure_ascii=False)}"
             )
             repaired, _ = await self._structured_response(
@@ -530,8 +569,10 @@ class ProductionOpenAILegalService(_FastV2):
                 schema_name="korgan_contract_repair",
                 schema=_CONTRACT_SCHEMA,
             )
+            self._log_numbering_conflicts(repaired, "repair")
             draft = ContractDraft.from_payload(status=research.status, source_urls=research.source_urls, payload=repaired)
             hard = _contract_hard_issues(draft)
+            structural = _contract_structure_issues(draft)
             validation = await self.validate_contract(case_context, research, draft)
             blocking = list(dict.fromkeys(validation["critical_errors"] + validation["unsupported_legal_claims"] + hard))
             if blocking:
@@ -539,9 +580,25 @@ class ProductionOpenAILegalService(_FastV2):
                 # are allowed as PRELIMINARY; fabricated/unsupported content is not.
                 raise RuntimeError("CONTRACT_QA_BLOCK: " + "; ".join(blocking[:10]))
 
+        # A preamble the model would not repair is not fatal: the export
+        # renders the identification block with visible gaps, and the defect is
+        # surfaced to the user instead of being hidden.
+        for item in structural:
+            if item not in draft.verification_notes:
+                draft.verification_notes.append(item)
         for item in validation["missing_essential_terms"]:
             if item not in draft.verification_notes:
                 draft.verification_notes.append(item)
         if research.unverified_claims or draft.verification_notes:
             draft.status = VerificationStatus.NEEDS_VERIFICATION
         return draft
+
+    @staticmethod
+    def _log_numbering_conflicts(payload: dict[str, Any], stage: str) -> None:
+        conflicts = count_literal_numbers(payload)
+        if conflicts:
+            LOGGER.warning(
+                "KORGAN contract numbering: model wrote %d literal number(s) at stage=%s; stripped on import",
+                conflicts,
+                stage,
+            )

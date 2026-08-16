@@ -42,6 +42,10 @@ For claims/complaints/applications where applicable:
 
 ## Contract drafting
 
+Договор всегда открывается преамбулой с полной идентификацией обеих сторон и
+основанием полномочий подписантов; номера разделов и пунктов проставляет экспорт, а не
+текст. Обязательные форматы и проверки — см. [contracts.md](contracts.md).
+
 For contracts, check or include as relevant:
 - parties and authority;
 - subject;
