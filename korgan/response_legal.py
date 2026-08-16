@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from korgan.contract_generation_hotfix import ProductionOpenAILegalService as _ContractSafeService
 from korgan.legal_types import LegalResearch, VerificationStatus
+from korgan.provision_check import paraphrase_defects, verified_claim_line
 from korgan.response_types import ResponseToClaimDraft
 from korgan.verified_openai import _VERIFIED_RESEARCH_SCHEMA, _actual_response_urls, _canonical_url
 
@@ -26,7 +27,19 @@ _RESPONSE_DRAFT_SCHEMA: dict[str, Any] = {
         "defendant": {"type": "array", "items": {"type": "string"}},
         "claim_summary": {"type": "array", "items": {"type": "string"}},
         "position": {"type": "array", "items": {"type": "string"}},
-        "objections": {"type": "array", "items": {"type": "string"}},
+        "objections": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "subclauses": {"type": "array", "items": {"type": "string"}},
+                    "prose": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["text", "subclauses", "prose"],
+                "additionalProperties": False,
+            },
+        },
         "legal_basis": {"type": "array", "items": {"type": "string"}},
         "requests": {"type": "array", "items": {"type": "string"}},
         "attachments": {"type": "array", "items": {"type": "string"}},
@@ -70,7 +83,7 @@ def _has_article_166(claims: list[str]) -> bool:
 def _allowed_article_numbers(claims: list[str]) -> set[str]:
     allowed: set[str] = set()
     for claim in claims:
-        match = re.search(r"\[основание:\s*(.*?);\s*источник:", claim, flags=re.IGNORECASE)
+        match = re.search(r"\[основание:\s*([^;\]]+)", claim, flags=re.IGNORECASE)
         basis = match.group(1) if match else claim
         found = re.findall(r"(?i)(?:статья|статьи|ст\.)\s*(\d+(?:-\d+)?)", basis)
         allowed.update(found)
@@ -111,7 +124,7 @@ class ProductionOpenAILegalService(_ContractSafeService):
                 "text": self._json_schema(schema_name, schema),
                 "store": False,
                 "max_output_tokens": limit,
-                "prompt_cache_key": f"korgan:{schema_name}:response-v1",
+                "prompt_cache_key": f"korgan:{schema_name}:response-v2",
             }
             model = self.settings.openai_model
             if model == "gpt-5.1" or model.startswith("gpt-5.1-"):
@@ -164,21 +177,22 @@ class ProductionOpenAILegalService(_ContractSafeService):
             "2. Из материалов выдели каждое требование истца и его предполагаемое материально-правовое основание.\n"
             "3. Для возражений ответчика найди только те профильные нормы материального права, которые реально относятся к заявленным требованиям и имеющимся фактам.\n"
             "4. Не придумывай обстоятельства, доказательства, признание долга, оплату, переписку, сроки или возражения, которых нет в материалах.\n"
-            "5. Каждый verified_point должен содержать конкретный применимый вывод, точную статью/пункт и URL реально открытой страницы Adilet.\n"
-            "6. Если довод нельзя подтвердить действующей нормой или фактами, помести его только в unverified_claims.\n"
-            "7. Не превращай отзыв во встречный иск и не добавляй самостоятельные требования ответчика без прямого запроса пользователя.\n\n"
+            "5. Каждый verified_point должен содержать statement, точную статью/пункт, URL реально открытой страницы Adilet и provision_text — дословную существенную выдержку именно той части/пункта нормы.\n"
+            "6. Statement обязан сохранять все ограничители provision_text (субъект, условие, исключение, право/обязанность) и не добавлять требования, которых нет в тексте нормы.\n"
+            "7. Если довод нельзя подтвердить действующей нормой или фактами, помести его только в unverified_claims.\n"
+            "8. Не превращай отзыв во встречный иск и не добавляй самостоятельные требования ответчика без прямого запроса пользователя.\n\n"
             f"МАТЕРИАЛЫ ДЕЛА:\n{case_context[:self.settings.max_case_text_chars]}"
         )
         payload, response = await self._response_structured(
             instructions=(
                 "Ты судебный юрист KORGAN, защищающий позицию ответчика в гражданском процессе Республики Казахстан. "
-                "Работай строго source-bound по Adilet. "
+                "Работай строго source-bound по Adilet и сверяй каждый пересказ нормы с provision_text. "
                 f"Язык: {'казахский' if language == 'kk' else 'русский'}."
             ),
             prompt=prompt,
             schema_name="korgan_response_research",
             schema=_VERIFIED_RESEARCH_SCHEMA,
-            max_tokens=3600,
+            max_tokens=4200,
             tools=tools,
         )
 
@@ -190,13 +204,18 @@ class ProductionOpenAILegalService(_ContractSafeService):
         for point in payload.get("verified_points", []):
             statement = str(point.get("statement", "")).strip()
             article = str(point.get("article", "")).strip()
+            provision_text = str(point.get("provision_text", "")).strip()
             claimed_url = str(point.get("source_url", "")).strip()
             actual_url = actual_by_canonical.get(_canonical_url(claimed_url))
             if not statement or not article or not actual_url:
                 if statement:
                     rejected.append(f"{statement} — не принят как VERIFIED: нет source-bound Adilet источника.")
                 continue
-            verified.append(f"{statement} [основание: {article}; источник: {actual_url}]")
+            drift = paraphrase_defects(statement, provision_text)
+            if drift:
+                rejected.append(f"{statement} — не принят как VERIFIED: {'; '.join(drift[:3])}")
+                continue
+            verified.append(verified_claim_line(statement, article, provision_text, actual_url))
             if actual_url not in used:
                 used.append(actual_url)
 
@@ -231,14 +250,15 @@ class ProductionOpenAILegalService(_ContractSafeService):
             "Составь профессиональный ОТЗЫВ НА ИСК для суда Республики Казахстан от имени ответчика.\n\n"
             "ПРАВИЛА:\n"
             "1. Факты, суммы, даты, стороны и доказательства бери ТОЛЬКО из материалов пользователя. Не заполняй пробелы догадками.\n"
-            "2. Разбери требования истца по существу: для каждого существенного требования сформулируй отдельное возражение, если материалы дают для этого основание.\n"
-            "3. Не пиши, что ответчик признаёт или не признаёт иск полностью, если позиция пользователя из материалов этого не следует. В таком случае сформулируй позицию осторожно и отметь пробел в verification_notes.\n"
-            "4. Точные статьи и юридические выводы разрешены ТОЛЬКО из блока VERIFIED. Никаких статей по памяти.\n"
-            "5. Не добавляй встречный иск, новые денежные требования, компенсации, штрафы или ходатайства, если пользователь этого не просил.\n"
-            "6. Просительная часть должна соответствовать позиции и материалам: например, отказать полностью/частично только когда это действительно следует из позиции ответчика.\n"
-            "7. Приложения перечисляй только из реально имеющихся/упомянутых материалов и процессуально обязательных копий, подтверждённых VERIFIED.\n"
-            "8. Не вставляй URL, служебные комментарии, Markdown или фразы ассистента в текст судебного документа.\n"
-            "9. Неизвестный суд, номер дела или реквизит оставляй как [ТРЕБУЕТ УТОЧНЕНИЯ: ...], а не выдумывай.\n\n"
+            "2. Разбери требования истца по существу: для каждого существенного требования сформулируй отдельное структурное возражение.\n"
+            "3. Поле objections имеет структуру {text, subclauses, prose}. text — основной нумеруемый довод; subclauses — только структурные подпункты; prose — свободные поясняющие абзацы, которые НИКОГДА не должны получать номер. Литеральные номера в text/subclauses/prose не пиши — экспорт нумерует сам.\n"
+            "4. Не пиши, что ответчик признаёт или не признаёт иск полностью, если позиция пользователя из материалов этого не следует. В таком случае сформулируй позицию осторожно и отметь пробел в verification_notes.\n"
+            "5. Точные статьи и юридические выводы разрешены ТОЛЬКО из блока VERIFIED. Пересказ должен сохранять ограничители текста нормы, который приложен к VERIFIED. Никаких статей по памяти.\n"
+            "6. Не добавляй встречный иск, новые денежные требования, компенсации, штрафы или ходатайства, если пользователь этого не просил.\n"
+            "7. Просительная часть должна соответствовать позиции и материалам: отказать полностью/частично только когда это действительно следует из позиции ответчика.\n"
+            "8. Приложения перечисляй только из реально имеющихся/упомянутых материалов и процессуально обязательных копий, подтверждённых VERIFIED.\n"
+            "9. Не вставляй URL, служебные комментарии, Markdown или фразы ассистента в текст судебного документа.\n"
+            "10. Неизвестный суд, номер дела или реквизит оставляй как [ТРЕБУЕТ УТОЧНЕНИЯ: ...], а не выдумывай.\n\n"
             f"МАТЕРИАЛЫ:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
             f"VERIFIED:\n{json.dumps(research.verified_claims, ensure_ascii=False)}\n\n"
             f"UNVERIFIED/ПРОБЕЛЫ:\n{json.dumps(research.unverified_claims, ensure_ascii=False)}"
@@ -252,7 +272,7 @@ class ProductionOpenAILegalService(_ContractSafeService):
             prompt=prompt,
             schema_name="korgan_response_draft",
             schema=_RESPONSE_DRAFT_SCHEMA,
-            max_tokens=7000,
+            max_tokens=7600,
         )
 
         notes = [str(x).strip() for x in payload.get("verification_notes", []) if str(x).strip()]
@@ -281,7 +301,7 @@ class ProductionOpenAILegalService(_ContractSafeService):
             defendant=[str(x).strip() for x in payload.get("defendant", []) if str(x).strip()],
             claim_summary=[str(x).strip() for x in payload.get("claim_summary", []) if str(x).strip()],
             position=[str(x).strip() for x in payload.get("position", []) if str(x).strip()],
-            objections=[str(x).strip() for x in payload.get("objections", []) if str(x).strip()],
+            objections=list(payload.get("objections", []) or []),
             legal_basis=legal_basis,
             requests=[str(x).strip() for x in payload.get("requests", []) if str(x).strip()],
             attachments=[str(x).strip() for x in payload.get("attachments", []) if str(x).strip()],
