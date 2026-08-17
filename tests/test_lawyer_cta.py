@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import unquote
+
 from aiogram.types import BufferedInputFile
 
 from korgan.localized_transport import (
@@ -35,7 +37,7 @@ def test_all_current_document_types_have_short_captions() -> None:
         assert "NEEDS_VERIFICATION" not in caption
 
 
-def test_lawyer_cta_registers_concrete_case_before_whatsapp() -> None:
+def test_lawyer_cta_opens_concrete_case_in_whatsapp_immediately() -> None:
     text = lawyer_consultation_text("ru", CASE_REFERENCE, "claim")
     markup = lawyer_consultation_markup("ru", CASE_REFERENCE, "claim")
     yes = markup.inline_keyboard[0][0]
@@ -46,10 +48,10 @@ def test_lawyer_cta_registers_concrete_case_before_whatsapp() -> None:
     assert CASE_REFERENCE in text
     assert "Исковое заявление" in text
 
-    # The first click must register the request in Telegram state. WhatsApp opens
-    # only on the confirmation step, so the consultation request is not lost.
-    assert yes.url is None
-    assert yes.callback_data == f"lawyer:request:{CASE_REFERENCE}:claim"
-    assert "по этому делу" in yes.text
+    assert yes.url is not None
+    assert yes.url.startswith("https://wa.me/77005000553?text=")
+    assert CASE_REFERENCE in unquote(yes.url)
+    assert yes.callback_data is None
+    assert yes.text == "✅ Да"
     assert no.callback_data == "lawyer:decline"
     assert no.text == "❌ Нет"
