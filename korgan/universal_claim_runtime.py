@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, Message
 
 from korgan import bot as base_bot
+from korgan.case_reference import ensure_case_reference, filename_with_case_reference
 from korgan.citation_audit import ProvisionReference, extract_references
 from korgan.claim_docx import build_claim_docx, missing_required_fields
 from korgan.claim_failure import ClaimStage, failure_from_exception
@@ -222,6 +223,7 @@ async def _send_claim(
         )
         return
 
+    case_reference = await ensure_case_reference(state)
     await state.update_data(mode="main", gate_issues=[], claim_draft=None, pending_fields=[])
     if quality.ready:
         caption = f"✅ KORGAN QUALITY {quality.score:.1f}/10\nИск сформирован в Word (.docx)."
@@ -231,8 +233,9 @@ async def _send_claim(
         if checks:
             caption += "\n\nПеред подачей требуется:\n" + bullets(checks)
 
+    filename = filename_with_case_reference("KORGAN_iskovoe_zayavlenie.docx", case_reference)
     await message.answer_document(
-        BufferedInputFile(file_bytes, filename="KORGAN_iskovoe_zayavlenie.docx"),
+        BufferedInputFile(file_bytes, filename=filename),
         caption=fit_caption(caption),
         reply_markup=base_bot.MENU,
     )
