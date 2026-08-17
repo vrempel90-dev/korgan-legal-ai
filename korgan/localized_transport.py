@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 import io
+import logging
 from typing import Any
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from docx import Document
 
+from korgan.claim_review_handoff import (
+    claim_review_offer_markup,
+    claim_review_offer_text,
+    is_claim_review_document,
+    register_claim_for_review,
+)
 from korgan.client_safe_ui import ClientSafeBot, _clean_upload, sanitize_client_text
+from korgan.config import get_settings
 from korgan.i18n import BUTTONS, KK, RU, tr
 from korgan.language_context import current_language
+
+LOGGER = logging.getLogger(__name__)
 
 _BUTTON_MAP = {value: BUTTONS[KK][key] for key, value in BUTTONS[RU].items()}
 _EXTRA_BUTTON_MAP = {
@@ -158,7 +168,32 @@ class LocalizedClientSafeBot(ClientSafeBot):
             kwargs["caption"] = _localize_text(kwargs.get("caption"))
         if "reply_markup" in kwargs:
             kwargs["reply_markup"] = _localize_markup(kwargs.get("reply_markup"))
-        return await Bot.send_document(self, chat_id, _localize_docx(_clean_upload(document)), *args, **kwargs)
+
+        prepared = _localize_docx(_clean_upload(document))
+        filename = str(getattr(prepared, "filename", "") or "")
+        sent = await Bot.send_document(self, chat_id, prepared, *args, **kwargs)
+
+        if is_claim_review_document(filename):
+            settings = get_settings()
+            payload = getattr(prepared, "data", None)
+            try:
+                chat_key = int(chat_id)
+            except (TypeError, ValueError):
+                chat_key = 0
+            if settings.whatsapp_review_ready and chat_key and isinstance(payload, (bytes, bytearray)):
+                language = current_language()
+                register_claim_for_review(chat_key, bytes(payload), filename, language)
+                await Bot.send_message(
+                    self,
+                    chat_id,
+                    claim_review_offer_text(language),
+                    reply_markup=claim_review_offer_markup(language),
+                    disable_web_page_preview=True,
+                )
+            elif not settings.whatsapp_review_ready:
+                LOGGER.warning("Claim lawyer-review CTA disabled: WhatsApp Cloud API is not configured")
+
+        return sent
 
     async def edit_message_text(self, text: str, *args: Any, **kwargs: Any) -> Any:
         if "reply_markup" in kwargs:
