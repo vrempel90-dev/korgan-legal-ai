@@ -33,6 +33,9 @@ _ITEM_HEAD = re.compile(r"^\s*(\d+(?:-\d+)?)\.\s+(?=\S)", re.MULTILINE)
 _WHITESPACE = re.compile(r"[ \t\xa0]+")
 _BLANK_LINES = re.compile(r"\n{3,}")
 _FOOTNOTE = re.compile(r"^\s*Сноска\.\s*", re.IGNORECASE)
+_REPEALED_HEADER_LINE = re.compile(
+    r"(?im)^\s*(?:Утративший\s+силу|[^\n]{0,220}\b(?:Закон|Кодекс|Конституция|акт)\b[^\n]{0,120}\bутратил(?:а|о)?\s+силу\b)"
+)
 
 
 class SourceRejected(RuntimeError):
@@ -107,8 +110,19 @@ def check_source(url: str, text: str) -> None:
         raise SourceRejected(
             f"текст не похож на русскую редакцию: доля кириллицы {share:.0%} < {MIN_CYRILLIC_SHARE:.0%}"
         )
-    if not _ARTICLE_HEAD.search(text):
+
+    article_match = _ARTICLE_HEAD.search(text)
+    if article_match is None:
         raise SourceRejected("в тексте не найдено ни одной «Статья N.» — страница не является актом")
+
+    # Status/title live before the first normative article.  Looking only at
+    # that header avoids false positives from historical footnotes inside a
+    # current act while still rejecting an Adilet page explicitly marked as
+    # repealed.  Transitional remnants are intentionally not cached locally;
+    # the source-bound web layer may still verify a specific surviving rule.
+    header = text[: article_match.start()]
+    if _REPEALED_HEADER_LINE.search(header):
+        raise SourceRejected("Adilet помечает акт как утративший силу — локальный RAG его не принимает")
 
 
 def _split_items(body: str) -> list[tuple[str | None, str]]:
