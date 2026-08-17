@@ -1,18 +1,8 @@
 """Local corpus of Kazakhstan provisions, backed by SQLite + FTS5.
 
-Provisions reached the documents through OpenAI web search, which returns
-whatever the search engine surfaces — English translations of the codes, or
-nothing at all. This module is the alternative: articles loaded once from
-adilet.zan.kz, stored per article/пункт, and searched locally.
-
-The unit of storage is a provision — an article, or a single пункт of one when
-the article is split. Its ``article_id`` is stable across reloads, which is what
-lets the citation validator check that a provision the model referenced really
-exists rather than trusting an article number in prose.
-
-Russian is highly inflected and FTS5 has no stemmer for it, so «предоплата
-подряд возврат» would miss «предоплаты подряда возврата». Queries are therefore
-compiled into prefix terms, and the index declares matching prefix lengths.
+The corpus is intentionally article/point based.  KORGAN never treats a vector
+or text-search hit as authority by itself: retrieved provisions are candidates
+for the existing source-bound verification and final citation audit.
 """
 
 from __future__ import annotations
@@ -21,35 +11,19 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
+
+from korgan.legal.rk_catalog import ACT_SHORT_TITLES, KNOWN_ACTS
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "corpus.sqlite3"
 
-# Acts KORGAN is allowed to load. Keys double as the act half of article_id.
+# Backward-compatible IDs imported throughout the production quality layer.
 ACT_GK_GENERAL = "GK_RK_OBSHAYA"
 ACT_GK_SPECIAL = "GK_RK_OSOBENNAYA"
 ACT_GPK = "GPK_RK"
 ACT_TAX_DUTY = "NK_RK_GOSPOSHLINA"
 ACT_CONSUMER = "ZPP_RK"
 ACT_LABOR = "TK_RK"
-
-KNOWN_ACTS: dict[str, tuple[str, str]] = {
-    ACT_GK_GENERAL: ("K940001000_", "Гражданский кодекс Республики Казахстан (Общая часть)"),
-    ACT_GK_SPECIAL: ("K990000409_", "Гражданский кодекс Республики Казахстан (Особенная часть)"),
-    ACT_GPK: ("K1500000377", "Гражданский процессуальный кодекс Республики Казахстан"),
-    ACT_TAX_DUTY: ("K2500000214", "Кодекс Республики Казахстан «О налогах и других обязательных платежах в бюджет»"),
-    ACT_CONSUMER: ("Z100000274_", "Закон Республики Казахстан «О защите прав потребителей»"),
-    ACT_LABOR: ("K1500000414", "Трудовой кодекс Республики Казахстан"),
-}
-
-# Abbreviations used when citing a provision inside a court document.
-ACT_SHORT_TITLES: dict[str, str] = {
-    ACT_GK_GENERAL: "ГК РК (Общая часть)",
-    ACT_GK_SPECIAL: "ГК РК (Особенная часть)",
-    ACT_GPK: "ГПК РК",
-    ACT_TAX_DUTY: "НК РК",
-    ACT_CONSUMER: "Закона РК «О защите прав потребителей»",
-    ACT_LABOR: "ТК РК",
-}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS acts (
@@ -118,7 +92,6 @@ class Provision:
     url: str
 
     def label(self) -> str:
-        """«ст. 630 ГК РК (Особенная часть), п. 2» — for citations in a document."""
         base = f"ст. {self.article_no} {ACT_SHORT_TITLES.get(self.act_id, self.act_title)}"
         return f"{base}, п. {self.item_no}" if self.item_no else base
 
@@ -129,6 +102,7 @@ def make_article_id(act_id: str, article_no: str, item_no: str | None = None) ->
 
 
 def compile_query(text: str) -> str:
+    """Build a conservative Russian/Kazakh-friendly FTS prefix query."""
     terms: list[str] = []
     for word in _WORD.findall(text.lower()):
         if len(word) >= 7:
@@ -167,7 +141,7 @@ class LegalCorpus:
             self._connection.close()
             self._connection = None
 
-    def __enter__(self) -> LegalCorpus:
+    def __enter__(self) -> "LegalCorpus":
         self.create_schema()
         return self
 
@@ -227,9 +201,19 @@ class LegalCorpus:
         )
 
     def search(self, query: str, act_id: str | None = None, limit: int = 20) -> list[Provision]:
+        return self.search_many(query, [act_id] if act_id else None, limit=limit)
+
+    def search_many(self, query: str, act_ids: Iterable[str] | None = None, *, limit: int = 20) -> list[Provision]:
+        """Search globally or inside a routed set of Kazakhstan acts.
+
+        Filtering before BM25 ranking keeps an employment query from being
+        crowded out by semantically similar wording in unrelated codes.
+        """
         compiled = compile_query(query)
         if not compiled:
             return []
+
+        selected = [item for item in dict.fromkeys(act_ids or ()) if item in KNOWN_ACTS]
         sql = """
             SELECT p.article_id, p.act_id, a.title_ru AS act_title, p.article_no, p.item_no,
                    p.heading, p.body, p.edition_date, p.url
@@ -239,9 +223,10 @@ class LegalCorpus:
             WHERE provisions_fts MATCH ?
         """
         params: list[object] = [compiled]
-        if act_id:
-            sql += " AND p.act_id = ?"
-            params.append(act_id)
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            sql += f" AND p.act_id IN ({placeholders})"
+            params.extend(selected)
         sql += " ORDER BY bm25(provisions_fts, 2.0, 1.0) LIMIT ?"
         params.append(limit)
         rows = self.connection.execute(sql, params).fetchall()
@@ -259,6 +244,20 @@ class LegalCorpus:
             (article_id,),
         ).fetchone()
         return self._row_to_provision(row) if row else None
+
+    def get_article(self, act_id: str, article_no: str) -> list[Provision]:
+        rows = self.connection.execute(
+            """
+            SELECT p.article_id, p.act_id, a.title_ru AS act_title, p.article_no, p.item_no,
+                   p.heading, p.body, p.edition_date, p.url
+            FROM provisions p
+            JOIN acts a ON a.act_id = p.act_id
+            WHERE p.act_id = ? AND p.article_no = ?
+            ORDER BY p.sort_key
+            """,
+            (act_id, str(article_no)),
+        ).fetchall()
+        return [self._row_to_provision(row) for row in rows]
 
     def exists(self, article_id: str) -> bool:
         row = self.connection.execute("SELECT 1 FROM provisions WHERE article_id = ?", (article_id,)).fetchone()
