@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import pytest
+import asyncio
 
 from korgan.additive_legal_guard import AdditiveLegalGuardService
 from korgan.legal_types import LegalResearch, VerificationStatus
@@ -24,8 +24,7 @@ def _research() -> LegalResearch:
     )
 
 
-@pytest.mark.asyncio
-async def test_claim_research_does_not_run_client_material_law_second_pass(monkeypatch) -> None:
+def test_claim_research_does_not_run_client_material_law_second_pass(monkeypatch) -> None:
     calls: list[str] = []
 
     async def fake_research_case(self, case_context: str, language: str = "ru") -> LegalResearch:
@@ -35,9 +34,11 @@ async def test_claim_research_does_not_run_client_material_law_second_pass(monke
     monkeypatch.setattr(StableLegalProductionService, "research_case", fake_research_case)
     service = object.__new__(PretrialOnlyMaterialGuardService)
 
-    research = await service.research_case(
-        "Взыскать задолженность по договору 4 025 000 тенге",
-        language="ru",
+    research = asyncio.run(
+        service.research_case(
+            "Взыскать задолженность по договору 4 025 000 тенге",
+            language="ru",
+        )
     )
 
     assert len(calls) == 1
@@ -45,8 +46,7 @@ async def test_claim_research_does_not_run_client_material_law_second_pass(monke
     assert not research.unverified_claims
 
 
-@pytest.mark.asyncio
-async def test_pretrial_keeps_material_law_second_pass(monkeypatch) -> None:
+def test_pretrial_keeps_material_law_second_pass(monkeypatch) -> None:
     calls: list[str] = []
 
     async def fake_research_case(self, case_context: str, language: str = "ru") -> LegalResearch:
@@ -56,9 +56,11 @@ async def test_pretrial_keeps_material_law_second_pass(monkeypatch) -> None:
     monkeypatch.setattr(StableLegalProductionService, "research_case", fake_research_case)
     service = object.__new__(PretrialOnlyMaterialGuardService)
 
-    research = await service.research_pretrial(
-        "Подготовить досудебную претензию о взыскании задолженности по договору 4 025 000 тенге",
-        language="ru",
+    research = asyncio.run(
+        service.research_pretrial(
+            "Подготовить досудебную претензию о взыскании задолженности по договору 4 025 000 тенге",
+            language="ru",
+        )
     )
 
     assert len(calls) == 2
