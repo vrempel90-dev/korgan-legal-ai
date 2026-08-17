@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/additive-document-law-gate
+      - feature/openai-docs-claims
   workflow_dispatch:
 
 jobs:
