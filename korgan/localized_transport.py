@@ -12,13 +12,12 @@ from aiogram.types import (
 
 from korgan.case_reference import (
     case_reference_from_filename,
-    consultation_callback_data,
     document_kind_from_filename,
     document_label,
     new_case_reference,
 )
 from korgan.client_safe_ui import ClientSafeBot, _clean_upload, sanitize_client_text
-from korgan.contact_handlers import WHATSAPP_NUMBER_DISPLAY
+from korgan.contact_handlers import WHATSAPP_NUMBER_DISPLAY, whatsapp_url_for_case
 from korgan.i18n import BUTTONS, KK, RU, tr
 from korgan.language_context import current_language
 
@@ -120,14 +119,14 @@ def lawyer_consultation_text(
             f"👨‍⚖️ KORGAN ісі № {case_reference}\n"
             f"📄 Құжат: {label}\n\n"
             "Құжатты пайдаланар алдында заңгердің қорытынды консультациясы қажет.\n"
-            "Осы іс бойынша жеке заңгердің ақылы консультациясын алғыңыз келе ме?\n\n"
+            "Жеке заңгердің консультациясы ақылы. Осы іс бойынша консультация алғыңыз келе ме?\n\n"
             f"📱 {WHATSAPP_NUMBER_DISPLAY}"
         )
     return (
         f"👨‍⚖️ Дело KORGAN № {case_reference}\n"
         f"📄 Документ: {label}\n\n"
         "Перед использованием документа требуется финальная консультация юриста.\n"
-        "Хотите получить платную консультацию персонального юриста именно по этому делу?\n\n"
+        "Консультация персонального юриста платная. Хотите получить консультацию по этому делу?\n\n"
         f"📱 {WHATSAPP_NUMBER_DISPLAY}"
     )
 
@@ -137,21 +136,21 @@ def lawyer_consultation_markup(
     case_reference: str,
     document_kind: str,
 ) -> InlineKeyboardMarkup:
-    yes = "✅ Иә, осы іс бойынша" if language == KK else "✅ Да, по этому делу"
+    yes = "✅ Иә" if language == KK else "✅ Да"
     no = "❌ Жоқ" if language == KK else "❌ Нет"
+    # URL button opens WhatsApp immediately in one tap. The case reference and
+    # document type are included in the pre-filled WhatsApp message.
+    url = whatsapp_url_for_case(case_reference, document_kind, language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(
-                text=yes,
-                callback_data=consultation_callback_data(case_reference, document_kind),
-            )],
+            [InlineKeyboardButton(text=yes, url=url)],
             [InlineKeyboardButton(text=no, callback_data="lawyer:decline")],
         ]
     )
 
 
 class LocalizedClientSafeBot(ClientSafeBot):
-    """Client-safe transport plus per-session RU/KK and case-bound lawyer CTA."""
+    """Client-safe transport plus per-session RU/KK and direct lawyer CTA."""
 
     async def send_message(self, chat_id: Any, text: str, *args: Any, **kwargs: Any) -> Any:
         if "reply_markup" in kwargs:
