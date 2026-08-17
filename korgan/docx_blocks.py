@@ -1,8 +1,4 @@
-"""The one place in KORGAN that is allowed to put a number on a paragraph.
-
-Every document type — claim, contract, response to a claim — is described as a
-flat list of typed blocks and rendered through :func:`render_blocks`.
-"""
+"""Typed DOCX blocks and deterministic numbering for KORGAN documents."""
 
 from __future__ import annotations
 
@@ -42,14 +38,11 @@ class NumberedItem:
 
 @dataclass(slots=True)
 class AutoNumberedList:
-    """A numbered list.
+    """A real Word numbered list.
 
-    ``restart=True`` is used for independent legal-document sections such as
-    «Приложения». Those sections are rendered with deterministic visible
-    numbers starting at 1 instead of relying on Word's inherited list state.
-    This prevents a request list ending at 4 from making attachments start at 5.
+    ``restart=True`` creates a fresh numbering definition with start=1. This is
+    used for «Приложения», so it can never continue the prayer-for-relief list.
     """
-
     items: list[str] = field(default_factory=list)
     restart: bool = False
 
@@ -72,41 +65,74 @@ def advance(counters: list[int], level: int) -> str:
     return ".".join(str(value) for value in counters[: level + 1]) + "."
 
 
-def _restarted_num_id(doc, style_id: str) -> int | None:
-    """Legacy Word-list restart helper kept for non-critical compatibility."""
-    style_num_id = None
-    for style in doc.styles.element.findall(qn("w:style")):
-        if style.get(qn("w:styleId")) != style_id:
-            continue
-        found = style.find(f'{qn("w:pPr")}/{qn("w:numPr")}/{qn("w:numId")}')
-        if found is not None:
-            style_num_id = found.get(qn("w:val"))
-        break
+def _next_numeric_id(elements, attr: str) -> int:
+    used: set[int] = set()
+    for element in elements:
+        raw = element.get(qn(attr))
+        if raw and raw.isdigit():
+            used.add(int(raw))
+    return max(used, default=0) + 1
 
-    if style_num_id is None:
-        return None
 
+def _fresh_numbering_from_one(doc) -> int:
+    """Create a self-contained decimal Word list starting at 1.
+
+    We do not clone the document's ``List Number`` style because some DOCX
+    viewers keep the inherited list state and continue numbering across legal
+    sections. A dedicated abstractNum + numId makes the restart explicit in the
+    file itself and interoperable across Word/LibreOffice/mobile viewers.
+    """
     numbering = doc.part.numbering_part.element
-    abstract_id = None
-    used_ids = set()
-    for num in numbering.findall(qn("w:num")):
-        current = num.get(qn("w:numId"))
-        if current is not None and current.isdigit():
-            used_ids.add(int(current))
-        if current == style_num_id:
-            reference = num.find(qn("w:abstractNumId"))
-            if reference is not None:
-                abstract_id = reference.get(qn("w:val"))
+    abstract_id = _next_numeric_id(numbering.findall(qn("w:abstractNum")), "w:abstractNumId")
+    num_id = _next_numeric_id(numbering.findall(qn("w:num")), "w:numId")
 
-    if abstract_id is None:
-        return None
+    abstract = OxmlElement("w:abstractNum")
+    abstract.set(qn("w:abstractNumId"), str(abstract_id))
 
-    new_id = max(used_ids, default=0) + 1
+    multi = OxmlElement("w:multiLevelType")
+    multi.set(qn("w:val"), "singleLevel")
+    abstract.append(multi)
+
+    level = OxmlElement("w:lvl")
+    level.set(qn("w:ilvl"), "0")
+
+    start = OxmlElement("w:start")
+    start.set(qn("w:val"), "1")
+    level.append(start)
+
+    num_fmt = OxmlElement("w:numFmt")
+    num_fmt.set(qn("w:val"), "decimal")
+    level.append(num_fmt)
+
+    level_text = OxmlElement("w:lvlText")
+    level_text.set(qn("w:val"), "%1.")
+    level.append(level_text)
+
+    level_jc = OxmlElement("w:lvlJc")
+    level_jc.set(qn("w:val"), "left")
+    level.append(level_jc)
+
+    p_pr = OxmlElement("w:pPr")
+    tabs = OxmlElement("w:tabs")
+    tab = OxmlElement("w:tab")
+    tab.set(qn("w:val"), "num")
+    tab.set(qn("w:pos"), "720")
+    tabs.append(tab)
+    p_pr.append(tabs)
+    ind = OxmlElement("w:ind")
+    ind.set(qn("w:left"), "720")
+    ind.set(qn("w:hanging"), "360")
+    p_pr.append(ind)
+    level.append(p_pr)
+    abstract.append(level)
+    numbering.append(abstract)
+
     num = OxmlElement("w:num")
-    num.set(qn("w:numId"), str(new_id))
+    num.set(qn("w:numId"), str(num_id))
     reference = OxmlElement("w:abstractNumId")
-    reference.set(qn("w:val"), abstract_id)
+    reference.set(qn("w:val"), str(abstract_id))
     num.append(reference)
+
     override = OxmlElement("w:lvlOverride")
     override.set(qn("w:ilvl"), "0")
     start_override = OxmlElement("w:startOverride")
@@ -114,28 +140,13 @@ def _restarted_num_id(doc, style_id: str) -> int | None:
     override.append(start_override)
     num.append(override)
     numbering.append(num)
-    return new_id
+    return num_id
 
 
 def _apply_num_id(paragraph: Paragraph, num_id: int) -> None:
     num_pr = paragraph._p.get_or_add_pPr().get_or_add_numPr()
     num_pr.get_or_add_ilvl().val = 0
     num_pr.get_or_add_numId().val = num_id
-
-
-def _render_forced_restart(doc, items: list[str]) -> None:
-    """Render an independent list with literal 1..N numbering.
-
-    Word list styles can inherit the previous ``numId`` depending on the viewer
-    and template. Court documents need deterministic visible numbering, so an
-    explicitly restarted section does not depend on that mutable Word state.
-    """
-    for index, item in enumerate(items, start=1):
-        paragraph = doc.add_paragraph()
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        paragraph.paragraph_format.left_indent = Cm(0.8)
-        paragraph.paragraph_format.first_line_indent = Cm(-0.8)
-        paragraph.add_run(f"{index}. {strip_leading_number(item)}")
 
 
 def render_blocks(doc, blocks: list[Block]) -> None:
@@ -183,11 +194,11 @@ def render_blocks(doc, blocks: list[Block]) -> None:
             continue
 
         if isinstance(block, AutoNumberedList):
-            if block.restart:
-                _render_forced_restart(doc, block.items)
-                continue
+            num_id = _fresh_numbering_from_one(doc) if block.restart else None
             for item in block.items:
-                doc.add_paragraph(strip_leading_number(item), style="List Number")
+                paragraph = doc.add_paragraph(strip_leading_number(item), style="List Number")
+                if num_id is not None:
+                    _apply_num_id(paragraph, num_id)
             continue
 
         raise TypeError(f"unsupported document block: {type(block).__name__}")
