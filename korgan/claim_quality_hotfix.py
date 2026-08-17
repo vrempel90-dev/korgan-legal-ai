@@ -9,7 +9,6 @@ from korgan import senior_claim_preflight as _sp
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 
 LOGGER = logging.getLogger(__name__)
-
 FILING_ACTION_PREFIX = "FILING_ACTION: "
 
 _ORIGINAL_ASSESS = _dq.assess_document_quality
@@ -24,7 +23,6 @@ _MORAL_FACT_RE = re.compile(
     r"ухудшен\w*\s+(?:здоров|самочувств)|бессонниц\w*|неудобств\w*",
     re.IGNORECASE,
 )
-
 _COURT_PREFLIGHT_FRAGMENT = "Точное наименование суда не подтверждено материалами пользователя или source-bound записью VERIFIED_COURT."
 _COURT_QUALITY_MARKERS = (
     "не определено конкретное наименование суда",
@@ -55,12 +53,6 @@ def _verified_statement_and_article(line: str) -> tuple[str, str] | None:
 
 
 def _ensure_verified_articles(research: LegalResearch, draft: ClaimDraft) -> None:
-    """Carry source-bound legal conclusions into the court-facing legal basis.
-
-    The model is not allowed to decide that a VERIFIED article is optional. We
-    copy only the already accepted statement+article pair and deliberately omit
-    the source URL and internal provision-text metadata from the filing.
-    """
     existing = "\n".join(draft.legal_basis).lower()
     additions: list[str] = []
     for line in research.verified_claims:
@@ -79,7 +71,6 @@ def _ensure_verified_articles(research: LegalResearch, draft: ClaimDraft) -> Non
 
 
 def _remove_invented_subjective_harm(case_context: str, draft: ClaimDraft) -> None:
-    """The model may not manufacture distress/health facts to support moral harm."""
     if _MORAL_FACT_RE.search(case_context or ""):
         return
     original = list(draft.facts)
@@ -90,7 +81,6 @@ def _remove_invented_subjective_harm(case_context: str, draft: ClaimDraft) -> No
 
 
 def _remove_invented_moral_amount(case_context: str, draft: ClaimDraft) -> None:
-    """Do not invent a monetary amount for moral harm when the user did not give it."""
     context_amounts = {_digits(match.group(1)) for match in _AMOUNT_RE.finditer(case_context or "")}
     kept: list[str] = []
     removed = False
@@ -149,24 +139,15 @@ def _filing_notes(draft: ClaimDraft) -> list[str]:
 
 
 def _patched_preflight(case_context: str, research: LegalResearch, draft: ClaimDraft) -> list[str]:
-    """Keep substantive contradictions hard; exact court identity is a filing prerequisite."""
     errors = _ORIGINAL_PREFLIGHT(case_context, research, draft)
     return [item for item in errors if _COURT_PREFLIGHT_FRAGMENT not in str(item)]
 
 
-def _patched_assess_document_quality(
-    kind: Any,
-    case_context: str,
-    research: LegalResearch,
-    draft: Any,
-):
+def _patched_assess_document_quality(kind: Any, case_context: str, research: LegalResearch, draft: Any):
     if kind != "claim" or not isinstance(draft, ClaimDraft):
         return _ORIGINAL_ASSESS(kind, case_context, research, draft)
 
     polish_claim_before_quality(case_context, research, draft)
-
-    # Filing-only notes must remain visible to the user but must not be counted
-    # as defects in the legal substance score.
     all_notes = list(draft.verification_notes)
     draft.verification_notes = [
         note for note in all_notes if not str(note).startswith(FILING_ACTION_PREFIX)
@@ -182,13 +163,9 @@ def _patched_assess_document_quality(
     for blocker in report.hard_blockers:
         lower = str(blocker).lower()
         if _COURT_QUALITY_MARKERS[0] in lower:
-            removed_court.append(str(blocker))
-            restore += 0.75
-            continue
+            removed_court.append(str(blocker)); restore += 0.75; continue
         if _COURT_QUALITY_MARKERS[1] in lower:
-            removed_court.append(str(blocker))
-            restore += 0.55
-            continue
+            removed_court.append(str(blocker)); restore += 0.55; continue
         remaining.append(str(blocker))
 
     filing = _filing_notes(draft)
@@ -208,23 +185,18 @@ def _patched_assess_document_quality(
     return report
 
 
-# Install the policy before importing the fast service. Its `from ... import`
-# bindings therefore receive the corrected functions as well.
-_dq.assess_document_quality = _patched_assess_document_quality
-_sp.deterministic_claim_preflight = _patched_preflight
+# Scope the PR #41 filing-vs-substance policy to the actual fast production
+# claim module only. Do not mutate document_quality/senior_claim_preflight
+# globally: doing so made independent QA behavior depend on import order.
+from korgan import fast_professional_litigation as _fast  # noqa: E402
 
-from korgan.fast_professional_litigation import FastProfessionalLitigationService as _FastProfessionalLitigationService  # noqa: E402
+_fast.assess_document_quality = _patched_assess_document_quality
+_fast.deterministic_claim_preflight = _patched_preflight
+_FastProfessionalLitigationService = _fast.FastProfessionalLitigationService
 
 
 class ProductionClaimService(_FastProfessionalLitigationService):
-    """Fast professional litigation plus deterministic final claim polish."""
-
-    async def draft_claim(
-        self,
-        case_context: str,
-        research: LegalResearch,
-        language: str = "ru",
-    ) -> ClaimDraft:
+    async def draft_claim(self, case_context: str, research: LegalResearch, language: str = "ru") -> ClaimDraft:
         draft = await super().draft_claim(case_context, research, language=language)
         polish_claim_before_quality(case_context, research, draft)
         filing = _filing_notes(draft)
@@ -238,7 +210,6 @@ class ProductionClaimService(_FastProfessionalLitigationService):
 
 
 def install_runtime_hotfix() -> None:
-    """Patch only the claim-delivery caption/status; contracts and responses stay unchanged."""
     from korgan import universal_claim_runtime as runtime
     from korgan.claim_docx import build_claim_docx
     from korgan.claim_failure import ClaimStage, failure_from_exception
@@ -247,14 +218,7 @@ def install_runtime_hotfix() -> None:
     from aiogram.types import BufferedInputFile
     from korgan import bot as base_bot
 
-    async def _send_claim(
-        message,
-        state,
-        *,
-        context: str,
-        research: LegalResearch,
-        draft: ClaimDraft,
-    ) -> None:
+    async def _send_claim(message, state, *, context: str, research: LegalResearch, draft: ClaimDraft) -> None:
         fit = runtime.enforce_legal_basis_fit(draft)
         if fit:
             draft.status = VerificationStatus.NEEDS_VERIFICATION
@@ -286,25 +250,15 @@ def install_runtime_hotfix() -> None:
             str(item) for item in quality.repair_issues()
             if not str(item).startswith(FILING_ACTION_PREFIX)
         ]
-
-        if quality.ready and not filing:
-            draft.status = VerificationStatus.VERIFIED
-        else:
-            draft.status = VerificationStatus.NEEDS_VERIFICATION
+        draft.status = VerificationStatus.VERIFIED if quality.ready and not filing else VerificationStatus.NEEDS_VERIFICATION
 
         try:
             file_bytes = build_claim_docx(draft)
         except Exception as exc:
-            await base_bot._report_claim_failure(
-                message,
-                failure_from_exception(exc, stage=ClaimStage.RENDER),
-            )
+            await base_bot._report_claim_failure(message, failure_from_exception(exc, stage=ClaimStage.RENDER))
             return
 
-        export_blockers = rendered_docx_blockers(
-            file_bytes,
-            ready_expected=quality.ready and not filing,
-        )
+        export_blockers = rendered_docx_blockers(file_bytes, ready_expected=quality.ready and not filing)
         if quality.ready and not filing and export_blockers:
             LOGGER.error("UNIVERSAL_CLAIM_DOCX_BLOCK quality=%.1f issues=%s", quality.score, export_blockers)
             await message.answer(
@@ -320,8 +274,7 @@ def install_runtime_hotfix() -> None:
             caption = (
                 f"⚠️ KORGAN QUALITY {quality.score:.1f}/10 · ПРОЕКТ ГОТОВ\n"
                 "Юридическое содержание прошло порог качества. Перед подачей нужно заполнить/проверить реквизиты:"
-            )
-            caption += "\n" + bullets(filing[:6])
+            ) + "\n" + bullets(filing[:6])
         else:
             caption = (
                 f"⚠️ PRELIMINARY · KORGAN QUALITY {quality.score:.1f}/10\n"
@@ -338,4 +291,4 @@ def install_runtime_hotfix() -> None:
         )
 
     runtime._send_claim = _send_claim
-    LOGGER.info("Installed KORGAN claim quality hotfix: filing prerequisites separated from substantive score")
+    LOGGER.info("Installed KORGAN claim quality hotfix: production-scoped filing policy")
