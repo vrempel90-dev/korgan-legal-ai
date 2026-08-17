@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from korgan.client_safe_ui import ClientSafeBot, _clean_upload, sanitize_client_text
+from korgan.consultation_cta import is_generated_document, send_consultation_cta
 from korgan.i18n import BUTTONS, KK, RU, tr
 from korgan.language_context import current_language
 
+LOGGER = logging.getLogger(__name__)
 _BUTTON_MAP = {value: BUTTONS[KK][key] for key, value in BUTTONS[RU].items()}
 
 
@@ -80,11 +83,22 @@ class LocalizedClientSafeBot(ClientSafeBot):
         return await Bot.send_message(self, chat_id, _localize_text(text) or "", *args, **kwargs)
 
     async def send_document(self, chat_id: Any, document: Any, *args: Any, **kwargs: Any) -> Any:
+        generated = is_generated_document(document)
+        language = current_language()
         if "caption" in kwargs:
             kwargs["caption"] = _localize_text(kwargs.get("caption"))
         if "reply_markup" in kwargs:
             kwargs["reply_markup"] = _localize_markup(kwargs.get("reply_markup"))
-        return await Bot.send_document(self, chat_id, _clean_upload(document), *args, **kwargs)
+        result = await Bot.send_document(self, chat_id, _clean_upload(document), *args, **kwargs)
+
+        # The legal document has already been delivered. CTA failure must never
+        # turn that successful delivery into a false generation error upstream.
+        if generated:
+            try:
+                await send_consultation_cta(self, chat_id, language)
+            except Exception:
+                LOGGER.exception("KORGAN consultation CTA delivery failed chat_id=%s", chat_id)
+        return result
 
     async def edit_message_text(self, text: str, *args: Any, **kwargs: Any) -> Any:
         if "reply_markup" in kwargs:
