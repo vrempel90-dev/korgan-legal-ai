@@ -1,21 +1,4 @@
-"""The one place in KORGAN that is allowed to put a number on a paragraph.
-
-Every document type — claim, contract, response to a claim — is described as a
-flat list of typed blocks and rendered through :func:`render_blocks`. The rule
-the renderer enforces is document-type independent:
-
-* ``NumberedItem`` is a *structural* clause (1., 1.1., 1.1.1.). Its number is
-  computed from position and written by the renderer.
-* ``AutoNumberedList`` is a genuine Word list (просительная часть, приложения)
-  and is the only construct that touches Word auto-numbering.
-* ``Prose`` is free narrative text. It never receives a number, never joins a
-  list, and never carries ``w:numPr``.
-
-The defect this closes: exporters used to hand ``style="List Number"`` to whole
-argument sections, so ordinary narrative sentences came out as "3. Согласно
-позиции Ответчика...". Prose and structure are now different types, so the
-mistake is no longer expressible.
-"""
+"""Typed DOCX blocks and deterministic numbering for KORGAN documents."""
 
 from __future__ import annotations
 
@@ -32,8 +15,6 @@ from korgan.contract_numbering import strip_leading_number
 
 @dataclass(slots=True)
 class Heading:
-    """A bold, unnumbered caption such as «Возражения по существу»."""
-
     text: str
     centered: bool = False
     space_before: int = 10
@@ -41,8 +22,6 @@ class Heading:
 
 @dataclass(slots=True)
 class Prose:
-    """Free narrative text. Never numbered, never part of a list."""
-
     text: str
     indent_levels: int = 0
     first_line_indent: bool = True
@@ -52,13 +31,6 @@ class Prose:
 
 @dataclass(slots=True)
 class NumberedItem:
-    """A structural clause whose number is generated from its position.
-
-    ``level`` 0 is a top-level item (1.), 1 a clause (1.1.), 2 a subclause
-    (1.1.1.). Numbering is computed by the renderer; ``text`` must never carry a
-    literal number and is stripped defensively if it does.
-    """
-
     text: str
     level: int = 0
     bold: bool = False
@@ -66,12 +38,11 @@ class NumberedItem:
 
 @dataclass(slots=True)
 class AutoNumberedList:
-    """A real Word numbered list — the only block that uses Word numbering.
+    """A real Word numbered list.
 
-    ``restart`` clones the list style with ``startOverride=1`` so that, for
-    example, приложения start from 1 instead of continuing просительная часть.
+    ``restart=True`` creates a fresh numbering definition with start=1. This is
+    used for «Приложения», so it can never continue the prayer-for-relief list.
     """
-
     items: list[str] = field(default_factory=list)
     restart: bool = False
 
@@ -85,7 +56,6 @@ Block = Heading | Prose | NumberedItem | AutoNumberedList | Spacer
 
 
 def advance(counters: list[int], level: int) -> str:
-    """Advance positional counters and return the number for ``level``."""
     if level < 0:
         raise ValueError("numbering level must not be negative")
     while len(counters) <= level:
@@ -95,41 +65,74 @@ def advance(counters: list[int], level: int) -> str:
     return ".".join(str(value) for value in counters[: level + 1]) + "."
 
 
-def _restarted_num_id(doc, style_id: str) -> int | None:
-    """Clone the style's numbering with startOverride=1."""
-    style_num_id = None
-    for style in doc.styles.element.findall(qn("w:style")):
-        if style.get(qn("w:styleId")) != style_id:
-            continue
-        found = style.find(f'{qn("w:pPr")}/{qn("w:numPr")}/{qn("w:numId")}')
-        if found is not None:
-            style_num_id = found.get(qn("w:val"))
-        break
+def _next_numeric_id(elements, attr: str) -> int:
+    used: set[int] = set()
+    for element in elements:
+        raw = element.get(qn(attr))
+        if raw and raw.isdigit():
+            used.add(int(raw))
+    return max(used, default=0) + 1
 
-    if style_num_id is None:
-        return None
 
+def _fresh_numbering_from_one(doc) -> int:
+    """Create a self-contained decimal Word list starting at 1.
+
+    We do not clone the document's ``List Number`` style because some DOCX
+    viewers keep the inherited list state and continue numbering across legal
+    sections. A dedicated abstractNum + numId makes the restart explicit in the
+    file itself and interoperable across Word/LibreOffice/mobile viewers.
+    """
     numbering = doc.part.numbering_part.element
-    abstract_id = None
-    used_ids = set()
-    for num in numbering.findall(qn("w:num")):
-        current = num.get(qn("w:numId"))
-        if current is not None and current.isdigit():
-            used_ids.add(int(current))
-        if current == style_num_id:
-            reference = num.find(qn("w:abstractNumId"))
-            if reference is not None:
-                abstract_id = reference.get(qn("w:val"))
+    abstract_id = _next_numeric_id(numbering.findall(qn("w:abstractNum")), "w:abstractNumId")
+    num_id = _next_numeric_id(numbering.findall(qn("w:num")), "w:numId")
 
-    if abstract_id is None:
-        return None
+    abstract = OxmlElement("w:abstractNum")
+    abstract.set(qn("w:abstractNumId"), str(abstract_id))
 
-    new_id = max(used_ids, default=0) + 1
+    multi = OxmlElement("w:multiLevelType")
+    multi.set(qn("w:val"), "singleLevel")
+    abstract.append(multi)
+
+    level = OxmlElement("w:lvl")
+    level.set(qn("w:ilvl"), "0")
+
+    start = OxmlElement("w:start")
+    start.set(qn("w:val"), "1")
+    level.append(start)
+
+    num_fmt = OxmlElement("w:numFmt")
+    num_fmt.set(qn("w:val"), "decimal")
+    level.append(num_fmt)
+
+    level_text = OxmlElement("w:lvlText")
+    level_text.set(qn("w:val"), "%1.")
+    level.append(level_text)
+
+    level_jc = OxmlElement("w:lvlJc")
+    level_jc.set(qn("w:val"), "left")
+    level.append(level_jc)
+
+    p_pr = OxmlElement("w:pPr")
+    tabs = OxmlElement("w:tabs")
+    tab = OxmlElement("w:tab")
+    tab.set(qn("w:val"), "num")
+    tab.set(qn("w:pos"), "720")
+    tabs.append(tab)
+    p_pr.append(tabs)
+    ind = OxmlElement("w:ind")
+    ind.set(qn("w:left"), "720")
+    ind.set(qn("w:hanging"), "360")
+    p_pr.append(ind)
+    level.append(p_pr)
+    abstract.append(level)
+    numbering.append(abstract)
+
     num = OxmlElement("w:num")
-    num.set(qn("w:numId"), str(new_id))
+    num.set(qn("w:numId"), str(num_id))
     reference = OxmlElement("w:abstractNumId")
-    reference.set(qn("w:val"), abstract_id)
+    reference.set(qn("w:val"), str(abstract_id))
     num.append(reference)
+
     override = OxmlElement("w:lvlOverride")
     override.set(qn("w:ilvl"), "0")
     start_override = OxmlElement("w:startOverride")
@@ -137,7 +140,7 @@ def _restarted_num_id(doc, style_id: str) -> int | None:
     override.append(start_override)
     num.append(override)
     numbering.append(num)
-    return new_id
+    return num_id
 
 
 def _apply_num_id(paragraph: Paragraph, num_id: int) -> None:
@@ -147,7 +150,6 @@ def _apply_num_id(paragraph: Paragraph, num_id: int) -> None:
 
 
 def render_blocks(doc, blocks: list[Block]) -> None:
-    """Render typed blocks into ``doc``, generating every number exactly once."""
     counters: list[int] = []
 
     for block in blocks:
@@ -192,9 +194,9 @@ def render_blocks(doc, blocks: list[Block]) -> None:
             continue
 
         if isinstance(block, AutoNumberedList):
-            num_id = _restarted_num_id(doc, "ListNumber") if block.restart else None
+            num_id = _fresh_numbering_from_one(doc) if block.restart else None
             for item in block.items:
-                paragraph = doc.add_paragraph(item, style="List Number")
+                paragraph = doc.add_paragraph(strip_leading_number(item), style="List Number")
                 if num_id is not None:
                     _apply_num_id(paragraph, num_id)
             continue

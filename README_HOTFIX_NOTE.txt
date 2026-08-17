@@ -1,1 +1,5 @@
-Civil claim hotfix scope: isolate state-duty law/calculation from civil-claim legal qualification and model FINAL QA; prevent stale Tax Code references from blocking DOCX; avoid duplicate state-duty requests; reduce repeated legal research by treating articles 715 and 722 as the core loan/debt backbone and using one medium-context pass before any high-context fallback.
+KORGAN production note
+
+Current release line combines the restored >=8.5 claim quality core, local Adilet RAG, RU/KK client interface, no-questionnaire claim flow, source-language citation dedupe, employment remedy coverage, and RU/KK no-questionnaire pre-trial demand generation.
+
+Release candidate validated through Railway pytest gate before production promotion.

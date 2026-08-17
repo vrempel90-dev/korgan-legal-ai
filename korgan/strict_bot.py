@@ -10,11 +10,13 @@ from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
-from korgan.claim_intake_priority import router as claim_intake_priority_router
+from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
-from korgan.kazakh_citation_compat import install_kazakh_citation_compat
+from korgan.kazakh_article_forms import install_kazakh_article_forms
+from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
+from korgan.kazakh_ui import router as kazakh_router
 from korgan.language_context import LanguageContextMiddleware
 from korgan.legal.corpus_refresh import start_corpus_refresh_task
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
@@ -22,9 +24,20 @@ from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
 from korgan.pretrial import PretrialProductionService
 from korgan.pretrial_runtime import router as pretrial_router
+from korgan.professional_rag_bridge import install_professional_rag_bridge
 from korgan.reply_menu_handlers import router as reply_menu_router
-from korgan.response_menu_handlers import router as response_router
+from korgan.stable_legal_release import install_stable_legal_release
 from korgan.ui import main_menu
+
+install_runtime_hotfix()
+install_kazakh_legal_bridge()
+install_kazakh_article_forms()
+install_professional_rag_bridge()
+install_stable_legal_release()
+install_client_safe_runtime()
+
+from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
+from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
 
 LOGGER = logging.getLogger(__name__)
 
@@ -36,10 +49,8 @@ async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    install_kazakh_citation_compat()
     base_bot.service = PretrialProductionService(settings)
     base_bot.MENU = main_menu()
-    install_client_safe_runtime()
 
     bot = LocalizedClientSafeBot(token=settings.telegram_bot_token)
     await configure_telegram_menu(bot)
@@ -54,14 +65,17 @@ async def main() -> None:
     dp.include_router(start_router)
     dp.include_router(safety_router)
     dp.include_router(contact_router)
-    dp.include_router(claim_intake_priority_router)
+    dp.include_router(kazakh_router)
     dp.include_router(pretrial_router)
-    dp.include_router(response_router)
+    dp.include_router(universal_claim_router)
+    dp.include_router(universal_document_router)
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
     corpus_task = start_corpus_refresh_task()
-    LOGGER.info("Starting KORGAN: client-safe RU/KK UI + verified corpus + claims + responses + contracts + button-only pretrial + protected claim intake")
+    LOGGER.info(
+        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + no-questionnaire claims/pretrial + stable citation release"
+    )
     try:
         await dp.start_polling(bot)
     finally:

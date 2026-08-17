@@ -5,8 +5,8 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from korgan.i18n import KK, RU, button, normalize_language, tr
-from korgan.legal_safety import has_current_consent, privacy_text, show_terms, terms_keyboard, terms_text
+from korgan.i18n import KK, RU, normalize_language, tr
+from korgan.legal_safety import has_current_consent, privacy_text, show_terms, terms_text, terms_keyboard
 from korgan.ui import language_menu, main_menu
 
 router = Router(name="korgan-menu-start")
@@ -16,7 +16,12 @@ async def _show_language_choice(message: Message) -> None:
     await message.answer(tr(RU, "choose_language"), reply_markup=language_menu())
 
 
-async def _set_language_and_continue(*, language: str, state: FSMContext, message: Message) -> None:
+async def _set_language_and_continue(
+    *,
+    language: str,
+    state: FSMContext,
+    message: Message,
+) -> None:
     lang = normalize_language(language)
     await state.update_data(language=lang, language_selected=True)
     if not await has_current_consent(state):
@@ -33,9 +38,11 @@ async def start(message: Message, state: FSMContext) -> None:
         await state.set_data({"language": RU, "language_selected": False, "documents": [], "facts": []})
         await _show_language_choice(message)
         return
+
     if not data.get("language_selected"):
         await _show_language_choice(message)
         return
+
     lang = normalize_language(data.get("language", RU))
     if not await has_current_consent(state):
         await show_terms(message, lang)
@@ -69,11 +76,6 @@ async def language_ru_command(message: Message, state: FSMContext) -> None:
 
 @router.message(Command("language"))
 async def language_command(message: Message) -> None:
-    await _show_language_choice(message)
-
-
-@router.message(F.text == button(RU, "language"))
-async def language_button(message: Message) -> None:
     await _show_language_choice(message)
 
 

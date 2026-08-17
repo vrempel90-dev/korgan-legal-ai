@@ -77,27 +77,28 @@ def case_menu(language: str = RU) -> InlineKeyboardMarkup:
 def back_to_main(language: str = RU) -> InlineKeyboardMarkup:
     lang = normalize_language(language)
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=button(lang, "main"), callback_data="menu:main")]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text=button(lang, "main"), callback_data="menu:main")]
+        ]
     )
 
 
 def help_menu(language: str = RU) -> InlineKeyboardMarkup:
     lang = normalize_language(language)
-    rows = (
-        [
+    if lang == KK:
+        rows = [
             ("⚖️ KORGAN не істей алады", "help:capabilities"),
             ("📎 Құжатты қалай жүктеуге болады", "help:upload"),
             ("❗ Құжат толық емес болып шықты", "help:incomplete"),
             ("🔐 Дербес деректер", "help:privacy"),
         ]
-        if lang == KK
-        else [
+    else:
+        rows = [
             ("⚖️ Что умеет KORGAN", "help:capabilities"),
             ("📎 Как загрузить документ", "help:upload"),
             ("❗ Документ получился неполным", "help:incomplete"),
             ("🔐 Персональные данные", "help:privacy"),
         ]
-    )
     return InlineKeyboardMarkup(
         inline_keyboard=[
             *[[InlineKeyboardButton(text=text, callback_data=data)] for text, data in rows],
@@ -108,11 +109,10 @@ def help_menu(language: str = RU) -> InlineKeyboardMarkup:
 
 def delete_confirm_menu(language: str = RU) -> InlineKeyboardMarkup:
     lang = normalize_language(language)
-    yes, cancel = (
-        ("✅ Иә, іс деректерін жою", "↩️ Болдырмау")
-        if lang == KK
-        else ("✅ Да, удалить данные дела", "↩️ Отмена")
-    )
+    if lang == KK:
+        yes, cancel = "✅ Иә, іс деректерін жою", "↩️ Болдырмау"
+    else:
+        yes, cancel = "✅ Да, удалить данные дела", "↩️ Отмена"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=yes, callback_data="delete:confirm")],
@@ -121,7 +121,6 @@ def delete_confirm_menu(language: str = RU) -> InlineKeyboardMarkup:
     )
 
 
-# Backward-compatible Russian constants used by older modules.
 WELCOME_TEXT = tr(RU, "welcome")
 MAIN_TEXT = tr(RU, "main")
 DOCUMENTS_TEXT = tr(RU, "documents")

@@ -5,12 +5,11 @@ from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, TelegramObject
+from aiogram.types import TelegramObject
 
-from korgan.i18n import BUTTONS, KK, RU, normalize_language
+from korgan.i18n import RU, normalize_language
 
 _CURRENT_LANGUAGE: ContextVar[str] = ContextVar("korgan_current_language", default=RU)
-_KK_TO_RU_BUTTON = {value: BUTTONS[RU][key] for key, value in BUTTONS[KK].items()}
 
 
 def current_language() -> str:
@@ -18,7 +17,7 @@ def current_language() -> str:
 
 
 class LanguageContextMiddleware(BaseMiddleware):
-    """Expose session language and map KK menu input onto the proven RU handlers."""
+    """Expose the FSM language to renderers/transport without global user state."""
 
     async def __call__(
         self,
@@ -33,9 +32,6 @@ class LanguageContextMiddleware(BaseMiddleware):
             lang = normalize_language(stored.get("language", RU))
         token = _CURRENT_LANGUAGE.set(lang)
         try:
-            routed_event: TelegramObject = event
-            if lang == KK and isinstance(event, Message) and event.text in _KK_TO_RU_BUTTON:
-                routed_event = event.model_copy(update={"text": _KK_TO_RU_BUTTON[event.text]})
-            return await handler(routed_event, data)
+            return await handler(event, data)
         finally:
             _CURRENT_LANGUAGE.reset(token)
