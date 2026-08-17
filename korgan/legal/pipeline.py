@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Iterable
 
 from korgan.legal.corpus import DEFAULT_DB_PATH, LegalCorpus, Provision
+from korgan.legal.current_law_guard import is_current_source
 from korgan.legal.rk_catalog import KNOWN_ACTS
 from korgan.legal.validator import build_offer
 
@@ -128,6 +129,24 @@ def _explicit_article_candidates(active: LegalCorpus, query: str, routed: tuple[
     return found
 
 
+def _current_candidates(provisions: list[Provision]) -> list[Provision]:
+    """Remove known superseded local hints before they ever reach the model."""
+    accepted: list[Provision] = []
+    for provision in provisions:
+        label = f"статья {provision.article_no}"
+        if provision.item_no:
+            label += f", пункт {provision.item_no}"
+        if is_current_source(provision.url, article_label=label):
+            accepted.append(provision)
+        else:
+            LOGGER.warning(
+                "KORGAN local RAG skipped superseded source article_id=%s url=%s",
+                provision.article_id,
+                provision.url,
+            )
+    return accepted
+
+
 def research_from_corpus(
     query: str,
     *,
@@ -164,12 +183,13 @@ def research_from_corpus(
                 continue
             provisions.append(provision)
             seen.add(article_id)
+        provisions = _current_candidates(provisions)
     finally:
         if owned:
             active.close()
 
     if not provisions:
-        LOGGER.info("KORGAN local corpus returned nothing for %r — using web search", query[:80])
+        LOGGER.info("KORGAN local corpus returned nothing current for %r — using web search", query[:80])
         return None
 
     LOGGER.info(
