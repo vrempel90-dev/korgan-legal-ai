@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from urllib.parse import unquote
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 
-from korgan import localized_transport, pretrial
+from korgan import consultation_cta, localized_transport, pretrial
 from korgan.additive_legal_guard import _pretrial_basis_coverage
 from korgan.consultation_cta import (
     WHATSAPP_NUMBER,
+    ConsultationReference,
+    build_consultation_reference,
     consultation_keyboard,
     consultation_text,
     is_generated_document,
@@ -113,25 +116,82 @@ def test_client_regression_verified_material_rule_is_restored_into_pretrial(monk
     assert not [item for item in blockers if "материаль" in item.lower()]
 
 
-def test_whatsapp_cta_is_clean_and_points_to_required_number() -> None:
-    url = whatsapp_url("ru")
+def test_whatsapp_cta_identifies_exact_document_without_personal_data() -> None:
+    reference = ConsultationReference(
+        case_id="KRG-A1B2C3",
+        document_id="KRG-A1B2C3-D02",
+        document_number=2,
+        document_label="Досудебная претензия",
+    )
+    url = whatsapp_url("ru", reference)
     assert url.startswith(f"https://wa.me/{WHATSAPP_NUMBER}?text=")
     assert "+" not in url
     assert " " not in url
     assert "700-500" not in url
 
-    text = consultation_text("ru")
-    assert "требуется консультация юриста" in text.lower()
+    decoded = unquote(url)
+    assert "KRG-A1B2C3" in decoded
+    assert "KRG-A1B2C3-D02" in decoded
+    assert "Досудебная претензия" in decoded
+    assert "ИИН" not in decoded
+    assert "БИН" not in decoded
+
+    text = consultation_text("ru", reference)
+    assert "конкретному документу" in text.lower()
+    assert reference.document_id in text
+    assert reference.case_id in text
     assert WHATSAPP_NUMBER not in text
     assert "+7 700" not in text
 
-    keyboard = consultation_keyboard("ru")
+    keyboard = consultation_keyboard("ru", reference)
     yes = keyboard.inline_keyboard[0][0]
     no = keyboard.inline_keyboard[1][0]
-    assert yes.text == "✅ Да, получить консультацию"
+    assert yes.text == "💬 Консультация по этому документу"
     assert yes.url == url
-    assert no.text == "Нет, спасибо"
+    assert no.text == "Не сейчас"
     assert no.callback_data == "consultation:no"
+
+
+def test_document_references_share_case_and_increment_until_case_is_cleared(monkeypatch) -> None:
+    class FakeState:
+        def __init__(self) -> None:
+            self.data: dict[str, object] = {"language": "ru"}
+
+        async def get_data(self) -> dict[str, object]:
+            return dict(self.data)
+
+        async def update_data(self, **kwargs: object) -> None:
+            self.data.update(kwargs)
+
+    state = FakeState()
+    ids = iter(["a1b2c3", "d4e5f6"])
+    monkeypatch.setattr(consultation_cta, "current_fsm_state", lambda: state)
+    monkeypatch.setattr(consultation_cta.secrets, "token_hex", lambda _n: next(ids))
+
+    async def scenario() -> tuple[ConsultationReference, ConsultationReference, ConsultationReference]:
+        first = await build_consultation_reference(
+            BufferedInputFile(b"doc", filename="KORGAN_dosudebnaya_pretenziya.docx"), "ru"
+        )
+        second = await build_consultation_reference(
+            BufferedInputFile(b"doc", filename="KORGAN_iskovoe_zayavlenie.docx"), "ru"
+        )
+        # Simulates /clear: the real clear handler replaces the FSM data and
+        # therefore removes both consultation reference keys.
+        state.data = {"language": "ru", "documents": [], "facts": [], "mode": "main"}
+        third = await build_consultation_reference(
+            BufferedInputFile(b"doc", filename="KORGAN_dogovor.docx"), "ru"
+        )
+        return first, second, third
+
+    first, second, third = asyncio.run(scenario())
+    assert first.case_id == second.case_id == "KRG-A1B2C3"
+    assert first.document_id == "KRG-A1B2C3-D01"
+    assert second.document_id == "KRG-A1B2C3-D02"
+    assert first.document_label == "Досудебная претензия"
+    assert second.document_label == "Исковое заявление"
+    assert third.case_id == "KRG-D4E5F6"
+    assert third.document_id == "KRG-D4E5F6-D01"
+    assert third.document_label == "Договор"
 
 
 def test_only_generated_korgan_documents_trigger_cta() -> None:
@@ -141,16 +201,16 @@ def test_only_generated_korgan_documents_trigger_cta() -> None:
     assert not is_generated_document("file_id_from_telegram")
 
 
-def test_localized_transport_sends_one_cta_after_generated_document(monkeypatch) -> None:
+def test_localized_transport_sends_one_cta_for_the_exact_generated_document(monkeypatch) -> None:
     sent_documents: list[str] = []
-    ctas: list[tuple[int, str]] = []
+    ctas: list[tuple[int, str, str]] = []
 
     async def fake_send_document(self, chat_id, document, *args, **kwargs):
         sent_documents.append(str(getattr(document, "filename", "")))
         return SimpleNamespace(message_id=1)
 
-    async def fake_cta(bot, chat_id, language="ru"):
-        ctas.append((int(chat_id), str(language)))
+    async def fake_cta(bot, chat_id, language="ru", *, document=None):
+        ctas.append((int(chat_id), str(language), str(getattr(document, "filename", ""))))
         return SimpleNamespace(message_id=2)
 
     monkeypatch.setattr(Bot, "send_document", fake_send_document)
@@ -168,4 +228,4 @@ def test_localized_transport_sends_one_cta_after_generated_document(monkeypatch)
 
     asyncio.run(scenario())
     assert sent_documents == ["KORGAN_dogovor.docx"]
-    assert ctas == [(123, "ru")]
+    assert ctas == [(123, "ru", "KORGAN_dogovor.docx")]
