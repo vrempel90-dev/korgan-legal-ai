@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from korgan.ui import main_menu
 
@@ -26,6 +26,14 @@ async def lawyer_contact(message: Message, state: FSMContext) -> None:
         disable_web_page_preview=True,
         reply_markup=main_menu(),
     )
+
+
+@router.callback_query(F.data == "lawyer:decline")
+async def lawyer_consultation_declined(callback: CallbackQuery) -> None:
+    """Close the one-time CTA without adding another message to the chat."""
+    await callback.answer("Хорошо")
+    if callback.message is not None:
+        await callback.message.edit_reply_markup(reply_markup=None)
 
 
 @router.message(F.text == "🆘 Техподдержка")
