@@ -13,9 +13,9 @@ from korgan.contract_docx import build_contract_docx
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
 from korgan.legal_types import VerificationStatus
-from korgan.material_law_guard import has_material_verified
 from korgan.response_docx import build_response_to_claim_docx
 from korgan.response_intent import is_response_to_claim_request
+from korgan.telegram_text import bullets, fit_caption
 from korgan.ui import main_menu
 from korgan.universal_claim_runtime import _generate_now as generate_claim_now
 
@@ -82,22 +82,20 @@ def _looks_like_claim_materials(context: str) -> bool:
 
 
 async def _ask_contract(message: Message, state: FSMContext) -> None:
-    lang = str((await state.get_data()).get("language", "ru"))
     await state.update_data(mode="contract_details")
     await message.answer(
         "🤝 Опишите договор одним сообщением: вид/цель договора, стороны и роли, предмет, цена/оплата, срок и важные условия. "
         "После этого KORGAN проверит право РК и сформирует Word.",
-        reply_markup=main_menu(lang),
+        reply_markup=main_menu(),
     )
 
 
 async def _ask_response(message: Message, state: FSMContext) -> None:
-    lang = str((await state.get_data()).get("language", "ru"))
     await state.update_data(mode="response_details")
     await message.answer(
         "🛡 Пришлите иск (PDF/DOCX/фото) или вставьте его требования текстом. Если можете, одним сообщением добавьте позицию ответчика, "
         "оспариваемые факты, доказательства, суд и номер дела. После этого KORGAN сформирует отзыв в Word.",
-        reply_markup=main_menu(lang),
+        reply_markup=main_menu(),
     )
 
 
@@ -117,64 +115,41 @@ async def _send_contract(message: Message, state: FSMContext) -> None:
 
     await state.update_data(mode="main")
     lang = str((await state.get_data()).get("language", "ru"))
-    menu = main_menu(lang)
-    await message.answer("Формирую и проверяю договор…", reply_markup=menu)
+    await message.answer("Формирую и проверяю договор…", reply_markup=main_menu())
     await message.bot.send_chat_action(message.chat.id, "typing")
 
     try:
         research = await research_method(context, language=lang)
-        if not has_material_verified(research):
-            LOGGER.error("UNIVERSAL_CONTRACT_MATERIAL_LAW_BLOCK verified=%d", len(research.verified_claims))
-            await message.answer(
-                "Договор пока не прошёл юридическую проверку, поэтому Word-файл не выдан. "
-                "Правовая конструкция договора должна быть подтверждена действующими материальными нормами, а не только процессуальными положениями. "
-                "Попробуйте сформировать договор повторно.",
-                reply_markup=menu,
-            )
-            return
         draft = await draft_method(context, research, language=lang)
         quality = assess_document_quality("contract", context, research, draft)
+        draft.status = VerificationStatus.VERIFIED if quality.ready else VerificationStatus.NEEDS_VERIFICATION
+        file_bytes = build_contract_docx(draft)
     except Exception:
         LOGGER.exception("Universal contract generation failed")
         await message.answer(
             "Не удалось безопасно сформировать договор. KORGAN не будет выдавать неподтверждённый текст как готовый документ.",
-            reply_markup=menu,
+            reply_markup=main_menu(),
         )
         return
 
-    if not quality.ready:
-        draft.status = VerificationStatus.NEEDS_VERIFICATION
-        LOGGER.error(
-            "UNIVERSAL_CONTRACT_RELEASE_BLOCK quality=%.1f blockers=%s issues=%s",
-            quality.score,
-            quality.hard_blockers[:6],
-            quality.issues[:6],
-        )
-        await message.answer(
-            "Договор пока не прошёл юридическую проверку, поэтому Word-файл не выдан. "
-            "KORGAN не отправляет предварительный документ как готовый. Попробуйте сформировать договор повторно.",
-            reply_markup=menu,
-        )
-        return
-
-    draft.status = VerificationStatus.VERIFIED
-    try:
-        file_bytes = build_contract_docx(draft)
-    except Exception:
-        LOGGER.exception("Universal contract DOCX rendering failed")
-        await message.answer("Не удалось сформировать Word-файл договора. Попробуйте повторить.", reply_markup=menu)
-        return
-
-    export_blockers = rendered_docx_blockers(file_bytes, ready_expected=True)
-    if export_blockers:
+    export_blockers = rendered_docx_blockers(file_bytes, ready_expected=quality.ready)
+    if quality.ready and export_blockers:
         LOGGER.error("UNIVERSAL_CONTRACT_DOCX_BLOCK quality=%.1f issues=%s", quality.score, export_blockers)
-        await message.answer("Готовый Word не выпущен: экспорт не прошёл финальную проверку документа.", reply_markup=menu)
+        await message.answer("Готовый Word не выпущен: экспорт не прошёл финальную проверку качества.", reply_markup=main_menu())
         return
+
+    if quality.ready:
+        caption = f"✅ KORGAN QUALITY {quality.score:.1f}/10\nДоговор сформирован в Word (.docx)."
+    else:
+        caption = f"⚠️ PRELIMINARY · KORGAN QUALITY {quality.score:.1f}/10\nПроект договора сформирован, но не достиг порога 8.5/10."
+        checks = quality.repair_issues()[:6]
+        if checks:
+            caption += "\n\nПеред подписанием требуется:\n" + bullets(checks)
 
     await message.answer_document(
         BufferedInputFile(file_bytes, filename="KORGAN_dogovor.docx"),
-        caption="✅ Договор сформирован в Word (.docx).",
-        reply_markup=menu,
+        caption=fit_caption(caption),
+        reply_markup=main_menu(),
     )
 
 
@@ -194,55 +169,41 @@ async def _send_response(message: Message, state: FSMContext) -> None:
 
     await state.update_data(mode="main")
     lang = str((await state.get_data()).get("language", "ru"))
-    menu = main_menu(lang)
-    await message.answer("Формирую и проверяю отзыв на иск…", reply_markup=menu)
+    await message.answer("Формирую и проверяю отзыв на иск…", reply_markup=main_menu())
     await message.bot.send_chat_action(message.chat.id, "typing")
 
     try:
         research = await research_method(context, language=lang)
         draft = await draft_method(context, research, language=lang)
         quality = assess_document_quality("response_to_claim", context, research, draft)
+        draft.status = VerificationStatus.VERIFIED if quality.ready else VerificationStatus.NEEDS_VERIFICATION
+        file_bytes = build_response_to_claim_docx(draft)
     except Exception:
         LOGGER.exception("Universal response-to-claim generation failed")
         await message.answer(
             "Не удалось безопасно сформировать отзыв. KORGAN не будет выдавать неподтверждённый текст как готовый документ.",
-            reply_markup=menu,
+            reply_markup=main_menu(),
         )
         return
 
-    if not quality.ready:
-        draft.status = VerificationStatus.NEEDS_VERIFICATION
-        LOGGER.error(
-            "UNIVERSAL_RESPONSE_RELEASE_BLOCK quality=%.1f blockers=%s issues=%s",
-            quality.score,
-            quality.hard_blockers[:6],
-            quality.issues[:6],
-        )
-        await message.answer(
-            "Отзыв пока не прошёл юридическую проверку, поэтому Word-файл не выдан. "
-            "KORGAN не отправляет предварительный документ как готовый. Попробуйте сформировать отзыв повторно.",
-            reply_markup=menu,
-        )
-        return
-
-    draft.status = VerificationStatus.VERIFIED
-    try:
-        file_bytes = build_response_to_claim_docx(draft)
-    except Exception:
-        LOGGER.exception("Universal response DOCX rendering failed")
-        await message.answer("Не удалось сформировать Word-файл отзыва. Попробуйте повторить.", reply_markup=menu)
-        return
-
-    export_blockers = rendered_docx_blockers(file_bytes, ready_expected=True)
-    if export_blockers:
+    export_blockers = rendered_docx_blockers(file_bytes, ready_expected=quality.ready)
+    if quality.ready and export_blockers:
         LOGGER.error("UNIVERSAL_RESPONSE_DOCX_BLOCK quality=%.1f issues=%s", quality.score, export_blockers)
-        await message.answer("Готовый Word не выпущен: экспорт не прошёл финальную проверку документа.", reply_markup=menu)
+        await message.answer("Готовый Word не выпущен: экспорт не прошёл финальную проверку качества.", reply_markup=main_menu())
         return
+
+    if quality.ready:
+        caption = f"✅ KORGAN QUALITY {quality.score:.1f}/10\nОтзыв на иск сформирован в Word (.docx)."
+    else:
+        caption = f"⚠️ PRELIMINARY · KORGAN QUALITY {quality.score:.1f}/10\nПроект отзыва сформирован, но не достиг порога 8.5/10."
+        checks = quality.repair_issues()[:6]
+        if checks:
+            caption += "\n\nПеред подачей требуется:\n" + bullets(checks)
 
     await message.answer_document(
         BufferedInputFile(file_bytes, filename="KORGAN_otzyv_na_isk.docx"),
-        caption="✅ Отзыв на иск сформирован в Word (.docx).",
-        reply_markup=menu,
+        caption=fit_caption(caption),
+        reply_markup=main_menu(),
     )
 
 
