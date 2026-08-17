@@ -2,18 +2,6 @@
 
 Anything computable from a verified legal rate belongs here, not in a model
 prompt. The model may not invent, round or "remember" these numbers.
-
-State-duty source: статья 665 Налогового кодекса РК (Кодекс РК от 18.07.2025
-№ 214-VIII, adilet id K2500000214), действует с 01.01.2026 — ставка по искам
-имущественного характера: 1% от суммы иска для физических лиц, 3% для
-юридических лиц, но не более 10 000 МРП.
-
-МРП source: Закон РК от 08.12.2025 № 239-VIII «О республиканском бюджете на
-2026 - 2028 годы» (adilet id Z2500000239) — 4 325 тенге с 01.01.2026.
-
-Article 353 calculation uses a versioned National Bank rate table. The table is
-intentionally fail-closed: after the next scheduled rate decision it is not used
-until the project re-verifies the official National Bank schedule.
 """
 
 from __future__ import annotations
@@ -57,10 +45,13 @@ _NEXT_PARTY_INLINE_RE = re.compile(
     r"\b(?:ответчик|должник|взыскатель|кредитор)\s*:",
     re.IGNORECASE,
 )
+_PAREN_CLAIMANT_RE = re.compile(
+    r"(?is)(?:^|\n|\bстороны\s*:\s*)[^;\n:]{0,100}\(\s*(?:истец|заявитель)\s*\)\s*:\s*"
+    r"(.{1,500}?)(?=;\s*[^;\n:]{0,100}\(\s*(?:ответчик|должник)\s*\)\s*:|\n|$)"
+)
 
 
 def calc_gosposhlina_claim(amount: int, is_individual: bool) -> int:
-    """State duty for a monetary claim, in tenge."""
     if amount < 0:
         raise ValueError("Сумма иска не может быть отрицательной")
     rate = RATE_INDIVIDUAL if is_individual else RATE_LEGAL_ENTITY
@@ -69,7 +60,6 @@ def calc_gosposhlina_claim(amount: int, is_individual: bool) -> int:
 
 
 def parse_amount_kzt(text: str) -> int | None:
-    """Extract the first explicit tenge amount from free text."""
     if not text:
         return None
     match = _AMOUNT_PATTERN.search(text)
@@ -90,7 +80,6 @@ def format_kzt(value: int) -> str:
 
 
 def _before_next_party(text: str) -> tuple[str, bool]:
-    """Clip an inline «Ответчик: ...» etc. from claimant-bound text."""
     match = _NEXT_PARTY_INLINE_RE.search(text or "")
     if match:
         return text[: match.start()].strip(), True
@@ -98,7 +87,11 @@ def _before_next_party(text: str) -> tuple[str, bool]:
 
 
 def _claimant_segment(case_context: str) -> str:
-    """Return only claimant-bound text, never defendant/other-party data."""
+    """Return only claimant-bound text, never defendant/other-party data.
+
+    Supports both canonical ``Истец: ...`` input and legal-role descriptions
+    such as ``Займодавец (истец): ...; Заёмщик (ответчик): ...``.
+    """
     if not case_context:
         return ""
 
@@ -133,7 +126,11 @@ def _claimant_segment(case_context: str) -> str:
         r"(?is)\b(?:истец|заявитель)\s*:\s*(.{1,500}?)(?=\b(?:ответчик|должник|взыскатель|кредитор)\s*:|$)",
         case_context,
     )
-    return match.group(1).strip() if match else ""
+    if match:
+        return match.group(1).strip()
+
+    parenthetical = _PAREN_CLAIMANT_RE.search(case_context)
+    return parenthetical.group(1).strip() if parenthetical else ""
 
 
 def claimant_is_individual(case_context: str) -> bool | None:
@@ -150,21 +147,16 @@ def claimant_is_individual(case_context: str) -> bool | None:
 
 
 def gosposhlina_line(case_context: str, price_of_claim: str) -> str:
-    """Court-ready state duty line, or the explicit needs-calculation marker."""
     amount = parse_amount_kzt(price_of_claim)
     if amount is None:
         return NEEDS_CALCULATION_MARKER
-
     is_individual = claimant_is_individual(case_context)
     if is_individual is None:
         return NEEDS_CALCULATION_MARKER
-
     duty = calc_gosposhlina_claim(amount, is_individual)
     percent = "1%" if is_individual else "3%"
     return f"{format_kzt(duty)} ({percent} от цены иска, {RATE_SOURCE_ARTICLE})"
 
-
-# --- Неустойка за просрочку денежного обязательства (ст. 353 ГК РК) ---------
 
 ARTICLE_353_SOURCE_URL = "https://adilet.zan.kz/rus/docs/K940001000_/compare"
 NB_RATE_SOURCE_URL = "https://nationalbank.kz/ru/news/grafik-prinyatiya-resheniy-po-bazovoy-stavke/rubrics/2365"
@@ -176,7 +168,6 @@ NB_BASE_RATES: tuple[tuple[date, float], ...] = (
     (date(2026, 6, 8), 17.0),
     (date(2026, 7, 27), 16.75),
 )
-
 NB_RATE_TABLE_VALID_THROUGH = date(2026, 9, 3)
 DAYS_IN_YEAR = 365
 
