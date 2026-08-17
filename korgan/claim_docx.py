@@ -26,8 +26,8 @@ QA_READY = "READY FOR FINAL HUMAN REVIEW"
 
 
 REQUIRED_DOCUMENT_FIELDS: tuple[tuple[str, str], ...] = (
-    ("claimant", "данные истца (ФИО/наименование, идентификатор, адрес)"),
-    ("defendant", "данные ответчика (ФИО/наименование, адрес)"),
+    ("claimant", "данные истца (ФИО, ИИН, адрес)"),
+    ("defendant", "данные ответчика (ФИО, адрес)"),
     ("facts", "обстоятельства дела"),
     ("requests", "требования к ответчику (просительная часть)"),
 )
@@ -121,12 +121,7 @@ def _body_blocks(draft: ClaimDraft) -> list[Block]:
 
 
 def build_claim_docx(draft: ClaimDraft) -> bytes:
-    """Build a clean court-facing DOCX.
-
-    Internal KORGAN QA labels are shown only on a preliminary/lawyer-review
-    project. A release-ready claim must look like a normal court document, not
-    like an internal AI report.
-    """
+    """Build a clean court-facing DOCX with a visible KORGAN QA readiness status."""
     doc = Document()
 
     section = doc.sections[0]
@@ -142,21 +137,19 @@ def build_claim_docx(draft: ClaimDraft) -> bytes:
         if style_name in styles:
             styles[style_name].font.name = "Times New Roman"
 
-    document_status = _document_status(draft)
-    if document_status != QA_READY:
-        for current_section in doc.sections:
-            footer = current_section.footer.paragraphs[0]
-            footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = footer.add_run(DRAFT_NOTICE)
-            run.font.name = "Times New Roman"
-            run.font.size = Pt(8)
+    for current_section in doc.sections:
+        footer = current_section.footer.paragraphs[0]
+        footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = footer.add_run(DRAFT_NOTICE)
+        run.font.name = "Times New Roman"
+        run.font.size = Pt(8)
 
-        qa = doc.add_paragraph()
-        qa.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        qa_run = qa.add_run(f"KORGAN QA STATUS: {document_status}")
-        qa_run.bold = True
-        qa_run.font.name = "Times New Roman"
-        qa_run.font.size = Pt(9)
+    qa = doc.add_paragraph()
+    qa.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    qa_run = qa.add_run(f"KORGAN QA STATUS: {_document_status(draft)}")
+    qa_run.bold = True
+    qa_run.font.name = "Times New Roman"
+    qa_run.font.size = Pt(9)
 
     court = _strip_label(draft.court, "В суд") or "[ТРЕБУЕТ УТОЧНЕНИЯ: точное наименование суда]"
     price = _strip_label(draft.price_of_claim, "Цена иска") or "[ТРЕБУЕТ УТОЧНЕНИЯ: цена иска]"

@@ -155,7 +155,7 @@ def _mark_paragraph(paragraph: str, reference: ProvisionReference) -> str:
     body = _strip_quotation(paragraph).rstrip(" .")
     return (
         f"[ТРЕБУЕТ ПРОВЕРКИ: {body}. Действующая редакция и содержание "
-        f"{reference.genitive()} подлежат сверке по официальному источнику до подачи документа; "
+        f"{reference.label()} подлежат сверке по официальному источнику до подачи документа; "
         "в настоящем документе содержание нормы не утверждается.]"
     )
 
@@ -194,53 +194,3 @@ def apply_citation_waiver(
                 applied.append(target)
 
     return rewritten, applied
-
-
-def _restored_paragraph(reference: ProvisionReference) -> str:
-    """The article number, kept — and nothing asserted about what it says."""
-    genitive = reference.genitive()
-    return (
-        f"[ТРЕБУЕТ ПРОВЕРКИ: правовое основание требования включает нормы {genitive}. "
-        f"Действующая редакция и содержание {genitive} подлежат сверке по официальному "
-        "источнику до подачи документа; в настоящем документе содержание нормы "
-        "не утверждается.]"
-    )
-
-
-def _mentions(lines: list[str], reference: ProvisionReference) -> bool:
-    return any(
-        reference.matches(found) for line in lines for found in extract_references(line)
-    )
-
-
-def keep_accepted_provisions(
-    lines: list[str],
-    targets: list[ProvisionReference],
-) -> tuple[list[str], list[ProvisionReference]]:
-    """Hold the user's «оставь с пометкой NEEDS_VERIFICATION» across a rebuild.
-
-    Accepting the downgrade is a decision about a specific provision, and it has
-    to outlive the draft it was made on. Redrafting produces a fresh document
-    from the model, which is free to drop the disputed article and reach for a
-    blander one — which is exactly what happened to статья 616 ГК РК: the user
-    agreed to keep it marked, and the final document came back citing an
-    unrelated provision about acceptance of work instead.
-
-    So this does two things, and the second is the one that was missing: mark
-    the provision where it appears, and *restore* it where it no longer does.
-    Either way the article number is in the document and its content is not
-    asserted — the state the user actually agreed to.
-    """
-    rewritten, applied = apply_citation_waiver(list(lines), targets)
-    kept = list(applied)
-
-    for target in targets:
-        if _mentions(rewritten, target):
-            if target not in kept:
-                kept.append(target)
-            continue
-        rewritten.append(_restored_paragraph(target))
-        if target not in kept:
-            kept.append(target)
-
-    return rewritten, kept

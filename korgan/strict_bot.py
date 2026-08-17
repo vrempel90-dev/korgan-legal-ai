@@ -9,21 +9,14 @@ from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
-from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
-from korgan.finalized_litigation import FinalizedProductionClaimService
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
+from korgan.response_legal import ProductionOpenAILegalService
+from korgan.response_menu_handlers import router as response_router
 from korgan.ui import main_menu
-
-# Install before importing the claim runtime so its bound quality function uses
-# the filing-vs-substance policy as well.
-install_runtime_hotfix()
-
-from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
-from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,9 +31,7 @@ async def configure_telegram_menu(bot: Bot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    # Preserve the current filing-vs-substance quality layer and add only a
-    # zero-call deterministic professional finalizer before Word release.
-    base_bot.service = FinalizedProductionClaimService(settings)
+    base_bot.service = ProductionOpenAILegalService(settings)
     base_bot.MENU = main_menu()
 
     bot = Bot(token=settings.telegram_bot_token)
@@ -49,19 +40,17 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.outer_middleware(ConsentMiddleware())
 
+    # Admin must be registered before generic user routers. Every admin handler
+    # independently re-checks ADMIN_TELEGRAM_IDS and fails closed.
     dp.include_router(admin_router)
     dp.include_router(start_router)
     dp.include_router(safety_router)
     dp.include_router(contact_router)
-
-    dp.include_router(universal_claim_router)
-    dp.include_router(universal_document_router)
+    dp.include_router(response_router)
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
-    LOGGER.info(
-        "Starting KORGAN: finalized professional RK litigation + claim quality filing separation + unchanged Telegram UI"
-    )
+    LOGGER.info("Starting KORGAN: verified provision text + admin access + claims + responses + contracts")
     try:
         await dp.start_polling(bot)
     finally:

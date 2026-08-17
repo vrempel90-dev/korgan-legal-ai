@@ -4,15 +4,9 @@ The loop: asked for «дата рождения истца», the user answered 
 the bot asked again — because `claim_preflight` looks for a date *near the words*
 «дата рождения», and an answer does not repeat the question.
 
-Since then the question itself has been withdrawn: a date of birth is a filing
-requisite, not a condition of the document making sense, so it is marked inside
-the draft instead of being collected (см. korgan.claim_intake_policy). What
-remains collectable is the critical set — who is suing whom, and for what — and
-these tests keep the loop guards on that much smaller surface.
-
-They drive the real handlers over an aiogram MemoryStorage, so they cover the
-order of operations too (parse → write → await → re-read → decide), not just the
-parsing helpers.
+These tests drive the real handlers over an aiogram MemoryStorage, so they cover
+the order of operations too (parse → write → await → re-read → decide), not just
+the parsing helpers.
 """
 
 from __future__ import annotations
@@ -34,10 +28,6 @@ _CASE = (
     "Я истец Иванов Иван Иванович, дал в долг 800 000 тенге Петрову Петру Петровичу "
     "(ответчик). Деньги в срок не возвращены."
 )
-
-# Ни одна сторона не названа — единственный класс пробела, который всё ещё
-# останавливает подготовку документа.
-_NAMELESS_CASE = "Дал в долг 800 000 тенге. Деньги в срок не возвращены, вернуть отказываются."
 
 
 @dataclass
@@ -174,36 +164,42 @@ def test_multiline_answer_fills_several_fields_at_once() -> None:
 # --- the dialogue itself ---------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "field_label",
-    ["дата рождения истца", "ИИН истца", "адрес места жительства истца", "адрес места жительства ответчика"],
-)
-def test_a_filing_requisite_is_never_asked_for(field_label: str) -> None:
-    """Задача 1: формальный реквизит помечается в документе, а не собирается."""
-
+def test_answering_the_date_no_longer_repeats_the_same_question() -> None:
     async def scenario() -> None:
         dialog = Dialog()
         await dialog.start_case()
 
-        await dialog.say("подготовь иск")
+        first = await dialog.say("подготовь иск")
+        assert "дата рождения истца" in first[0]
 
-        assert field_label not in await dialog.pending()
-        assert (await dialog.state.get_data())["mode"] != "claim_details"
+        second = await dialog.say("03.03.1999")
+        assert second, "бот промолчал"
+        # The question moved on: the date is no longer being asked for.
+        assert "дата рождения истца" not in second[-1]
+        assert "дата рождения истца" not in await dialog.pending()
 
     run(scenario())
 
 
-def test_a_complete_enough_case_goes_straight_to_drafting() -> None:
-    """Одно сообщение с сутью дела — и документ собирается без раундов."""
+@pytest.mark.parametrize(
+    ("answer", "field_label"),
+    [
+        ("03.03.1999", "дата рождения истца"),
+        ("990303300123", "ИИН истца"),
+        ("Адрес места жительства истца: г. Алматы, ул. Абая, д. 15, кв. 3", "адрес места жительства истца"),
+    ],
+)
+def test_no_field_loops_on_a_direct_answer(answer: str, field_label: str) -> None:
+    """Task 3: the defect was general, so the check is general too."""
 
     async def scenario() -> None:
         dialog = Dialog()
         await dialog.start_case()
+        await dialog.say("подготовь иск")
+        assert field_label in await dialog.pending()
 
-        replies = await dialog.say("подготовь иск")
-
-        assert replies[0].startswith("Проверяю право")
-        assert not await dialog.pending()
+        await dialog.say(answer)
+        assert field_label not in await dialog.pending()
 
     run(scenario())
 
@@ -220,39 +216,45 @@ def test_bare_name_fills_the_defendant_field_when_only_it_is_outstanding() -> No
     ).missing
 
 
-def test_the_only_question_covers_every_critical_gap_at_once() -> None:
-    """Пробелы спрашиваются одним сообщением, а не серией раундов."""
+def test_value_matching_two_fields_asks_which_one_instead_of_looping() -> None:
+    """Both addresses are outstanding, so a bare address is genuinely ambiguous."""
 
     async def scenario() -> None:
         dialog = Dialog()
-        await dialog.start_case(_NAMELESS_CASE)
+        await dialog.start_case()
+        prompt = (await dialog.say("подготовь иск"))[0]
 
-        replies = await dialog.say("подготовь иск")
+        replies = await dialog.say("г. Алматы, ул. Абая, д. 15, кв. 3")
+        assert replies
+        assert replies[0] != prompt, "бот повторил тот же запрос"
+        assert "подходит сразу к нескольким полям" in replies[0]
 
-        assert len(replies) == 1
-        assert "кто истец" in replies[0]
-        assert "кто ответчик" in replies[0]
-        # И тут же обещание не спрашивать остальное.
-        assert "[ТРЕБУЕТ УТОЧНЕНИЯ" in replies[0]
-        assert set(await dialog.pending()) == {"ФИО истца полностью", "ФИО ответчика полностью"}
+        # Labelling it resolves the ambiguity and the field is filled.
+        await dialog.say("Адрес места жительства истца: г. Алматы, ул. Абая, д. 15, кв. 3")
+        assert "адрес места жительства истца" not in await dialog.pending()
 
     run(scenario())
 
 
-def test_a_free_form_answer_closes_the_question_in_one_go() -> None:
-    """Ответ обычной фразой, не подписанный по полям, закрывает оба пробела."""
-
+def test_every_field_can_be_filled_in_sequence_without_getting_stuck() -> None:
     async def scenario() -> None:
         dialog = Dialog()
-        await dialog.start_case(_NAMELESS_CASE)
+        await dialog.start_case()
         await dialog.say("подготовь иск")
 
-        replies = await dialog.say(
-            "Меня зовут Иванов Иван Иванович, ответчик — Петров Пётр Петрович"
-        )
+        answers = [
+            "03.03.1999",
+            "990303300123",
+            "Адрес места жительства истца: г. Алматы, ул. Абая, д. 15, кв. 3",
+            "Адрес места жительства ответчика: г. Астана, ул. Кенесары, д. 40, кв. 12",
+        ]
+        for answer in answers:
+            before = await dialog.pending()
+            await dialog.say(answer)
+            after = await dialog.pending()
+            assert after != before, f"поле не заполнилось: {answer!r} (осталось {after})"
 
         assert not await dialog.pending()
-        assert any(reply.startswith("Проверяю право") for reply in replies)
 
     run(scenario())
 
@@ -260,7 +262,7 @@ def test_a_free_form_answer_closes_the_question_in_one_go() -> None:
 def test_unparsable_answer_gets_an_error_instead_of_the_same_prompt() -> None:
     async def scenario() -> None:
         dialog = Dialog()
-        await dialog.start_case(_NAMELESS_CASE)
+        await dialog.start_case()
         await dialog.say("подготовь иск")
 
         replies = await dialog.say("не помню")
@@ -277,7 +279,7 @@ def test_repeated_identical_prompt_triggers_the_escape_route() -> None:
 
     async def scenario() -> None:
         dialog = Dialog()
-        await dialog.start_case(_NAMELESS_CASE)
+        await dialog.start_case()
         await dialog.say("подготовь иск")
 
         # Answers that record something but never satisfy any field keep the

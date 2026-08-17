@@ -65,6 +65,12 @@ def build_contract_docx(draft: ContractDraft) -> bytes:
         if name in styles:
             styles[name].font.name = "Times New Roman"
 
+    footer = section.footer.paragraphs[0]
+    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = footer.add_run(DRAFT_NOTICE)
+    run.font.name = "Times New Roman"
+    run.font.size = Pt(8)
+
     # The identification block is mandatory: when the model omitted it, the
     # export inserts the structure with visible gaps instead of shipping a
     # contract whose parties are only named in the requisites table.
@@ -73,22 +79,12 @@ def build_contract_docx(draft: ContractDraft) -> bytes:
         party_a=draft.party_a,
         party_b=draft.party_b,
     )
-    document_status = _status(draft, preamble)
 
-    # Internal product QA is useful only on a non-ready project. A contract that
-    # passed the universal quality bar must be a clean signing document.
-    if document_status != "READY FOR FINAL HUMAN REVIEW":
-        footer = section.footer.paragraphs[0]
-        footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = footer.add_run(DRAFT_NOTICE)
-        run.font.name = "Times New Roman"
-        run.font.size = Pt(8)
-
-        qa = doc.add_paragraph()
-        qa.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        qa_run = qa.add_run(f"KORGAN QA STATUS: {document_status}")
-        qa_run.bold = True
-        qa_run.font.size = Pt(9)
+    qa = doc.add_paragraph()
+    qa.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    qa_run = qa.add_run(f"KORGAN QA STATUS: {_status(draft, preamble)}")
+    qa_run.bold = True
+    qa_run.font.size = Pt(9)
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
