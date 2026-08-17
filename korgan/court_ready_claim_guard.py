@@ -56,10 +56,6 @@ _PRETRIAL_DONE_RE = re.compile(
     r"направил\w*.{0,80}(?:требован|уведомлен)|получил\w*.{0,80}(?:претензи|требован)|"
     r"сотқа\s+дейінгі\s+талап|келісу\s+комиссия)"
 )
-
-# Quality defects that are allowed only as explicit pre-filing actions.  They do
-# not lower the legal substance standard, but the client must fill/check them
-# before actual filing.
 _FILING_ONLY_QUALITY_RE = re.compile(
     r"(?i)(?:незаполненные\s+обязательные/проверочные\s+поля|"
     r"не\s+определено\s+конкретное\s+наименование\s+суда|"
@@ -75,8 +71,12 @@ def _lines(values: list[str]) -> str:
 
 
 def _has_specific_placeholder(values: list[str], *tokens: str) -> bool:
-    text = _lines(values).lower()
-    return any(token.lower() in text and "[" in text for token in tokens)
+    for raw in values:
+        line = str(raw or "")
+        lowered = line.lower()
+        if _PLACEHOLDER_RE.search(line) and any(token.lower() in lowered for token in tokens):
+            return True
+    return False
 
 
 def _add_filing_action(draft: ClaimDraft, message: str) -> None:
@@ -97,23 +97,23 @@ def add_gpk_filing_actions(case_context: str, research: LegalResearch, draft: Cl
     if claimant:
         if not _ENTITY_RE.search(claimant):
             lower = claimant.lower()
-            if "дата рождения" not in lower and "туған" not in lower:
+            if ("дата рождения" not in lower and "туған" not in lower) or _has_specific_placeholder(draft.claimant, "дата рождения", "туған"):
                 _add_filing_action(draft, "для истца-физлица заполнить дату рождения, требуемую для подачи иска.")
-            if "иин" not in lower and not re.search(r"(?<!\d)\d{12}(?!\d)", claimant):
+            if ("иин" not in lower and not re.search(r"(?<!\d)\d{12}(?!\d)", claimant)) or _has_specific_placeholder(draft.claimant, "иин", "жсн"):
                 _add_filing_action(draft, "для истца-физлица заполнить ИИН перед подачей.")
-            if not re.search(r"(?i)(?:адрес|мест[оа]\s+жительств|тұрғылықты\s+жер|мекенжай)", claimant):
+            if not re.search(r"(?i)(?:адрес|мест[оа]\s+жительств|тұрғылықты\s+жер|мекенжай)", claimant) or _has_specific_placeholder(draft.claimant, "адрес", "место жительства", "тұрғылықты", "мекенжай"):
                 _add_filing_action(draft, "для истца указать место жительства/адрес перед подачей.")
         else:
             lower = claimant.lower()
-            if "бин" not in lower and not re.search(r"(?<!\d)\d{12}(?!\d)", claimant):
+            if ("бин" not in lower and not re.search(r"(?<!\d)\d{12}(?!\d)", claimant)) or _has_specific_placeholder(draft.claimant, "бин", "бсн"):
                 _add_filing_action(draft, "для истца-юрлица заполнить БИН перед подачей.")
-            if not re.search(r"(?i)(?:адрес|мест[оа]\s+нахожд|мекенжай)", claimant):
+            if not re.search(r"(?i)(?:адрес|мест[оа]\s+нахожд|мекенжай)", claimant) or _has_specific_placeholder(draft.claimant, "адрес", "место нахождения", "мекенжай"):
                 _add_filing_action(draft, "для истца-юрлица указать место нахождения перед подачей.")
-            if not re.search(r"(?i)(?:банковск\w*\s+реквизит|iban|иик|банк)", claimant):
+            if not re.search(r"(?i)(?:банковск\w*\s+реквизит|iban|иик|банк)", claimant) or _has_specific_placeholder(draft.claimant, "банков", "iban", "иик"):
                 _add_filing_action(draft, "для истца-юрлица заполнить банковские реквизиты перед подачей.")
 
     if defendant:
-        if not re.search(r"(?i)(?:адрес|мест[оа]\s+(?:жительств|нахожд)|тұрғылықты\s+жер|мекенжай)", defendant):
+        if not re.search(r"(?i)(?:адрес|мест[оа]\s+(?:жительств|нахожд)|тұрғылықты\s+жер|мекенжай)", defendant) or _has_specific_placeholder(draft.defendant, "адрес", "место жительства", "место нахождения", "мекенжай"):
             _add_filing_action(draft, "указать известное место жительства/нахождения ответчика и проверить подсудность.")
 
     if _MONEY_RE.search(_lines(draft.requests)) and not (draft.price_of_claim or "").strip():
@@ -173,9 +173,6 @@ def substantive_release_defects(
     if not draft.legal_basis or not _ARTICLE_RE.search(_lines(draft.legal_basis)):
         defects.append("в финальном правовом обосновании нет конкретной проверенной нормы")
 
-    # Reuse the existing >=8.5 quality engine, but do not turn formal Article
-    # 148/149 requisites into a second questionnaire.  Any remaining non-filing
-    # defect after the normal repair pass is a release blocker.
     quality = _patched_assess_document_quality("claim", case_context, research, draft)
     nonfiling = [
         str(item)
