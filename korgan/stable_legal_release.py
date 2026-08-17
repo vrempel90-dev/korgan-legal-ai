@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 from korgan.citation_audit import extract_references
 from korgan.finalized_litigation import FinalizedProductionClaimService
+from korgan.legal.current_law_guard import current_source_defect, is_current_source
 from korgan.legal.rk_catalog import CITATION_ACT_IDS
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.request_basis_coverage import ensure_request_basis_coverage
@@ -74,20 +75,43 @@ def _dedupe_by_article(lines: list[str]) -> list[str]:
 
 
 def sanitize_research_sources(research: LegalResearch) -> LegalResearch:
-    """Reject non-Russian Adilet pages and language-version framing before drafting."""
+    """Reject wrong-language or known superseded Adilet law before drafting."""
     accepted: list[str] = []
+    accepted_sources: list[str] = []
     rejected = list(research.unverified_claims)
+
     for line in research.verified_claims:
-        match = _SOURCE_RE.search(str(line))
-        source = match.group(1).rstrip(".,;)") if match else ""
+        raw = str(line)
+        source_match = _SOURCE_RE.search(raw)
+        source = source_match.group(1).rstrip(".,;)") if source_match else ""
+        verified_match = _VERIFIED_RE.search(raw)
+        article = verified_match.group("article").strip() if verified_match else ""
+
         if source and not _is_russian_adilet(source):
             rejected.append("Правовой вывод не использован: открыта не русская официальная страница Adilet.")
             continue
-        accepted.append(clean_language_labels(str(line)))
+        defect = current_source_defect(source, article_label=article) if source else None
+        if defect:
+            rejected.append("Правовой вывод не использован: " + defect + ".")
+            continue
+
+        accepted.append(clean_language_labels(raw))
+        if source and source not in accepted_sources:
+            accepted_sources.append(source)
+
     accepted = _dedupe_by_article(accepted)
-    sources = [url for url in research.source_urls if _is_russian_adilet(url)]
+
+    # Keep ordinary non-superseded source URLs even when a research note has no
+    # filing-facing proposition.  Known superseded IDs are retained only when an
+    # accepted verified line above proved an explicit transition provision.
+    for url in research.source_urls:
+        if url in accepted_sources:
+            continue
+        if _is_russian_adilet(url) and is_current_source(url):
+            accepted_sources.append(url)
+
     research.verified_claims = accepted
-    research.source_urls = list(dict.fromkeys(sources))
+    research.source_urls = list(dict.fromkeys(accepted_sources))
     research.unverified_claims = list(dict.fromkeys(x for x in rejected if x))
     if not accepted:
         research.status = VerificationStatus.NEEDS_VERIFICATION
@@ -183,7 +207,9 @@ def install_stable_legal_release() -> None:
             "Принимай статьи только после source-bound проверки действующей русской страницы Adilet.\n"
             "24. Не создавай несколько verified_points с одним и тем же актом и номером статьи ради языковых страниц или почти одинаковых пересказов. "
             "Одна норма — один точный verified_point, если разные пункты не дают действительно разные правила.\n"
-            "25. Если отдельное требование не удалось связать с точной VERIFIED нормой, не маскируй пробел общими принципами: пометь его как непокрытое для внутреннего quality-gate."
+            "25. Если отдельное требование не удалось связать с точной VERIFIED нормой, не маскируй пробел общими принципами: пометь его как непокрытое для внутреннего quality-gate.\n"
+            "26. Перед использованием акта проверь, что это действующий на дату исследования акт. Если официальный Adilet указывает, что закон утратил силу или заменён, "
+            "не используй его как общую текущую норму. Переходное положение старого акта допустимо только когда оно прямо продолжает действовать и относится к фактам дела."
         )
 
     litigation._professional_research_prompt = stable_prompt
