@@ -1,8 +1,8 @@
 """Additive legal-release layer; existing production generators stay authoritative.
 
 Every override calls the already deployed implementation first and only adds
-source-bound fail-closed checks.  Intake, DOCX renderers and deterministic
-calculations stay untouched.
+source-bound fail-closed checks.  Intake, claim/contract drafters, DOCX renderers
+and deterministic calculations stay untouched here.
 """
 
 from __future__ import annotations
@@ -11,14 +11,13 @@ import re
 from typing import Any
 
 from korgan.legal.current_law_guard import is_current_source
-from korgan.legal_types import ContractDraft, LegalResearch, VerificationStatus
+from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.material_law_guard import (
     has_material_basis,
     has_material_verified,
     inject_material_basis,
     mark_missing_material_law,
     material_research_context,
-    material_verified_claims,
     merge_research,
     requires_material_law,
 )
@@ -69,11 +68,11 @@ def _pretrial_basis_coverage(
                 if not _basis_has(rule, basis):
                     missing.append(rule.label)
 
-    # The principal debt/refund/termination etc. must never be justified only by
-    # GPK state-duty or representative-cost provisions.  When targeted research
-    # found material law, put it first in the client-facing legal basis.
+    # If a specific remedy rule already explains the gap, do not add a second
+    # generic issue.  Otherwise ensure a generic substantive demand is not
+    # justified only by GPK/state-duty/representative-cost provisions.
     substantive_text = "\n".join([case_context, *draft.demands, *draft.facts])
-    if requires_material_law(substantive_text) and not has_material_basis(basis):
+    if not missing and requires_material_law(substantive_text) and not has_material_basis(basis):
         basis = inject_material_basis(basis, research)
         if not has_material_basis(basis):
             missing.append("материально-правовое основание основного требования")
@@ -113,7 +112,7 @@ def _response_basis_coverage(
 
 
 class AdditiveLegalGuardService(PretrialProductionService):
-    """Production service plus a universal material-law completeness gate."""
+    """Production service plus additive research/pre-trial/response guards."""
 
     async def research_case(
         self,
@@ -123,7 +122,7 @@ class AdditiveLegalGuardService(PretrialProductionService):
         research = await super().research_case(case_context, language=language)
         research = sanitize_research_sources(research)
 
-        # One targeted fallback only.  It is triggered when the first pass found
+        # One targeted fallback only. It is triggered when a first pass found
         # procedure/costs but no substantive law for the underlying obligation.
         if requires_material_law(case_context) and not has_material_verified(research):
             supplement = await super().research_case(
@@ -136,23 +135,6 @@ class AdditiveLegalGuardService(PretrialProductionService):
         if requires_material_law(case_context) and not has_material_verified(research):
             mark_missing_material_law(research, "основного требования")
         return research
-
-    async def draft_claim(
-        self,
-        case_context: str,
-        research: LegalResearch,
-        language: str = "ru",
-    ):
-        draft = await super().draft_claim(case_context, research, language=language)
-        if requires_material_law("\n".join([case_context, *draft.requests])):
-            draft.legal_basis = inject_material_basis(list(draft.legal_basis), research)
-            if not has_material_basis(draft.legal_basis):
-                _add_note(
-                    draft,
-                    "Основное требование иска не имеет отдельной VERIFIED материально-правовой опоры; "
-                    "ГПК, подсудность, госпошлина и судебные расходы её не заменяют.",
-                )
-        return draft
 
     async def draft_pretrial(
         self,
@@ -209,21 +191,6 @@ class AdditiveLegalGuardService(PretrialProductionService):
         if requires_material_law(case_context) and not has_material_verified(research):
             mark_missing_material_law(research, "юридической конструкции договора")
         return research
-
-    async def draft_contract(
-        self,
-        case_context: str,
-        research: LegalResearch,
-        language: str = "ru",
-    ) -> ContractDraft:
-        draft = await super().draft_contract(case_context, research, language=language)  # type: ignore[misc]
-        if requires_material_law(case_context) and not material_verified_claims(research):
-            _add_note(
-                draft,
-                "Не подтверждена материально-правовая основа выбранной договорной конструкции; "
-                "договор требует дополнительной юридической проверки.",
-            )
-        return draft
 
 
 def install_global_current_law_guard() -> None:
