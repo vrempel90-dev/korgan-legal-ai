@@ -22,7 +22,8 @@ from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
 from korgan.kazakh_ui import router as kazakh_router
 from korgan.language_context import LanguageContextMiddleware
 from korgan.legal.citation_extensions import install_extended_citation_audit
-from korgan.legal.corpus_refresh import start_corpus_refresh_task
+from korgan.legal.corpus import DEFAULT_DB_PATH
+from korgan.legal.corpus_refresh import autoload_enabled, refresh_corpus_once, start_corpus_refresh_task
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
@@ -60,12 +61,41 @@ async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
     await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
 
 
+async def ensure_startup_corpus_ready() -> None:
+    """Do not accept legal-document requests before the verified core corpus exists.
+
+    Railway containers use ephemeral application storage.  After a fresh deploy
+    the SQLite corpus can therefore be absent for the first minute or two.  The
+    document release guard is intentionally fail-closed and would otherwise
+    reject a perfectly good claim merely because source-bound verification raced
+    the background corpus refresh.  When autoload is enabled and no corpus is
+    present, build it synchronously before Telegram polling starts.  If a healthy
+    corpus already exists, startup remains fast and the normal background refresh
+    keeps it current.
+    """
+    if not autoload_enabled():
+        return
+    if DEFAULT_DB_PATH.exists() and DEFAULT_DB_PATH.stat().st_size > 0:
+        LOGGER.info("KORGAN startup corpus already present path=%s", DEFAULT_DB_PATH)
+        return
+
+    LOGGER.info("KORGAN startup waiting for verified Adilet core corpus path=%s", DEFAULT_DB_PATH)
+    total = await asyncio.to_thread(refresh_corpus_once, DEFAULT_DB_PATH)
+    if total <= 0 or not DEFAULT_DB_PATH.exists():
+        raise RuntimeError("KORGAN startup corpus refresh produced no verified provisions")
+    LOGGER.info("KORGAN startup corpus READY provisions=%d path=%s", total, DEFAULT_DB_PATH)
+
+
 async def main() -> None:
     settings = get_settings()
     # AdditiveLegalGuardService inherits the already deployed pre-trial/claim/
     # response service chain and only performs post-generation fail-closed checks.
     base_bot.service = AdditiveLegalGuardService(settings)
     base_bot.MENU = main_menu()
+
+    # A fresh Railway container must not start accepting document requests while
+    # source-bound verification is still missing its local legal corpus.
+    await ensure_startup_corpus_ready()
 
     bot = LocalizedClientSafeBot(token=settings.telegram_bot_token)
     await configure_telegram_menu(bot)
@@ -92,7 +122,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: intent-locked documents + court-ready/reviewable claim projects + current RK Adilet RAG + RU/KK + no questionnaires"
+        "Starting KORGAN: verified corpus ready + intent-locked documents + court-ready/reviewable claim projects + current RK Adilet RAG + RU/KK + no questionnaires"
     )
     try:
         await dp.start_polling(bot)
