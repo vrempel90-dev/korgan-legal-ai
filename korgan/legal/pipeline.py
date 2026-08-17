@@ -1,37 +1,88 @@
-"""Feature-flagged entry into the local-corpus path.
+"""Feature-flagged, law-aware entry into the local Kazakhstan corpus.
 
-Default behaviour is unchanged: without the flag — or with an empty/absent
-corpus database — this returns nothing and the caller keeps using the existing
-OpenAI web-search research. The flag is read from the environment rather than
-added to Pydantic Settings, so the existing config stays untouched.
-
-Falling back on an empty corpus is deliberate. The database is built by
-`scripts/load_corpus.py` against adilet, which is a separate operational step;
-until it has run, the local path has no provisions to offer and pretending
-otherwise would produce claims with no legal basis at all.
+The local database is a retrieval accelerator, never an authority shortcut.
+Every candidate still goes through KORGAN's existing source-bound verification.
+When the corpus is absent, empty or irrelevant the caller falls back to official
+web research.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 from korgan.legal.corpus import DEFAULT_DB_PATH, LegalCorpus, Provision
+from korgan.legal.rk_catalog import CORE_ACT_IDS, KNOWN_ACTS
 from korgan.legal.validator import build_offer
 
 LOGGER = logging.getLogger(__name__)
 
 FLAG_ENV = "KORGAN_LOCAL_CORPUS"
 _TRUTHY = {"1", "true", "yes", "on"}
-
 DEFAULT_LIMIT = 12
+
+# Domain routing is deliberately conservative: it narrows obvious matters but
+# never prevents web fallback.  Several acts can be searched together.
+_ROUTE_RULES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
+    (re.compile(r"(?i)заработ|зарплат|трудов|работник|работодател|увольнен|отпуск|еңбек|жалақ|жұмыс беруш"), ("TK_RK", "GPK_RK")),
+    (re.compile(r"(?i)потребител|магазин|товар|услуг|подряд|ремонт|заказчик|тұтынуш"), ("ZPP_RK", "GK_RK_OSOBENNAYA", "GK_RK_OBSHAYA", "GPK_RK")),
+    (re.compile(r"(?i)займ|за[её]м|расписк|долг|қарыз|борыш"), ("GK_RK_OSOBENNAYA", "GK_RK_OBSHAYA", "GPK_RK")),
+    (re.compile(r"(?i)семь|брак|супруг|развод|алимент|ребен|отцовств|неке|отбасы|алимент"), ("FAMILY_RK", "GPK_RK")),
+    (re.compile(r"(?i)административн\w*\s+(?:иск|суд|орган|акт)|аппк|кас\s*рк|әкімшілік.*(?:сот|орган|акт)"), ("APPC_RK",)),
+    (re.compile(r"(?i)административн\w*\s+правонаруш|коап|штраф\w*\s+(?:полици|адм)|әкімшілік\s+құқық\s*бұз"), ("KOAP_RK",)),
+    (re.compile(r"(?i)уголовн|преступлен|подозреваем|обвиняем|ук\s*рк|қылмы"), ("UK_RK", "UPK_RK")),
+    (re.compile(r"(?i)исполнительн\w*\s+производ|судебн\w*\s+исполнител|чси\b|атқаруш"), ("ENFORCEMENT_RK", "GPK_RK")),
+    (re.compile(r"(?i)жилищ|квартир|выселен|кск|оси\b|тұрғын\s*үй"), ("HOUSING_RK", "GK_RK_OBSHAYA", "GPK_RK")),
+    (re.compile(r"(?i)банк\w*|кредит|ипотек|микрокредит|мфо|коллектор|несие"), ("BANKS_RK", "MICROFINANCE_RK", "COLLECTION_RK", "GK_RK_OBSHAYA", "GPK_RK")),
+    (re.compile(r"(?i)банкротств\w*\s+граждан|неплатежеспособ|төлем\s*қабілет"), ("CITIZEN_BANKRUPTCY_RK",)),
+    (re.compile(r"(?i)нотариус|нотариаль|исполнительн\w*\s+надпис|нотариат"), ("NOTARIAT_RK",)),
+    (re.compile(r"(?i)земел|участок|землепольз|жер\s+учас"), ("LAND_RK",)),
+    (re.compile(r"(?i)госзакуп|государственн\w*\s+закуп|мемлекеттік\s+сатып"), ("PUBLIC_PROCUREMENT_RK",)),
+    (re.compile(r"(?i)предпринимател|бизнес|ип\b|тоо\b|кәсіпкер"), ("ENTREPRENEUR_RK", "GK_RK_OBSHAYA", "GPK_RK")),
+    (re.compile(r"(?i)социальн|пенси|пособ|соцвыплат|әлеуметтік|зейнет"), ("SOCIAL_RK",)),
+    (re.compile(r"(?i)медицин|здоров|пациент|денсаулық"), ("HEALTH_RK",)),
+    (re.compile(r"(?i)конституц|конституциялық"), ("CONSTITUTION_RK",)),
+)
+
+_EXPLICIT_ACTS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
+    (re.compile(r"(?i)\bгпк\s*рк\b|гражданск\w*\s+процессуальн\w*\s+кодекс"), ("GPK_RK",)),
+    (re.compile(r"(?i)\bтк\s*рк\b|трудов\w*\s+кодекс"), ("TK_RK",)),
+    (re.compile(r"(?i)\bаппк\s*рк\b|\bкас\s*рк\b|административн\w*\s+процедурно"), ("APPC_RK",)),
+    (re.compile(r"(?i)\bкоап\s*рк\b|кодекс.*административн\w*\s+правонаруш"), ("KOAP_RK",)),
+    (re.compile(r"(?i)\bупк\s*рк\b|уголовно-процессуальн\w*\s+кодекс"), ("UPK_RK",)),
+    (re.compile(r"(?i)\bук\s*рк\b|уголовн\w*\s+кодекс"), ("UK_RK",)),
+    (re.compile(r"(?i)\bгк\s*рк\b|гражданск\w*\s+кодекс"), ("GK_RK_OBSHAYA", "GK_RK_OSOBENNAYA")),
+)
+_ARTICLE_NO_RE = re.compile(r"(?i)(?:стать(?:я|и|е|ю|ёй|ей)|ст\.|бап(?:тың|қа|та|та)?|бабы)\s*(\d+(?:-\d+)?)")
 
 
 def local_corpus_enabled() -> bool:
     return os.getenv(FLAG_ENV, "").strip().lower() in _TRUTHY
+
+
+def route_act_ids(query: str) -> tuple[str, ...]:
+    """Return the smallest sensible act set for the query, preserving order."""
+    value = str(query or "")
+    explicit: list[str] = []
+    for pattern, act_ids in _EXPLICIT_ACTS:
+        if pattern.search(value):
+            explicit.extend(act_ids)
+    if explicit:
+        # Litigation questions still benefit from GPK unless another procedure
+        # code was explicitly named.
+        if "GPK_RK" not in explicit and not any(x in explicit for x in ("APPC_RK", "UPK_RK", "KOAP_RK")):
+            explicit.append("GPK_RK")
+        return tuple(dict.fromkeys(x for x in explicit if x in KNOWN_ACTS))
+
+    routed: list[str] = []
+    for pattern, act_ids in _ROUTE_RULES:
+        if pattern.search(value):
+            routed.extend(act_ids)
+    return tuple(dict.fromkeys(x for x in routed if x in KNOWN_ACTS))
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,12 +101,10 @@ class CorpusResearch:
 
 
 def open_corpus(path: Path | str | None = None) -> LegalCorpus | None:
-    """Open the corpus, or return None when it has not been built yet."""
     db_path = Path(path or DEFAULT_DB_PATH)
     if not db_path.exists():
         LOGGER.info("KORGAN local corpus not found at %s — using web search", db_path)
         return None
-
     corpus = LegalCorpus(db_path)
     try:
         if corpus.count() == 0:
@@ -69,6 +118,19 @@ def open_corpus(path: Path | str | None = None) -> LegalCorpus | None:
     return corpus
 
 
+def _explicit_article_candidates(active: LegalCorpus, query: str, routed: tuple[str, ...]) -> list[Provision]:
+    numbers = list(dict.fromkeys(_ARTICLE_NO_RE.findall(query or "")))
+    if not numbers or not routed or len(routed) > 3:
+        return []
+    found: list[Provision] = []
+    for act_id in routed:
+        for number in numbers[:4]:
+            for provision in active.get_article(act_id, number):
+                if provision not in found:
+                    found.append(provision)
+    return found
+
+
 def research_from_corpus(
     query: str,
     *,
@@ -77,13 +139,6 @@ def research_from_corpus(
     limit: int = DEFAULT_LIMIT,
     required_article_ids: Iterable[str] | None = None,
 ) -> CorpusResearch | None:
-    """Provisions for this case, or None when the local path is unavailable.
-
-    ``required_article_ids`` lets a deterministic case router add known
-    procedural/core provisions to the candidate set.  Missing required ids do
-    not get invented; they are simply absent, allowing the caller to reject the
-    local result and fall back to source-bound web research.
-    """
     if not local_corpus_enabled():
         return None
 
@@ -93,7 +148,15 @@ def research_from_corpus(
         return None
 
     try:
-        provisions = active.search(query, act_id=act_id, limit=limit)
+        routed = (act_id,) if act_id else route_act_ids(query)
+        provisions = active.search_many(query, routed or None, limit=limit)
+
+        # Exact article references outrank semantic/lexical candidates.
+        exact = _explicit_article_candidates(active, query, routed)
+        if exact:
+            provisions = [*exact, *[item for item in provisions if item.article_id not in {x.article_id for x in exact}]]
+            provisions = provisions[: max(limit, len(exact))]
+
         seen = {provision.article_id for provision in provisions}
         for article_id in required_article_ids or ():
             if article_id in seen:
@@ -113,6 +176,11 @@ def research_from_corpus(
         LOGGER.info("KORGAN local corpus returned nothing for %r — using web search", query[:80])
         return None
 
+    LOGGER.info(
+        "KORGAN routed corpus query acts=%s provisions=%d",
+        ",".join(routed) if routed else "ALL",
+        len(provisions),
+    )
     offered_ids, prompt_block = build_offer(provisions)
     return CorpusResearch(
         provisions=tuple(provisions),
