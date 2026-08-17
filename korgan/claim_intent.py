@@ -18,6 +18,10 @@ _ADVICE_ONLY = re.compile(
     r"^\s*(?:как|каким образом|что нужно(?:,)? чтобы|что нужно для|қалай|не істеу керек|не қажет)\s+(?:подготов\w*|состав\w*|сдел\w*|оформ\w*|дайында\w*|жаса\w*|құрастыр\w*|әзірле\w*)",
     re.IGNORECASE,
 )
+_KK_ADVICE_AFTER_NOUN = re.compile(
+    r"\b(?:талап\s+қою\s+арыз\w*|талап\s+арыз\w*|талап-арыз\w*)\b.{0,40}\bқалай\b.{0,40}\b(?:дайында\w*|жаса\w*|құрастыр\w*|әзірле\w*|жаз\w*|қалыптастыр\w*)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def is_claim_drafting_request(text: str | None) -> bool:
@@ -26,6 +30,6 @@ def is_claim_drafting_request(text: str | None) -> bool:
     cleaned = " ".join(text.split())
     if not _CLAIM_NOUN.search(cleaned):
         return False
-    if _ADVICE_ONLY.search(cleaned):
+    if _ADVICE_ONLY.search(cleaned) or _KK_ADVICE_AFTER_NOUN.search(cleaned):
         return False
     return bool(_CLAIM_ACTION.search(cleaned) or _CLAIM_WANT.search(cleaned))
