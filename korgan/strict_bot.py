@@ -19,8 +19,9 @@ from korgan.legal.corpus_refresh import start_corpus_refresh_task
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
+from korgan.pretrial import PretrialProductionService
+from korgan.pretrial_runtime import router as pretrial_router
 from korgan.reply_menu_handlers import router as reply_menu_router
-from korgan.response_legal import ProductionOpenAILegalService
 from korgan.response_menu_handlers import router as response_router
 from korgan.ui import main_menu
 
@@ -35,7 +36,7 @@ async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
 async def main() -> None:
     settings = get_settings()
     install_kazakh_citation_compat()
-    base_bot.service = ProductionOpenAILegalService(settings)
+    base_bot.service = PretrialProductionService(settings)
     base_bot.MENU = main_menu()
     install_client_safe_runtime()
 
@@ -52,12 +53,13 @@ async def main() -> None:
     dp.include_router(start_router)
     dp.include_router(safety_router)
     dp.include_router(contact_router)
+    dp.include_router(pretrial_router)
     dp.include_router(response_router)
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
     corpus_task = start_corpus_refresh_task()
-    LOGGER.info("Starting KORGAN: client-safe RU/KK UI + verified corpus + claims + responses + contracts")
+    LOGGER.info("Starting KORGAN: client-safe RU/KK UI + verified corpus + claims + responses + contracts + button-only pretrial")
     try:
         await dp.start_polling(bot)
     finally:
