@@ -75,7 +75,12 @@ def test_model_cannot_add_unrequested_penalty() -> None:
     draft = _draft()
     context = "ИИН 900000000001. Проценты договором не предусмотрены. Неустойка договором не предусмотрена."
     _apply_verified_article_353(context, _verified_353(), draft, filing_date=date(2026, 8, 16))
-    assert len(draft.requests) == 1
+    # The model-written penalty must disappear.  The deterministic state-duty
+    # reimbursement request is a separate, legitimate request and is expected.
+    assert len(draft.requests) == 2
+    assert any("основной долг 800 000" in item for item in draft.requests)
+    assert sum("государственной пошлины" in item.lower() for item in draft.requests) == 1
+    assert not any("353" in item or "процент" in item.lower() for item in draft.requests)
     assert draft.price_of_claim == "800 000 тенге"
     assert draft.late_interest == ""
 
