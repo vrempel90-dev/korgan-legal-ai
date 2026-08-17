@@ -20,6 +20,7 @@ import re
 from typing import Any
 
 from korgan.claim_quality_hotfix import FILING_ACTION_PREFIX, _patched_assess_document_quality
+from korgan.i18n import KK, normalize_language
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.professional_claim_finalizer import sanitize_prayer_requests
 from korgan.request_basis_coverage import ensure_request_basis_coverage
@@ -83,6 +84,15 @@ def _add_filing_action(draft: ClaimDraft, message: str) -> None:
     marker = FILING_ACTION_PREFIX + message
     if marker not in draft.verification_notes:
         draft.verification_notes.append(marker)
+
+
+def _all_filing_actions(draft: ClaimDraft) -> list[str]:
+    return list(dict.fromkeys(
+        str(note)[len(FILING_ACTION_PREFIX):].strip()
+        for note in draft.verification_notes
+        if str(note).startswith(FILING_ACTION_PREFIX)
+        and str(note)[len(FILING_ACTION_PREFIX):].strip()
+    ))
 
 
 def add_gpk_filing_actions(case_context: str, research: LegalResearch, draft: ClaimDraft) -> list[str]:
@@ -187,6 +197,40 @@ def substantive_release_defects(
     return list(dict.fromkeys(defects))
 
 
+class _DeliveryProbe:
+    """Delegate a Telegram Message while recording whether Word was delivered."""
+
+    def __init__(self, target: Any) -> None:
+        self._target = target
+        self.document_sent = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._target, name)
+
+    async def answer_document(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._target.answer_document(*args, **kwargs)
+        self.document_sent = True
+        return result
+
+
+async def _send_filing_checklist(message: Any, state: Any, draft: ClaimDraft) -> None:
+    actions = _all_filing_actions(draft)
+    if not actions:
+        return
+    data = await state.get_data()
+    lang = normalize_language(str(data.get("language", "ru")))
+    items = "\n".join(f"• {item}" for item in actions[:8])
+    if lang == KK:
+        text = (
+            "📌 Word-жоба дайын. Сотқа нақты берер алдында мына деректерді толтырып/тексеріңіз:\n" + items
+        )
+    else:
+        text = (
+            "📌 Word-проект сформирован. Перед фактической подачей в суд обязательно заполните/проверьте:\n" + items
+        )
+    await message.answer(text)
+
+
 def install_court_ready_claim_guard() -> None:
     """Wrap the already installed claim sender; do not replace claim generation."""
     from korgan import bot as base_bot
@@ -218,7 +262,11 @@ def install_court_ready_claim_guard() -> None:
                 reply_markup=base_bot.MENU,
             )
             return
-        await original_send(message, state, context=context, research=research, draft=draft)
+
+        probe = _DeliveryProbe(message)
+        await original_send(probe, state, context=context, research=research, draft=draft)
+        if probe.document_sent:
+            await _send_filing_checklist(message, state, draft)
 
     runtime._send_claim = guarded_send
     runtime._court_ready_claim_guard_installed = True
