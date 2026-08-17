@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import quote
 
 from aiogram import Bot, F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
 from korgan.i18n import KK, normalize_language
@@ -77,8 +78,8 @@ async def send_consultation_cta(bot: Bot, chat_id: Any, language: str = "ru") ->
 
 
 @router.callback_query(F.data == "consultation:no")
-async def consultation_no(callback: CallbackQuery) -> None:
-    lang = normalize_language("kk" if "Иә" in str(getattr(callback.message, "text", "")) else "ru")
+async def consultation_no(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = normalize_language(str((await state.get_data()).get("language", "ru")))
     await callback.answer("Жақсы" if lang == KK else "Хорошо")
     if callback.message is not None:
         await callback.message.edit_reply_markup(reply_markup=None)
