@@ -93,9 +93,11 @@ class LocalizedClientSafeBot(ClientSafeBot):
 
         # The legal document has already been delivered. CTA failure must never
         # turn that successful delivery into a false generation error upstream.
+        # Pass the original generated file so the CTA can identify this exact
+        # document and assign a per-case/per-document reference.
         if generated:
             try:
-                await send_consultation_cta(self, chat_id, language)
+                await send_consultation_cta(self, chat_id, language, document=document)
             except Exception:
                 LOGGER.exception("KORGAN consultation CTA delivery failed chat_id=%s", chat_id)
         return result
