@@ -7,96 +7,119 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+from korgan.i18n import KK, RU, button, normalize_language, tr
 
-def main_menu() -> ReplyKeyboardMarkup:
-    """Persistent Telegram keyboard like the original KORGAN interface."""
+
+def main_menu(language: str = RU) -> ReplyKeyboardMarkup:
+    """Persistent Telegram keyboard in the selected client language."""
+    lang = normalize_language(language)
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="⚖️ Консультация"),
-                KeyboardButton(text="📄 Документ"),
+                KeyboardButton(text=button(lang, "consultation")),
+                KeyboardButton(text=button(lang, "document")),
             ],
             [
-                KeyboardButton(text="💰 Цены"),
-                KeyboardButton(text="📦 Моё дело"),
+                KeyboardButton(text=button(lang, "prices")),
+                KeyboardButton(text=button(lang, "case")),
             ],
-            [KeyboardButton(text="👨‍⚖️ Ваш персональный юрист")],
-            [KeyboardButton(text="❓ Помощь и частые вопросы")],
-            [KeyboardButton(text="🆘 Техподдержка")],
-            [KeyboardButton(text="⭐ Оставить отзыв")],
-            [KeyboardButton(text="🗑 Удалить мои данные")],
+            [KeyboardButton(text=button(lang, "lawyer"))],
+            [KeyboardButton(text=button(lang, "help"))],
+            [KeyboardButton(text=button(lang, "support"))],
+            [KeyboardButton(text=button(lang, "feedback"))],
+            [KeyboardButton(text=button(lang, "language"))],
+            [KeyboardButton(text=button(lang, "delete"))],
         ],
         resize_keyboard=True,
         is_persistent=True,
-        input_field_placeholder="Выберите действие или напишите сообщение…",
+        input_field_placeholder=(
+            "Әрекетті таңдаңыз немесе хабарлама жазыңыз…"
+            if lang == KK
+            else "Выберите действие или напишите сообщение…"
+        ),
     )
 
 
-def documents_menu() -> InlineKeyboardMarkup:
-    """Only real document-generation workflows; no generic «case analysis» item."""
+def language_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⚖️ Исковое заявление", callback_data="doc:claim")],
-            [InlineKeyboardButton(text="🛡 Отзыв на иск", callback_data="doc:response")],
-            [InlineKeyboardButton(text="🤝 Договор", callback_data="doc:contract")],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main")],
+            [InlineKeyboardButton(text="🇰🇿 Қазақша", callback_data="lang:kk")],
+            [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang:ru")],
         ]
     )
 
 
-def case_menu() -> InlineKeyboardMarkup:
+def documents_menu(language: str = RU) -> InlineKeyboardMarkup:
+    lang = normalize_language(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📎 Добавить документ / скан", callback_data="doc:upload")],
-            [InlineKeyboardButton(text="🧹 Очистить дело", callback_data="doc:clear")],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main")],
+            [InlineKeyboardButton(text=button(lang, "claim"), callback_data="doc:claim")],
+            [InlineKeyboardButton(text=button(lang, "response"), callback_data="doc:response")],
+            [InlineKeyboardButton(text=button(lang, "contract"), callback_data="doc:contract")],
+            [InlineKeyboardButton(text=button(lang, "main"), callback_data="menu:main")],
         ]
     )
 
 
-def back_to_main() -> InlineKeyboardMarkup:
+def case_menu(language: str = RU) -> InlineKeyboardMarkup:
+    lang = normalize_language(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main")]
+            [InlineKeyboardButton(text=button(lang, "upload"), callback_data="doc:upload")],
+            [InlineKeyboardButton(text=button(lang, "clear"), callback_data="doc:clear")],
+            [InlineKeyboardButton(text=button(lang, "main"), callback_data="menu:main")],
         ]
     )
 
 
-def help_menu() -> InlineKeyboardMarkup:
+def back_to_main(language: str = RU) -> InlineKeyboardMarkup:
+    lang = normalize_language(language)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=button(lang, "main"), callback_data="menu:main")]]
+    )
+
+
+def help_menu(language: str = RU) -> InlineKeyboardMarkup:
+    lang = normalize_language(language)
+    rows = (
+        [
+            ("⚖️ KORGAN не істей алады", "help:capabilities"),
+            ("📎 Құжатты қалай жүктеуге болады", "help:upload"),
+            ("❗ Құжат толық емес болып шықты", "help:incomplete"),
+            ("🔐 Дербес деректер", "help:privacy"),
+        ]
+        if lang == KK
+        else [
+            ("⚖️ Что умеет KORGAN", "help:capabilities"),
+            ("📎 Как загрузить документ", "help:upload"),
+            ("❗ Документ получился неполным", "help:incomplete"),
+            ("🔐 Персональные данные", "help:privacy"),
+        ]
+    )
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⚖️ Что умеет KORGAN", callback_data="help:capabilities")],
-            [InlineKeyboardButton(text="📎 Как загрузить документ", callback_data="help:upload")],
-            [InlineKeyboardButton(text="❗ Документ получился неполным", callback_data="help:incomplete")],
-            [InlineKeyboardButton(text="🔐 Персональные данные", callback_data="help:privacy")],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main")],
+            *[[InlineKeyboardButton(text=text, callback_data=data)] for text, data in rows],
+            [InlineKeyboardButton(text=button(lang, "main"), callback_data="menu:main")],
         ]
     )
 
 
-def delete_confirm_menu() -> InlineKeyboardMarkup:
+def delete_confirm_menu(language: str = RU) -> InlineKeyboardMarkup:
+    lang = normalize_language(language)
+    yes, cancel = (
+        ("✅ Иә, іс деректерін жою", "↩️ Болдырмау")
+        if lang == KK
+        else ("✅ Да, удалить данные дела", "↩️ Отмена")
+    )
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, удалить данные дела", callback_data="delete:confirm")],
-            [InlineKeyboardButton(text="↩️ Отмена", callback_data="menu:main")],
+            [InlineKeyboardButton(text=yes, callback_data="delete:confirm")],
+            [InlineKeyboardButton(text=cancel, callback_data="menu:main")],
         ]
     )
 
 
-WELCOME_TEXT = (
-    "⚖️ <b>KORGAN Legal AI</b>\n\n"
-    "Юридический AI‑ассистент по законодательству Республики Казахстан.\n\n"
-    "Можно получить консультацию, загрузить PDF/DOCX/TXT, фото или скан, "
-    "подготовить исковое заявление, отзыв на иск или профессиональный договор.\n\n"
-    "🔎 Точные нормы, сроки, госпошлина и подсудность используются только после "
-    "проверки официальных источников. Если подтверждения недостаточно — KORGAN "
-    "покажет <b>NEEDS_VERIFICATION</b>, а не будет угадывать.\n\n"
-    "Выберите нужный раздел 👇"
-)
-
-MAIN_TEXT = "🏠 <b>Главное меню</b>\n\nВыберите нужный раздел 👇"
-
-DOCUMENTS_TEXT = (
-    "📄 <b>Документ</b>\n\n"
-    "Выберите: исковое заявление, отзыв на иск или договор. Готовый документ придёт отдельным файлом .docx."
-)
+# Backward-compatible Russian constants used by older modules.
+WELCOME_TEXT = tr(RU, "welcome")
+MAIN_TEXT = tr(RU, "main")
+DOCUMENTS_TEXT = tr(RU, "documents")
