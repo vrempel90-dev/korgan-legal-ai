@@ -1,20 +1,7 @@
 """The one place in KORGAN that is allowed to put a number on a paragraph.
 
 Every document type — claim, contract, response to a claim — is described as a
-flat list of typed blocks and rendered through :func:`render_blocks`. The rule
-the renderer enforces is document-type independent:
-
-* ``NumberedItem`` is a *structural* clause (1., 1.1., 1.1.1.). Its number is
-  computed from position and written by the renderer.
-* ``AutoNumberedList`` is a genuine Word list (просительная часть, приложения)
-  and is the only construct that touches Word auto-numbering.
-* ``Prose`` is free narrative text. It never receives a number, never joins a
-  list, and never carries ``w:numPr``.
-
-The defect this closes: exporters used to hand ``style="List Number"`` to whole
-argument sections, so ordinary narrative sentences came out as "3. Согласно
-позиции Ответчика...". Prose and structure are now different types, so the
-mistake is no longer expressible.
+flat list of typed blocks and rendered through :func:`render_blocks`.
 """
 
 from __future__ import annotations
@@ -32,8 +19,6 @@ from korgan.contract_numbering import strip_leading_number
 
 @dataclass(slots=True)
 class Heading:
-    """A bold, unnumbered caption such as «Возражения по существу»."""
-
     text: str
     centered: bool = False
     space_before: int = 10
@@ -41,8 +26,6 @@ class Heading:
 
 @dataclass(slots=True)
 class Prose:
-    """Free narrative text. Never numbered, never part of a list."""
-
     text: str
     indent_levels: int = 0
     first_line_indent: bool = True
@@ -52,13 +35,6 @@ class Prose:
 
 @dataclass(slots=True)
 class NumberedItem:
-    """A structural clause whose number is generated from its position.
-
-    ``level`` 0 is a top-level item (1.), 1 a clause (1.1.), 2 a subclause
-    (1.1.1.). Numbering is computed by the renderer; ``text`` must never carry a
-    literal number and is stripped defensively if it does.
-    """
-
     text: str
     level: int = 0
     bold: bool = False
@@ -66,10 +42,12 @@ class NumberedItem:
 
 @dataclass(slots=True)
 class AutoNumberedList:
-    """A real Word numbered list — the only block that uses Word numbering.
+    """A numbered list.
 
-    ``restart`` clones the list style with ``startOverride=1`` so that, for
-    example, приложения start from 1 instead of continuing просительная часть.
+    ``restart=True`` is used for independent legal-document sections such as
+    «Приложения». Those sections are rendered with deterministic visible
+    numbers starting at 1 instead of relying on Word's inherited list state.
+    This prevents a request list ending at 4 from making attachments start at 5.
     """
 
     items: list[str] = field(default_factory=list)
@@ -85,7 +63,6 @@ Block = Heading | Prose | NumberedItem | AutoNumberedList | Spacer
 
 
 def advance(counters: list[int], level: int) -> str:
-    """Advance positional counters and return the number for ``level``."""
     if level < 0:
         raise ValueError("numbering level must not be negative")
     while len(counters) <= level:
@@ -96,7 +73,7 @@ def advance(counters: list[int], level: int) -> str:
 
 
 def _restarted_num_id(doc, style_id: str) -> int | None:
-    """Clone the style's numbering with startOverride=1."""
+    """Legacy Word-list restart helper kept for non-critical compatibility."""
     style_num_id = None
     for style in doc.styles.element.findall(qn("w:style")):
         if style.get(qn("w:styleId")) != style_id:
@@ -146,8 +123,22 @@ def _apply_num_id(paragraph: Paragraph, num_id: int) -> None:
     num_pr.get_or_add_numId().val = num_id
 
 
+def _render_forced_restart(doc, items: list[str]) -> None:
+    """Render an independent list with literal 1..N numbering.
+
+    Word list styles can inherit the previous ``numId`` depending on the viewer
+    and template. Court documents need deterministic visible numbering, so an
+    explicitly restarted section does not depend on that mutable Word state.
+    """
+    for index, item in enumerate(items, start=1):
+        paragraph = doc.add_paragraph()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        paragraph.paragraph_format.left_indent = Cm(0.8)
+        paragraph.paragraph_format.first_line_indent = Cm(-0.8)
+        paragraph.add_run(f"{index}. {strip_leading_number(item)}")
+
+
 def render_blocks(doc, blocks: list[Block]) -> None:
-    """Render typed blocks into ``doc``, generating every number exactly once."""
     counters: list[int] = []
 
     for block in blocks:
@@ -192,11 +183,11 @@ def render_blocks(doc, blocks: list[Block]) -> None:
             continue
 
         if isinstance(block, AutoNumberedList):
-            num_id = _restarted_num_id(doc, "ListNumber") if block.restart else None
+            if block.restart:
+                _render_forced_restart(doc, block.items)
+                continue
             for item in block.items:
-                paragraph = doc.add_paragraph(item, style="List Number")
-                if num_id is not None:
-                    _apply_num_id(paragraph, num_id)
+                doc.add_paragraph(strip_leading_number(item), style="List Number")
             continue
 
         raise TypeError(f"unsupported document block: {type(block).__name__}")
