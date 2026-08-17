@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class ActSpec:
+    act_id: str
+    adilet_id: str
+    title_ru: str
+    short_title: str
+    core: bool = False
+
+
+# KORGAN keeps the proven civil/labour filing corpus as CORE.  The extended
+# catalogue broadens consultation/research coverage, but a temporary failure of
+# an optional act must never make the whole production corpus unavailable.
+ACT_SPECS: tuple[ActSpec, ...] = (
+    ActSpec("GK_RK_OBSHAYA", "K940001000_", "Гражданский кодекс Республики Казахстан (Общая часть)", "ГК РК (Общая часть)", True),
+    ActSpec("GK_RK_OSOBENNAYA", "K990000409_", "Гражданский кодекс Республики Казахстан (Особенная часть)", "ГК РК (Особенная часть)", True),
+    ActSpec("GPK_RK", "K1500000377", "Гражданский процессуальный кодекс Республики Казахстан", "ГПК РК", True),
+    ActSpec("NK_RK_GOSPOSHLINA", "K2500000214", "Кодекс Республики Казахстан «О налогах и других обязательных платежах в бюджет»", "НК РК", True),
+    ActSpec("ZPP_RK", "Z100000274_", "Закон Республики Казахстан «О защите прав потребителей»", "Закон РК «О защите прав потребителей»", True),
+    ActSpec("TK_RK", "K1500000414", "Трудовой кодекс Республики Казахстан", "ТК РК", True),
+    ActSpec("CONSTITUTION_RK", "K950001000_", "Конституция Республики Казахстан", "Конституция РК"),
+    ActSpec("APPC_RK", "K2000000350", "Административный процедурно-процессуальный кодекс Республики Казахстан", "АППК РК"),
+    ActSpec("KOAP_RK", "K1400000235", "Кодекс Республики Казахстан об административных правонарушениях", "КоАП РК"),
+    ActSpec("UK_RK", "K1400000226", "Уголовный кодекс Республики Казахстан", "УК РК"),
+    ActSpec("UPK_RK", "K1400000231", "Уголовно-процессуальный кодекс Республики Казахстан", "УПК РК"),
+    ActSpec("FAMILY_RK", "K1100000518", "Кодекс Республики Казахстан «О браке (супружестве) и семье»", "Кодекс РК о браке и семье"),
+    ActSpec("ENTREPRENEUR_RK", "K1500000375", "Предпринимательский кодекс Республики Казахстан", "Предпринимательский кодекс РК"),
+    ActSpec("SOCIAL_RK", "K2300000224", "Социальный кодекс Республики Казахстан", "Социальный кодекс РК"),
+    ActSpec("LAND_RK", "K030000442_", "Земельный кодекс Республики Казахстан", "Земельный кодекс РК"),
+    ActSpec("HEALTH_RK", "K2000000360", "Кодекс Республики Казахстан «О здоровье народа и системе здравоохранения»", "Кодекс РК о здоровье народа"),
+    ActSpec("PUBLIC_PROCUREMENT_RK", "Z2400000106", "Закон Республики Казахстан «О государственных закупках»", "Закон РК о государственных закупках"),
+    ActSpec("ENFORCEMENT_RK", "Z100000261_", "Закон Республики Казахстан «Об исполнительном производстве и статусе судебных исполнителей»", "Закон РК об исполнительном производстве"),
+    ActSpec("HOUSING_RK", "Z970000094_", "Закон Республики Казахстан «О жилищных отношениях»", "Закон РК о жилищных отношениях"),
+    ActSpec("BANKS_RK", "Z950002444_", "Закон Республики Казахстан «О банках и банковской деятельности в Республике Казахстан»", "Закон РК о банках"),
+    ActSpec("MICROFINANCE_RK", "Z1200000056", "Закон Республики Казахстан «О микрофинансовой деятельности»", "Закон РК о микрофинансовой деятельности"),
+    ActSpec("COLLECTION_RK", "Z1700000062", "Закон Республики Казахстан «О коллекторской деятельности»", "Закон РК о коллекторской деятельности"),
+    ActSpec("CITIZEN_BANKRUPTCY_RK", "Z2200000178", "Закон Республики Казахстан «О восстановлении платежеспособности и банкротстве граждан Республики Казахстан»", "Закон РК о банкротстве граждан"),
+    ActSpec("NOTARIAT_RK", "Z970000155_", "Закон Республики Казахстан «О нотариате»", "Закон РК о нотариате"),
+    ActSpec("EDUCATION_RK", "Z070000319_", "Закон Республики Казахстан «Об образовании»", "Закон РК об образовании"),
+    ActSpec("PUBLIC_SERVICE_RK", "Z1500000416", "Закон Республики Казахстан «О государственной службе Республики Казахстан»", "Закон РК о государственной службе"),
+    ActSpec("ROAD_TRAFFIC_RK", "Z1400000194", "Закон Республики Казахстан «О дорожном движении»", "Закон РК о дорожном движении"),
+    ActSpec("ADVOCACY_RK", "Z1800000176", "Закон Республики Казахстан «Об адвокатской деятельности и юридической помощи»", "Закон РК об адвокатской деятельности"),
+    ActSpec("MIGRATION_RK", "Z1100000477", "Закон Республики Казахстан «О миграции населения»", "Закон РК о миграции населения"),
+    ActSpec("LANGUAGES_RK", "Z970000151_", "Закон Республики Казахстан «О языках в Республике Казахстан»", "Закон РК о языках"),
+)
+
+ACT_BY_ID = {spec.act_id: spec for spec in ACT_SPECS}
+CORE_ACT_IDS = frozenset(spec.act_id for spec in ACT_SPECS if spec.core)
+OPTIONAL_ACT_IDS = frozenset(spec.act_id for spec in ACT_SPECS if not spec.core)
+
+KNOWN_ACTS = {spec.act_id: (spec.adilet_id, spec.title_ru) for spec in ACT_SPECS}
+ACT_SHORT_TITLES = {spec.act_id: spec.short_title for spec in ACT_SPECS}
+
+# Normalized citation labels understood by the final citation audit.  Multiple
+# aliases can intentionally resolve to one local act.
+CITATION_ACT_IDS: dict[str, tuple[str, ...]] = {
+    "ГК РК": ("GK_RK_OBSHAYA", "GK_RK_OSOBENNAYA"),
+    "ГПК РК": ("GPK_RK",),
+    "НК РК": ("NK_RK_GOSPOSHLINA",),
+    "ТК РК": ("TK_RK",),
+    "АППК РК": ("APPC_RK",),
+    "КАС РК": ("APPC_RK",),
+    "КоАП РК": ("KOAP_RK",),
+    "УК РК": ("UK_RK",),
+    "УПК РК": ("UPK_RK",),
+    "Конституция РК": ("CONSTITUTION_RK",),
+}
