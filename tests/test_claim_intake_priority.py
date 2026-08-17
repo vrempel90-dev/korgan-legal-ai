@@ -31,10 +31,10 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _state(mode: str) -> FSMContext:
+async def _state(mode: str) -> FSMContext:
     storage = MemoryStorage()
     state = FSMContext(storage=storage, key=StorageKey(bot_id=1, chat_id=1, user_id=1))
-    _run(state.set_data({
+    await state.set_data({
         "mode": mode,
         "pending_fields": [
             "место нахождения истца",
@@ -43,7 +43,7 @@ def _state(mode: str) -> FSMContext:
         ],
         "facts": [CASE],
         "language": "ru",
-    }))
+    })
     return state
 
 
@@ -66,7 +66,7 @@ def test_exact_corporate_answer_clears_all_three_missing_fields() -> None:
 
 def test_active_claim_details_text_is_reserved_for_intake() -> None:
     async def scenario() -> None:
-        state = _state("claim_details")
+        state = await _state("claim_details")
         message = SimpleNamespace(text=ANSWER)
         assert await ActiveClaimReplyFilter()(message, state) is True
 
@@ -75,7 +75,7 @@ def test_active_claim_details_text_is_reserved_for_intake() -> None:
 
 def test_even_repeated_claim_command_is_reserved_while_waiting_for_fields() -> None:
     async def scenario() -> None:
-        state = _state("claim_details")
+        state = await _state("claim_details")
         message = SimpleNamespace(text="Подготовь исковое заявление о взыскании 600 000 тенге")
         assert await ActiveClaimReplyFilter()(message, state) is True
 
@@ -84,7 +84,7 @@ def test_even_repeated_claim_command_is_reserved_while_waiting_for_fields() -> N
 
 def test_navigation_button_is_not_trapped_by_claim_intake() -> None:
     async def scenario() -> None:
-        state = _state("claim_details")
+        state = await _state("claim_details")
         message = SimpleNamespace(text="📄 Документ")
         assert await ActiveClaimReplyFilter()(message, state) is False
 
@@ -93,7 +93,7 @@ def test_navigation_button_is_not_trapped_by_claim_intake() -> None:
 
 def test_claim_callback_is_intercepted_without_restarting_preflight() -> None:
     async def scenario() -> None:
-        state = _state("claim_details")
+        state = await _state("claim_details")
         callback = SimpleNamespace()
         assert await ClaimButtonWhileWaitingFilter()(callback, state) is True
 
