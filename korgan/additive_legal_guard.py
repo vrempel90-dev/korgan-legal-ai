@@ -1,8 +1,8 @@
 """Additive legal-release layer; existing production generators stay authoritative.
 
 Every override calls the already deployed implementation first and only adds a
-fail-closed post-check.  No intake, DOCX renderer, deterministic calculation or
-menu behavior is replaced here.
+fail-closed post-check.  No intake, contract generator, DOCX renderer,
+deterministic calculation or menu behavior is replaced here.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from korgan.legal.current_law_guard import is_current_source
-from korgan.legal_types import ContractDraft, LegalResearch, VerificationStatus
+from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.material_law_guard import (
     has_material_basis,
     has_material_verified,
@@ -64,7 +64,14 @@ def _pretrial_basis_coverage(case_context: str, draft: PretrialDraft, research: 
 
     draft.legal_basis = list(dict.fromkeys(basis))
     substantive_text = "\n".join([case_context, *draft.demands, *draft.facts])
-    if requires_material_law(substantive_text) and not has_material_basis(draft.legal_basis):
+    # If a specific remedy rule has already identified the gap, do not add a
+    # second generic version of the same defect.  The generic guard exists for
+    # substantive demands that are not yet represented by a dedicated rule.
+    if (
+        not missing
+        and requires_material_law(substantive_text)
+        and not has_material_basis(draft.legal_basis)
+    ):
         missing.append("материально-правовое основание основного требования")
 
     missing = list(dict.fromkeys(missing))
@@ -111,7 +118,7 @@ def _response_basis_coverage(draft: ResponseToClaimDraft, research: LegalResearc
 
 
 class AdditiveLegalGuardService(PretrialProductionService):
-    """Existing KORGAN production service plus universal material-law guards."""
+    """Existing KORGAN production service plus additive pre-trial/response guards."""
 
     async def draft_pretrial(
         self,
@@ -156,45 +163,6 @@ class AdditiveLegalGuardService(PretrialProductionService):
     ) -> ResponseToClaimDraft:
         draft = await super().draft_response_to_claim(case_context, research, language=language)  # type: ignore[misc]
         _response_basis_coverage(draft, research)
-        return draft
-
-    async def research_contract(
-        self,
-        case_context: str,
-        language: str = "ru",
-    ) -> LegalResearch:
-        research = sanitize_research_sources(
-            await super().research_contract(case_context, language=language)  # type: ignore[misc]
-        )
-        if has_material_verified(research):
-            return research
-
-        focus = (
-            "\n\nВНУТРЕННИЙ ФОКУС ИССЛЕДОВАНИЯ KORGAN: для конструкции договора нужны именно действующие материальные нормы "
-            "о соответствующем виде обязательства, предмете, правах/обязанностях, исполнении и прекращении. "
-            "Процессуальные статьи, госпошлина и судебные расходы не подтверждают правовую конструкцию договора. "
-            "Квалифицируй вид договора только по фактам пользователя."
-        )
-        supplement = sanitize_research_sources(
-            await super().research_contract(case_context + focus, language=language)  # type: ignore[misc]
-        )
-        research = sanitize_research_sources(merge_research(research, supplement))
-        if not has_material_verified(research):
-            mark_missing_material_law(research, "правовой конструкции договора")
-        return research
-
-    async def draft_contract(
-        self,
-        case_context: str,
-        research: LegalResearch,
-        language: str = "ru",
-    ) -> ContractDraft:
-        draft = await super().draft_contract(case_context, research, language=language)  # type: ignore[misc]
-        if not has_material_verified(research):
-            _add_note(
-                draft,
-                "Правовая конструкция договора не имеет VERIFIED материально-правовой основы; процессуальные нормы не заменяют договорное право.",
-            )
         return draft
 
 
