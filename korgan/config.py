@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     max_case_text_chars: int = 60000
     admin_telegram_ids: str = ""
 
+    # Claim -> live-lawyer WhatsApp handoff. These are deliberately optional so
+    # production stays fail-closed until Meta Cloud API is configured.
+    whatsapp_access_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_graph_api_version: str = ""
+    whatsapp_review_template_name: str = ""
+    whatsapp_review_template_language: str = "ru"
+    whatsapp_lawyer_number: str = "77005000553"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -37,6 +46,19 @@ class Settings(BaseSettings):
             if value:
                 result.add(int(value))
         return result
+
+    @property
+    def whatsapp_review_ready(self) -> bool:
+        return all(
+            value.strip()
+            for value in (
+                self.whatsapp_access_token,
+                self.whatsapp_phone_number_id,
+                self.whatsapp_graph_api_version,
+                self.whatsapp_review_template_name,
+                self.whatsapp_lawyer_number,
+            )
+        )
 
 
 @lru_cache(maxsize=1)
