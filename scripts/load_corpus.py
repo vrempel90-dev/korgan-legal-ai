@@ -28,7 +28,10 @@ MIN_CYRILLIC_SHARE = 0.5
 
 _CYRILLIC = re.compile(r"[а-яё]", re.IGNORECASE)
 _LETTER = re.compile(r"[^\W\d_]", re.UNICODE)
-_ARTICLE_HEAD = re.compile(r"Статья\s+(\d+(?:-\d+)?)\.\s*([^\n]*)")
+# Most Adilet acts use «Статья 1. Название», while the 2026 Constitution uses
+# headings such as «Статья 1» without a dot.  Requiring a line boundary keeps
+# the optional dot from turning inline references into false article headings.
+_ARTICLE_HEAD = re.compile(r"(?m)^\s*Статья\s+(\d+(?:-\d+)?)\.?\s*([^\n]*)$")
 _ITEM_HEAD = re.compile(r"^\s*(\d+(?:-\d+)?)\.\s+(?=\S)", re.MULTILINE)
 _WHITESPACE = re.compile(r"[ \t\xa0]+")
 _BLANK_LINES = re.compile(r"\n{3,}")
@@ -113,7 +116,7 @@ def check_source(url: str, text: str) -> None:
 
     article_match = _ARTICLE_HEAD.search(text)
     if article_match is None:
-        raise SourceRejected("в тексте не найдено ни одной «Статья N.» — страница не является актом")
+        raise SourceRejected("в тексте не найдено ни одного заголовка «Статья N» — страница не является актом")
 
     # Status/title live before the first normative article.  Looking only at
     # that header avoids false positives from historical footnotes inside a
