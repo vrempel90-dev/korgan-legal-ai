@@ -8,6 +8,7 @@ import time
 
 from korgan.legal_routing import detect_claim_profile
 from korgan.legal_types import LegalResearch, VerificationStatus
+from korgan.local_corpus_runtime import research_case_from_local_corpus
 from korgan.robust_production_legal import ProductionOpenAILegalService as _RobustService
 from korgan.verified_openai import _actual_response_urls
 
@@ -75,6 +76,30 @@ def _core_profile_supported(profile_code: str, research: LegalResearch) -> bool:
     if profile_code == "loan_debt":
         return _has_article(research, "715") and _has_article(research, "722")
     return True
+
+
+def _local_corpus_sufficient(profile_code: str, research: LegalResearch) -> bool:
+    """Local research must cover both claim form and material law."""
+    if not _core_profile_supported(profile_code, research):
+        return False
+    if not (_has_article(research, "148") and _has_article(research, "149")):
+        return False
+    return any(
+        "процессуаль" not in title.lower() and "налог" not in title.lower()
+        for title in research.applicable_law
+    )
+
+
+def _local_required_article_ids(profile) -> tuple[str, ...]:
+    required = ["GPK_RK:148", "GPK_RK:149"]
+    if profile.code == "loan_debt":
+        # Article 716 is offered as well, while the existing runtime only makes
+        # 715 + 722 mandatory for the core loan/debt qualification.
+        required.extend(
+            f"GK_RK_OSOBENNAYA:{article}"
+            for article in profile.required_article_hints
+        )
+    return tuple(required)
 
 
 class ProductionOpenAILegalService(_RobustService):
@@ -150,6 +175,39 @@ class ProductionOpenAILegalService(_RobustService):
             return cached[1]
 
         started = time.perf_counter()
+
+        # Prefer the locally cached official provisions only when the complete
+        # minimum backbone is present.  Any missing article, validation defect,
+        # or empty DB returns None and leaves the existing source-bound web path
+        # untouched.
+        local_query = (
+            f"{profile.research_focus}\n"
+            "Для формы искового заявления проверь содержание и приложения по ГПК РК.\n"
+            f"{case_context}"
+        )
+        local = await research_case_from_local_corpus(
+            self,
+            case_context,
+            language,
+            query=local_query,
+            required_article_ids=_local_required_article_ids(profile),
+        )
+        if local is not None:
+            local = _sanitize_civil_research(local)
+            if _local_corpus_sufficient(profile.code, local):
+                self._claim_research_cache[cache_key] = (time.monotonic(), local)
+                LOGGER.info(
+                    "KORGAN civil claim local corpus HIT seconds=%.2f profile=%s verified=%d",
+                    time.perf_counter() - started,
+                    profile.code,
+                    len(local.verified_claims),
+                )
+                return local
+            LOGGER.info(
+                "KORGAN civil claim local corpus incomplete profile=%s — using web search",
+                profile.code,
+            )
+
         # A loan case gets medium context once.  This is much cheaper than the
         # previous low pass followed by a mandatory high-context second pass.
         search_size = "medium" if profile.code == "loan_debt" else profile.search_context_size

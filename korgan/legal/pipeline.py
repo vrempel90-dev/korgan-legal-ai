@@ -17,6 +17,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
 from korgan.legal.corpus import DEFAULT_DB_PATH, LegalCorpus, Provision
 from korgan.legal.validator import build_offer
@@ -74,11 +75,14 @@ def research_from_corpus(
     corpus: LegalCorpus | None = None,
     act_id: str | None = None,
     limit: int = DEFAULT_LIMIT,
+    required_article_ids: Iterable[str] | None = None,
 ) -> CorpusResearch | None:
     """Provisions for this case, or None when the local path is unavailable.
 
-    None means «use the existing path», not «no law applies» — the distinction
-    matters, because the fallback is a working research pass, not a failure.
+    ``required_article_ids`` lets a deterministic case router add known
+    procedural/core provisions to the candidate set.  Missing required ids do
+    not get invented; they are simply absent, allowing the caller to reject the
+    local result and fall back to source-bound web research.
     """
     if not local_corpus_enabled():
         return None
@@ -90,6 +94,17 @@ def research_from_corpus(
 
     try:
         provisions = active.search(query, act_id=act_id, limit=limit)
+        seen = {provision.article_id for provision in provisions}
+        for article_id in required_article_ids or ():
+            if article_id in seen:
+                continue
+            provision = active.get(article_id)
+            if provision is None:
+                continue
+            if act_id is not None and provision.act_id != act_id:
+                continue
+            provisions.append(provision)
+            seen.add(article_id)
     finally:
         if owned:
             active.close()

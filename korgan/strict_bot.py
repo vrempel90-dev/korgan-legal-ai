@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 from aiogram import Bot, Dispatcher
@@ -11,6 +12,7 @@ from korgan import bot as base_bot
 from korgan.admin import router as admin_router
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
+from korgan.legal.corpus_refresh import start_corpus_refresh_task
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.menu_start import router as start_router
 from korgan.reply_menu_handlers import router as reply_menu_router
@@ -50,10 +52,15 @@ async def main() -> None:
     dp.include_router(reply_menu_router)
     dp.include_router(base_bot.router)
 
+    corpus_task = start_corpus_refresh_task()
     LOGGER.info("Starting KORGAN: verified provision text + admin access + claims + responses + contracts")
     try:
         await dp.start_polling(bot)
     finally:
+        if corpus_task is not None:
+            corpus_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await corpus_task
         await bot.session.close()
 
 
