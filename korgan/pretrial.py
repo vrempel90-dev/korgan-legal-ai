@@ -41,14 +41,18 @@ _INTENT_RU = re.compile(r"(?i)\b(?:досудебн\w*\s+претензи\w*|п�
 # Do not terminate the pattern at bare "талап" with a word boundary.
 _INTENT_KK = re.compile(r"(?i)(?:сотқа\s+дейінгі\s+талап\w*|талап\s+хат\w*)")
 _ACTION = re.compile(r"(?i)\b(?:подготов\w*|состав\w*|сформир\w*|сдел\w*|напиш\w*|дайында\w*|жаса\w*|әзірле\w*|құрастыр\w*)\b")
-_ADVICE = re.compile(r"(?i)^\s*(?:как|қалай)\b")
+# Russian advice normally begins with «как». In Kazakh the interrogative «қалай»
+# naturally follows the object: «Сотқа дейінгі талапты қалай дайындауға болады?».
+# Treat either shape as advice so a how-to question never triggers a DOCX.
+_ADVICE_RU = re.compile(r"(?i)^\s*как\b")
+_ADVICE_KK = re.compile(r"(?i)\bқалай\b")
 
 _LANG_VERSION_RE = re.compile(r"(?i)английск\w*\s+верси\w*|англ\.?\s+ст\.|русск\w*\s+редакц\w*|english\s+version|russian\s+version")
 
 
 def is_pretrial_request(text: str | None) -> bool:
     value = " ".join((text or "").split())
-    if not value or _ADVICE.search(value):
+    if not value or _ADVICE_RU.search(value) or _ADVICE_KK.search(value):
         return False
     return bool((_INTENT_RU.search(value) or _INTENT_KK.search(value)) and _ACTION.search(value))
 
