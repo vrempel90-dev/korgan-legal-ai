@@ -10,6 +10,7 @@ from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
+from korgan.claim_review_handoff import router as claim_review_router
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
@@ -55,6 +56,7 @@ async def main() -> None:
     dp.include_router(start_router)
     dp.include_router(safety_router)
     dp.include_router(contact_router)
+    dp.include_router(claim_review_router)
     dp.include_router(response_router)
     # Must run before generic text/menu routers so a pre-trial drafting request
     # cannot fall through to consultation or claim routing.
@@ -63,7 +65,10 @@ async def main() -> None:
     dp.include_router(base_bot.router)
 
     corpus_task = start_corpus_refresh_task()
-    LOGGER.info("Starting KORGAN: client-safe RU/KK UI + verified corpus + claims + responses + contracts + pretrial material-law guard")
+    LOGGER.info(
+        "Starting KORGAN: client-safe RU/KK UI + verified corpus + claims + responses + contracts + "
+        "pretrial material-law guard + consented WhatsApp claim review"
+    )
     try:
         await dp.start_polling(bot)
     finally:
