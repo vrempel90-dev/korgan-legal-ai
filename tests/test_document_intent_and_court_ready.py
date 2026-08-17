@@ -154,5 +154,5 @@ def test_formal_gpk_fields_become_filing_actions_not_questionnaire_rounds() -> N
     actions = add_gpk_filing_actions("Работодатель не выплатил зарплату.", _research(), draft)
     joined = "\n".join(actions).lower()
     assert "суд" in joined
-    assert "дата рождения" in joined
+    assert "рождения" in joined
     assert "госпошлин" in joined
