@@ -51,9 +51,11 @@ def language_menu() -> InlineKeyboardMarkup:
 
 def documents_menu(language: str = RU) -> InlineKeyboardMarkup:
     lang = normalize_language(language)
+    pretrial = "📨 Сотқа дейінгі талап" if lang == KK else "📨 Досудебная претензия"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=button(lang, "claim"), callback_data="doc:claim")],
+            [InlineKeyboardButton(text=pretrial, callback_data="doc:pretrial")],
             [InlineKeyboardButton(text=button(lang, "response"), callback_data="doc:response")],
             [InlineKeyboardButton(text=button(lang, "contract"), callback_data="doc:contract")],
             [InlineKeyboardButton(text=button(lang, "main"), callback_data="menu:main")],
@@ -119,7 +121,6 @@ def delete_confirm_menu(language: str = RU) -> InlineKeyboardMarkup:
     )
 
 
-# Backward-compatible Russian constants used by older modules.
 WELCOME_TEXT = tr(RU, "welcome")
 MAIN_TEXT = tr(RU, "main")
 DOCUMENTS_TEXT = tr(RU, "documents")
