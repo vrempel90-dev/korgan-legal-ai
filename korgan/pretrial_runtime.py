@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from korgan import bot as base_bot
+from korgan.case_reference import ensure_case_reference, filename_with_case_reference
 from korgan.i18n import KK, normalize_language
 from korgan.pretrial import build_pretrial_docx, is_pretrial_request, pretrial_quality_issues
 from korgan.ui import main_menu
@@ -115,7 +116,9 @@ async def _generate(message: Message, state: FSMContext) -> None:
             "✅ Досудебная претензия сформирована в Word (.docx)."
         )
 
-    filename = "KORGAN_sotqa_deyingi_talap.docx" if lang == KK else "KORGAN_dosudebnaya_pretenziya.docx"
+    case_reference = await ensure_case_reference(state)
+    base_filename = "KORGAN_sotqa_deyingi_talap.docx" if lang == KK else "KORGAN_dosudebnaya_pretenziya.docx"
+    filename = filename_with_case_reference(base_filename, case_reference)
     await message.answer_document(
         BufferedInputFile(file_bytes, filename=filename),
         caption=caption,
