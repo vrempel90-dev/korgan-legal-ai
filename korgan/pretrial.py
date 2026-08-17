@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -16,6 +15,13 @@ from docx.shared import Cm, Pt
 
 from korgan.document_release import review_lines
 from korgan.legal_types import LegalResearch, VerificationStatus
+from korgan.material_law_guard import (
+    has_material_basis,
+    has_material_verified,
+    mark_missing_material_law,
+    merge_research,
+    requires_material_law,
+)
 from korgan.stable_legal_release import StableLegalProductionService, clean_language_labels, sanitize_research_sources
 
 _PRETRIAL_SCHEMA: dict[str, Any] = {
@@ -46,8 +52,12 @@ _ACTION = re.compile(r"(?i)\b(?:подготов\w*|состав\w*|сформи
 # Treat either shape as advice so a how-to question never triggers a DOCX.
 _ADVICE_RU = re.compile(r"(?i)^\s*как\b")
 _ADVICE_KK = re.compile(r"(?i)\bқалай\b")
-
 _LANG_VERSION_RE = re.compile(r"(?i)английск\w*\s+верси\w*|англ\.?\s+ст\.|русск\w*\s+редакц\w*|english\s+version|russian\s+version")
+_MATERIAL_MISSING_RE = re.compile(
+    r"(?i)(?:нет\s+отдельной\s+verified\s+правовой\s+опоры|"
+    r"не\s+подтверждена\s+материально-правовая\s+основа|"
+    r"процессуальные\s+нормы\s+сами\s+по\s+себе\s+не\s+подтверждают)"
+)
 
 
 def is_pretrial_request(text: str | None) -> bool:
@@ -109,6 +119,7 @@ def normalize_pretrial(draft: PretrialDraft) -> None:
 
 
 def pretrial_quality_issues(draft: PretrialDraft, research: LegalResearch) -> list[str]:
+    """Internal review findings. Formal missing fields may stay as one-shot project gaps."""
     issues: list[str] = []
     if not draft.sender:
         issues.append("не указан отправитель претензии")
@@ -125,13 +136,61 @@ def pretrial_quality_issues(draft: PretrialDraft, research: LegalResearch) -> li
     return list(dict.fromkeys(issues))
 
 
+def pretrial_release_blockers(
+    draft: PretrialDraft,
+    research: LegalResearch,
+    case_context: str,
+) -> list[str]:
+    """Block Word only for substantive/legal defects, not ordinary fill-in requisites."""
+    blockers: list[str] = []
+    substantive_text = "\n".join([case_context, *draft.demands, *draft.facts])
+
+    if not draft.facts:
+        blockers.append("нет фактического основания требований")
+    if not draft.demands:
+        blockers.append("нет сформулированных требований")
+
+    if requires_material_law(substantive_text):
+        if not has_material_verified(research):
+            blockers.append("нет подтверждённой материально-правовой нормы под основное требование")
+        if not has_material_basis(draft.legal_basis):
+            blockers.append("материальная норма не перенесена в правовое обоснование претензии")
+
+    release = review_lines(draft.body_lines(), verified_claims=research.verified_claims)
+    blockers.extend(str(item) for item in release.blocking)
+
+    for note in draft.verification_notes:
+        if _MATERIAL_MISSING_RE.search(str(note)):
+            blockers.append(str(note))
+
+    return list(dict.fromkeys(blockers))
+
+
 class PretrialProductionService(StableLegalProductionService):
     async def research_pretrial(self, case_context: str, language: str = "ru") -> LegalResearch:
-        # Reuse the proven professional source-bound pass. It already decomposes
-        # remedies and checks mandatory pre-trial procedure; the dedicated draft
-        # below simply omits court-only material from the client document.
-        research = await self.research_case(case_context, language=language)
-        return sanitize_research_sources(research)
+        """Research the actual obligation first; procedural cost law is supplemental."""
+        research = sanitize_research_sources(
+            await self.research_case(case_context, language=language)
+        )
+        if not requires_material_law(case_context) or has_material_verified(research):
+            return research
+
+        # One targeted retry is allowed only when the ordinary research pass found
+        # procedure/cost law but missed the norm creating the underlying right.
+        focus = (
+            "\n\nВНУТРЕННИЙ ФОКУС ИССЛЕДОВАНИЯ KORGAN: найди действующую материально-правовую норму, "
+            "которая создаёт/подтверждает основную обязанность по фактам дела и право требовать её исполнения "
+            "(например, оплату, возврат, исполнение, расторжение — только если это следует из материалов). "
+            "Норма ГПК о госпошлине, судебных расходах или представителе НЕ заменяет материальную основу основного требования. "
+            "Не придумывай вид договора: квалифицируй его по фактам и подтверждай только официальным действующим источником."
+        )
+        supplement = sanitize_research_sources(
+            await self.research_case(case_context + focus, language=language)
+        )
+        research = sanitize_research_sources(merge_research(research, supplement))
+        if not has_material_verified(research):
+            mark_missing_material_law(research, "основного требования досудебной претензии")
+        return research
 
     async def draft_pretrial(self, case_context: str, research: LegalResearch, language: str = "ru") -> PretrialDraft:
         verified = "\n".join(f"- {x}" for x in research.verified_claims) or "- нет подтвержденных норм"
@@ -140,13 +199,16 @@ class PretrialProductionService(StableLegalProductionService):
             "Это не иск и не анкета. Используй только факты пользователя и VERIFIED-нормы.\n\n"
             "Правила:\n"
             "1. Не придумывай ФИО/БИН/ИИН, адрес, договор, даты, суммы, доказательства или факт направления прежней претензии.\n"
-            "2. Каждое требование должно вытекать из факта и иметь правовое основание, если оно VERIFIED.\n"
-            "3. Не пиши 'английская версия', 'русская редакция' и не представляй переводы одного акта как разные нормы.\n"
-            "4. Одну статью не пересказывай несколько раз: один точный абзац на одну норму.\n"
-            "5. Срок добровольного исполнения указывай только если он дан пользователем или VERIFIED законом/договором; иначе сформулируй нейтрально без выдуманного числа дней.\n"
-            "6. В последствиях укажи возможное обращение в суд/уполномоченный орган только как следующий законный шаг, без угроз и без гарантии результата.\n"
-            "7. В приложениях перечисляй только реально имеющиеся материалы.\n"
-            f"8. Язык документа: {'казахский' if language == 'kk' else 'русский'}.\n\n"
+            "2. Каждое требование должно вытекать из факта и иметь собственное правовое основание из VERIFIED.\n"
+            "3. МАТЕРИАЛЬНОЕ ПРАВО ПЕРВЫМ: если требуют основной долг, оплату, возврат, исполнение, неустойку, расторжение или иное материальное последствие, "
+            "сначала укажи VERIFIED норму, которая создаёт/подтверждает эту обязанность и право требования. ГПК о госпошлине, судебных расходах или представителе не является основанием основного долга.\n"
+            "4. Процессуальные нормы добавляй только после материальной основы и только для реально относящегося процессуального вопроса.\n"
+            "5. Не пиши 'английская версия', 'русская редакция' и не представляй переводы одного акта как разные нормы.\n"
+            "6. Одну статью не пересказывай несколько раз: один точный абзац на одну норму.\n"
+            "7. Срок добровольного исполнения указывай только если он дан пользователем или VERIFIED законом/договором; иначе сформулируй нейтрально без выдуманного числа дней.\n"
+            "8. В последствиях укажи возможное обращение в суд/уполномоченный орган только как следующий законный шаг, без угроз и без гарантии результата.\n"
+            "9. В приложениях перечисляй только реально имеющиеся материалы.\n"
+            f"10. Язык документа: {'казахский' if language == 'kk' else 'русский'}.\n\n"
             f"МАТЕРИАЛЫ:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
             f"VERIFIED:\n{verified}"
         )
@@ -154,6 +216,7 @@ class PretrialProductionService(StableLegalProductionService):
             model=self.settings.openai_model,
             instructions=(
                 "Ты практикующий юрист KORGAN в Республике Казахстан. Составляй деловую, юридически точную досудебную претензию. "
+                "Для материального требования сначала дай его материально-правовую основу; процессуальная статья не заменяет её. "
                 "Не добавляй непроверенное право и не задавай пользователю анкету."
             ),
             content=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
