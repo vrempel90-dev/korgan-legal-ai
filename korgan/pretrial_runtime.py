@@ -8,12 +8,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from korgan import bot as base_bot
-from korgan.i18n import KK, button_values, normalize_language
+from korgan.i18n import KK, normalize_language
 from korgan.pretrial import build_pretrial_docx, is_pretrial_request, pretrial_quality_issues
 from korgan.ui import main_menu
 
 LOGGER = logging.getLogger(__name__)
 router = Router(name="korgan-pretrial-no-questionnaire")
+_PRETRIAL_BUTTONS = {"📨 Досудебная претензия", "📨 Сотқа дейінгі талап"}
 
 
 class _Waiting(BaseFilter):
@@ -38,7 +39,7 @@ async def _save_text(message: Message, state: FSMContext) -> None:
     if message.from_user is not None and message.from_user.is_bot:
         return
     text = (message.text or "").strip()
-    if not text or text in set(button_values("pretrial")):
+    if not text or text in _PRETRIAL_BUTTONS:
         return
     data = await state.get_data()
     facts = list(data.get("facts", []) or [])
