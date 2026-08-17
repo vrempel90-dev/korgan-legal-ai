@@ -9,14 +9,13 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
-from korgan.additive_legal_guard import AdditiveLegalGuardService, install_global_current_law_guard
+from korgan.additive_legal_guard import install_global_current_law_guard
 from korgan.admin import router as admin_router
 from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.claim_route_lock import router as claim_route_lock_router
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
-from korgan.court_ready_claim_guard import install_court_ready_claim_guard
 from korgan.document_intent_guard import router as intent_guard_router
 from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
@@ -28,9 +27,9 @@ from korgan.legal.corpus_refresh import autoload_enabled, refresh_corpus_once, s
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
+from korgan.pretrial_only_material_guard import PretrialOnlyMaterialGuardService
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
-from korgan.project_claim_release_hotfix import install_project_claim_release_hotfix
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.stable_legal_release import install_stable_legal_release
 from korgan.ui import main_menu
@@ -42,14 +41,10 @@ install_professional_rag_bridge()
 install_stable_legal_release()
 install_extended_citation_audit()
 install_client_safe_runtime()
-# Must remain after every citation/runtime bridge so it guards the final lookup.
+# Keep current-law/source checks globally, but do not install the later
+# court-ready/material-law release wrappers on statements of claim.  The
+# client-specific material-law completeness requirement is pre-trial only.
 install_global_current_law_guard()
-# Wrap the final claim sender last. It does not replace the generator; it only
-# blocks a Word release when substantive legal quality is still unsafe.
-install_court_ready_claim_guard()
-# Filing details and omitted secondary remedies may downgrade an otherwise safe
-# claim to a reviewable project, but missing VERIFIED material law still blocks.
-install_project_claim_release_hotfix()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
@@ -67,12 +62,11 @@ async def ensure_startup_corpus_ready() -> None:
 
     Railway containers use ephemeral application storage. After a fresh deploy
     the SQLite corpus can therefore be absent for the first minute or two. The
-    document release guard is intentionally fail-closed and would otherwise
-    reject a perfectly good claim merely because source-bound verification raced
-    the background corpus refresh. When autoload is enabled and no corpus is
-    present, build it synchronously before Telegram polling starts. If a healthy
-    corpus already exists, startup remains fast and the normal background refresh
-    keeps it current.
+    source-verification pipeline would otherwise begin work before its local
+    legal corpus is ready. When autoload is enabled and no corpus is present,
+    build it synchronously before Telegram polling starts. If a healthy corpus
+    already exists, startup remains fast and the normal background refresh keeps
+    it current.
     """
     if not autoload_enabled():
         return
@@ -89,9 +83,10 @@ async def ensure_startup_corpus_ready() -> None:
 
 async def main() -> None:
     settings = get_settings()
-    # AdditiveLegalGuardService inherits the already deployed pre-trial/claim/
-    # response service chain and only performs post-generation fail-closed checks.
-    base_bot.service = AdditiveLegalGuardService(settings)
+    # The client's enhanced material-law completeness rule applies only to
+    # pre-trial demands. Claims use the ordinary inherited production research
+    # and Word-release path that existed before that requirement was added.
+    base_bot.service = PretrialOnlyMaterialGuardService(settings)
     base_bot.MENU = main_menu()
 
     # A fresh Railway container must not start accepting document requests while
@@ -126,7 +121,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: verified corpus ready + hard claim-to-DOCX routing + intent-locked documents + court-ready/reviewable claim projects + current RK Adilet RAG + RU/KK + no questionnaires"
+        "Starting KORGAN: verified corpus ready + hard claim-to-DOCX routing + pretrial-only material-law enhancement + current RK Adilet RAG + RU/KK + no questionnaires"
     )
     try:
         await dp.start_polling(bot)
