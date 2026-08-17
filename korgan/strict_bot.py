@@ -9,6 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
+from korgan.additive_legal_guard import AdditiveLegalGuardService, install_global_current_law_guard
 from korgan.admin import router as admin_router
 from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.client_safe_ui import install_client_safe_runtime
@@ -23,7 +24,6 @@ from korgan.legal.corpus_refresh import start_corpus_refresh_task
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
-from korgan.pretrial import PretrialProductionService
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
 from korgan.reply_menu_handlers import router as reply_menu_router
@@ -37,6 +37,9 @@ install_professional_rag_bridge()
 install_stable_legal_release()
 install_extended_citation_audit()
 install_client_safe_runtime()
+# Must be last: it wraps the final lookup bindings after the existing runtime
+# installers, without replacing their behavior.
+install_global_current_law_guard()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
@@ -51,7 +54,9 @@ async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    base_bot.service = PretrialProductionService(settings)
+    # AdditiveLegalGuardService inherits the already deployed pre-trial/claim/
+    # response service chain and only performs post-generation fail-closed checks.
+    base_bot.service = AdditiveLegalGuardService(settings)
     base_bot.MENU = main_menu()
 
     bot = LocalizedClientSafeBot(token=settings.telegram_bot_token)
@@ -76,7 +81,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: >=8.5 quality core + expanded RK Adilet RAG + RU/KK + no-questionnaire claims/pretrial"
+        "Starting KORGAN: >=8.5 quality core + expanded current RK Adilet RAG + RU/KK + no-questionnaire claims/pretrial"
     )
     try:
         await dp.start_polling(bot)
