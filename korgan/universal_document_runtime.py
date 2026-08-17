@@ -13,6 +13,7 @@ from korgan.contract_docx import build_contract_docx
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
 from korgan.legal_types import VerificationStatus
+from korgan.material_law_guard import has_material_verified
 from korgan.response_docx import build_response_to_claim_docx
 from korgan.response_intent import is_response_to_claim_request
 from korgan.ui import main_menu
@@ -122,6 +123,15 @@ async def _send_contract(message: Message, state: FSMContext) -> None:
 
     try:
         research = await research_method(context, language=lang)
+        if not has_material_verified(research):
+            LOGGER.error("UNIVERSAL_CONTRACT_MATERIAL_LAW_BLOCK verified=%d", len(research.verified_claims))
+            await message.answer(
+                "Договор пока не прошёл юридическую проверку, поэтому Word-файл не выдан. "
+                "Правовая конструкция договора должна быть подтверждена действующими материальными нормами, а не только процессуальными положениями. "
+                "Попробуйте сформировать договор повторно.",
+                reply_markup=menu,
+            )
+            return
         draft = await draft_method(context, research, language=lang)
         quality = assess_document_quality("contract", context, research, draft)
     except Exception:
