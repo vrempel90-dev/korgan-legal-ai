@@ -4,12 +4,13 @@ import asyncio
 import contextlib
 import logging
 
-from aiogram import Bot, Dispatcher
+from aiogram import Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
+from korgan.client_safe_ui import ClientSafeBot, install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
 from korgan.legal.corpus_refresh import start_corpus_refresh_task
@@ -23,7 +24,7 @@ from korgan.ui import main_menu
 LOGGER = logging.getLogger(__name__)
 
 
-async def configure_telegram_menu(bot: Bot) -> None:
+async def configure_telegram_menu(bot: ClientSafeBot) -> None:
     # KORGAN already has its own persistent reply keyboard. Keeping Telegram's
     # command list creates a second blue «Меню» button next to the input field,
     # so clear bot commands and restore the default menu-button state.
@@ -35,8 +36,9 @@ async def main() -> None:
     settings = get_settings()
     base_bot.service = ProductionOpenAILegalService(settings)
     base_bot.MENU = main_menu()
+    install_client_safe_runtime()
 
-    bot = Bot(token=settings.telegram_bot_token)
+    bot = ClientSafeBot(token=settings.telegram_bot_token)
     await configure_telegram_menu(bot)
 
     dp = Dispatcher(storage=MemoryStorage())
@@ -53,7 +55,7 @@ async def main() -> None:
     dp.include_router(base_bot.router)
 
     corpus_task = start_corpus_refresh_task()
-    LOGGER.info("Starting KORGAN: verified provision text + admin access + claims + responses + contracts")
+    LOGGER.info("Starting KORGAN: client-safe legal UI + verified corpus + claims + responses + contracts")
     try:
         await dp.start_polling(bot)
     finally:
