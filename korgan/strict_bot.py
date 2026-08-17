@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
-from korgan.additive_legal_guard import install_global_current_law_guard
+from korgan.additive_legal_guard import AdditiveLegalGuardService, install_global_current_law_guard
 from korgan.admin import router as admin_router
 from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.claim_route_lock import router as claim_route_lock_router
@@ -27,7 +27,6 @@ from korgan.legal.corpus_refresh import autoload_enabled, refresh_corpus_once, s
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
-from korgan.pretrial_only_material_guard import PretrialOnlyMaterialGuardService
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
 from korgan.reply_menu_handlers import router as reply_menu_router
@@ -41,9 +40,10 @@ install_professional_rag_bridge()
 install_stable_legal_release()
 install_extended_citation_audit()
 install_client_safe_runtime()
-# Keep current-law/source checks globally, but do not install the later
-# court-ready/material-law release wrappers on statements of claim.  The
-# client-specific material-law completeness requirement is pre-trial only.
+# Current-law/source checks remain global. Material-law completeness is also
+# global at the service layer: substantive demands in claims, responses,
+# pre-trial demands and contracts may not be justified only by procedural law,
+# state duty or representative-cost rules.
 install_global_current_law_guard()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
@@ -83,10 +83,9 @@ async def ensure_startup_corpus_ready() -> None:
 
 async def main() -> None:
     settings = get_settings()
-    # The client's enhanced material-law completeness rule applies only to
-    # pre-trial demands. Claims use the ordinary inherited production research
-    # and Word-release path that existed before that requirement was added.
-    base_bot.service = PretrialOnlyMaterialGuardService(settings)
+    # Preserve all deployed generators and add one source-bound completeness
+    # layer across every supported generated document type.
+    base_bot.service = AdditiveLegalGuardService(settings)
     base_bot.MENU = main_menu()
 
     # A fresh Railway container must not start accepting document requests while
@@ -121,7 +120,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: verified corpus ready + hard claim-to-DOCX routing + pretrial-only material-law enhancement + current RK Adilet RAG + RU/KK + no questionnaires"
+        "Starting KORGAN: verified corpus ready + hard claim-to-DOCX routing + universal material-law completeness + current RK Adilet RAG + RU/KK + no questionnaires"
     )
     try:
         await dp.start_polling(bot)
