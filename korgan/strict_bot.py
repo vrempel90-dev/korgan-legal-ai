@@ -15,6 +15,7 @@ from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
 from korgan.finalized_litigation import FinalizedProductionClaimService
+from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
 from korgan.kazakh_ui import router as kazakh_router
 from korgan.language_context import LanguageContextMiddleware
@@ -28,6 +29,7 @@ from korgan.ui import main_menu
 
 install_runtime_hotfix()
 install_kazakh_legal_bridge()
+install_kazakh_article_forms()
 install_professional_rag_bridge()
 install_client_safe_runtime()
 
