@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 from korgan.client_safe_ui import ClientSafeBot, _clean_upload, sanitize_client_text
+from korgan.contact_handlers import WHATSAPP_NUMBER_DISPLAY, WHATSAPP_URL
 from korgan.i18n import BUTTONS, KK, RU, tr
 from korgan.language_context import current_language
 
@@ -71,8 +78,64 @@ def _localize_text(text: str | None) -> str | None:
     return clean
 
 
+def _generated_filename(document: Any) -> str:
+    return str(getattr(document, "filename", "") or "")
+
+
+def is_generated_korgan_document(document: Any) -> bool:
+    """Only KORGAN-produced DOCX/PDF files receive the post-document CTA."""
+    filename = _generated_filename(document).lower()
+    return filename.startswith("korgan_") and filename.endswith((".docx", ".pdf"))
+
+
+def short_document_caption(filename: str, language: str = RU) -> str:
+    """Client-facing caption deliberately contains no internal quality dump."""
+    name = (filename or "").lower()
+    kk = language == KK
+    if "otzyv" in name or "response" in name:
+        return "✅ Талап қоюға пікір дайын." if kk else "✅ Отзыв на иск готов."
+    if "dosudeb" in name or "sotqa_deyingi" in name or "pretrial" in name:
+        return "✅ Сотқа дейінгі талап дайын." if kk else "✅ Досудебная претензия готова."
+    if "dogovor" in name or "contract" in name:
+        return "✅ Шарт дайын." if kk else "✅ Договор готов."
+    if "iskov" in name or "claim" in name:
+        return "✅ Талап қою арызы дайын." if kk else "✅ Исковое заявление готово."
+    return "✅ Құжат дайын." if kk else "✅ Документ готов."
+
+
+def lawyer_consultation_text(language: str = RU) -> str:
+    if language == KK:
+        return (
+            "👨‍⚖️ Құжатты пайдаланар алдында заңгердің қорытынды тексеруі қажет.\n\n"
+            "Жеке заңгердің ақылы консультациясын алғыңыз келе ме?\n"
+            f"📱 {WHATSAPP_NUMBER_DISPLAY}"
+        )
+    return (
+        "👨‍⚖️ Перед использованием документа требуется финальная проверка юристом.\n\n"
+        "Хотите получить платную консультацию персонального юриста?\n"
+        f"📱 {WHATSAPP_NUMBER_DISPLAY}"
+    )
+
+
+def lawyer_consultation_markup(language: str = RU) -> InlineKeyboardMarkup:
+    prefill = (
+        "Сәлеметсіз бе! KORGAN құжаты бойынша ақылы заңгер консультациясын алғым келеді."
+        if language == KK
+        else "Здравствуйте! Хочу получить платную консультацию юриста по документу KORGAN."
+    )
+    url = f"{WHATSAPP_URL}?text={quote(prefill)}"
+    yes = "✅ Иә, консультация алу" if language == KK else "✅ Да, получить консультацию"
+    no = "❌ Жоқ" if language == KK else "❌ Нет"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=yes, url=url)],
+            [InlineKeyboardButton(text=no, callback_data="lawyer:decline")],
+        ]
+    )
+
+
 class LocalizedClientSafeBot(ClientSafeBot):
-    """Client-safe transport plus per-session Russian/Kazakh presentation."""
+    """Client-safe transport plus per-session RU/KK and lawyer CTA."""
 
     async def send_message(self, chat_id: Any, text: str, *args: Any, **kwargs: Any) -> Any:
         if "reply_markup" in kwargs:
@@ -80,11 +143,30 @@ class LocalizedClientSafeBot(ClientSafeBot):
         return await Bot.send_message(self, chat_id, _localize_text(text) or "", *args, **kwargs)
 
     async def send_document(self, chat_id: Any, document: Any, *args: Any, **kwargs: Any) -> Any:
-        if "caption" in kwargs:
+        generated = is_generated_korgan_document(document)
+        filename = _generated_filename(document)
+        language = current_language()
+
+        if generated:
+            # Replace long quality/verification captions with one clean result.
+            kwargs["caption"] = short_document_caption(filename, language)
+        elif "caption" in kwargs:
             kwargs["caption"] = _localize_text(kwargs.get("caption"))
+
         if "reply_markup" in kwargs:
             kwargs["reply_markup"] = _localize_markup(kwargs.get("reply_markup"))
-        return await Bot.send_document(self, chat_id, _clean_upload(document), *args, **kwargs)
+
+        sent = await Bot.send_document(self, chat_id, _clean_upload(document), *args, **kwargs)
+
+        if generated:
+            await Bot.send_message(
+                self,
+                chat_id,
+                lawyer_consultation_text(language),
+                reply_markup=lawyer_consultation_markup(language),
+                disable_web_page_preview=True,
+            )
+        return sent
 
     async def edit_message_text(self, text: str, *args: Any, **kwargs: Any) -> Any:
         if "reply_markup" in kwargs:

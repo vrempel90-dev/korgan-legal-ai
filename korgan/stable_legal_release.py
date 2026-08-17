@@ -10,6 +10,7 @@ from korgan.finalized_litigation import FinalizedProductionClaimService
 from korgan.legal.current_law_guard import current_source_defect, is_current_source
 from korgan.legal.rk_catalog import CITATION_ACT_IDS
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
+from korgan.material_law_guard import has_material_basis, inject_material_basis, requires_material_law
 from korgan.request_basis_coverage import ensure_request_basis_coverage
 
 _LANGUAGE_LABEL_RE = re.compile(
@@ -101,9 +102,6 @@ def sanitize_research_sources(research: LegalResearch) -> LegalResearch:
 
     accepted = _dedupe_by_article(accepted)
 
-    # Keep ordinary non-superseded source URLs even when a research note has no
-    # filing-facing proposition.  Known superseded IDs are retained only when an
-    # accepted verified line above proved an explicit transition provision.
     for url in research.source_urls:
         if url in accepted_sources:
             continue
@@ -179,6 +177,23 @@ class StableLegalProductionService(FinalizedProductionClaimService):
         draft = await super().draft_claim(case_context, research, language=language)
         normalize_claim_legal_basis(draft, research)
         ensure_request_basis_coverage(case_context, draft, research)
+
+        # Generic safety net: even when a new remedy has no dedicated rule yet,
+        # the principal substantive claim may not be justified only by GPK,
+        # state duty or representative costs.  Source-bound material research is
+        # prepended when available; otherwise the document stays non-final.
+        substantive_text = "\n".join([case_context, *draft.requests, *draft.facts])
+        if requires_material_law(substantive_text) and not has_material_basis(draft.legal_basis):
+            draft.legal_basis = inject_material_basis(list(draft.legal_basis), research)
+            if not has_material_basis(draft.legal_basis):
+                draft.status = VerificationStatus.NEEDS_VERIFICATION
+                note = (
+                    "Основное требование иска не имеет отдельной VERIFIED материально-правовой опоры; "
+                    "процессуальные нормы и судебные расходы её не заменяют."
+                )
+                if note not in draft.verification_notes:
+                    draft.verification_notes.append(note)
+
         draft.legal_basis = _dedupe_by_article(draft.legal_basis)
         return draft
 
