@@ -30,6 +30,7 @@ ACT_GK_SPECIAL = "GK_RK_OSOBENNAYA"
 ACT_GPK = "GPK_RK"
 ACT_TAX_DUTY = "NK_RK_GOSPOSHLINA"
 ACT_CONSUMER = "ZPP_RK"
+ACT_LABOR = "TK_RK"
 
 KNOWN_ACTS: dict[str, tuple[str, str]] = {
     ACT_GK_GENERAL: ("K940001000_", "Гражданский кодекс Республики Казахстан (Общая часть)"),
@@ -37,6 +38,7 @@ KNOWN_ACTS: dict[str, tuple[str, str]] = {
     ACT_GPK: ("K1500000377", "Гражданский процессуальный кодекс Республики Казахстан"),
     ACT_TAX_DUTY: ("K2500000214", "Кодекс Республики Казахстан «О налогах и других обязательных платежах в бюджет»"),
     ACT_CONSUMER: ("Z100000274_", "Закон Республики Казахстан «О защите прав потребителей»"),
+    ACT_LABOR: ("K1500000414", "Трудовой кодекс Республики Казахстан"),
 }
 
 # Abbreviations used when citing a provision inside a court document.
@@ -46,6 +48,7 @@ ACT_SHORT_TITLES: dict[str, str] = {
     ACT_GPK: "ГПК РК",
     ACT_TAX_DUTY: "НК РК",
     ACT_CONSUMER: "Закона РК «О защите прав потребителей»",
+    ACT_LABOR: "ТК РК",
 }
 
 SCHEMA = """
@@ -115,29 +118,17 @@ class Provision:
     url: str
 
     def label(self) -> str:
-        """«ст. 630 ГК РК (Особенная часть), п. 2» — for citations in a document.
-
-        The abbreviation is deliberate: a full act title would have to be
-        declined («в соответствии со ст. 630 Гражданского кодекса…»), and an
-        abbreviation stays correct in any position.
-        """
+        """«ст. 630 ГК РК (Особенная часть), п. 2» — for citations in a document."""
         base = f"ст. {self.article_no} {ACT_SHORT_TITLES.get(self.act_id, self.act_title)}"
         return f"{base}, п. {self.item_no}" if self.item_no else base
 
 
 def make_article_id(act_id: str, article_no: str, item_no: str | None = None) -> str:
-    """Stable identifier: act, article, optional пункт."""
     suffix = f":{item_no}" if item_no else ""
     return f"{act_id}:{article_no}{suffix}"
 
 
 def compile_query(text: str) -> str:
-    """Turn free Russian text into an FTS5 prefix query.
-
-    Trimming the inflected tail is what makes «предоплата» match «предоплаты».
-    Short words are left alone — cutting them produces prefixes so broad the
-    result set stops being about the question.
-    """
     terms: list[str] = []
     for word in _WORD.findall(text.lower()):
         if len(word) >= 7:
@@ -153,13 +144,9 @@ def compile_query(text: str) -> str:
 
 
 class LegalCorpus:
-    """Read/write access to the provision database."""
-
     def __init__(self, path: Path | str = DEFAULT_DB_PATH) -> None:
         self.path = Path(path)
         self._connection: sqlite3.Connection | None = None
-
-    # --- lifecycle ---------------------------------------------------------
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -187,17 +174,7 @@ class LegalCorpus:
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    # --- writing -----------------------------------------------------------
-
-    def upsert_act(
-        self,
-        act_id: str,
-        adilet_id: str,
-        title_ru: str,
-        url: str,
-        edition_date: str,
-        loaded_at: str,
-    ) -> None:
+    def upsert_act(self, act_id: str, adilet_id: str, title_ru: str, url: str, edition_date: str, loaded_at: str) -> None:
         self.connection.execute(
             """
             INSERT INTO acts (act_id, adilet_id, title_ru, url, edition_date, loaded_at, lang)
@@ -213,18 +190,7 @@ class LegalCorpus:
         )
         self.connection.commit()
 
-    def upsert_provision(
-        self,
-        *,
-        act_id: str,
-        article_no: str,
-        item_no: str | None,
-        heading: str,
-        body: str,
-        edition_date: str,
-        url: str,
-        sort_key: int,
-    ) -> str:
+    def upsert_provision(self, *, act_id: str, article_no: str, item_no: str | None, heading: str, body: str, edition_date: str, url: str, sort_key: int) -> str:
         article_id = make_article_id(act_id, article_no, item_no)
         self.connection.execute(
             """
@@ -244,11 +210,8 @@ class LegalCorpus:
         return article_id
 
     def clear_act(self, act_id: str) -> None:
-        """Drop an act's provisions before a reload, so removed articles disappear."""
         self.connection.execute("DELETE FROM provisions WHERE act_id = ?", (act_id,))
         self.connection.commit()
-
-    # --- reading -----------------------------------------------------------
 
     def _row_to_provision(self, row: sqlite3.Row) -> Provision:
         return Provision(
@@ -267,7 +230,6 @@ class LegalCorpus:
         compiled = compile_query(query)
         if not compiled:
             return []
-
         sql = """
             SELECT p.article_id, p.act_id, a.title_ru AS act_title, p.article_no, p.item_no,
                    p.heading, p.body, p.edition_date, p.url
@@ -282,7 +244,6 @@ class LegalCorpus:
             params.append(act_id)
         sql += " ORDER BY bm25(provisions_fts, 2.0, 1.0) LIMIT ?"
         params.append(limit)
-
         rows = self.connection.execute(sql, params).fetchall()
         return [self._row_to_provision(row) for row in rows]
 
@@ -300,16 +261,12 @@ class LegalCorpus:
         return self._row_to_provision(row) if row else None
 
     def exists(self, article_id: str) -> bool:
-        row = self.connection.execute(
-            "SELECT 1 FROM provisions WHERE article_id = ?", (article_id,)
-        ).fetchone()
+        row = self.connection.execute("SELECT 1 FROM provisions WHERE article_id = ?", (article_id,)).fetchone()
         return row is not None
 
     def count(self, act_id: str | None = None) -> int:
         if act_id:
-            row = self.connection.execute(
-                "SELECT COUNT(*) AS n FROM provisions WHERE act_id = ?", (act_id,)
-            ).fetchone()
+            row = self.connection.execute("SELECT COUNT(*) AS n FROM provisions WHERE act_id = ?", (act_id,)).fetchone()
         else:
             row = self.connection.execute("SELECT COUNT(*) AS n FROM provisions").fetchone()
         return int(row["n"])
