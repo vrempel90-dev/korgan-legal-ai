@@ -5,7 +5,6 @@ from urllib.parse import unquote
 
 from korgan.case_reference import (
     case_reference_from_filename,
-    consultation_callback_data,
     document_kind_from_filename,
     ensure_case_reference,
     filename_with_case_reference,
@@ -52,14 +51,17 @@ def test_all_supported_document_filenames_can_carry_same_case_reference() -> Non
         assert document_kind_from_filename(filename) == kind
 
 
-def test_initial_cta_registers_case_before_opening_whatsapp() -> None:
+def test_initial_cta_opens_case_bound_whatsapp_directly() -> None:
     reference = "KRG-260817-A1B2C3"
     markup = lawyer_consultation_markup("ru", reference, "claim")
     yes = markup.inline_keyboard[0][0]
     no = markup.inline_keyboard[1][0]
 
-    assert yes.url is None
-    assert yes.callback_data == consultation_callback_data(reference, "claim")
+    assert yes.url is not None
+    assert yes.url.startswith("https://wa.me/77005000553?text=")
+    assert reference in unquote(yes.url)
+    assert yes.callback_data is None
+    assert yes.text == "✅ Да"
     assert no.callback_data == "lawyer:decline"
     assert reference in lawyer_consultation_text("ru", reference, "claim")
 
