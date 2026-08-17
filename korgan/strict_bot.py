@@ -18,6 +18,7 @@ from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
 from korgan.kazakh_ui import router as kazakh_router
 from korgan.language_context import LanguageContextMiddleware
+from korgan.legal.citation_extensions import install_extended_citation_audit
 from korgan.legal.corpus_refresh import start_corpus_refresh_task
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
@@ -34,6 +35,7 @@ install_kazakh_legal_bridge()
 install_kazakh_article_forms()
 install_professional_rag_bridge()
 install_stable_legal_release()
+install_extended_citation_audit()
 install_client_safe_runtime()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
@@ -74,7 +76,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + no-questionnaire claims/pretrial + stable citation release"
+        "Starting KORGAN: >=8.5 quality core + expanded RK Adilet RAG + RU/KK + no-questionnaire claims/pretrial"
     )
     try:
         await dp.start_polling(bot)
