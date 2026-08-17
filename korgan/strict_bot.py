@@ -15,6 +15,8 @@ from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
+from korgan.court_ready_claim_guard import install_court_ready_claim_guard
+from korgan.document_intent_guard import router as intent_guard_router
 from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
 from korgan.kazakh_ui import router as kazakh_router
@@ -37,9 +39,11 @@ install_professional_rag_bridge()
 install_stable_legal_release()
 install_extended_citation_audit()
 install_client_safe_runtime()
-# Must be last: it wraps the final lookup bindings after the existing runtime
-# installers, without replacing their behavior.
+# Must remain after every citation/runtime bridge so it guards the final lookup.
 install_global_current_law_guard()
+# Wrap the final claim sender last. It does not replace the generator; it only
+# blocks a Word release when substantive legal quality is still unsafe.
+install_court_ready_claim_guard()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
@@ -72,8 +76,11 @@ async def main() -> None:
     dp.include_router(start_router)
     dp.include_router(safety_router)
     dp.include_router(contact_router)
-    dp.include_router(kazakh_router)
+    # Intent lock must run before every document-specific waiting handler and
+    # before the Kazakh consultation catch-all.
+    dp.include_router(intent_guard_router)
     dp.include_router(pretrial_router)
+    dp.include_router(kazakh_router)
     dp.include_router(universal_claim_router)
     dp.include_router(universal_document_router)
     dp.include_router(reply_menu_router)
@@ -81,7 +88,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: >=8.5 quality core + expanded current RK Adilet RAG + RU/KK + no-questionnaire claims/pretrial"
+        "Starting KORGAN: intent-locked documents + court-ready >=8.5 claims + current RK Adilet RAG + RU/KK + no questionnaires"
     )
     try:
         await dp.start_polling(bot)
