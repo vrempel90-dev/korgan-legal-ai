@@ -14,7 +14,7 @@ from korgan.admin import router as admin_router
 from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
-from korgan.consultation_cta import router as consultation_cta_router
+from korgan.consultation_cta import install_compact_document_followup, router as consultation_cta_router
 from korgan.contact_handlers import router as contact_router
 from korgan.court_ready_claim_guard import install_court_ready_claim_guard
 from korgan.document_intent_guard import router as intent_guard_router
@@ -45,6 +45,9 @@ install_global_current_law_guard()
 # Wrap the final claim sender last. It does not replace the generator; it only
 # blocks a Word release when substantive legal quality is still unsafe.
 install_court_ready_claim_guard()
+# Keep the filing checks above, but make one compact lawyer CTA the only
+# client-facing follow-up after a successfully delivered KORGAN document.
+install_compact_document_followup()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
