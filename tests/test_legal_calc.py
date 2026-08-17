@@ -11,7 +11,6 @@ from korgan.legal_calc import (
     parse_amount_kzt,
 )
 
-# Материалы дела № 2: заём Ахметов -> Садыков, оба физические лица.
 DELO_2_CONTEXT = (
     "Файл: KORGAN_TEST_DELO_2.docx\n"
     "Стороны: Займодавец (истец): Ахметов Руслан Маратович; Заёмщик (ответчик): Садыков Тимур Ерланович\n"
@@ -21,7 +20,6 @@ DELO_2_CONTEXT = (
 
 
 def test_delo_2_state_duty_is_24000() -> None:
-    """Контрольное значение из задания: 1% от 2 400 000 тенге."""
     assert calc_gosposhlina_claim(2_400_000, True) == 24_000
 
 
@@ -67,15 +65,23 @@ def test_claimant_is_individual_for_delo_2() -> None:
     assert claimant_is_individual(DELO_2_CONTEXT) is True
 
 
-def test_legal_entity_marker_blocks_rate_choice() -> None:
-    """Ставка 1% / 3% зависит от статуса истца — при БИН/ТОО код не выбирает её сам."""
-    context = DELO_2_CONTEXT + "Идентификаторы: ТОО «Альфа», БИН 000000000303\n"
-    assert claimant_is_individual(context) is None
+def test_respondent_legal_entity_marker_does_not_change_claimant_rate() -> None:
+    """Party type is role-bound: an unrelated/respondent ТОО cannot contaminate the claimant."""
+    context = DELO_2_CONTEXT + "Дополнительно упомянуто ТОО «Альфа», БИН 000000000303.\n"
+    assert claimant_is_individual(context) is True
+
+
+def test_legal_entity_claimant_uses_three_percent() -> None:
+    context = (
+        "Истец: ТОО «Альфа», БИН 000000000303, адрес: г. Алматы\n"
+        "Ответчик: Иванов Иван, ИИН 000000000101\n"
+    )
+    assert claimant_is_individual(context) is False
+    assert gosposhlina_line(context, "2 400 000 тенге").startswith("72 000 тенге")
 
 
 def test_gosposhlina_line_for_delo_2() -> None:
     line = gosposhlina_line(DELO_2_CONTEXT, "2 400 000 (два миллиона четыреста тысяч) тенге")
-
     assert line.startswith("24 000 тенге")
     assert "1%" in line
     assert "665" in line
