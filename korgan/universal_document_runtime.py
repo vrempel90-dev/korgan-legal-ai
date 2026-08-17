@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from korgan import bot as base_bot
+from korgan.case_reference import ensure_case_reference, filename_with_case_reference
 from korgan.contract_docx import build_contract_docx
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
@@ -146,8 +147,10 @@ async def _send_contract(message: Message, state: FSMContext) -> None:
         if checks:
             caption += "\n\nПеред подписанием требуется:\n" + bullets(checks)
 
+    case_reference = await ensure_case_reference(state)
+    filename = filename_with_case_reference("KORGAN_dogovor.docx", case_reference)
     await message.answer_document(
-        BufferedInputFile(file_bytes, filename="KORGAN_dogovor.docx"),
+        BufferedInputFile(file_bytes, filename=filename),
         caption=fit_caption(caption),
         reply_markup=main_menu(),
     )
@@ -200,8 +203,10 @@ async def _send_response(message: Message, state: FSMContext) -> None:
         if checks:
             caption += "\n\nПеред подачей требуется:\n" + bullets(checks)
 
+    case_reference = await ensure_case_reference(state)
+    filename = filename_with_case_reference("KORGAN_otzyv_na_isk.docx", case_reference)
     await message.answer_document(
-        BufferedInputFile(file_bytes, filename="KORGAN_otzyv_na_isk.docx"),
+        BufferedInputFile(file_bytes, filename=filename),
         caption=fit_caption(caption),
         reply_markup=main_menu(),
     )
