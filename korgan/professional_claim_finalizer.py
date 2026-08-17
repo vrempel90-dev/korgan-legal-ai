@@ -35,6 +35,23 @@ _ALTERNATIVE_RE = re.compile(r"альтернативн", re.IGNORECASE)
 _CONSUMER_VENUE_RE = re.compile(r"стать(?:я|и)\s*30\b.*потребител|потребител.*стать(?:я|и)\s*30\b", re.IGNORECASE | re.DOTALL)
 _GENERAL_VENUE_RE = re.compile(r"стать(?:я|и)\s*29\b", re.IGNORECASE)
 
+# A model may reason internally in a long request item.  A court prayer must not
+# contain that scratch structure: only the operative remedy belongs under
+# «ПРОШУ СУД».  This directly prevents strings such as
+# «Правовое основание: пункт 2 Республики Казахстан» from reaching Word.
+_PRAYER_META_RE = re.compile(
+    r"(?i)\s+(?:Фактические\s+основания|Правовое\s+основание|Юридическое\s+последствие|"
+    r"Нақты\s+негіздер|Құқықтық\s+негіз|Құқықтық\s+салдар)\s*:"
+)
+_BROKEN_PRAYER_PREFIX_RE = re.compile(
+    r"(?i)^\s*На\s+основании\s+(?:(?:пункт\w*|стать\w*)\s*\d+(?:-\d+)?\s+)?Республики\s+Казахстан\s*[,;:]?\s*"
+)
+_INTERNAL_LEGAL_TEXT_RE = re.compile(
+    r"(?i)(?:\[\s*ТРЕБУЕТ\s+ПРОВЕРКИ\s*:|NEEDS_VERIFICATION|KORGAN\s+QA\s+STATUS|"
+    r"source-bound|содержание\s+нормы\s+не\s+воспроизводится\s+до\s+сверки|"
+    r"подлежит\s+сверке\s+по\s+официальному\s+источнику)"
+)
+
 _DISTRICTS = {
     "алатаус": "Алатауский",
     "алмалин": "Алмалинский",
@@ -114,7 +131,6 @@ def _resolve_court(case_context: str, research: LegalResearch, draft: ClaimDraft
     if source and source not in research.source_urls:
         research.source_urls.append(source)
 
-    # Court uncertainty notes are stale once an official directory entry resolved it.
     draft.verification_notes = [
         value for value in draft.verification_notes
         if not ("суд" in str(value).lower() and any(token in str(value).lower() for token in ("уточн", "не подтверж", "наименование")))
@@ -142,10 +158,41 @@ def _verified_legal_basis(research: LegalResearch) -> list[str]:
 def _apply_verified_legal_basis(research: LegalResearch, draft: ClaimDraft) -> None:
     basis = _verified_legal_basis(research)
     if basis:
-        # A filing-facing legal basis is reconstructed from accepted source-bound
-        # propositions. This prevents the drafting model from replacing verified
-        # articles with generic prose or introducing an unverified article.
         draft.legal_basis = basis
+
+
+def _sanitize_filing_legal_basis(draft: ClaimDraft) -> None:
+    """Internal verification prose may live in notes/logs, never in the pleading."""
+    draft.legal_basis = [
+        " ".join(str(item).split()).strip()
+        for item in draft.legal_basis
+        if str(item).strip() and not _INTERNAL_LEGAL_TEXT_RE.search(str(item))
+    ]
+
+
+def _clean_prayer_item(value: str) -> str:
+    text = " ".join(str(value or "").split()).strip()
+    if not text:
+        return ""
+    split = _PRAYER_META_RE.split(text, maxsplit=1)
+    text = split[0].strip(" ;")
+    text = _BROKEN_PRAYER_PREFIX_RE.sub("", text).strip(" ;")
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
+    return text
+
+
+def sanitize_prayer_requests(draft: ClaimDraft) -> None:
+    """Keep only executable court remedies under the prayer for relief."""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in draft.requests:
+        item = _clean_prayer_item(str(raw))
+        key = re.sub(r"\W+", "", item.lower())
+        if item and key and key not in seen:
+            cleaned.append(item)
+            seen.add(key)
+    draft.requests = cleaned
 
 
 def _moral_facts_supplied(case_context: str) -> bool:
@@ -179,16 +226,11 @@ def _sanitize_relief(case_context: str, research: LegalResearch, draft: ClaimDra
             flags=re.IGNORECASE,
         ).strip(" ,")
 
-    # Do not generate evidentiary/procedural motions merely because they are
-    # procedurally possible. They require an actual litigation need in the facts.
     draft.requests = [
         item for item in draft.requests
         if not (_PROCESS_MOTION_RE.search(item.strip()) and item.lower() not in (case_context or "").lower())
     ]
 
-    # A separate rescission/termination remedy is excluded unless the professional
-    # research explicitly marked it INCLUDE. A prior unilateral refusal in the
-    # materials is not converted into an extra court remedy by drafting creativity.
     if not _termination_is_included(research):
         draft.requests = [item for item in draft.requests if not _TERMINATION_RE.search(item)]
 
@@ -222,10 +264,11 @@ def finalize_professional_claim(
     """Apply non-model professional release invariants before scoring/export."""
     _resolve_court(case_context, research, draft)
     _apply_verified_legal_basis(research, draft)
+    _sanitize_filing_legal_basis(draft)
     _sanitize_relief(case_context, research, draft)
+    sanitize_prayer_requests(draft)
     _recalculate_price(draft)
 
-    # Any remaining internal score note is never part of the filing-facing draft.
     draft.verification_notes = [
         note for note in draft.verification_notes
         if not str(note).startswith(("KORGAN QUALITY", "SENIOR_PREFLIGHT_SCORE:"))
