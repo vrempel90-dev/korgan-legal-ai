@@ -1,0 +1,1 @@
+Emergency fix scope: prevent internal QA/verification messages from reaching clients while preserving all existing generation, RAG, material-law and consultation CTA behavior.
