@@ -20,7 +20,8 @@ LOGGER = logging.getLogger(__name__)
 
 _PROJECT_DETAIL_TOKENS = (
     "неустойк",
-    "пен",
+    "пеня",
+    "пени",
     "госпошлин",
     "суд",
     "подсудн",
@@ -98,7 +99,7 @@ def _add_filing_action(draft: ClaimDraft, message: str) -> None:
 
 def _promote_project_notes_to_filing_actions(draft: ClaimDraft) -> None:
     notes = "\n".join(str(note or "") for note in draft.verification_notes).lower()
-    if "неустойк" in notes or "пен" in notes:
+    if "неустойк" in notes or "пеня" in notes or "пени" in notes:
         _add_filing_action(
             draft,
             "если заявляется неустойка/пеня, до подачи подтвердить её вид, правовое основание и расчет; неподтверждённое дополнительное требование в проект не включать.",
