@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Iterable
 
 from korgan.legal.corpus import DEFAULT_DB_PATH, LegalCorpus, Provision
-from korgan.legal.rk_catalog import CORE_ACT_IDS, KNOWN_ACTS
+from korgan.legal.rk_catalog import KNOWN_ACTS
 from korgan.legal.validator import build_offer
 
 LOGGER = logging.getLogger(__name__)
@@ -25,8 +25,6 @@ FLAG_ENV = "KORGAN_LOCAL_CORPUS"
 _TRUTHY = {"1", "true", "yes", "on"}
 DEFAULT_LIMIT = 12
 
-# Domain routing is deliberately conservative: it narrows obvious matters but
-# never prevents web fallback.  Several acts can be searched together.
 _ROUTE_RULES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     (re.compile(r"(?i)заработ|зарплат|трудов|работник|работодател|увольнен|отпуск|еңбек|жалақ|жұмыс беруш"), ("TK_RK", "GPK_RK")),
     (re.compile(r"(?i)потребител|магазин|товар|услуг|подряд|ремонт|заказчик|тұтынуш"), ("ZPP_RK", "GK_RK_OSOBENNAYA", "GK_RK_OBSHAYA", "GPK_RK")),
@@ -34,7 +32,7 @@ _ROUTE_RULES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     (re.compile(r"(?i)семь|брак|супруг|развод|алимент|ребен|отцовств|неке|отбасы|алимент"), ("FAMILY_RK", "GPK_RK")),
     (re.compile(r"(?i)административн\w*\s+(?:иск|суд|орган|акт)|аппк|кас\s*рк|әкімшілік.*(?:сот|орган|акт)"), ("APPC_RK",)),
     (re.compile(r"(?i)административн\w*\s+правонаруш|коап|штраф\w*\s+(?:полици|адм)|әкімшілік\s+құқық\s*бұз"), ("KOAP_RK",)),
-    (re.compile(r"(?i)уголовн|преступлен|подозреваем|обвиняем|ук\s*рк|қылмы"), ("UK_RK", "UPK_RK")),
+    (re.compile(r"(?i)уголовн|преступлен|подозреваем|обвиняем|ук\s*рк|қылмы"), ("CRIMINAL_RK", "CRIMINAL_PROCEDURE_RK")),
     (re.compile(r"(?i)исполнительн\w*\s+производ|судебн\w*\s+исполнител|чси\b|атқаруш"), ("ENFORCEMENT_RK", "GPK_RK")),
     (re.compile(r"(?i)жилищ|квартир|выселен|кск|оси\b|тұрғын\s*үй"), ("HOUSING_RK", "GK_RK_OBSHAYA", "GPK_RK")),
     (re.compile(r"(?i)банк\w*|кредит|ипотек|микрокредит|мфо|коллектор|несие"), ("BANKS_RK", "MICROFINANCE_RK", "COLLECTION_RK", "GK_RK_OBSHAYA", "GPK_RK")),
@@ -53,8 +51,8 @@ _EXPLICIT_ACTS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     (re.compile(r"(?i)\bтк\s*рк\b|трудов\w*\s+кодекс"), ("TK_RK",)),
     (re.compile(r"(?i)\bаппк\s*рк\b|\bкас\s*рк\b|административн\w*\s+процедурно"), ("APPC_RK",)),
     (re.compile(r"(?i)\bкоап\s*рк\b|кодекс.*административн\w*\s+правонаруш"), ("KOAP_RK",)),
-    (re.compile(r"(?i)\bупк\s*рк\b|уголовно-процессуальн\w*\s+кодекс"), ("UPK_RK",)),
-    (re.compile(r"(?i)\bук\s*рк\b|уголовн\w*\s+кодекс"), ("UK_RK",)),
+    (re.compile(r"(?i)\bупк\s*рк\b|уголовно-процессуальн\w*\s+кодекс"), ("CRIMINAL_PROCEDURE_RK",)),
+    (re.compile(r"(?i)\bук\s*рк\b|уголовн\w*\s+кодекс"), ("CRIMINAL_RK",)),
     (re.compile(r"(?i)\bгк\s*рк\b|гражданск\w*\s+кодекс"), ("GK_RK_OBSHAYA", "GK_RK_OSOBENNAYA")),
 )
 _ARTICLE_NO_RE = re.compile(r"(?i)(?:стать(?:я|и|е|ю|ёй|ей)|ст\.|бап(?:тың|қа|та|та)?|бабы)\s*(\d+(?:-\d+)?)")
@@ -65,16 +63,15 @@ def local_corpus_enabled() -> bool:
 
 
 def route_act_ids(query: str) -> tuple[str, ...]:
-    """Return the smallest sensible act set for the query, preserving order."""
     value = str(query or "")
     explicit: list[str] = []
     for pattern, act_ids in _EXPLICIT_ACTS:
         if pattern.search(value):
             explicit.extend(act_ids)
     if explicit:
-        # Litigation questions still benefit from GPK unless another procedure
-        # code was explicitly named.
-        if "GPK_RK" not in explicit and not any(x in explicit for x in ("APPC_RK", "UPK_RK", "KOAP_RK")):
+        if "GPK_RK" not in explicit and not any(
+            x in explicit for x in ("APPC_RK", "CRIMINAL_PROCEDURE_RK", "KOAP_RK")
+        ):
             explicit.append("GPK_RK")
         return tuple(dict.fromkeys(x for x in explicit if x in KNOWN_ACTS))
 
@@ -150,11 +147,10 @@ def research_from_corpus(
     try:
         routed = (act_id,) if act_id else route_act_ids(query)
         provisions = active.search_many(query, routed or None, limit=limit)
-
-        # Exact article references outrank semantic/lexical candidates.
         exact = _explicit_article_candidates(active, query, routed)
         if exact:
-            provisions = [*exact, *[item for item in provisions if item.article_id not in {x.article_id for x in exact}]]
+            exact_ids = {x.article_id for x in exact}
+            provisions = [*exact, *[item for item in provisions if item.article_id not in exact_ids]]
             provisions = provisions[: max(limit, len(exact))]
 
         seen = {provision.article_id for provision in provisions}
