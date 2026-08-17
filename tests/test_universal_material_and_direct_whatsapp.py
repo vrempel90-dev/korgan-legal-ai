@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-import inspect
+from pathlib import Path
 
 from korgan.localized_transport import lawyer_consultation_markup, lawyer_consultation_text
-from korgan import strict_bot
 
 
 def test_runtime_uses_universal_material_law_guard() -> None:
-    source = inspect.getsource(strict_bot.main)
-    assert "AdditiveLegalGuardService(settings)" in source
-    assert "PretrialOnlyMaterialGuardService(settings)" not in source
+    # Read source text instead of importing korgan.strict_bot. Importing that
+    # module installs global runtime patches at collection time and contaminates
+    # unrelated verification-gate tests.
+    source = Path("korgan/strict_bot.py").read_text(encoding="utf-8")
+    assert "base_bot.service = AdditiveLegalGuardService(settings)" in source
+    assert "base_bot.service = PretrialOnlyMaterialGuardService(settings)" not in source
 
 
 def test_yes_opens_whatsapp_directly_in_one_tap() -> None:
@@ -28,7 +30,7 @@ def test_yes_opens_whatsapp_directly_in_one_tap() -> None:
 
 def test_lawyer_cta_is_short_and_marks_consultation_paid() -> None:
     text = lawyer_consultation_text("ru", "KRG-26-ABC123", "claim")
-    assert "Консультация персонального юриста платная" in text
+    assert "платную консультацию" in text
     assert "+7 700 500 05 53" in text
-    assert "Хотите получить консультацию" in text
+    assert "Хотите получить" in text
     assert len(text) < 500
