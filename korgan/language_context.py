@@ -10,14 +10,25 @@ from aiogram.types import TelegramObject
 from korgan.i18n import RU, normalize_language
 
 _CURRENT_LANGUAGE: ContextVar[str] = ContextVar("korgan_current_language", default=RU)
+_CURRENT_STATE: ContextVar[FSMContext | None] = ContextVar("korgan_current_fsm_state", default=None)
 
 
 def current_language() -> str:
     return normalize_language(_CURRENT_LANGUAGE.get())
 
 
+def current_fsm_state() -> FSMContext | None:
+    """Return the FSM state bound to the current Telegram update, if any.
+
+    This keeps per-case metadata available to the transport layer without a
+    process-global user map. ContextVars are scoped to the current async task,
+    so simultaneous chats do not share state.
+    """
+    return _CURRENT_STATE.get()
+
+
 class LanguageContextMiddleware(BaseMiddleware):
-    """Expose the FSM language to renderers/transport without global user state."""
+    """Expose the FSM language/state to renderers and transport per update."""
 
     async def __call__(
         self,
@@ -27,11 +38,14 @@ class LanguageContextMiddleware(BaseMiddleware):
     ) -> Any:
         lang = RU
         state = data.get("state")
-        if isinstance(state, FSMContext):
-            stored = await state.get_data()
+        current_state = state if isinstance(state, FSMContext) else None
+        if current_state is not None:
+            stored = await current_state.get_data()
             lang = normalize_language(stored.get("language", RU))
-        token = _CURRENT_LANGUAGE.set(lang)
+        language_token = _CURRENT_LANGUAGE.set(lang)
+        state_token = _CURRENT_STATE.set(current_state)
         try:
             return await handler(event, data)
         finally:
-            _CURRENT_LANGUAGE.reset(token)
+            _CURRENT_STATE.reset(state_token)
+            _CURRENT_LANGUAGE.reset(language_token)
