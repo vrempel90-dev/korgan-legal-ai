@@ -12,9 +12,6 @@ class ActSpec:
     core: bool = False
 
 
-# KORGAN keeps the proven civil/labour filing corpus as CORE.  The extended
-# catalogue broadens consultation/research coverage, but a temporary failure of
-# an optional act must never make the whole production corpus unavailable.
 ACT_SPECS: tuple[ActSpec, ...] = (
     ActSpec("GK_RK_OBSHAYA", "K940001000_", "Гражданский кодекс Республики Казахстан (Общая часть)", "ГК РК (Общая часть)", True),
     ActSpec("GK_RK_OSOBENNAYA", "K990000409_", "Гражданский кодекс Республики Казахстан (Особенная часть)", "ГК РК (Особенная часть)", True),
@@ -51,12 +48,9 @@ ACT_SPECS: tuple[ActSpec, ...] = (
 ACT_BY_ID = {spec.act_id: spec for spec in ACT_SPECS}
 CORE_ACT_IDS = frozenset(spec.act_id for spec in ACT_SPECS if spec.core)
 OPTIONAL_ACT_IDS = frozenset(spec.act_id for spec in ACT_SPECS if not spec.core)
-
 KNOWN_ACTS = {spec.act_id: (spec.adilet_id, spec.title_ru) for spec in ACT_SPECS}
 ACT_SHORT_TITLES = {spec.act_id: spec.short_title for spec in ACT_SPECS}
 
-# Normalized citation labels understood by the final citation audit.  Multiple
-# aliases can intentionally resolve to one local act.
 CITATION_ACT_IDS: dict[str, tuple[str, ...]] = {
     "ГК РК": ("GK_RK_OBSHAYA", "GK_RK_OSOBENNAYA"),
     "ГПК РК": ("GPK_RK",),
@@ -68,4 +62,24 @@ CITATION_ACT_IDS: dict[str, tuple[str, ...]] = {
     "УК РК": ("UK_RK",),
     "УПК РК": ("UPK_RK",),
     "Конституция РК": ("CONSTITUTION_RK",),
+    "Кодекс РК о браке и семье": ("FAMILY_RK",),
+    "Предпринимательский кодекс РК": ("ENTREPRENEUR_RK",),
+    "Социальный кодекс РК": ("SOCIAL_RK",),
+    "Земельный кодекс РК": ("LAND_RK",),
+    "Кодекс РК о здоровье народа": ("HEALTH_RK",),
+    "Закон РК о защите прав потребителей": ("ZPP_RK",),
+    "Закон РК о государственных закупках": ("PUBLIC_PROCUREMENT_RK",),
+    "Закон РК об исполнительном производстве": ("ENFORCEMENT_RK",),
+    "Закон РК о жилищных отношениях": ("HOUSING_RK",),
+    "Закон РК о банках": ("BANKS_RK",),
+    "Закон РК о микрофинансовой деятельности": ("MICROFINANCE_RK",),
+    "Закон РК о коллекторской деятельности": ("COLLECTION_RK",),
+    "Закон РК о банкротстве граждан": ("CITIZEN_BANKRUPTCY_RK",),
+    "Закон РК о нотариате": ("NOTARIAT_RK",),
+    "Закон РК об образовании": ("EDUCATION_RK",),
+    "Закон РК о государственной службе": ("PUBLIC_SERVICE_RK",),
+    "Закон РК о дорожном движении": ("ROAD_TRAFFIC_RK",),
+    "Закон РК об адвокатской деятельности": ("ADVOCACY_RK",),
+    "Закон РК о миграции населения": ("MIGRATION_RK",),
+    "Закон РК о языках": ("LANGUAGES_RK",),
 }
