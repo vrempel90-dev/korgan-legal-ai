@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from korgan.citation_audit import ProvisionReference, extract_references
+from korgan.citation_audit import extract_references
 from korgan.finalized_litigation import FinalizedProductionClaimService
 from korgan.legal.corpus import ACT_LABOR
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
@@ -94,7 +94,6 @@ def sanitize_research_sources(research: LegalResearch) -> LegalResearch:
             continue
         accepted.append(clean_language_labels(str(line)))
 
-    # Deduplicate source-bound points by article after language cleanup.
     accepted = _dedupe_by_article(accepted)
     sources = [url for url in research.source_urls if _is_russian_adilet(url)]
     research.verified_claims = accepted
@@ -161,8 +160,6 @@ def normalize_claim_legal_basis(draft: ClaimDraft, research: LegalResearch) -> l
 
 
 class StableLegalProductionService(FinalizedProductionClaimService):
-    """Current production core plus source-language and remedy-coverage invariants."""
-
     async def research_case(self, case_context: str, language: str = "ru") -> LegalResearch:
         research = await super().research_case(case_context, language=language)
         return sanitize_research_sources(research)
@@ -174,7 +171,30 @@ class StableLegalProductionService(FinalizedProductionClaimService):
 
 
 def install_stable_legal_release() -> None:
-    """Add Labor Code to the local citation audit without weakening verification."""
+    """Install production research rules and Labor Code citation lookup."""
     from korgan import client_safe_ui
+    from korgan import fast_professional_litigation as litigation
 
     client_safe_ui._ACT_IDS["ТК РК"] = (ACT_LABOR,)
+
+    if getattr(litigation, "_stable_legal_release_prompt_installed", False):
+        return
+    original = litigation._professional_research_prompt
+
+    def stable_prompt(case_context: str, *, max_chars: int, checked_on: str, **kwargs: object) -> str:
+        base = original(case_context, max_chars=max_chars, checked_on=checked_on, **kwargs)
+        return base + (
+            "\n\nСТАБИЛЬНОСТЬ ИСТОЧНИКОВ И ПОКРЫТИЕ ТРЕБОВАНИЙ:\n"
+            "21. Для норм права открывай только русскую официальную страницу Adilet вида /rus/docs/. "
+            "Не используй /eng/docs/ как отдельный источник и никогда не пиши в результате 'английская версия' или 'русская редакция': это один нормативный акт.\n"
+            "22. Для КАЖДОГО самостоятельного денежного требования найди отдельную норму, которая прямо поддерживает именно это требование. "
+            "Нельзя обосновать только меньшую часть и оставить основную сумму без правовой опоры.\n"
+            "23. В трудовом споре отдельно проверь: задолженность по заработной плате — ст. 113 ТК РК (и иные прямо применимые нормы); "
+            "компенсацию за неиспользованный отпуск — ст. 96 ТК РК; при требовании немедленного исполнения заработной платы — ст. 243 ГПК РК. "
+            "Принимай эти статьи только после source-bound проверки их действующей русской страницы Adilet.\n"
+            "24. Не создавай несколько verified_points с одним и тем же актом и номером статьи ради разных языковых страниц или почти одинаковых пересказов. "
+            "Одна норма — один точный verified_point, если разные пункты статьи не дают действительно разные правила."
+        )
+
+    litigation._professional_research_prompt = stable_prompt
+    litigation._stable_legal_release_prompt_installed = True
