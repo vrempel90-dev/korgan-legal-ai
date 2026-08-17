@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from urllib.parse import quote
 
@@ -11,6 +12,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton
 
 from korgan.i18n import KK, normalize_language
 
+LOGGER = logging.getLogger(__name__)
 router = Router(name="korgan-document-consultation-cta")
 
 WHATSAPP_DISPLAY_NUMBER = "+7 700 500 05 53"
@@ -75,6 +77,26 @@ async def send_consultation_cta(bot: Bot, chat_id: Any, language: str = "ru") ->
         reply_markup=consultation_keyboard(lang),
         disable_web_page_preview=True,
     )
+
+
+def install_compact_document_followup() -> None:
+    """Keep internal filing actions but suppress the old long post-claim checklist.
+
+    The court-ready gate still calculates and uses filing actions for release
+    decisions.  Client UX after a successfully delivered KORGAN file is now one
+    consistent lawyer CTA, regardless of document type.
+    """
+    from korgan import court_ready_claim_guard
+
+    if getattr(court_ready_claim_guard, "_compact_followup_installed", False):
+        return
+
+    async def _no_client_checklist(message: Any, state: Any, draft: Any) -> None:
+        return None
+
+    court_ready_claim_guard._send_filing_checklist = _no_client_checklist
+    court_ready_claim_guard._compact_followup_installed = True
+    LOGGER.info("Installed KORGAN compact post-document consultation followup")
 
 
 @router.callback_query(F.data == "consultation:no")
