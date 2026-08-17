@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import io
 from typing import Any
+from urllib.parse import quote
 
 from aiogram import Bot
-from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import (
+    BufferedInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 from docx import Document
 
 from korgan.client_safe_ui import ClientSafeBot, _clean_upload, sanitize_client_text
@@ -41,6 +48,48 @@ _DOCX_REPLACEMENTS = (
     ("Сторона 1", "1-тарап"),
     ("Сторона 2", "2-тарап"),
 )
+
+_CLAIM_REVIEW_PHONE = "77005000553"
+_CLAIM_FILENAME = "korgan_iskovoe_zayavlenie.docx"
+
+
+def _claim_review_text(language: str) -> str:
+    if language == KK:
+        return (
+            "⚠️ Бұл талап қою арызы KORGAN AI көмегімен дайындалды. "
+            "Сотқа берер алдында оны заңгерге тексертуге кеңес береміз.\n\n"
+            "Тексеру тек осы талап қою арызына қатысты. Қосымша құжаттарды дайындау немесе тексеру — бөлек ақылы қызмет.\n\n"
+            "WhatsApp ашылғаннан кейін осы чатта алған Word-файлын заңгерге тіркеңіз."
+        )
+    return (
+        "⚠️ Этот иск подготовлен с использованием KORGAN AI. Перед подачей в суд рекомендуем проверить его у юриста.\n\n"
+        "Проверка относится только к этому иску. Подготовка или проверка дополнительных документов — отдельная платная услуга.\n\n"
+        "После открытия WhatsApp прикрепите полученный в этом чате Word-файл иска."
+    )
+
+
+def _claim_review_markup(language: str) -> InlineKeyboardMarkup:
+    if language == KK:
+        label = "👨‍⚖️ Талапты WhatsApp-та тексеру"
+        prefill = (
+            "Сәлеметсіз бе! KORGAN-да дайындалған талап қою арызын заңгерге тексеруге бергім келеді. "
+            "Қазір Word-файлын тіркеймін."
+        )
+    else:
+        label = "👨‍⚖️ Проверить иск в WhatsApp"
+        prefill = (
+            "Здравствуйте! Хочу передать иск, подготовленный в KORGAN, на проверку юристу. "
+            "Сейчас прикреплю Word-файл иска."
+        )
+    url = f"https://wa.me/{_CLAIM_REVIEW_PHONE}?text={quote(prefill)}"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=label, url=url)]]
+    )
+
+
+def _is_claim_document(document: Any) -> bool:
+    filename = str(getattr(document, "filename", "") or "")
+    return filename.rsplit("/", 1)[-1].lower() == _CLAIM_FILENAME
 
 
 def _localize_markup(markup: Any) -> Any:
@@ -154,11 +203,25 @@ class LocalizedClientSafeBot(ClientSafeBot):
         return await Bot.send_message(self, chat_id, _localize_text(text) or "", *args, **kwargs)
 
     async def send_document(self, chat_id: Any, document: Any, *args: Any, **kwargs: Any) -> Any:
+        is_claim = _is_claim_document(document)
         if "caption" in kwargs:
             kwargs["caption"] = _localize_text(kwargs.get("caption"))
         if "reply_markup" in kwargs:
             kwargs["reply_markup"] = _localize_markup(kwargs.get("reply_markup"))
-        return await Bot.send_document(self, chat_id, _localize_docx(_clean_upload(document)), *args, **kwargs)
+        result = await Bot.send_document(self, chat_id, _localize_docx(_clean_upload(document)), *args, **kwargs)
+        if is_claim:
+            language = current_language()
+            try:
+                await Bot.send_message(
+                    self,
+                    chat_id,
+                    _claim_review_text(language),
+                    reply_markup=_claim_review_markup(language),
+                )
+            except Exception:
+                # The optional CTA must never turn a successfully delivered claim into a failed request.
+                pass
+        return result
 
     async def edit_message_text(self, text: str, *args: Any, **kwargs: Any) -> Any:
         if "reply_markup" in kwargs:
