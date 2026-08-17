@@ -37,7 +37,9 @@ _PRETRIAL_SCHEMA: dict[str, Any] = {
 }
 
 _INTENT_RU = re.compile(r"(?i)\b(?:досудебн\w*\s+претензи\w*|претензи\w*)\b")
-_INTENT_KK = re.compile(r"(?i)\b(?:сотқа\s+дейінгі\s+талап|талап\s+хат)\b")
+# Kazakh case endings are part of the same word: талап, талапты, талаптың, талапқа...
+# Do not terminate the pattern at bare "талап" with a word boundary.
+_INTENT_KK = re.compile(r"(?i)(?:сотқа\s+дейінгі\s+талап\w*|талап\s+хат\w*)")
 _ACTION = re.compile(r"(?i)\b(?:подготов\w*|состав\w*|сформир\w*|сдел\w*|напиш\w*|дайында\w*|жаса\w*|әзірле\w*|құрастыр\w*)\b")
 _ADVICE = re.compile(r"(?i)^\s*(?:как|қалай)\b")
 
