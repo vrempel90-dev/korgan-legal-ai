@@ -37,6 +37,19 @@ Everything computable from a rate fixed in law is computed in `korgan/legal_calc
 
 When the claim price or the payer type cannot be established from the materials, the document carries `[ТРЕБУЕТ РАСЧЁТА ГОСПОШЛИНЫ]` instead of a guessed number. Both rate constants are year-bound and must be re-verified when the next budget law enters into force.
 
+## Local corpus (feature-flagged)
+
+`korgan/legal/` holds the local-corpus path: provisions in SQLite + FTS5, a citation validator, Python-only calculations, requirement checklists and a ГПК form check. It is **off by default** — the existing OpenAI web-search research runs unchanged until the flag is set:
+
+```bash
+python scripts/load_corpus.py --all          # requires network access to adilet.zan.kz
+KORGAN_LOCAL_CORPUS=1 python -m korgan.bot
+```
+
+The loader accepts only adilet's Russian edition: the URL must be on `/rus/`, and the text must actually read as Russian, because an English translation of a code parses just as cleanly. Rates used by the calculators live in `korgan/data/rates.json` with the date they were current on — update the file, not the code.
+
+With the flag off, an unbuilt corpus, or a query with no matches, the pipeline falls back to web search rather than emitting a claim with no legal basis.
+
 ## Stack
 
 - Python 3.11+
