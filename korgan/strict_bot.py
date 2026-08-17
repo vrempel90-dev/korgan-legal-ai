@@ -28,6 +28,7 @@ from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
+from korgan.project_claim_release_hotfix import install_project_claim_release_hotfix
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.stable_legal_release import install_stable_legal_release
 from korgan.ui import main_menu
@@ -44,6 +45,9 @@ install_global_current_law_guard()
 # Wrap the final claim sender last. It does not replace the generator; it only
 # blocks a Word release when substantive legal quality is still unsafe.
 install_court_ready_claim_guard()
+# Filing details and omitted secondary remedies may downgrade an otherwise safe
+# claim to a reviewable project, but missing VERIFIED material law still blocks.
+install_project_claim_release_hotfix()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
@@ -88,7 +92,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: intent-locked documents + court-ready >=8.5 claims + current RK Adilet RAG + RU/KK + no questionnaires"
+        "Starting KORGAN: intent-locked documents + court-ready/reviewable claim projects + current RK Adilet RAG + RU/KK + no questionnaires"
     )
     try:
         await dp.start_polling(bot)
