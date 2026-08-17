@@ -145,6 +145,7 @@ def test_salary_without_verified_basis_is_not_release_ready() -> None:
 def test_pretrial_intent_is_action_only_not_advice() -> None:
     assert is_pretrial_request("Подготовь досудебную претензию о возврате денег")
     assert is_pretrial_request("Сотқа дейінгі талапты дайында")
+    assert is_pretrial_request("Сотқа дейінгі талапқа мәтін әзірле")
     assert not is_pretrial_request("Как составить досудебную претензию?")
     assert not is_pretrial_request("Сотқа дейінгі талапты қалай дайындауға болады?")
 
