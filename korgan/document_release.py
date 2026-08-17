@@ -1,10 +1,4 @@
-"""The gate every KORGAN document passes before it reaches the user.
-
-The gate reads finished document text and is document-type agnostic. Legal
-citations are checked first against source-bound provisions verified for the
-current document and then against the dated local corpus. Text integrity is
-always checked independently.
-"""
+"""The gate every KORGAN document passes before it reaches the user."""
 
 from __future__ import annotations
 
@@ -18,12 +12,11 @@ LAW_CHECK_NOTE_PREFIX = "Сверьте каждую статью в разде�
 
 
 def law_verification_note() -> str:
-    """Conservative checklist note for documents that cite law."""
     checked = corpus_checked_on()
     provenance = (
         f"последняя сверка локальной базы норм KORGAN: {checked}"
         if checked
-        else "локальная база норм KORGAN не имеет общей даты полной сверки"
+        else "общая полная сверка локальной базы норм KORGAN не проводилась"
     )
     return (
         f"{LAW_CHECK_NOTE_PREFIX} с действующей редакцией на дату подачи "
@@ -67,7 +60,6 @@ def review_document(
     *,
     verified_claims: list[str] | None = None,
 ) -> ReleaseReport:
-    """Run release checks using current source-bound law plus corpus fallback."""
     return ReleaseReport(
         citations=audit_citations(text, verified_claims=verified_claims),
         integrity=integrity_findings(text),
