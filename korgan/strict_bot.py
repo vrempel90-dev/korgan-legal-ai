@@ -15,6 +15,7 @@ from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
 from korgan.finalized_litigation import FinalizedProductionClaimService
+from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
 from korgan.kazakh_ui import router as kazakh_router
 from korgan.language_context import LanguageContextMiddleware
 from korgan.legal.corpus_refresh import start_corpus_refresh_task
@@ -26,6 +27,7 @@ from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.ui import main_menu
 
 install_runtime_hotfix()
+install_kazakh_legal_bridge()
 install_professional_rag_bridge()
 install_client_safe_runtime()
 
@@ -43,8 +45,6 @@ async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
 async def main() -> None:
     settings = get_settings()
     base_bot.service = FinalizedProductionClaimService(settings)
-    # Russian remains the backward-compatible default. The transport and the
-    # Kazakh router render a per-session keyboard when language == kk.
     base_bot.MENU = main_menu()
 
     bot = LocalizedClientSafeBot(token=settings.telegram_bot_token)
@@ -60,9 +60,6 @@ async def main() -> None:
     dp.include_router(start_router)
     dp.include_router(safety_router)
     dp.include_router(contact_router)
-    # Kazakh buttons/uploads/questions must be handled before the legacy Russian
-    # reply router. Claim callbacks still call the same universal no-questionnaire
-    # production pipeline and the same >=8.5 quality gate.
     dp.include_router(kazakh_router)
     dp.include_router(universal_claim_router)
     dp.include_router(universal_document_router)
