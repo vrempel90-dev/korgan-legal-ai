@@ -12,6 +12,7 @@ from korgan import bot as base_bot
 from korgan.additive_legal_guard import AdditiveLegalGuardService, install_global_current_law_guard
 from korgan.admin import router as admin_router
 from korgan.claim_quality_hotfix import install_runtime_hotfix
+from korgan.claim_route_lock import router as claim_route_lock_router
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
@@ -64,12 +65,12 @@ async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
 async def ensure_startup_corpus_ready() -> None:
     """Do not accept legal-document requests before the verified core corpus exists.
 
-    Railway containers use ephemeral application storage.  After a fresh deploy
-    the SQLite corpus can therefore be absent for the first minute or two.  The
+    Railway containers use ephemeral application storage. After a fresh deploy
+    the SQLite corpus can therefore be absent for the first minute or two. The
     document release guard is intentionally fail-closed and would otherwise
     reject a perfectly good claim merely because source-bound verification raced
-    the background corpus refresh.  When autoload is enabled and no corpus is
-    present, build it synchronously before Telegram polling starts.  If a healthy
+    the background corpus refresh. When autoload is enabled and no corpus is
+    present, build it synchronously before Telegram polling starts. If a healthy
     corpus already exists, startup remains fast and the normal background refresh
     keeps it current.
     """
@@ -110,6 +111,9 @@ async def main() -> None:
     dp.include_router(start_router)
     dp.include_router(safety_router)
     dp.include_router(contact_router)
+    # A claim selected from the document menu is a hard intent lock. This router
+    # must run before legacy document-menu callbacks and consultation fallbacks.
+    dp.include_router(claim_route_lock_router)
     # Intent lock must run before every document-specific waiting handler and
     # before the Kazakh consultation catch-all.
     dp.include_router(intent_guard_router)
@@ -122,7 +126,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: verified corpus ready + intent-locked documents + court-ready/reviewable claim projects + current RK Adilet RAG + RU/KK + no questionnaires"
+        "Starting KORGAN: verified corpus ready + hard claim-to-DOCX routing + intent-locked documents + court-ready/reviewable claim projects + current RK Adilet RAG + RU/KK + no questionnaires"
     )
     try:
         await dp.start_polling(bot)
