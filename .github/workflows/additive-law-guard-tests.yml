@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/additive-document-law-gate
+      - fix/material-law-and-lawyer-cta-v2
   workflow_dispatch:
 
 jobs:
