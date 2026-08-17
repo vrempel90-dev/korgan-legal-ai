@@ -5,9 +5,10 @@ import logging
 from aiogram import F, Router
 from aiogram.filters import BaseFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from korgan import bot as base_bot
+from korgan.claim_intent import is_claim_drafting_request
 from korgan.i18n import KK, normalize_language
 from korgan.pretrial import build_pretrial_docx, is_pretrial_request, pretrial_release_blockers
 from korgan.ui import main_menu
@@ -19,13 +20,25 @@ router = Router(name="korgan-pretrial-material-law-only")
 class _Waiting(BaseFilter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
-        return data.get("mode") == "pretrial_waiting" and bool(message.text) and not message.text.startswith("/")
+        if data.get("mode") != "pretrial_waiting" or not message.text or message.text.startswith("/"):
+            return False
+        # A user may change their mind after opening the pretrial flow. An
+        # explicit claim drafting request must go to the claim router instead
+        # of being consumed as pretrial facts.
+        if is_claim_drafting_request(message.text):
+            return False
+        return True
 
 
 class _Intent(BaseFilter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
         if data.get("mode") in {"consultation", "contract_details", "response_details"}:
+            return False
+        # Case facts often mention that a pretrial demand was already sent.
+        # If the user's actual instruction is to draft a claim, that explicit
+        # document intent wins and this router must not steal the message.
+        if is_claim_drafting_request(message.text):
             return False
         return is_pretrial_request(message.text)
 
@@ -135,6 +148,13 @@ async def _generate(message: Message, state: FSMContext) -> None:
         caption=caption,
         reply_markup=menu,
     )
+
+
+@router.callback_query(F.data == "doc:pretrial")
+async def pretrial_document_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.message is not None:
+        await _generate(callback.message, state)
 
 
 @router.message(_Waiting(), F.text)
