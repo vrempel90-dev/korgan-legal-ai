@@ -16,6 +16,7 @@ from korgan.legal.rk_catalog import ACT_BY_ID
 from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.pretrial import PretrialDraft, PretrialProductionService
 from korgan.response_types import ResponseObjection, ResponseToClaimDraft
+from scripts.load_corpus import parse_provisions
 
 
 def _research(*verified: str) -> LegalResearch:
@@ -34,6 +35,21 @@ def test_current_catalog_uses_2026_replacements() -> None:
     assert ACT_BY_ID["CONSTITUTION_RK"].adilet_id == "K2600000000"
     assert ACT_BY_ID["BANKS_RK"].adilet_id == "Z2600000258"
     assert ACT_BY_ID["PUBLIC_SERVICE_RK"].adilet_id == "Z2600000290"
+
+
+def test_constitution_style_article_heading_without_dot_is_parsed() -> None:
+    text = (
+        "Конституция Республики Казахстан\n"
+        "Раздел I\n"
+        "Статья 1\n"
+        "Республика Казахстан – демократическое, светское, правовое и социальное государство.\n"
+        "Статья 2\n"
+        "1. Республика Казахстан – унитарное государство.\n"
+        "2. Суверенитет распространяется на всю ее территорию.\n"
+    )
+    provisions = parse_provisions(text)
+    assert {item.article_no for item in provisions} == {"1", "2"}
+    assert any("демократическое" in item.body for item in provisions if item.article_no == "1")
 
 
 def test_old_constitution_is_rejected_after_july_2026() -> None:
