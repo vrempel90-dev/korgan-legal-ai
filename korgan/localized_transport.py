@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import quote
 
 from aiogram import Bot
 from aiogram.types import (
@@ -11,8 +10,15 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+from korgan.case_reference import (
+    case_reference_from_filename,
+    consultation_callback_data,
+    document_kind_from_filename,
+    document_label,
+    new_case_reference,
+)
 from korgan.client_safe_ui import ClientSafeBot, _clean_upload, sanitize_client_text
-from korgan.contact_handlers import WHATSAPP_NUMBER_DISPLAY, WHATSAPP_URL
+from korgan.contact_handlers import WHATSAPP_NUMBER_DISPLAY
 from korgan.i18n import BUTTONS, KK, RU, tr
 from korgan.language_context import current_language
 
@@ -103,39 +109,49 @@ def short_document_caption(filename: str, language: str = RU) -> str:
     return "✅ Құжат дайын." if kk else "✅ Документ готов."
 
 
-def lawyer_consultation_text(language: str = RU) -> str:
+def lawyer_consultation_text(
+    language: str,
+    case_reference: str,
+    document_kind: str,
+) -> str:
+    label = document_label(document_kind, language)
     if language == KK:
         return (
-            "👨‍⚖️ Құжатты пайдаланар алдында заңгердің қорытынды тексеруі қажет.\n\n"
-            "Жеке заңгердің ақылы консультациясын алғыңыз келе ме?\n"
+            f"👨‍⚖️ KORGAN ісі № {case_reference}\n"
+            f"📄 Құжат: {label}\n\n"
+            "Құжатты пайдаланар алдында заңгердің қорытынды консультациясы қажет.\n"
+            "Осы іс бойынша жеке заңгердің ақылы консультациясын алғыңыз келе ме?\n\n"
             f"📱 {WHATSAPP_NUMBER_DISPLAY}"
         )
     return (
-        "👨‍⚖️ Перед использованием документа требуется финальная проверка юристом.\n\n"
-        "Хотите получить платную консультацию персонального юриста?\n"
+        f"👨‍⚖️ Дело KORGAN № {case_reference}\n"
+        f"📄 Документ: {label}\n\n"
+        "Перед использованием документа требуется финальная консультация юриста.\n"
+        "Хотите получить платную консультацию персонального юриста именно по этому делу?\n\n"
         f"📱 {WHATSAPP_NUMBER_DISPLAY}"
     )
 
 
-def lawyer_consultation_markup(language: str = RU) -> InlineKeyboardMarkup:
-    prefill = (
-        "Сәлеметсіз бе! KORGAN құжаты бойынша ақылы заңгер консультациясын алғым келеді."
-        if language == KK
-        else "Здравствуйте! Хочу получить платную консультацию юриста по документу KORGAN."
-    )
-    url = f"{WHATSAPP_URL}?text={quote(prefill)}"
-    yes = "✅ Иә, консультация алу" if language == KK else "✅ Да, получить консультацию"
+def lawyer_consultation_markup(
+    language: str,
+    case_reference: str,
+    document_kind: str,
+) -> InlineKeyboardMarkup:
+    yes = "✅ Иә, осы іс бойынша" if language == KK else "✅ Да, по этому делу"
     no = "❌ Жоқ" if language == KK else "❌ Нет"
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=yes, url=url)],
+            [InlineKeyboardButton(
+                text=yes,
+                callback_data=consultation_callback_data(case_reference, document_kind),
+            )],
             [InlineKeyboardButton(text=no, callback_data="lawyer:decline")],
         ]
     )
 
 
 class LocalizedClientSafeBot(ClientSafeBot):
-    """Client-safe transport plus per-session RU/KK and lawyer CTA."""
+    """Client-safe transport plus per-session RU/KK and case-bound lawyer CTA."""
 
     async def send_message(self, chat_id: Any, text: str, *args: Any, **kwargs: Any) -> Any:
         if "reply_markup" in kwargs:
@@ -159,11 +175,13 @@ class LocalizedClientSafeBot(ClientSafeBot):
         sent = await Bot.send_document(self, chat_id, _clean_upload(document), *args, **kwargs)
 
         if generated:
+            case_reference = case_reference_from_filename(filename) or new_case_reference()
+            document_kind = document_kind_from_filename(filename)
             await Bot.send_message(
                 self,
                 chat_id,
-                lawyer_consultation_text(language),
-                reply_markup=lawyer_consultation_markup(language),
+                lawyer_consultation_text(language, case_reference, document_kind),
+                reply_markup=lawyer_consultation_markup(language, case_reference, document_kind),
                 disable_web_page_preview=True,
             )
         return sent
