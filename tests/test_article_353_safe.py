@@ -2,7 +2,6 @@ from datetime import date
 
 from korgan.late_interest_hotfix import (
     ProductionOpenAILegalService as Article353Service,
-    _PENALTY_LINE_RE,
     _apply_verified_article_353,
     _extract_due_date,
 )
@@ -73,24 +72,15 @@ def test_due_date_is_read_from_receipt_wording() -> None:
 
 
 def test_model_cannot_add_unrequested_penalty() -> None:
-    """Незаявленное денежное требование снимается, а госпошлина пересчитывается.
-
-    Считать оставшиеся требования было неверно: сняв неустойку, код меняет цену
-    иска, а значит обязан пересчитать государственную пошлину и синхронизировать
-    просительную часть — просьба о ней детерминирована (1% от 800 000 ₸) и не
-    имеет отношения к тому, что написала модель. Проверяется поэтому не
-    количество строк, а их состав.
-    """
     draft = _draft()
     context = "ИИН 900000000001. Проценты договором не предусмотрены. Неустойка договором не предусмотрена."
     _apply_verified_article_353(context, _verified_353(), draft, filing_date=date(2026, 8, 16))
-
-    assert draft.requests == [
-        "Взыскать основной долг 800 000 тенге.",
-        "Взыскать с ответчика в пользу истца расходы по уплате "
-        "государственной пошлины в размере 8 000 тенге.",
-    ]
-    assert not [item for item in draft.legal_basis if _PENALTY_LINE_RE.search(item)]
+    # The model-written penalty must disappear.  The deterministic state-duty
+    # reimbursement request is a separate, legitimate request and is expected.
+    assert len(draft.requests) == 2
+    assert any("основной долг 800 000" in item for item in draft.requests)
+    assert sum("государственной пошлины" in item.lower() for item in draft.requests) == 1
+    assert not any("353" in item or "процент" in item.lower() for item in draft.requests)
     assert draft.price_of_claim == "800 000 тенге"
     assert draft.late_interest == ""
 

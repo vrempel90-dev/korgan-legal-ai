@@ -4,48 +4,13 @@ Production-oriented MVP for Kazakhstan legal consultations, document intake and 
 
 ## Current workflow
 
-1. User describes the dispute in Telegram — once, in their own words.
+1. User describes the dispute in Telegram.
 2. User can attach PDF/DOCX/TXT or photo/scan (JPG/PNG/WEBP).
 3. OpenAI extracts only visible facts and marks unreadable/missing data.
 4. KORGAN researches legal basis with OpenAI Web Search restricted to official Kazakhstan legal domains (default: `adilet.zan.kz`).
 5. A separate drafting pass builds a structured claim.
 6. A separate validation pass checks facts, legal support and missing required fields.
 7. The bot returns a DOCX and marks it `VERIFIED` or `NEEDS_VERIFICATION`.
-
-### One message in, one document out
-
-There is no field-by-field questionnaire (`korgan/claim_intake_policy.py`). Gaps
-in the materials are split by consequence, not by form:
-
-* **critical** — who is suing, whom, over what, and for how much. Without these
-  the document is meaningless, so they are asked for **once**, all in a single
-  message. Whatever that one answer does not produce becomes a placeholder too:
-  a second round never happens.
-* **filing requisites** — date of birth, ИИН/БИН, party addresses, bank details,
-  the exact court, the state duty. These never block drafting. The draft is
-  delivered with `[ТРЕБУЕТ УТОЧНЕНИЯ: ...]` in their place, exactly as contract
-  templates already work, and the user fills them in the file in one pass.
-
-### The provision must prove the relief
-
-Citation checking and provision *choice* are different failures, and
-`korgan/legal_basis_fit.py` covers the second. On a claim for the return of a
-2 300 000 ₸ prepayment for work never performed, the legal reasoning consisted of
-the rule on acceptance of a work result — a real article, quoted correctly, and
-about the customer's own duty rather than any ground for recovering money from
-the contractor.
-
-So the provision is matched to the relief in the prayer for relief: withdrawal
-from the contract with return of the advance, contractor liability or unjust
-enrichment support that claim; the acceptance rule does not and may never be its
-sole legal basis. When nothing in the document supports the relief, KORGAN does
-not substitute a plausible-looking article — the document says a lawyer must pick
-the exact provision.
-
-A provision the user agreed to keep as `NEEDS_VERIFICATION` is stored on the
-case, not on the draft it was granted for, and re-applied on every path into the
-renderer. A rebuild that drops the disputed article gets it back, with its number
-present and its content unasserted.
 
 ## Fail-closed rule
 
@@ -71,6 +36,19 @@ Every refusal carries a machine-readable reason (`korgan/claim_failure.py`): sta
 Everything computable from a rate fixed in law is computed in `korgan/legal_calc.py`, not by the model. The state duty for a monetary claim follows статья 665 НК РК (Кодекс РК № 214-VIII): 1% of the claim price for individuals, 3% for legal entities, capped at 10 000 МРП (4 325 ₸ in 2026, Закон РК № 239-VIII).
 
 When the claim price or the payer type cannot be established from the materials, the document carries `[ТРЕБУЕТ РАСЧЁТА ГОСПОШЛИНЫ]` instead of a guessed number. Both rate constants are year-bound and must be re-verified when the next budget law enters into force.
+
+## Local corpus (feature-flagged)
+
+`korgan/legal/` holds the local-corpus path: provisions in SQLite + FTS5, a citation validator, Python-only calculations, requirement checklists and a ГПК form check. It is **off by default** — the existing OpenAI web-search research runs unchanged until the flag is set:
+
+```bash
+python scripts/load_corpus.py --all          # requires network access to adilet.zan.kz
+KORGAN_LOCAL_CORPUS=1 python -m korgan.bot
+```
+
+The loader accepts only adilet's Russian edition: the URL must be on `/rus/`, and the text must actually read as Russian, because an English translation of a code parses just as cleanly. Rates used by the calculators live in `korgan/data/rates.json` with the date they were current on — update the file, not the code.
+
+With the flag off, an unbuilt corpus, or a query with no matches, the pipeline falls back to web search rather than emitting a claim with no legal basis.
 
 ## Stack
 

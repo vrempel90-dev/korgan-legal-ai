@@ -6,3 +6,6 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# Локальный корпус норм — собирается scripts/load_corpus.py
+korgan/data/*.sqlite3
