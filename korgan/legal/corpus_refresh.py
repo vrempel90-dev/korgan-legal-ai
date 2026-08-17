@@ -1,16 +1,17 @@
 """Non-blocking refresh of the official Adilet-backed SQLite corpus.
 
-Refreshing the corpus is deliberately decoupled from deployment.  A broken
+Refreshing the corpus is deliberately decoupled from deployment. A broken
 network path or an incomplete TLS chain at adilet.zan.kz must never prevent the
-Telegram bot from starting.  A complete refresh is built into a temporary
+Telegram bot from starting. A complete refresh is built into a temporary
 database and atomically replaces the live file only after every supported act
 has loaded successfully.
 
-TLS verification is never disabled.  When Adilet omits an intermediate CA that
-the runtime cannot build automatically, KORGAN may supplement the trust context
-with public DigiCert intermediate certificates.  Those certificates are
-downloaded from DigiCert over verified HTTPS and accepted only when their
-SHA-256 fingerprints match the values published by DigiCert.
+TLS verification is never disabled. Adilet currently serves only its leaf
+certificate in Railway, omitting the issuer. KORGAN therefore supplements the
+normal platform trust context with exactly the current GoGetSSL intermediate
+published by the CA vendor. The downloaded certificate is accepted only when
+its DER SHA-256 fingerprint matches the pinned fingerprint; its parent remains
+the platform-trusted DigiCert Global Root G2.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ import hashlib
 import logging
 import os
 import ssl
-import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
@@ -35,22 +35,15 @@ REFRESH_HOURS_ENV = "KORGAN_CORPUS_REFRESH_HOURS"
 _TRUTHY = {"1", "true", "yes", "on"}
 DEFAULT_REFRESH_HOURS = 24.0
 
-# Exact PEM endpoints were obtained from DigiCert's official CA certificate
-# page.  Fingerprints are SHA-256 over the DER certificate.
+# GoGetSSL's official intermediate/root page publishes this exact PEM/TXT file.
+# SHA-256 is over the DER certificate and is also present in public CA metadata.
 _PINNED_INTERMEDIATES: tuple[tuple[str, str], ...] = (
     (
-        "https://cacerts.digicert.com/GeoTrustEVRSACAG2.crt.pem",
-        "2D140F20B8A96E2B4D2F1CC5ACA5E5A1E7DC56A7491E510906960F38D2D21AEF",
-    ),
-    (
-        "https://cacerts.digicert.com/GeoTrustTLSRSACAG1.crt.pem",
-        "C06E307F7CFC1D32FA72A4C033C87B90019AF216F0775D64978A2ECA6C8A230E",
-    ),
-    (
-        "https://cacerts.digicert.com/DigiCertEVRSACAG2.crt.pem",
-        "9588EF74199E45ACEFCCCFC0C47010E9F2A37A1DD44C61A4E1C6B334DA5AF614",
+        "https://gogetssl-cdn.s3.eu-central-1.amazonaws.com/wiki/GoGetSSL_G2_TLS_RSA4096_SHA256_2022_CA-1.txt",
+        "8AADF068A1B7C04B3E346F7C97FD9619FFF14ECC6C82C2F15594B9732F3F3E72",
     ),
 )
+_PINNED_CA_HOSTS = {"gogetssl-cdn.s3.eu-central-1.amazonaws.com"}
 
 
 def autoload_enabled() -> bool:
@@ -79,7 +72,7 @@ def _is_allowed_adilet_url(url: str) -> bool:
 
 
 def _read_https(url: str, *, context: ssl.SSLContext, timeout: int = 60) -> tuple[str, str]:
-    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.1"})
+    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.2"})
     with urllib.request.urlopen(request, timeout=timeout, context=context) as response:  # noqa: S310
         final_url = response.geturl()
         if not _is_allowed_adilet_url(final_url):
@@ -90,20 +83,22 @@ def _read_https(url: str, *, context: ssl.SSLContext, timeout: int = 60) -> tupl
 
 def _download_pinned_intermediate(url: str, expected_sha256: str) -> str:
     parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname != "cacerts.digicert.com":
+    if parsed.scheme != "https" or parsed.hostname not in _PINNED_CA_HOSTS:
         raise RuntimeError(f"CA download host rejected: {url}")
 
-    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.1"})
+    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.2"})
     with urllib.request.urlopen(
         request,
         timeout=30,
         context=ssl.create_default_context(),
     ) as response:  # noqa: S310
         final = urlparse(response.geturl())
-        if final.scheme != "https" or final.hostname != "cacerts.digicert.com":
+        if final.scheme != "https" or final.hostname not in _PINNED_CA_HOSTS:
             raise RuntimeError(f"CA redirect rejected: {response.geturl()}")
-        pem = response.read().decode("ascii")
+        pem = response.read().decode("ascii").strip()
 
+    if "-----BEGIN CERTIFICATE-----" not in pem or "-----END CERTIFICATE-----" not in pem:
+        raise RuntimeError(f"CA payload is not PEM: {url}")
     der = ssl.PEM_cert_to_DER_cert(pem)
     actual = hashlib.sha256(der).hexdigest().upper()
     if actual != expected_sha256.upper():
@@ -124,8 +119,8 @@ def _adilet_context_with_pinned_intermediates() -> ssl.SSLContext:
         except Exception as exc:
             LOGGER.warning("KORGAN CA supplement skipped url=%s error=%s", url, exc)
     if loaded == 0:
-        raise RuntimeError("No pinned DigiCert intermediates could be loaded")
-    LOGGER.info("KORGAN TLS context supplemented with %d pinned DigiCert CA(s)", loaded)
+        raise RuntimeError("No pinned Adilet intermediate could be loaded")
+    LOGGER.info("KORGAN TLS context supplemented with %d fingerprint-pinned CA(s)", loaded)
     return context
 
 
