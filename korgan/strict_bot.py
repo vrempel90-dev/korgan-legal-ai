@@ -11,21 +11,20 @@ from aiogram.types import MenuButtonDefault
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
 from korgan.claim_quality_hotfix import install_runtime_hotfix
-from korgan.client_safe_ui import ClientSafeBot, install_client_safe_runtime
+from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
 from korgan.finalized_litigation import FinalizedProductionClaimService
+from korgan.kazakh_ui import router as kazakh_router
+from korgan.language_context import LanguageContextMiddleware
 from korgan.legal.corpus_refresh import start_corpus_refresh_task
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
+from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.ui import main_menu
 
-# Install the already proven filing-vs-substance quality policy before the
-# universal routers bind their quality functions. Then enrich its single
-# professional research pass with local-corpus candidates and keep all
-# verification internals out of the client transport.
 install_runtime_hotfix()
 install_professional_rag_bridge()
 install_client_safe_runtime()
@@ -36,7 +35,7 @@ from korgan.universal_document_runtime import router as universal_document_route
 LOGGER = logging.getLogger(__name__)
 
 
-async def configure_telegram_menu(bot: ClientSafeBot) -> None:
+async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
     await bot.delete_my_commands()
     await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
 
@@ -44,18 +43,27 @@ async def configure_telegram_menu(bot: ClientSafeBot) -> None:
 async def main() -> None:
     settings = get_settings()
     base_bot.service = FinalizedProductionClaimService(settings)
+    # Russian remains the backward-compatible default. The transport and the
+    # Kazakh router render a per-session keyboard when language == kk.
     base_bot.MENU = main_menu()
 
-    bot = ClientSafeBot(token=settings.telegram_bot_token)
+    bot = LocalizedClientSafeBot(token=settings.telegram_bot_token)
     await configure_telegram_menu(bot)
 
     dp = Dispatcher(storage=MemoryStorage())
+    language_middleware = LanguageContextMiddleware()
+    dp.message.outer_middleware(language_middleware)
+    dp.callback_query.outer_middleware(language_middleware)
     dp.message.outer_middleware(ConsentMiddleware())
 
     dp.include_router(admin_router)
     dp.include_router(start_router)
     dp.include_router(safety_router)
     dp.include_router(contact_router)
+    # Kazakh buttons/uploads/questions must be handled before the legacy Russian
+    # reply router. Claim callbacks still call the same universal no-questionnaire
+    # production pipeline and the same >=8.5 quality gate.
+    dp.include_router(kazakh_router)
     dp.include_router(universal_claim_router)
     dp.include_router(universal_document_router)
     dp.include_router(reply_menu_router)
@@ -63,7 +71,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: restored >=8.5 quality core + professional RAG hints + client-safe UI"
+        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK client UI + no-questionnaire claims"
     )
     try:
         await dp.start_polling(bot)
