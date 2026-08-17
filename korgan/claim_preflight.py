@@ -64,6 +64,45 @@ def _party_segments(text: str, markers: tuple[str, ...]) -> list[str]:
     return result
 
 
+def _party_blocks(text: str, markers: tuple[str, ...]) -> list[str]:
+    """Return compact multi-line blocks belonging to one party.
+
+    Telegram users commonly send a party header on one line and its address on
+    the next.  Treat subsequent lines as belonging to that party until a line
+    explicitly starts the opposite party.  This binds an address to the right
+    role without allowing a nearby defendant address to satisfy claimant data
+    (or vice versa).
+    """
+    opposite = _DEFENDANT_MARKERS if markers == _CLAIMANT_MARKERS else _CLAIMANT_MARKERS
+    lines = [line.strip() for line in text.splitlines()]
+    blocks: list[str] = []
+    current: list[str] | None = None
+
+    for line in lines:
+        lowered = line.lower()
+        owns_line = any(marker in lowered for marker in markers)
+        opposite_line = any(marker in lowered for marker in opposite)
+
+        if owns_line:
+            if current:
+                blocks.append("\n".join(current))
+            current = [line]
+            continue
+
+        if opposite_line:
+            if current:
+                blocks.append("\n".join(current))
+                current = None
+            continue
+
+        if current is not None and line:
+            current.append(line)
+
+    if current:
+        blocks.append("\n".join(current))
+    return blocks
+
+
 def _party_is_legal_entity(text: str, markers: tuple[str, ...]) -> bool:
     for segment in _party_segments(text, markers):
         lowered = f" {segment.lower()} "
@@ -129,11 +168,17 @@ def _looks_like_address(segment: str) -> bool:
 def _has_role_bound_address(text: str, markers: tuple[str, ...]) -> bool:
     claimant = markers == _CLAIMANT_MARKERS
 
-    # Require party + address in the same compact field/segment. A defendant's
-    # address located nearby must never satisfy the claimant requirement.
+    # First accept the compact one-line form.
     for segment in _segments(text):
         lowered = segment.lower()
         if any(marker in lowered for marker in markers) and _looks_like_address(segment):
+            return True
+
+    # Then accept the normal Telegram form where the address is on a following
+    # line, but only inside this party's block.  The block terminates as soon as
+    # the opposite party begins, preventing cross-party address leakage.
+    for block in _party_blocks(text, markers):
+        if _looks_like_address(block):
             return True
 
     lowered = text.lower()
