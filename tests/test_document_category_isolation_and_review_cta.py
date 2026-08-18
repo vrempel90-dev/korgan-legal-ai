@@ -9,6 +9,7 @@ from aiogram.types import BufferedInputFile
 from korgan.document_category_router import PreferredDocumentCategory, preferred_document_category
 from korgan.localized_transport import (
     _claim_client_caption,
+    _document_caption_with_review,
     _document_client_caption,
     _document_review_markup,
     _document_review_text,
@@ -121,6 +122,17 @@ def test_every_review_cta_is_small_paid_yes_no_and_link_is_only_in_yes_button() 
         assert no_button.callback_data == f"lawyer_review:{kind}:no"
 
 
+def test_document_caption_contains_compact_review_cta_on_same_message() -> None:
+    for kind in ("claim", "pretrial", "response", "contract"):
+        caption = _document_caption_with_review(kind, "ru")
+        assert _document_client_caption(kind, "ru") in caption
+        assert _document_review_text(kind, "ru") in caption
+        assert "PRELIMINARY" not in caption
+        assert "KORGAN QUALITY" not in caption
+        assert "wa.me" not in caption
+        assert len(caption) < 1024
+
+
 def test_every_generated_document_caption_hides_internal_quality_diagnostics() -> None:
     expected_ru = {
         "claim": "✅ Иск сформирован в Word (.docx).",
@@ -145,6 +157,9 @@ def test_kazakh_review_cta_is_compact_and_link_is_hidden_in_yes_button() -> None
         assert "http" not in text
         assert "wa.me" not in text
         assert len(text) < 220
+        caption = _document_caption_with_review(kind, "kk")
+        assert _document_client_caption(kind, "kk") in caption
+        assert text in caption
         markup = _document_review_markup(kind, "kk")
         yes_button, no_button = markup.inline_keyboard[0]
         assert yes_button.text == "✅ Иә"
