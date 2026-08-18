@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from urllib.parse import parse_qs, urlparse
 
 from aiogram.types import BufferedInputFile
 
@@ -88,13 +87,13 @@ def test_generated_document_kind_is_exact_for_all_four_categories() -> None:
 
 def test_every_review_cta_is_small_paid_yes_no_and_link_is_only_in_yes_button() -> None:
     expected = {
-        "claim": ("Рекомендуем проверить иск у профессионального юриста", "платная проверка иска"),
-        "pretrial": ("Рекомендуем проверить досудебную претензию у профессионального юриста", "платная проверка претензии"),
-        "response": ("Рекомендуем проверить отзыв на иск у профессионального юриста", "платная проверка отзыва на иск"),
-        "contract": ("Рекомендуем проверить договор у профессионального юриста", "платная проверка договора"),
+        "claim": "Рекомендуем проверить иск у профессионального юриста",
+        "pretrial": "Рекомендуем проверить досудебную претензию у профессионального юриста",
+        "response": "Рекомендуем проверить отзыв на иск у профессионального юриста",
+        "contract": "Рекомендуем проверить договор у профессионального юриста",
     }
 
-    for kind, (document_fragment, prefill_fragment) in expected.items():
+    for kind, document_fragment in expected.items():
         text = _document_review_text(kind, "ru")
         assert document_fragment in text
         assert "Проверка платная. Доп. услуги — отдельно." in text
@@ -110,13 +109,7 @@ def test_every_review_cta_is_small_paid_yes_no_and_link_is_only_in_yes_button() 
         assert len(markup.inline_keyboard[0]) == 2
         yes_button, no_button = markup.inline_keyboard[0]
         assert yes_button.text == "✅ Да"
-        assert yes_button.url is not None
-        assert yes_button.url.startswith("https://wa.me/77005000553?text=")
-        assert len(yes_button.url) < 256
-        query = parse_qs(urlparse(yes_button.url).query)
-        prefill = query["text"][0]
-        assert prefill_fragment in prefill
-        assert "KORGAN" in prefill
+        assert yes_button.url == "https://wa.me/77005000553"
         assert no_button.text == "❌ Нет"
         assert no_button.url is None
         assert no_button.callback_data == f"lawyer_review:{kind}:no"
@@ -163,9 +156,7 @@ def test_kazakh_review_cta_is_compact_and_link_is_hidden_in_yes_button() -> None
         markup = _document_review_markup(kind, "kk")
         yes_button, no_button = markup.inline_keyboard[0]
         assert yes_button.text == "✅ Иә"
-        assert yes_button.url is not None
-        assert yes_button.url.startswith("https://wa.me/77005000553?text=")
-        assert len(yes_button.url) < 256
+        assert yes_button.url == "https://wa.me/77005000553"
         assert no_button.text == "❌ Жоқ"
         assert no_button.url is None
         assert no_button.callback_data == f"lawyer_review:{kind}:no"
