@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 from aiogram.types import BufferedInputFile
 
 from korgan.document_category_router import PreferredDocumentCategory, preferred_document_category
 from korgan.localized_transport import (
+    _claim_client_caption,
     _document_review_markup,
     _document_review_text,
     _generated_document_kind,
@@ -81,9 +83,42 @@ def test_generated_document_kind_is_exact_for_all_four_categories() -> None:
     assert _generated_document_kind(BufferedInputFile(b"test", filename="random.docx")) is None
 
 
-def test_review_cta_is_category_specific_and_points_to_lawyer_whatsapp() -> None:
+def test_claim_review_cta_is_compact_paid_yes_no_and_points_to_exact_whatsapp() -> None:
+    text = _document_review_text("claim", "ru")
+    assert "настoятельно" not in text
+    assert "настoятель" not in text
+    assert "настo" not in text
+    assert "наст" in text
+    assert "Проверка этого иска — платная услуга" in text
+    assert "Дополнительные юридические услуги оплачиваются отдельно" in text
+    assert "Передать иск юристу?" in text
+    assert "KORGAN QUALITY" not in text
+    assert "PRELIMINARY" not in text
+
+    markup = _document_review_markup("claim", "ru")
+    assert len(markup.inline_keyboard) == 1
+    assert len(markup.inline_keyboard[0]) == 2
+    yes_button, no_button = markup.inline_keyboard[0]
+    assert yes_button.text == "✅ Да"
+    assert yes_button.url is not None
+    assert yes_button.url.startswith("https://wa.me/77005000553?text=")
+    query = parse_qs(urlparse(yes_button.url).query)
+    prefill = query["text"][0]
+    assert "платную проверку именно этого искового заявления" in prefill
+    assert "дополнительные юридические услуги оплачиваются отдельно" in prefill
+    assert no_button.text == "❌ Нет"
+    assert no_button.callback_data == "lawyer_review:claim:no"
+
+
+def test_claim_file_caption_hides_internal_quality_diagnostics() -> None:
+    assert _claim_client_caption("ru") == "✅ Иск сформирован в Word (.docx)."
+    assert _claim_client_caption("kk") == "✅ Талап қою арызы Word (.docx) форматында дайын."
+    assert "QUALITY" not in _claim_client_caption("ru")
+    assert "PRELIMINARY" not in _claim_client_caption("ru")
+
+
+def test_other_review_ctas_keep_category_specific_whatsapp_links() -> None:
     labels = {
-        "claim": "Проверить иск",
         "pretrial": "Проверить претензию",
         "response": "Проверить отзыв",
         "contract": "Проверить договор",
@@ -97,8 +132,21 @@ def test_review_cta_is_category_specific_and_points_to_lawyer_whatsapp() -> None
         assert "отдельная платная услуга" in _document_review_text(kind, "ru")
 
 
-def test_kazakh_review_cta_exists_for_every_category() -> None:
-    for kind in ("claim", "pretrial", "response", "contract"):
+def test_kazakh_claim_review_cta_is_paid_yes_no() -> None:
+    text = _document_review_text("claim", "kk")
+    assert "ақылы қызмет" in text
+    assert "Қосымша заңгерлік қызметтер бөлек төленеді" in text
+    markup = _document_review_markup("claim", "kk")
+    yes_button, no_button = markup.inline_keyboard[0]
+    assert yes_button.text == "✅ Иә"
+    assert yes_button.url is not None
+    assert "77005000553" in yes_button.url
+    assert no_button.text == "❌ Жоқ"
+    assert no_button.callback_data == "lawyer_review:claim:no"
+
+
+def test_kazakh_other_review_ctas_remain_available() -> None:
+    for kind in ("pretrial", "response", "contract"):
         markup = _document_review_markup(kind, "kk")
         button = markup.inline_keyboard[0][0]
         assert "WhatsApp" in button.text or "тексеру" in button.text
