@@ -18,6 +18,16 @@ _ACTION = re.compile(
 
 _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
+        "pretrial_response",
+        re.compile(
+            r"(?i)(?:\bотзыв\w*\s+на\s+(?:досудебн\w*\s+)?претензи\w*|"
+            r"\bответ\w*\s+на\s+(?:досудебн\w*\s+)?претензи\w*|"
+            r"\bвозражен\w*\s+на\s+(?:досудебн\w*\s+)?претензи\w*|"
+            r"\bсотқа\s+дейінгі\s+талап\w*\s+(?:жауап\w*|пікір\w*)|"
+            r"\bталап\s+хат\w*\s+(?:жауап\w*|пікір\w*))"
+        ),
+    ),
+    (
         "response",
         re.compile(
             r"(?i)(?:\bотзыв\w*\b.{0,35}\bиск\w*\b|\bвозражен\w*\b.{0,35}\bиск\w*\b|"
@@ -107,7 +117,7 @@ async def route_explicit_document_request(
     # Lazy imports are deliberate. The morning production runtime installs its
     # quality/RAG hotfix layer before importing these generator modules; category
     # isolation must not change that initialization order.
-    from korgan import pretrial_runtime, universal_claim_runtime, universal_document_runtime
+    from korgan import pretrial_response_runtime, pretrial_runtime, universal_claim_runtime, universal_document_runtime
 
     data = await state.get_data()
 
@@ -116,6 +126,10 @@ async def route_explicit_document_request(
             await universal_claim_runtime.claim_description(message, state)
         else:
             await universal_claim_runtime.claim_from_one_message(message, state)
+        return
+
+    if document_category == "pretrial_response":
+        await pretrial_response_runtime.pretrial_response_natural(message, state)
         return
 
     if document_category == "pretrial":
