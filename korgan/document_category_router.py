@@ -7,8 +7,6 @@ from aiogram.filters import Filter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from korgan import pretrial_runtime, universal_claim_runtime, universal_document_runtime
-
 router = Router(name="strict-document-category-router")
 
 # This router does not generate anything itself. It only decides which existing,
@@ -44,10 +42,10 @@ _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 def preferred_document_category(text: str | None) -> str | None:
     """Return the category explicitly requested nearest to the last drafting verb.
 
-    The last drafting instruction is intentional: a case description can contain
-    phrases such as «досудебная претензия направлена» or «договор заключён», while
-    the user's final instruction is «подготовь иск». The noun nearest to that final
-    drafting verb owns the request.
+    A case description can contain phrases such as «досудебная претензия
+    направлена» or «договор заключён», while the final instruction is
+    «подготовь иск». The document noun nearest to the last drafting verb owns the
+    request, so factual mentions cannot steal another category's workflow.
     """
     value = " ".join((text or "").split())
     if not value:
@@ -62,19 +60,14 @@ def preferred_document_category(text: str | None) -> str | None:
         for category, pattern in _CATEGORY_PATTERNS:
             for noun in pattern.finditer(value):
                 if noun.start() >= action.end():
-                    gap = noun.start() - action.end()
-                    # Prefer a document noun following the drafting verb.
-                    candidates.append((0, gap, category))
+                    candidates.append((0, noun.start() - action.end(), category))
                 elif action.start() >= noun.end():
-                    gap = action.start() - noun.end()
-                    candidates.append((1, gap, category))
+                    candidates.append((1, action.start() - noun.end(), category))
 
         if not candidates:
             continue
 
         direction, gap, category = min(candidates, key=lambda item: (item[0], item[1]))
-        # Keep the dispatcher conservative. Distant nouns belong to case facts,
-        # not necessarily to the drafting instruction.
         if (direction == 0 and gap <= 120) or (direction == 1 and gap <= 60):
             return category
 
@@ -91,8 +84,7 @@ class PreferredDocumentCategory(Filter):
         mode = data.get("mode")
 
         # Once the user entered the claim section and KORGAN is waiting for the
-        # case description, that next message belongs to the claim workflow only.
-        # This prevents a factual mention of a pre-trial demand from stealing it.
+        # case description, the next text belongs to the claim workflow only.
         if mode == "universal_claim_waiting":
             return {"document_category": "claim"}
 
@@ -112,6 +104,11 @@ async def route_explicit_document_request(
     state: FSMContext,
     document_category: str,
 ) -> None:
+    # Lazy imports are deliberate. The morning production runtime installs its
+    # quality/RAG hotfix layer before importing these generator modules; category
+    # isolation must not change that initialization order.
+    from korgan import pretrial_runtime, universal_claim_runtime, universal_document_runtime
+
     data = await state.get_data()
 
     if document_category == "claim":
