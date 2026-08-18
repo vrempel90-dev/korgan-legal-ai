@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import quote
 
 from aiogram import Bot
 from aiogram.methods import SendDocument
@@ -83,24 +82,13 @@ def _document_review_markup(kind: str, language: str) -> InlineKeyboardMarkup:
     if language == KK:
         yes_label = "✅ Иә"
         no_label = "❌ Жоқ"
-        text = {
-            "claim": "KORGAN: талап қою арызын ақылы тексеру.",
-            "pretrial": "KORGAN: талапты ақылы тексеру.",
-            "response": "KORGAN: пікірді ақылы тексеру.",
-            "contract": "KORGAN: шартты ақылы тексеру.",
-        }[kind]
     else:
         yes_label = "✅ Да"
         no_label = "❌ Нет"
-        text = {
-            "claim": "KORGAN: платная проверка иска.",
-            "pretrial": "KORGAN: платная проверка претензии.",
-            "response": "KORGAN: платная проверка отзыва на иск.",
-            "contract": "KORGAN: платная проверка договора.",
-        }[kind]
 
-    # The WhatsApp link is intentionally kept only inside the YES button.
-    url = f"https://wa.me/{_REVIEW_PHONE}?text={quote(text)}"
+    # Keep the destination short and readable in Telegram's external-link dialog.
+    # Document type and paid-service terms remain visible in the compact CTA.
+    url = f"https://wa.me/{_REVIEW_PHONE}"
     return InlineKeyboardMarkup(
         inline_keyboard=[[
             InlineKeyboardButton(text=yes_label, url=url),
