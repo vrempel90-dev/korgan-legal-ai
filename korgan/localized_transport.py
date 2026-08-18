@@ -74,6 +74,10 @@ def _document_review_text(kind: str, language: str) -> str:
     )
 
 
+def _document_caption_with_review(kind: str, language: str) -> str:
+    return f"{_document_client_caption(kind, language)}\n\n{_document_review_text(kind, language)}"
+
+
 def _document_review_markup(kind: str, language: str) -> InlineKeyboardMarkup:
     if language == KK:
         yes_label = "✅ Иә"
@@ -175,31 +179,18 @@ class LocalizedClientSafeBot(ClientSafeBot):
         document_kind = _generated_document_kind(document)
         language = current_language()
 
-        # Keep internal quality diagnostics and release gates unchanged. For all
-        # generated legal documents expose only a compact client-facing caption.
+        # Generated legal documents carry their compact review CTA directly on
+        # the document message. This avoids a fragile second Telegram send call.
         if document_kind is not None:
-            kwargs["caption"] = _document_client_caption(document_kind, language)
-        elif "caption" in kwargs:
-            kwargs["caption"] = _localize_text(kwargs.get("caption"))
+            kwargs["caption"] = _document_caption_with_review(document_kind, language)
+            kwargs["reply_markup"] = _document_review_markup(document_kind, language)
+        else:
+            if "caption" in kwargs:
+                kwargs["caption"] = _localize_text(kwargs.get("caption"))
+            if "reply_markup" in kwargs:
+                kwargs["reply_markup"] = _localize_markup(kwargs.get("reply_markup"))
 
-        if "reply_markup" in kwargs:
-            kwargs["reply_markup"] = _localize_markup(kwargs.get("reply_markup"))
-
-        result = await Bot.send_document(self, chat_id, _clean_upload(document), *args, **kwargs)
-
-        # CTA is intentionally post-delivery and non-blocking: it can never turn
-        # a successfully generated legal document into a failed request.
-        if document_kind is not None:
-            try:
-                await Bot.send_message(
-                    self,
-                    chat_id,
-                    _document_review_text(document_kind, language),
-                    reply_markup=_document_review_markup(document_kind, language),
-                )
-            except Exception:
-                pass
-        return result
+        return await Bot.send_document(self, chat_id, _clean_upload(document), *args, **kwargs)
 
     async def edit_message_text(self, text: str, *args: Any, **kwargs: Any) -> Any:
         if "reply_markup" in kwargs:
