@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from urllib.parse import parse_qs, urlparse
-
 from aiogram.methods import SendDocument
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup
 
@@ -24,9 +22,7 @@ def test_real_pretrial_send_document_gets_compact_paid_review_cta() -> None:
 
     yes_button, no_button = prepared.reply_markup.inline_keyboard[0]
     assert yes_button.text == "✅ Да"
-    assert yes_button.url is not None
-    assert yes_button.url.startswith("https://wa.me/77005000553?text=")
-    assert "KORGAN: платная проверка претензии." == parse_qs(urlparse(yes_button.url).query)["text"][0]
+    assert yes_button.url == "https://wa.me/77005000553"
     assert no_button.text == "❌ Нет"
     assert no_button.url is None
     assert no_button.callback_data == "lawyer_review:pretrial:no"
@@ -46,6 +42,5 @@ def test_real_send_document_cta_covers_all_four_categories() -> None:
         )
         assert isinstance(prepared.reply_markup, InlineKeyboardMarkup)
         yes_button, no_button = prepared.reply_markup.inline_keyboard[0]
-        assert yes_button.url is not None
-        assert yes_button.url.startswith("https://wa.me/77005000553?text=")
+        assert yes_button.url == "https://wa.me/77005000553"
         assert no_button.callback_data == callback
