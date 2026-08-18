@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     max_case_text_chars: int = 60000
     admin_telegram_ids: str = ""
 
+    # Payment gate is deliberately opt-in. Production enables it through Railway
+    # only after the complete test/deploy gate has passed.
+    payments_enabled: bool = False
+    kaspi_payment_url: str = ""
+    document_price_kzt: int = 1000
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
