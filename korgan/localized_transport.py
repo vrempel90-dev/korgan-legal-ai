@@ -26,111 +26,121 @@ def _generated_document_kind(document: Any) -> str | None:
     return _DOCUMENT_KINDS.get(filename)
 
 
-def _claim_client_caption(language: str) -> str:
+def _document_client_caption(kind: str, language: str) -> str:
     if language == KK:
-        return "✅ Талап қою арызы Word (.docx) форматында дайын."
-    return "✅ Иск сформирован в Word (.docx)."
+        return {
+            "claim": "✅ Талап қою арызы Word (.docx) форматында дайын.",
+            "pretrial": "✅ Сотқа дейінгі талап Word (.docx) форматында дайын.",
+            "response": "✅ Талап қою арызына пікір Word (.docx) форматында дайын.",
+            "contract": "✅ Шарт Word (.docx) форматында дайын.",
+        }[kind]
+    return {
+        "claim": "✅ Иск сформирован в Word (.docx).",
+        "pretrial": "✅ Досудебная претензия сформирована в Word (.docx).",
+        "response": "✅ Отзыв на иск сформирован в Word (.docx).",
+        "contract": "✅ Договор сформирован в Word (.docx).",
+    }[kind]
+
+
+def _claim_client_caption(language: str) -> str:
+    """Backward-compatible helper kept for existing tests/callers."""
+    return _document_client_caption("claim", language)
 
 
 def _document_review_text(kind: str, language: str) -> str:
-    if kind == "claim":
-        if language == KK:
-            return (
-                "⚠️ Талап қою арызын сотқа берер алдында кәсіби заңгерге тексертуге табанды түрде кеңес береміз.\n\n"
-                "Осы талап қою арызын тексеру — ақылы қызмет. Қосымша заңгерлік қызметтер бөлек төленеді.\n\n"
-                "Талап қою арызын заңгерге жіберу керек пе?"
-            )
-        return (
-            "⚠️ Перед подачей иска в суд настоятельно рекомендуем обратиться к профессиональному юристу для проверки.\n\n"
-            "Проверка этого иска — платная услуга. Дополнительные юридические услуги оплачиваются отдельно.\n\n"
-            "Передать иск юристу?"
-        )
-
     if language == KK:
-        intro = {
-            "pretrial": "⚠️ Бұл сотқа дейінгі талап KORGAN AI көмегімен дайындалды. Жіберер алдында оны заңгерге тексертуге кеңес береміз.",
-            "response": "⚠️ Бұл талап қою арызына пікір KORGAN AI көмегімен дайындалды. Сотқа ұсынар алдында оны заңгерге тексертуге кеңес береміз.",
-            "contract": "⚠️ Бұл шарт жобасы KORGAN AI көмегімен дайындалды. Қол қояр алдында оны заңгерге тексертуге кеңес береміз.",
+        recommendation = {
+            "claim": "⚠️ Талап қою арызын сотқа берер алдында кәсіби заңгерге тексертуге табанды түрде кеңес береміз.",
+            "pretrial": "⚠️ Сотқа дейінгі талапты жіберер алдында кәсіби заңгерге тексертуге табанды түрде кеңес береміз.",
+            "response": "⚠️ Пікірді сотқа ұсынар алдында кәсіби заңгерге тексертуге табанды түрде кеңес береміз.",
+            "contract": "⚠️ Шартқа қол қояр алдында кәсіби заңгерге тексертуге табанды түрде кеңес береміз.",
         }[kind]
-        scope = {
-            "pretrial": "Тексеру тек осы сотқа дейінгі талапқа қатысты.",
-            "response": "Тексеру тек осы пікірге қатысты.",
-            "contract": "Тексеру тек осы шарт жобасына қатысты.",
+        paid = {
+            "claim": "Осы талап қою арызын тексеру — ақылы қызмет.",
+            "pretrial": "Осы сотқа дейінгі талапты тексеру — ақылы қызмет.",
+            "response": "Осы пікірді тексеру — ақылы қызмет.",
+            "contract": "Осы шартты тексеру — ақылы қызмет.",
+        }[kind]
+        question = {
+            "claim": "Талап қою арызын заңгерге жіберу керек пе?",
+            "pretrial": "Сотқа дейінгі талапты заңгерге жіберу керек пе?",
+            "response": "Пікірді заңгерге жіберу керек пе?",
+            "contract": "Шартты заңгерге жіберу керек пе?",
         }[kind]
         return (
-            f"{intro}\n\n{scope} Қосымша құжаттарды дайындау немесе тексеру және өзге заңгерлік жұмыс — бөлек ақылы қызмет.\n\n"
-            "WhatsApp ашылғаннан кейін осы чатта алған Word файлын заңгерге тіркеңіз."
+            f"{recommendation}\n\n"
+            f"{paid} Қосымша заңгерлік қызметтер бөлек төленеді.\n\n"
+            f"{question}"
         )
 
-    intro = {
-        "pretrial": "⚠️ Эта досудебная претензия подготовлена с использованием KORGAN AI. Перед направлением адресату рекомендуем проверить её у юриста.",
-        "response": "⚠️ Этот отзыв на иск подготовлен с использованием KORGAN AI. Перед подачей в суд рекомендуем проверить его у юриста.",
-        "contract": "⚠️ Этот проект договора подготовлен с использованием KORGAN AI. Перед подписанием рекомендуем проверить его у юриста.",
+    recommendation = {
+        "claim": "⚠️ Перед подачей иска в суд настоятельно рекомендуем обратиться к профессиональному юристу для проверки.",
+        "pretrial": "⚠️ Перед направлением досудебной претензии настоятельно рекомендуем обратиться к профессиональному юристу для проверки.",
+        "response": "⚠️ Перед подачей отзыва в суд настоятельно рекомендуем обратиться к профессиональному юристу для проверки.",
+        "contract": "⚠️ Перед подписанием договора настоятельно рекомендуем обратиться к профессиональному юристу для проверки.",
     }[kind]
-    scope = {
-        "pretrial": "Проверка относится только к этой досудебной претензии.",
-        "response": "Проверка относится только к этому отзыву на иск.",
-        "contract": "Проверка относится только к этому проекту договора.",
+    paid = {
+        "claim": "Проверка этого иска — платная услуга.",
+        "pretrial": "Проверка этой досудебной претензии — платная услуга.",
+        "response": "Проверка этого отзыва на иск — платная услуга.",
+        "contract": "Проверка этого договора — платная услуга.",
+    }[kind]
+    question = {
+        "claim": "Передать иск юристу?",
+        "pretrial": "Передать претензию юристу?",
+        "response": "Передать отзыв юристу?",
+        "contract": "Передать договор юристу?",
     }[kind]
     return (
-        f"{intro}\n\n{scope} Подготовка или проверка дополнительных документов и иная юридическая работа — отдельная платная услуга.\n\n"
-        "После открытия WhatsApp прикрепите полученный в этом чате Word-файл."
+        f"{recommendation}\n\n"
+        f"{paid} Дополнительные юридические услуги оплачиваются отдельно.\n\n"
+        f"{question}"
     )
 
 
 def _document_review_markup(kind: str, language: str) -> InlineKeyboardMarkup:
-    if kind == "claim":
-        if language == KK:
-            yes_label = "✅ Иә"
-            no_label = "❌ Жоқ"
-            text = (
-                "Сәлеметсіз бе! KORGAN-да дайындалған осы талап қою арызын кәсіби заңгерге ақылы тексеруге бергім келеді. "
-                "Талап қою арызын тексеру ақылы екенін және қосымша заңгерлік қызметтер бөлек төленетінін түсінемін. "
-                "Қазір Word файлын тіркеймін."
-            )
-        else:
-            yes_label = "✅ Да"
-            no_label = "❌ Нет"
-            text = (
-                "Здравствуйте! Хочу заказать платную проверку именно этого искового заявления, подготовленного в KORGAN. "
-                "Понимаю, что проверка иска является платной услугой, а дополнительные юридические услуги оплачиваются отдельно. "
-                "Сейчас прикреплю Word-файл иска."
-            )
-        url = f"https://wa.me/{_REVIEW_PHONE}?text={quote(text)}"
-        return InlineKeyboardMarkup(
-            inline_keyboard=[[
-                InlineKeyboardButton(text=yes_label, url=url),
-                InlineKeyboardButton(text=no_label, callback_data="lawyer_review:claim:no"),
-            ]]
+    if language == KK:
+        yes_label = "✅ Иә"
+        no_label = "❌ Жоқ"
+        subject = {
+            "claim": "осы талап қою арызын",
+            "pretrial": "осы сотқа дейінгі талапты",
+            "response": "осы талап қою арызына пікірді",
+            "contract": "осы шартты",
+        }[kind]
+        text = (
+            f"Сәлеметсіз бе! KORGAN-да дайындалған {subject} кәсіби заңгерге ақылы тексеруге бергім келеді. "
+            "Осы құжатты тексеру ақылы екенін және қосымша заңгерлік қызметтер бөлек төленетінін түсінемін. "
+            "Қазір Word файлын тіркеймін."
+        )
+    else:
+        yes_label = "✅ Да"
+        no_label = "❌ Нет"
+        subject = {
+            "claim": "именно этого искового заявления",
+            "pretrial": "именно этой досудебной претензии",
+            "response": "именно этого отзыва на иск",
+            "contract": "именно этого договора",
+        }[kind]
+        file_subject = {
+            "claim": "иска",
+            "pretrial": "досудебной претензии",
+            "response": "отзыва на иск",
+            "contract": "договора",
+        }[kind]
+        text = (
+            f"Здравствуйте! Хочу заказать платную проверку {subject}, подготовленного в KORGAN. "
+            "Понимаю, что проверка этого документа является платной услугой, а дополнительные юридические услуги оплачиваются отдельно. "
+            f"Сейчас прикреплю Word-файл {file_subject}."
         )
 
-    if language == KK:
-        label = {
-            "pretrial": "👨‍⚖️ Сотқа дейінгі талапты тексеру",
-            "response": "👨‍⚖️ Пікірді WhatsApp-та тексеру",
-            "contract": "👨‍⚖️ Шартты WhatsApp-та тексеру",
-        }[kind]
-        subject = {
-            "pretrial": "сотқа дейінгі талапты",
-            "response": "талап қою арызына пікірді",
-            "contract": "шарт жобасын",
-        }[kind]
-        text = f"Сәлеметсіз бе! KORGAN-да дайындалған {subject} заңгерге тексеруге бергім келеді. Қазір Word файлын тіркеймін."
-    else:
-        label = {
-            "pretrial": "👨‍⚖️ Проверить претензию в WhatsApp",
-            "response": "👨‍⚖️ Проверить отзыв в WhatsApp",
-            "contract": "👨‍⚖️ Проверить договор в WhatsApp",
-        }[kind]
-        subject = {
-            "pretrial": "досудебную претензию",
-            "response": "отзыв на иск",
-            "contract": "проект договора",
-        }[kind]
-        text = f"Здравствуйте! Хочу передать {subject}, подготовленный в KORGAN, на проверку юристу. Сейчас прикреплю Word-файл."
-
     url = f"https://wa.me/{_REVIEW_PHONE}?text={quote(text)}"
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=label, url=url)]])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text=yes_label, url=url),
+            InlineKeyboardButton(text=no_label, callback_data=f"lawyer_review:{kind}:no"),
+        ]]
+    )
 
 
 def _localize_markup(markup: Any) -> Any:
@@ -204,10 +214,10 @@ class LocalizedClientSafeBot(ClientSafeBot):
         document_kind = _generated_document_kind(document)
         language = current_language()
 
-        # Keep all internal quality diagnostics and release gates unchanged, but
-        # do not expose the long PRELIMINARY/QUALITY checklist under the claim file.
-        if document_kind == "claim":
-            kwargs["caption"] = _claim_client_caption(language)
+        # Keep internal quality diagnostics and release gates unchanged. For all
+        # generated legal documents expose only a compact client-facing caption.
+        if document_kind is not None:
+            kwargs["caption"] = _document_client_caption(document_kind, language)
         elif "caption" in kwargs:
             kwargs["caption"] = _localize_text(kwargs.get("caption"))
 
