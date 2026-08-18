@@ -13,6 +13,8 @@ from korgan.admin import router as admin_router
 from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
+from korgan.consultation_quota import close_consultation_store, init_consultation_store
+from korgan.consultation_quota_runtime import router as consultation_quota_router
 from korgan.contact_handlers import router as contact_router
 from korgan.document_category_router import router as document_category_router
 from korgan.kazakh_article_forms import install_kazakh_article_forms
@@ -56,6 +58,7 @@ async def main() -> None:
     settings = get_settings()
     base_bot.service = PretrialProductionService(settings)
     base_bot.MENU = main_menu()
+    await init_consultation_store(settings)
 
     bot = LocalizedClientSafeBot(token=settings.telegram_bot_token)
     await configure_telegram_menu(bot)
@@ -78,12 +81,16 @@ async def main() -> None:
     dp.include_router(universal_claim_router)
     dp.include_router(universal_document_router)
     dp.include_router(reply_menu_router)
+    # Must remain immediately before base_bot.router: all document/menu routers
+    # get first refusal, while ordinary legal questions are quota-gated here.
+    dp.include_router(consultation_quota_router)
     dp.include_router(base_bot.router)
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + no-questionnaire claims/pretrial + stable citation release + Kaspi payment gate=%s",
+        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + no-questionnaire claims/pretrial + stable citation release + Kaspi payment gate=%s + consultation limit=%s",
         settings.payments_enabled,
+        settings.consultation_limit_enabled,
     )
     try:
         await dp.start_polling(bot)
@@ -92,6 +99,7 @@ async def main() -> None:
             corpus_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await corpus_task
+        await close_consultation_store()
         await bot.session.close()
 
 
