@@ -16,7 +16,7 @@ def test_real_pretrial_send_document_gets_compact_paid_review_cta() -> None:
     prepared = _prepare_send_document(method, "ru")
 
     assert "Рекомендуем проверить досудебную претензию у профессионального юриста" in (prepared.caption or "")
-    assert "Проверка платная. Доп. услуги — отдельно." in (prepared.caption or "")
+    assert "Проверка платная. Доп. услуги — платные." in (prepared.caption or "")
     assert "http" not in (prepared.caption or "")
     assert isinstance(prepared.reply_markup, InlineKeyboardMarkup)
 
