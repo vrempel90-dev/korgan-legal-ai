@@ -14,6 +14,7 @@ from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.contact_handlers import router as contact_router
+from korgan.document_category_router import router as document_category_router
 from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
 from korgan.kazakh_ui import router as kazakh_router
@@ -66,6 +67,7 @@ async def main() -> None:
     dp.include_router(safety_router)
     dp.include_router(contact_router)
     dp.include_router(kazakh_router)
+    dp.include_router(document_category_router)
     dp.include_router(pretrial_router)
     dp.include_router(universal_claim_router)
     dp.include_router(universal_document_router)
