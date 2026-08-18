@@ -96,7 +96,7 @@ def test_every_review_cta_is_small_paid_yes_no_and_link_is_only_in_yes_button() 
     for kind, document_fragment in expected.items():
         text = _document_review_text(kind, "ru")
         assert document_fragment in text
-        assert "Проверка платная. Доп. услуги — отдельно." in text
+        assert "Проверка платная. Доп. услуги — платные." in text
         assert "Передать юристу?" in text
         assert "http" not in text
         assert "wa.me" not in text
@@ -146,7 +146,7 @@ def test_every_generated_document_caption_hides_internal_quality_diagnostics() -
 def test_kazakh_review_cta_is_compact_and_link_is_hidden_in_yes_button() -> None:
     for kind in ("claim", "pretrial", "response", "contract"):
         text = _document_review_text(kind, "kk")
-        assert "Тексеру ақылы. Қосымша қызметтер бөлек төленеді." in text
+        assert "Тексеру ақылы. Қосымша қызметтер ақылы." in text
         assert "http" not in text
         assert "wa.me" not in text
         assert len(text) < 220
