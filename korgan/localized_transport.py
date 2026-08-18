@@ -26,16 +26,33 @@ def _generated_document_kind(document: Any) -> str | None:
     return _DOCUMENT_KINDS.get(filename)
 
 
+def _claim_client_caption(language: str) -> str:
+    if language == KK:
+        return "✅ Талап қою арызы Word (.docx) форматында дайын."
+    return "✅ Иск сформирован в Word (.docx)."
+
+
 def _document_review_text(kind: str, language: str) -> str:
+    if kind == "claim":
+        if language == KK:
+            return (
+                "⚠️ Талап қою арызын сотқа берер алдында кәсіби заңгерге тексертуге настоятельно кеңес береміз.\n\n"
+                "Осы талап қою арызын тексеру — ақылы қызмет. Қосымша заңгерлік қызметтер бөлек төленеді.\n\n"
+                "Талап қою арызын заңгерге жіберу керек пе?"
+            )
+        return (
+            "⚠️ Перед подачей иска в суд настоятельно рекомендуем обратиться к профессиональному юристу для проверки.\n\n"
+            "Проверка этого иска — платная услуга. Дополнительные юридические услуги оплачиваются отдельно.\n\n"
+            "Передать иск юристу?"
+        )
+
     if language == KK:
         intro = {
-            "claim": "⚠️ Бұл талап қою арызы KORGAN AI көмегімен дайындалды. Сотқа берер алдында оны заңгерге тексертуге кеңес береміз.",
             "pretrial": "⚠️ Бұл сотқа дейінгі талап KORGAN AI көмегімен дайындалды. Жіберер алдында оны заңгерге тексертуге кеңес береміз.",
             "response": "⚠️ Бұл талап қою арызына пікір KORGAN AI көмегімен дайындалды. Сотқа ұсынар алдында оны заңгерге тексертуге кеңес береміз.",
             "contract": "⚠️ Бұл шарт жобасы KORGAN AI көмегімен дайындалды. Қол қояр алдында оны заңгерге тексертуге кеңес береміз.",
         }[kind]
         scope = {
-            "claim": "Тексеру тек осы талап қою арызына қатысты.",
             "pretrial": "Тексеру тек осы сотқа дейінгі талапқа қатысты.",
             "response": "Тексеру тек осы пікірге қатысты.",
             "contract": "Тексеру тек осы шарт жобасына қатысты.",
@@ -46,13 +63,11 @@ def _document_review_text(kind: str, language: str) -> str:
         )
 
     intro = {
-        "claim": "⚠️ Этот иск подготовлен с использованием KORGAN AI. Перед подачей в суд рекомендуем проверить его у юриста.",
         "pretrial": "⚠️ Эта досудебная претензия подготовлена с использованием KORGAN AI. Перед направлением адресату рекомендуем проверить её у юриста.",
         "response": "⚠️ Этот отзыв на иск подготовлен с использованием KORGAN AI. Перед подачей в суд рекомендуем проверить его у юриста.",
         "contract": "⚠️ Этот проект договора подготовлен с использованием KORGAN AI. Перед подписанием рекомендуем проверить его у юриста.",
     }[kind]
     scope = {
-        "claim": "Проверка относится только к этому иску.",
         "pretrial": "Проверка относится только к этой досудебной претензии.",
         "response": "Проверка относится только к этому отзыву на иск.",
         "contract": "Проверка относится только к этому проекту договора.",
@@ -64,15 +79,38 @@ def _document_review_text(kind: str, language: str) -> str:
 
 
 def _document_review_markup(kind: str, language: str) -> InlineKeyboardMarkup:
+    if kind == "claim":
+        if language == KK:
+            yes_label = "✅ Иә"
+            no_label = "❌ Жоқ"
+            text = (
+                "Сәлеметсіз бе! KORGAN-да дайындалған осы талап қою арызын кәсіби заңгерге ақылы тексеруге бергім келеді. "
+                "Талап қою арызын тексеру ақылы екенін және қосымша заңгерлік қызметтер бөлек төленетінін түсінемін. "
+                "Қазір Word файлын тіркеймін."
+            )
+        else:
+            yes_label = "✅ Да"
+            no_label = "❌ Нет"
+            text = (
+                "Здравствуйте! Хочу заказать платную проверку именно этого искового заявления, подготовленного в KORGAN. "
+                "Понимаю, что проверка иска является платной услугой, а дополнительные юридические услуги оплачиваются отдельно. "
+                "Сейчас прикреплю Word-файл иска."
+            )
+        url = f"https://wa.me/{_REVIEW_PHONE}?text={quote(text)}"
+        return InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(text=yes_label, url=url),
+                InlineKeyboardButton(text=no_label, callback_data="lawyer_review:claim:no"),
+            ]]
+        )
+
     if language == KK:
         label = {
-            "claim": "👨‍⚖️ Талапты WhatsApp-та тексеру",
             "pretrial": "👨‍⚖️ Сотқа дейінгі талапты тексеру",
             "response": "👨‍⚖️ Пікірді WhatsApp-та тексеру",
             "contract": "👨‍⚖️ Шартты WhatsApp-та тексеру",
         }[kind]
         subject = {
-            "claim": "талап қою арызын",
             "pretrial": "сотқа дейінгі талапты",
             "response": "талап қою арызына пікірді",
             "contract": "шарт жобасын",
@@ -80,13 +118,11 @@ def _document_review_markup(kind: str, language: str) -> InlineKeyboardMarkup:
         text = f"Сәлеметсіз бе! KORGAN-да дайындалған {subject} заңгерге тексеруге бергім келеді. Қазір Word файлын тіркеймін."
     else:
         label = {
-            "claim": "👨‍⚖️ Проверить иск в WhatsApp",
             "pretrial": "👨‍⚖️ Проверить претензию в WhatsApp",
             "response": "👨‍⚖️ Проверить отзыв в WhatsApp",
             "contract": "👨‍⚖️ Проверить договор в WhatsApp",
         }[kind]
         subject = {
-            "claim": "иск",
             "pretrial": "досудебную претензию",
             "response": "отзыв на иск",
             "contract": "проект договора",
@@ -166,8 +202,15 @@ class LocalizedClientSafeBot(ClientSafeBot):
 
     async def send_document(self, chat_id: Any, document: Any, *args: Any, **kwargs: Any) -> Any:
         document_kind = _generated_document_kind(document)
-        if "caption" in kwargs:
+        language = current_language()
+
+        # Keep all internal quality diagnostics and release gates unchanged, but
+        # do not expose the long PRELIMINARY/QUALITY checklist under the claim file.
+        if document_kind == "claim":
+            kwargs["caption"] = _claim_client_caption(language)
+        elif "caption" in kwargs:
             kwargs["caption"] = _localize_text(kwargs.get("caption"))
+
         if "reply_markup" in kwargs:
             kwargs["reply_markup"] = _localize_markup(kwargs.get("reply_markup"))
 
@@ -176,7 +219,6 @@ class LocalizedClientSafeBot(ClientSafeBot):
         # CTA is intentionally post-delivery and non-blocking: it can never turn
         # a successfully generated legal document into a failed request.
         if document_kind is not None:
-            language = current_language()
             try:
                 await Bot.send_message(
                     self,
