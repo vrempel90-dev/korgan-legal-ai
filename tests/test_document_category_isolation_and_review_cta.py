@@ -85,20 +85,22 @@ def test_generated_document_kind_is_exact_for_all_four_categories() -> None:
     assert _generated_document_kind(BufferedInputFile(b"test", filename="random.docx")) is None
 
 
-def test_every_review_cta_is_compact_paid_yes_no_and_points_to_exact_whatsapp() -> None:
+def test_every_review_cta_is_small_paid_yes_no_and_link_is_only_in_yes_button() -> None:
     expected = {
-        "claim": ("Проверка этого иска — платная услуга", "Передать иск юристу?", "платная проверка иска"),
-        "pretrial": ("Проверка этой досудебной претензии — платная услуга", "Передать претензию юристу?", "платная проверка претензии"),
-        "response": ("Проверка этого отзыва на иск — платная услуга", "Передать отзыв юристу?", "платная проверка отзыва на иск"),
-        "contract": ("Проверка этого договора — платная услуга", "Передать договор юристу?", "платная проверка договора"),
+        "claim": ("Рекомендуем проверить иск у профессионального юриста", "платная проверка иска"),
+        "pretrial": ("Рекомендуем проверить досудебную претензию у профессионального юриста", "платная проверка претензии"),
+        "response": ("Рекомендуем проверить отзыв на иск у профессионального юриста", "платная проверка отзыва на иск"),
+        "contract": ("Рекомендуем проверить договор у профессионального юриста", "платная проверка договора"),
     }
 
-    for kind, (paid_fragment, question, prefill_fragment) in expected.items():
+    for kind, (document_fragment, prefill_fragment) in expected.items():
         text = _document_review_text(kind, "ru")
-        assert "наст" in text
-        assert paid_fragment in text
-        assert "Дополнительные юридические услуги оплачиваются отдельно" in text
-        assert question in text
+        assert document_fragment in text
+        assert "Проверка платная. Доп. услуги — отдельно." in text
+        assert "Передать юристу?" in text
+        assert "http" not in text
+        assert "wa.me" not in text
+        assert len(text) < 220
         assert "KORGAN QUALITY" not in text
         assert "PRELIMINARY" not in text
 
@@ -115,6 +117,7 @@ def test_every_review_cta_is_compact_paid_yes_no_and_points_to_exact_whatsapp() 
         assert prefill_fragment in prefill
         assert "KORGAN" in prefill
         assert no_button.text == "❌ Нет"
+        assert no_button.url is None
         assert no_button.callback_data == f"lawyer_review:{kind}:no"
 
 
@@ -135,11 +138,13 @@ def test_every_generated_document_caption_hides_internal_quality_diagnostics() -
     assert _claim_client_caption("kk") == "✅ Талап қою арызы Word (.docx) форматында дайын."
 
 
-def test_kazakh_review_cta_is_paid_yes_no_for_every_category() -> None:
+def test_kazakh_review_cta_is_compact_and_link_is_hidden_in_yes_button() -> None:
     for kind in ("claim", "pretrial", "response", "contract"):
         text = _document_review_text(kind, "kk")
-        assert "ақылы қызмет" in text
-        assert "Қосымша заңгерлік қызметтер бөлек төленеді" in text
+        assert "Тексеру ақылы. Қосымша қызметтер бөлек төленеді." in text
+        assert "http" not in text
+        assert "wa.me" not in text
+        assert len(text) < 220
         markup = _document_review_markup(kind, "kk")
         yes_button, no_button = markup.inline_keyboard[0]
         assert yes_button.text == "✅ Иә"
@@ -147,6 +152,7 @@ def test_kazakh_review_cta_is_paid_yes_no_for_every_category() -> None:
         assert yes_button.url.startswith("https://wa.me/77005000553?text=")
         assert len(yes_button.url) < 256
         assert no_button.text == "❌ Жоқ"
+        assert no_button.url is None
         assert no_button.callback_data == f"lawyer_review:{kind}:no"
 
 
