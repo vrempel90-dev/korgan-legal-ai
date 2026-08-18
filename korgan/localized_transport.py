@@ -102,37 +102,21 @@ def _document_review_markup(kind: str, language: str) -> InlineKeyboardMarkup:
     if language == KK:
         yes_label = "✅ Иә"
         no_label = "❌ Жоқ"
-        subject = {
-            "claim": "осы талап қою арызын",
-            "pretrial": "осы сотқа дейінгі талапты",
-            "response": "осы талап қою арызына пікірді",
-            "contract": "осы шартты",
+        text = {
+            "claim": "KORGAN: талап қою арызын ақылы тексеру.",
+            "pretrial": "KORGAN: талапты ақылы тексеру.",
+            "response": "KORGAN: пікірді ақылы тексеру.",
+            "contract": "KORGAN: шартты ақылы тексеру.",
         }[kind]
-        text = (
-            f"Сәлеметсіз бе! KORGAN-да дайындалған {subject} кәсіби заңгерге ақылы тексеруге бергім келеді. "
-            "Осы құжатты тексеру ақылы екенін және қосымша заңгерлік қызметтер бөлек төленетінін түсінемін. "
-            "Қазір Word файлын тіркеймін."
-        )
     else:
         yes_label = "✅ Да"
         no_label = "❌ Нет"
-        subject = {
-            "claim": "именно этого искового заявления",
-            "pretrial": "именно этой досудебной претензии",
-            "response": "именно этого отзыва на иск",
-            "contract": "именно этого договора",
+        text = {
+            "claim": "KORGAN: платная проверка иска.",
+            "pretrial": "KORGAN: платная проверка претензии.",
+            "response": "KORGAN: платная проверка отзыва на иск.",
+            "contract": "KORGAN: платная проверка договора.",
         }[kind]
-        file_subject = {
-            "claim": "иска",
-            "pretrial": "досудебной претензии",
-            "response": "отзыва на иск",
-            "contract": "договора",
-        }[kind]
-        text = (
-            f"Здравствуйте! Хочу заказать платную проверку {subject}, подготовленного в KORGAN. "
-            "Понимаю, что проверка этого документа является платной услугой, а дополнительные юридические услуги оплачиваются отдельно. "
-            f"Сейчас прикреплю Word-файл {file_subject}."
-        )
 
     url = f"https://wa.me/{_REVIEW_PHONE}?text={quote(text)}"
     return InlineKeyboardMarkup(
