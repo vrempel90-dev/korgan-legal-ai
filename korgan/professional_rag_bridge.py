@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 import hashlib
 import logging
+import re
 import time
 from typing import Any
 
@@ -39,10 +40,10 @@ def _research_is_sufficient(profile: ClaimProfile, research: LegalResearch) -> b
         return True
 
     text = "\n".join(str(item) for item in research.verified_claims).lower()
-    for article in profile.required_article_hints:
-        if article not in text:
-            return False
-    return True
+    return all(
+        re.search(rf"(?<!\d){re.escape(article)}(?!\d)", text) is not None
+        for article in profile.required_article_hints
+    )
 
 
 def _with_search_context(tools: Any, search_context_size: str) -> Any:
