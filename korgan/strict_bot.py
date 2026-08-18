@@ -23,6 +23,8 @@ from korgan.legal.corpus_refresh import start_corpus_refresh_task
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
+from korgan.payment_gate import install_payment_gate
+from korgan.payment_runtime import router as payment_router
 from korgan.pretrial import PretrialProductionService
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
@@ -37,6 +39,7 @@ install_kazakh_article_forms()
 install_professional_rag_bridge()
 install_stable_legal_release()
 install_client_safe_runtime()
+install_payment_gate()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
@@ -66,6 +69,7 @@ async def main() -> None:
     dp.include_router(admin_router)
     dp.include_router(start_router)
     dp.include_router(safety_router)
+    dp.include_router(payment_router)
     dp.include_router(contact_router)
     dp.include_router(kazakh_router)
     dp.include_router(review_cta_router)
@@ -78,7 +82,8 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + no-questionnaire claims/pretrial + stable citation release"
+        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + no-questionnaire claims/pretrial + stable citation release + Kaspi payment gate=%s",
+        settings.payments_enabled,
     )
     try:
         await dp.start_polling(bot)
