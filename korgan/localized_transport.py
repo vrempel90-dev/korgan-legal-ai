@@ -4,6 +4,7 @@ from typing import Any
 from urllib.parse import quote
 
 from aiogram import Bot
+from aiogram.methods import SendDocument
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from korgan.client_safe_ui import ClientSafeBot, _clean_upload, sanitize_client_text
@@ -167,8 +168,35 @@ def _localize_text(text: str | None) -> str | None:
     return clean
 
 
+def _prepare_send_document(method: SendDocument, language: str | None = None) -> SendDocument:
+    """Apply client-safe presentation to the actual Telegram SendDocument method.
+
+    Message.answer_document() bypasses Bot.send_document() and executes a
+    SendDocument method through Bot.__call__.  Intercepting here therefore covers
+    the real claim/pretrial/response/contract delivery paths without changing any
+    legal generator or router.
+    """
+    lang = language or current_language()
+    kind = _generated_document_kind(method.document)
+    update: dict[str, Any] = {"document": _clean_upload(method.document)}
+    if kind is not None:
+        update["caption"] = _document_caption_with_review(kind, lang)
+        update["reply_markup"] = _document_review_markup(kind, lang)
+    else:
+        if method.caption is not None:
+            update["caption"] = _localize_text(method.caption)
+        if method.reply_markup is not None:
+            update["reply_markup"] = _localize_markup(method.reply_markup)
+    return method.model_copy(update=update)
+
+
 class LocalizedClientSafeBot(ClientSafeBot):
     """Client-safe transport plus per-session Russian/Kazakh presentation."""
+
+    async def __call__(self, method: Any, request_timeout: int | None = None) -> Any:
+        if isinstance(method, SendDocument):
+            method = _prepare_send_document(method)
+        return await super().__call__(method, request_timeout=request_timeout)
 
     async def send_message(self, chat_id: Any, text: str, *args: Any, **kwargs: Any) -> Any:
         if "reply_markup" in kwargs:
@@ -179,8 +207,6 @@ class LocalizedClientSafeBot(ClientSafeBot):
         document_kind = _generated_document_kind(document)
         language = current_language()
 
-        # Generated legal documents carry their compact review CTA directly on
-        # the document message. This avoids a fragile second Telegram send call.
         if document_kind is not None:
             kwargs["caption"] = _document_caption_with_review(document_kind, language)
             kwargs["reply_markup"] = _document_review_markup(document_kind, language)
