@@ -87,10 +87,10 @@ def test_generated_document_kind_is_exact_for_all_four_categories() -> None:
 
 def test_every_review_cta_is_compact_paid_yes_no_and_points_to_exact_whatsapp() -> None:
     expected = {
-        "claim": ("Проверка этого иска — платная услуга", "Передать иск юристу?", "именно этого искового заявления"),
-        "pretrial": ("Проверка этой досудебной претензии — платная услуга", "Передать претензию юристу?", "именно этой досудебной претензии"),
-        "response": ("Проверка этого отзыва на иск — платная услуга", "Передать отзыв юристу?", "именно этого отзыва на иск"),
-        "contract": ("Проверка этого договора — платная услуга", "Передать договор юристу?", "именно этого договора"),
+        "claim": ("Проверка этого иска — платная услуга", "Передать иск юристу?", "платная проверка иска"),
+        "pretrial": ("Проверка этой досудебной претензии — платная услуга", "Передать претензию юристу?", "платная проверка претензии"),
+        "response": ("Проверка этого отзыва на иск — платная услуга", "Передать отзыв юристу?", "платная проверка отзыва на иск"),
+        "contract": ("Проверка этого договора — платная услуга", "Передать договор юристу?", "платная проверка договора"),
     }
 
     for kind, (paid_fragment, question, prefill_fragment) in expected.items():
@@ -109,11 +109,11 @@ def test_every_review_cta_is_compact_paid_yes_no_and_points_to_exact_whatsapp() 
         assert yes_button.text == "✅ Да"
         assert yes_button.url is not None
         assert yes_button.url.startswith("https://wa.me/77005000553?text=")
+        assert len(yes_button.url) < 256
         query = parse_qs(urlparse(yes_button.url).query)
         prefill = query["text"][0]
         assert prefill_fragment in prefill
-        assert "платной услугой" in prefill
-        assert "дополнительные юридические услуги оплачиваются отдельно" in prefill
+        assert "KORGAN" in prefill
         assert no_button.text == "❌ Нет"
         assert no_button.callback_data == f"lawyer_review:{kind}:no"
 
@@ -144,7 +144,8 @@ def test_kazakh_review_cta_is_paid_yes_no_for_every_category() -> None:
         yes_button, no_button = markup.inline_keyboard[0]
         assert yes_button.text == "✅ Иә"
         assert yes_button.url is not None
-        assert "77005000553" in yes_button.url
+        assert yes_button.url.startswith("https://wa.me/77005000553?text=")
+        assert len(yes_button.url) < 256
         assert no_button.text == "❌ Жоқ"
         assert no_button.callback_data == f"lawyer_review:{kind}:no"
 
