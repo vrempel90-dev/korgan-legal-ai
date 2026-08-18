@@ -18,11 +18,18 @@ class Settings(BaseSettings):
     max_case_text_chars: int = 60000
     admin_telegram_ids: str = ""
 
-    # Payment gate is deliberately opt-in. Production enables it through Railway
-    # only after the complete test/deploy gate has passed.
+    # Document payment gate.
     payments_enabled: bool = False
     kaspi_payment_url: str = ""
     document_price_kzt: int = 1000
+
+    # Consultation quota/payment gate. Kept separately from document payments so
+    # the feature can be deployed dark and enabled only after persistent storage
+    # is connected in Railway.
+    consultation_limit_enabled: bool = False
+    free_consultations_per_day: int = 5
+    consultation_price_kzt: int = 1000
+    database_url: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
