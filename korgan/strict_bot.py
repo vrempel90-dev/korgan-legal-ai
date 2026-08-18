@@ -27,6 +27,7 @@ from korgan.pretrial import PretrialProductionService
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
 from korgan.reply_menu_handlers import router as reply_menu_router
+from korgan.review_cta_runtime import router as review_cta_router
 from korgan.stable_legal_release import install_stable_legal_release
 from korgan.ui import main_menu
 
@@ -67,6 +68,7 @@ async def main() -> None:
     dp.include_router(safety_router)
     dp.include_router(contact_router)
     dp.include_router(kazakh_router)
+    dp.include_router(review_cta_router)
     dp.include_router(document_category_router)
     dp.include_router(pretrial_router)
     dp.include_router(universal_claim_router)
