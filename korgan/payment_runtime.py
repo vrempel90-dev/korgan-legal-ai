@@ -48,7 +48,7 @@ def _parse_user_callback(data: str) -> tuple[int, str, str, str] | None:
 
 def _parse_admin_callback(data: str) -> tuple[str, int, int, str, str, str] | None:
     parts = data.split(":")
-    if len(parts) != 8 or parts[0] != "pay" or parts[1] not in {"ok", "no"}:
+    if len(parts) != 7 or parts[0] != "pay" or parts[1] not in {"ok", "no"}:
         return None
     try:
         return parts[1], int(parts[2]), int(parts[3]), parts[4], parts[5], parts[6]
@@ -79,6 +79,37 @@ async def _receipt_bytes(message: Message) -> tuple[bytes, str, str] | None:
     output = io.BytesIO()
     await message.bot.download_file(tg_file.file_path, destination=output)
     return output.getvalue(), filename, mime
+
+
+@router.message(F.text.in_({"💰 Цены", "💰 Бағалар"}))
+async def payment_prices(message: Message, state: FSMContext) -> None:
+    settings = get_settings()
+    await state.update_data(mode="main")
+    language = str((await state.get_data()).get("language", "ru"))
+    amount = f"{settings.document_price_kzt:,}".replace(",", " ")
+    if language == "kk":
+        text = (
+            "💰 KORGAN акциялық бағасы\n\n"
+            f"🔥 Кез келген заңдық құжат — {amount} ₸\n\n"
+            "• Талап қою арызы\n"
+            "• Сотқа дейінгі талап\n"
+            "• Талапқа пікір\n"
+            "• Шарт\n\n"
+            "💳 Төлем Kaspi арқылы жүргізіледі. Word-файл төлем расталғаннан кейін ғана беріледі.\n\n"
+            "👨‍⚖️ Дайын құжатты кәсіби заңгердің тексеруі — бөлек ақылы қызмет."
+        )
+    else:
+        text = (
+            "💰 Акционная цена KORGAN\n\n"
+            f"🔥 Любой юридический документ — {amount} ₸\n\n"
+            "• Исковое заявление\n"
+            "• Досудебная претензия\n"
+            "• Отзыв на иск\n"
+            "• Договор\n\n"
+            "💳 Оплата через Kaspi. Word-файл выдаётся только после подтверждения оплаты.\n\n"
+            "👨‍⚖️ Проверка готового документа профессиональным юристом — отдельная платная услуга."
+        )
+    await message.answer(text)
 
 
 @router.callback_query(F.data.startswith("pay:proof:"))
@@ -114,8 +145,14 @@ async def payment_proof_requested(callback: CallbackQuery, state: FSMContext) ->
 
 
 @router.message(PaymentReceiptTextFilter())
-async def payment_receipt_text(message: Message) -> None:
-    await message.answer("📎 Пришлите сам чек как фото, JPG/PNG/WEBP или PDF.")
+async def payment_receipt_text(message: Message, state: FSMContext) -> None:
+    language = str((await state.get_data()).get("payment_language", "ru"))
+    await message.answer(
+        "📎 Чектің өзін фото, JPG/PNG/WEBP немесе PDF түрінде жіберіңіз."
+        if language == "kk"
+        else
+        "📎 Пришлите сам чек как фото, JPG/PNG/WEBP или PDF."
+    )
 
 
 @router.message(PaymentReceiptFilter())
@@ -195,6 +232,9 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
     await message.answer(
         "✅ Чек принят. Он прошёл предварительную AI-проверку и отправлен на финальное подтверждение оплаты. "
         "Word-файл будет выдан только после сверки платежа администратором."
+        if language != "kk"
+        else
+        "✅ Чек қабылданды. Ол алдын ала AI-тексеруден өтіп, төлемді соңғы растауға жіберілді. Word-файл әкімші төлемді тексергеннен кейін ғана беріледі."
     )
 
 
@@ -246,4 +286,10 @@ async def admin_payment_decision(callback: CallbackQuery) -> None:
 
     await callback.answer("Оплата подтверждена, документ выдан.")
     await callback.message.edit_text(current_text + "\n\n✅ ОПЛАТА ПОДТВЕРЖДЕНА — документ выдан клиенту.", reply_markup=None)
-    await callback.bot.send_message(user_id, "✅ Оплата подтверждена. Word-файл выдан выше.")
+    await callback.bot.send_message(
+        user_id,
+        "✅ Оплата подтверждена. Word-файл выдан выше."
+        if language != "kk"
+        else
+        "✅ Төлем расталды. Word-файл жоғарыда берілді."
+    )
