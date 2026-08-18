@@ -14,7 +14,9 @@ from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.consultation_quota import close_consultation_store, init_consultation_store
+from korgan.consultation_quota_bridge import install_consultation_quota_bridge
 from korgan.consultation_quota_runtime import router as consultation_quota_router
+from korgan.consultation_ui_runtime import router as consultation_ui_router
 from korgan.contact_handlers import router as contact_router
 from korgan.document_category_router import router as document_category_router
 from korgan.kazakh_article_forms import install_kazakh_article_forms
@@ -42,6 +44,7 @@ install_professional_rag_bridge()
 install_stable_legal_release()
 install_client_safe_runtime()
 install_payment_gate()
+install_consultation_quota_bridge()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
@@ -74,6 +77,9 @@ async def main() -> None:
     dp.include_router(safety_router)
     dp.include_router(payment_router)
     dp.include_router(contact_router)
+    # Exact RU/KK consultation and price buttons are handled here before the
+    # legacy language/menu routers, so client-facing tariff text stays in sync.
+    dp.include_router(consultation_ui_router)
     dp.include_router(kazakh_router)
     dp.include_router(review_cta_router)
     dp.include_router(document_category_router)
@@ -83,6 +89,7 @@ async def main() -> None:
     dp.include_router(reply_menu_router)
     # Must remain immediately before base_bot.router: all document/menu routers
     # get first refusal, while ordinary legal questions are quota-gated here.
+    # KazakhLegalText yields to this router while the quota feature is enabled.
     dp.include_router(consultation_quota_router)
     dp.include_router(base_bot.router)
 
