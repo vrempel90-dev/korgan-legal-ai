@@ -11,6 +11,7 @@ from aiogram.types import MenuButtonDefault
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
 from korgan.auto_payment_runtime import install_auto_payment, router as auto_payment_router
+from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter, claim_pipeline_v2_mode
 from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
@@ -69,7 +70,8 @@ async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    base_bot.service = PretrialResponseProductionService(settings)
+    stable_service = PretrialResponseProductionService(settings)
+    base_bot.service = ClaimPipelineV2Adapter(stable_service)
     base_bot.MENU = main_menu()
     await init_consultation_store(settings)
 
@@ -110,9 +112,10 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + AI receipt release=%s + consultation limit=%s",
+        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + AI receipt release=%s + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
+        claim_pipeline_v2_mode(),
     )
     try:
         await dp.start_polling(bot)
