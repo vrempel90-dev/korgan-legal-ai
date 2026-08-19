@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
-
-import pytest
 
 from korgan.payment import ReceiptAnalyzer
 from korgan.payment_pdf_hotfix import install_payment_pdf_hotfix
@@ -31,22 +30,24 @@ class _Responses:
         }))
 
 
-@pytest.mark.asyncio
-async def test_pdf_receipt_uses_responses_data_url() -> None:
-    install_payment_pdf_hotfix()
-    analyzer = object.__new__(ReceiptAnalyzer)
-    analyzer.settings = SimpleNamespace(openai_vision_model="gpt-5.1")
-    responses = _Responses()
-    analyzer.client = SimpleNamespace(responses=responses)
+def test_pdf_receipt_uses_responses_data_url() -> None:
+    async def run() -> None:
+        install_payment_pdf_hotfix()
+        analyzer = object.__new__(ReceiptAnalyzer)
+        analyzer.settings = SimpleNamespace(openai_vision_model="gpt-5.1")
+        responses = _Responses()
+        analyzer.client = SimpleNamespace(responses=responses)
 
-    result = await analyzer.analyze(b"%PDF-1.4 test", "receipt.pdf", "application/pdf")
+        result = await analyzer.analyze(b"%PDF-1.4 test", "receipt.pdf", "application/pdf")
 
-    assert result.amount_kzt == 1000
-    content = responses.kwargs["input"][0]["content"]
-    file_part = next(item for item in content if item["type"] == "input_file")
-    assert file_part["filename"] == "receipt.pdf"
-    assert file_part["file_data"].startswith("data:application/pdf;base64,")
-    assert "%PDF" not in file_part["file_data"]
+        assert result.amount_kzt == 1000
+        content = responses.kwargs["input"][0]["content"]
+        file_part = next(item for item in content if item["type"] == "input_file")
+        assert file_part["filename"] == "receipt.pdf"
+        assert file_part["file_data"].startswith("data:application/pdf;base64,")
+        assert "%PDF" not in file_part["file_data"]
+
+    asyncio.run(run())
 
 
 def test_runtime_installs_pdf_receipt_hotfix() -> None:
