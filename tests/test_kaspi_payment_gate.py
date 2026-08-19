@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from korgan.config import Settings
 from korgan.payment import (
     ReceiptCheck,
@@ -47,6 +49,13 @@ def test_payment_offer_is_compact_and_kaspi_link_is_only_in_button() -> None:
     assert (doc_msg, kind, language) == (678, "pretrial", "ru")
     assert verify_user_payment(settings, signature, 12345, doc_msg, kind, language)
     assert not verify_user_payment(settings, signature, 54321, doc_msg, kind, language)
+
+
+def test_admin_client_requests_are_not_exempt_from_payment_gate() -> None:
+    source = Path("korgan/payment_gate.py").read_text(encoding="utf-8")
+    assert "if user_id in settings.admin_ids" not in source
+    assert "stored_message = await ClientSafeBot.__call__(self, stored_method" in source
+    assert "PAYMENT_GATE_HELD" in source
 
 
 def test_admin_decision_is_signed_and_bound_to_user_document_and_kind() -> None:
