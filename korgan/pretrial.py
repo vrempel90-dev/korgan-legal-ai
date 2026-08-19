@@ -138,23 +138,32 @@ class PretrialProductionService(StableLegalProductionService):
         prompt = (
             "Подготовь профессиональную досудебную претензию по праву Республики Казахстан. "
             "Это не иск и не анкета. Используй только факты пользователя и VERIFIED-нормы.\n\n"
-            "Правила:\n"
-            "1. Не придумывай ФИО/БИН/ИИН, адрес, договор, даты, суммы, доказательства или факт направления прежней претензии.\n"
-            "2. Каждое требование должно вытекать из факта и иметь правовое основание, если оно VERIFIED.\n"
-            "3. Не пиши 'английская версия', 'русская редакция' и не представляй переводы одного акта как разные нормы.\n"
-            "4. Одну статью не пересказывай несколько раз: один точный абзац на одну норму.\n"
-            "5. Срок добровольного исполнения указывай только если он дан пользователем или VERIFIED законом/договором; иначе сформулируй нейтрально без выдуманного числа дней.\n"
-            "6. В последствиях укажи возможное обращение в суд/уполномоченный орган только как следующий законный шаг, без угроз и без гарантии результата.\n"
-            "7. В приложениях перечисляй только реально имеющиеся материалы.\n"
-            f"8. Язык документа: {'казахский' if language == 'kk' else 'русский'}.\n\n"
+            "ЭТАЛОН ПОДАЧИ И СТРУКТУРЫ:\n"
+            "Документ должен выглядеть как реальная деловая досудебная претензия, подготовленная практикующим юристом, а не как AI-справка или юридическое заключение. "
+            "Ориентируйся на такую последовательность: реквизиты сторон → название документа → договор/правоотношение и роли сторон → хронология исполнения и нарушения → конкретные денежные последствия, задолженность, аванс или иные суммы → относящиеся к спору пункты договора и расчёт неустойки/пени, если они подтверждены материалами → применимые VERIFIED-нормы → конкретное требование и срок добровольного исполнения → законное последствие неисполнения → подпись.\n"
+            "Пиши связными деловыми абзацами. Не превращай документ в меморандум с искусственными разделами «Фактические обстоятельства», «Правовое обоснование», «Требования», «Последствия». "
+            "Переходы должны быть естественными: например «В нарушение условий договора…», «Кроме того…», «В этой связи…», «Руководствуясь…», но используй их только когда они подходят фактам. "
+            "Каждый элемент facts, legal_basis, demands и consequences формулируй как готовый абзац документа, а не как внутреннюю заметку, тезис или комментарий модели.\n\n"
+            "ПРАВИЛА БЕЗОПАСНОСТИ И ТОЧНОСТИ:\n"
+            "1. Не копируй никакие факты, суммы, даты, названия компаний, договоры, проценты, сроки или статьи из примера оформления. Пример задаёт только форму и уровень юридической подачи.\n"
+            "2. Не придумывай ФИО/БИН/ИИН, адрес, договор, даты, суммы, доказательства или факт направления прежней претензии.\n"
+            "3. Каждое требование должно вытекать из факта и иметь правовое основание, если оно VERIFIED.\n"
+            "4. Если пользователь дал пункт договора о неустойке/пене и данные для расчёта, изложи договорное основание и понятный расчёт. Если данных нет — не рассчитывай и не придумывай.\n"
+            "5. Не пиши 'английская версия', 'русская редакция' и не представляй переводы одного акта как разные нормы.\n"
+            "6. Одну статью не пересказывай несколько раз: один точный абзац на одну норму.\n"
+            "7. Срок добровольного исполнения указывай только если он дан пользователем или VERIFIED законом/договором; иначе сформулируй нейтрально без выдуманного числа дней.\n"
+            "8. В последствиях укажи возможное обращение в суд/уполномоченный орган только как следующий законный шаг, без угроз и без гарантии результата.\n"
+            "9. В приложениях перечисляй только реально имеющиеся материалы.\n"
+            "10. Не пиши мета-фразы «правовая оценка не проведена», «позиция не определена», «необходимо дополнительно проанализировать» в тело претензии. Недостающие критичные сведения вынеси только в verification_notes.\n"
+            f"11. Язык документа: {'казахский' if language == 'kk' else 'русский'}.\n\n"
             f"МАТЕРИАЛЫ:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
             f"VERIFIED:\n{verified}"
         )
         payload, _ = await self._structured_response(
             model=self.settings.openai_model,
             instructions=(
-                "Ты практикующий юрист KORGAN в Республике Казахстан. Составляй деловую, юридически точную досудебную претензию. "
-                "Не добавляй непроверенное право и не задавай пользователю анкету."
+                "Ты практикующий юрист KORGAN в Республике Казахстан. Составляй полноценную деловую досудебную претензию уровня юридической практики: связное письмо, конкретные факты, договорные основания, расчёты и требования только там, где они подтверждены материалами. "
+                "Не добавляй непроверенное право, не копируй факты из образцов оформления и не задавай пользователю анкету."
             ),
             content=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
             schema_name="korgan_pretrial_demand",
@@ -177,7 +186,36 @@ def _today() -> str:
     return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
 
 
+def _body_paragraph(doc: Document, text: str) -> None:
+    value = str(text or "").strip()
+    if not value:
+        return
+    p = doc.add_paragraph(value)
+    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.first_line_indent = Cm(1.25)
+    p.paragraph_format.space_after = Pt(6)
+
+
+def _deadline_paragraph(value: str, kk: bool) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lower = text.lower()
+    if kk:
+        if any(word in lower for word in ("мерзім", "күн ішінде", "орында", "талап ет")):
+            return text
+        return f"Жоғарыда көрсетілген талаптарды {text} ішінде орындауды сұраймыз."
+    if any(word in lower for word in ("срок", "в течение", "просим", "требуем", "исполн")):
+        return text
+    return f"Просим исполнить указанные требования в течение {text}."
+
+
 def build_pretrial_docx(draft: PretrialDraft, language: str = "ru") -> bytes:
+    """Render a business-letter pre-trial demand using the approved reference structure.
+
+    The renderer intentionally avoids memo-like body headings. Facts, law,
+    demands and consequences are already drafted as complete legal paragraphs.
+    """
     kk = language == "kk"
     doc = Document()
     section = doc.sections[0]
@@ -190,41 +228,34 @@ def build_pretrial_docx(draft: PretrialDraft, language: str = "ru") -> bytes:
 
     head = doc.add_paragraph()
     head.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    head.add_run(("Жіберуші:\n" if kk else "От:\n")).bold = True
-    for value in draft.sender or [("[Жіберуші деректері]" if kk else "[Данные отправителя]")]:
-        head.add_run(str(value) + "\n")
     head.add_run(("Алушы:\n" if kk else "Кому:\n")).bold = True
     for value in draft.recipient or [("[Алушы деректері]" if kk else "[Данные адресата]")]:
+        head.add_run(str(value) + "\n")
+    head.add_run(("Жіберуші:\n" if kk else "От:\n")).bold = True
+    for value in draft.sender or [("[Жіберуші деректері]" if kk else "[Данные отправителя]")]:
         head.add_run(str(value) + "\n")
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title.add_run(draft.title or ("СОТҚА ДЕЙІНГІ ТАЛАП" if kk else "ДОСУДЕБНАЯ ПРЕТЕНЗИЯ"))
+    run = title.add_run(draft.title or ("Сотқа дейінгі талап" if kk else "Досудебная претензия"))
     run.bold = True
     run.font.size = Pt(14)
 
     for fact in draft.facts:
-        doc.add_paragraph(fact)
+        _body_paragraph(doc, fact)
 
-    if draft.legal_basis:
-        p = doc.add_paragraph()
-        p.add_run("Құқықтық негіздеме" if kk else "Правовое обоснование").bold = True
-        for basis in draft.legal_basis:
-            doc.add_paragraph(basis)
+    for basis in draft.legal_basis:
+        _body_paragraph(doc, basis)
 
-    p = doc.add_paragraph()
-    p.add_run("ТАЛАП ЕТЕМІН:" if kk else "ТРЕБУЮ:").bold = True
-    for index, demand in enumerate(draft.demands, 1):
-        doc.add_paragraph(f"{index}. {demand}")
+    for demand in draft.demands:
+        _body_paragraph(doc, demand)
 
-    if draft.deadline:
-        doc.add_paragraph(("Орындау мерзімі: " if kk else "Срок исполнения: ") + draft.deadline)
+    deadline = _deadline_paragraph(draft.deadline, kk)
+    if deadline:
+        _body_paragraph(doc, deadline)
 
-    if draft.consequences:
-        p = doc.add_paragraph()
-        p.add_run("Орындалмаған жағдайда" if kk else "В случае неисполнения").bold = True
-        for line in draft.consequences:
-            doc.add_paragraph(line)
+    for line in draft.consequences:
+        _body_paragraph(doc, line)
 
     if draft.attachments:
         p = doc.add_paragraph()
