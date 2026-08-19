@@ -35,6 +35,7 @@ from korgan.pretrial_response_runtime import install_pretrial_response_transport
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
 from korgan.reply_menu_handlers import router as reply_menu_router
+from korgan.response_voice_guard import install_response_voice_guard
 from korgan.review_cta_runtime import router as review_cta_router
 from korgan.stable_legal_release import install_stable_legal_release
 from korgan.ui import main_menu
@@ -46,6 +47,7 @@ install_professional_rag_bridge()
 install_stable_legal_release()
 install_client_safe_runtime()
 install_pretrial_response_transport()
+install_response_voice_guard()
 install_auto_payment()
 install_payment_gate()
 install_consultation_quota_bridge()
