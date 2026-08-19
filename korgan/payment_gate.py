@@ -17,9 +17,11 @@ LOGGER = logging.getLogger(__name__)
 def install_payment_gate() -> None:
     """Hold generated legal DOCX files until Kaspi payment is confirmed.
 
-    The legal generators are untouched. Only the final Telegram SendDocument is
-    intercepted. The withheld DOCX is persisted as a Telegram message in the
-    configured administrator chat, so it is not kept only in process RAM.
+    Aiogram can deliver documents through either ``Bot.__call__(SendDocument)``
+    or the convenience ``send_document()`` method depending on the caller/version.
+    KORGAN must gate both paths. The withheld DOCX is persisted as a Telegram
+    message in the configured administrator chat and only the payment offer is
+    sent to the client until the receipt is accepted.
 
     Administrators are not exempt when they use the bot as a client. The private
     storage copy is sent through ClientSafeBot.__call__ directly, so it bypasses
@@ -29,6 +31,7 @@ def install_payment_gate() -> None:
         return
 
     original_call = LocalizedClientSafeBot.__call__
+    original_send_document = LocalizedClientSafeBot.send_document
 
     async def payment_aware_call(
         self: LocalizedClientSafeBot,
@@ -50,7 +53,6 @@ def install_payment_gate() -> None:
             return await original_call(self, method, request_timeout=request_timeout)
 
         admins = sorted(settings.admin_ids)
-
         if not settings.kaspi_payment_url.strip() or not admins:
             LOGGER.error(
                 "PAYMENT_GATE_CONFIG_ERROR kaspi_url=%s admin_count=%s user=%s",
@@ -106,6 +108,34 @@ def install_payment_gate() -> None:
         )
         return await ClientSafeBot.__call__(self, offer, request_timeout=request_timeout)
 
+    async def payment_aware_send_document(
+        self: LocalizedClientSafeBot,
+        chat_id: Any,
+        document: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Route generated DOCX convenience sends through the same payment gate."""
+        settings = get_settings()
+        kind = _generated_document_kind(document)
+        if kind is None or not settings.payments_enabled:
+            return await original_send_document(self, chat_id, document, *args, **kwargs)
+
+        if args:
+            # Generated KORGAN sends use keyword options. Fail closed instead of
+            # silently bypassing payment if a future caller adds positional data.
+            LOGGER.error("PAYMENT_GATE_UNSUPPORTED_POSITIONAL_SEND user=%r kind=%s", chat_id, kind)
+            failure = SendMessage(
+                chat_id=chat_id,
+                text="Документ готов, но платёжный шлюз не смог безопасно подготовить выдачу. Обратитесь в техподдержку — документ не выдан.",
+            )
+            return await ClientSafeBot.__call__(self, failure)
+
+        request_timeout = kwargs.pop("request_timeout", None)
+        method = SendDocument(chat_id=chat_id, document=document, **kwargs)
+        return await payment_aware_call(self, method, request_timeout=request_timeout)
+
     LocalizedClientSafeBot.__call__ = payment_aware_call  # type: ignore[method-assign]
+    LocalizedClientSafeBot.send_document = payment_aware_send_document  # type: ignore[method-assign]
     LocalizedClientSafeBot._kaspi_payment_gate_installed = True  # type: ignore[attr-defined]
     LOGGER.info("KORGAN Kaspi payment gate installed")
