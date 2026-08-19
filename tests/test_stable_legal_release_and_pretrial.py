@@ -167,7 +167,8 @@ def test_pretrial_docx_is_professional_and_has_separate_attachment_numbering() -
     doc = Document(io.BytesIO(data))
     text = "\n".join(p.text for p in doc.paragraphs)
     assert "ДОСУДЕБНАЯ ПРЕТЕНЗИЯ" in text
-    assert "ТРЕБУЮ:" in text
-    assert "1. Вернуть 100 000 тенге." in text
+    assert "ТРЕБУЮ:" not in text
+    assert "Вернуть 100 000 тенге." in text
+    assert "Предоставить письменный ответ." in text
     assert "1. Копия договора" in text
     assert "английская версия" not in text.lower()
