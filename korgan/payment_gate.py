@@ -15,11 +15,15 @@ LOGGER = logging.getLogger(__name__)
 
 
 def install_payment_gate() -> None:
-    """Hold generated legal DOCX files until Kaspi payment is manually confirmed.
+    """Hold generated legal DOCX files until Kaspi payment is confirmed.
 
     The legal generators are untouched. Only the final Telegram SendDocument is
     intercepted. The withheld DOCX is persisted as a Telegram message in the
     configured administrator chat, so it is not kept only in process RAM.
+
+    Administrators are not exempt when they use the bot as a client. The private
+    storage copy is sent through ClientSafeBot.__call__ directly, so it bypasses
+    this LocalizedClientSafeBot gate without creating a recursion loop.
     """
     if getattr(LocalizedClientSafeBot, "_kaspi_payment_gate_installed", False):
         return
@@ -46,9 +50,6 @@ def install_payment_gate() -> None:
             return await original_call(self, method, request_timeout=request_timeout)
 
         admins = sorted(settings.admin_ids)
-        if user_id in settings.admin_ids:
-            # Never gate the private admin storage copy itself.
-            return await original_call(self, method, request_timeout=request_timeout)
 
         if not settings.kaspi_payment_url.strip() or not admins:
             LOGGER.error(
