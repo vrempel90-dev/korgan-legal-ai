@@ -29,6 +29,7 @@ from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
 from korgan.payment_gate import install_payment_gate
+from korgan.payment_pdf_hotfix import install_payment_pdf_hotfix
 from korgan.payment_runtime import router as payment_router
 from korgan.pretrial_response import PretrialResponseProductionService
 from korgan.pretrial_response_runtime import install_pretrial_response_transport, router as pretrial_response_router
@@ -49,6 +50,7 @@ install_client_safe_runtime()
 install_pretrial_response_transport()
 install_response_voice_guard()
 install_auto_payment()
+install_payment_pdf_hotfix()
 install_payment_gate()
 install_consultation_quota_bridge()
 
