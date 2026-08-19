@@ -28,6 +28,7 @@ from korgan.legal.corpus_refresh import start_corpus_refresh_task
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
+from korgan.payment_delivery_bridge import install_payment_delivery_bridge
 from korgan.payment_gate import install_payment_gate
 from korgan.payment_pdf_hotfix import install_payment_pdf_hotfix
 from korgan.payment_runtime import router as payment_router
@@ -52,6 +53,7 @@ install_response_voice_guard()
 install_auto_payment()
 install_payment_pdf_hotfix()
 install_payment_gate()
+install_payment_delivery_bridge()
 install_consultation_quota_bridge()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
