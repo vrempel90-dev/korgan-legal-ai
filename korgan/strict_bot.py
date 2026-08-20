@@ -42,6 +42,7 @@ from korgan.response_voice_guard import install_response_voice_guard
 from korgan.review_cta_runtime import router as review_cta_router
 from korgan.stable_legal_release import install_stable_legal_release
 from korgan.ui import main_menu
+from korgan.upload_followup_guard import install_upload_followup_guard
 
 install_runtime_hotfix()
 install_kazakh_legal_bridge()
@@ -55,6 +56,7 @@ install_auto_payment()
 install_payment_pdf_hotfix()
 install_payment_gate()
 install_payment_delivery_bridge()
+install_upload_followup_guard()
 install_consultation_quota_bridge()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
