@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Iterable
 
 from aiogram.methods import SendDocument, SendMessage
 
@@ -14,14 +14,24 @@ from korgan.payment import admin_storage_caption, payment_offer_markup, payment_
 LOGGER = logging.getLogger(__name__)
 
 
+def _select_storage_admin(admin_ids: Iterable[int], user_id: int) -> int | None:
+    """Return a deterministic admin chat that is not the paying client.
+
+    The held Word document is a private storage copy. Sending that copy to the
+    payer — even when the payer is also an administrator/tester — would expose
+    the file before payment and defeat the gate. No safe admin means fail closed.
+    """
+    return next((admin_id for admin_id in sorted(set(admin_ids)) if admin_id != user_id), None)
+
+
 def install_payment_gate() -> None:
     """Hold generated legal DOCX files until Kaspi payment is confirmed.
 
     Aiogram can deliver documents through either ``Bot.__call__(SendDocument)``
     or the convenience ``send_document()`` method depending on the caller/version.
     KORGAN must gate both paths. The withheld DOCX is persisted as a Telegram
-    message in the configured administrator chat and only the payment offer is
-    sent to the client until the receipt is accepted.
+    message in a configured administrator chat that is different from the payer,
+    and only the payment offer is sent to the client until the receipt is accepted.
 
     Administrators are not exempt when they use the bot as a client. The private
     storage copy is sent through ClientSafeBot.__call__ directly, so it bypasses
@@ -53,27 +63,28 @@ def install_payment_gate() -> None:
             return await original_call(self, method, request_timeout=request_timeout)
 
         admins = sorted(settings.admin_ids)
-        if not settings.kaspi_payment_url.strip() or not admins:
+        storage_admin_id = _select_storage_admin(admins, user_id)
+        if not settings.kaspi_payment_url.strip() or storage_admin_id is None:
             LOGGER.error(
-                "PAYMENT_GATE_CONFIG_ERROR kaspi_url=%s admin_count=%s user=%s",
+                "PAYMENT_GATE_CONFIG_ERROR kaspi_url=%s admin_count=%s safe_storage=%s user=%s",
                 bool(settings.kaspi_payment_url.strip()),
                 len(admins),
+                storage_admin_id is not None,
                 user_id,
             )
             failure = SendMessage(
                 chat_id=method.chat_id,
                 text=(
                     "Оплата временно недоступна из-за технической настройки. "
-                    "Документ готов, но не выдан. Обратитесь в техподдержку — повторно оплачивать ничего не нужно."
+                    "Документ готов, но не выдан. Оплата не требуется. Обратитесь в техподдержку."
                 ),
             )
             return await ClientSafeBot.__call__(self, failure, request_timeout=request_timeout)
 
         language = current_language()
-        admin_id = admins[0]
         stored_method = method.model_copy(
             update={
-                "chat_id": admin_id,
+                "chat_id": storage_admin_id,
                 "document": _clean_upload(method.document),
                 "caption": admin_storage_caption(user_id, kind, language, settings.document_price_kzt),
                 "reply_markup": None,
@@ -102,7 +113,7 @@ def install_payment_gate() -> None:
             "PAYMENT_GATE_HELD user=%s kind=%s admin=%s admin_doc_message_id=%s amount=%s",
             user_id,
             kind,
-            admin_id,
+            storage_admin_id,
             admin_doc_message_id,
             settings.document_price_kzt,
         )
