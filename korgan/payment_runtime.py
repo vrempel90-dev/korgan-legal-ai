@@ -19,6 +19,7 @@ from korgan.payment import (
     verify_admin_action,
     verify_user_payment,
 )
+from korgan.payment_release_guard import can_release_paid_document
 
 LOGGER = logging.getLogger(__name__)
 router = Router(name="korgan-payment-runtime")
@@ -190,23 +191,43 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
         return
     raw, filename, mime = payload
 
-    check = None
-    ai_error = ""
     try:
         check = await ReceiptAnalyzer(settings).analyze(raw, filename, mime)
-    except Exception as exc:
+    except Exception:
+        # The client explicitly requires verification before release. If the AI
+        # receipt check is unavailable, do not create an admin approval button:
+        # there must be no path from an unchecked receipt to document delivery.
         LOGGER.exception("PAYMENT_RECEIPT_AI_FAILED user=%s", user_id)
-        ai_error = type(exc).__name__
+        await message.answer(
+            "⚠️ Сейчас не удалось выполнить обязательную проверку чека. "
+            "Документ остаётся заблокирован и не будет выдан без проверки. Попробуйте отправить чек ещё раз позже."
+            if language != "kk"
+            else
+            "⚠️ Қазір чекті міндетті тексеру орындалмады. Құжат бұғатталған күйде қалады және тексерусіз берілмейді. Чекті кейін қайта жіберіңіз."
+        )
+        return
 
-    if check is not None:
-        hard_issues = receipt_hard_issues(check, settings.document_price_kzt)
-        if hard_issues:
-            await message.answer(
-                "❌ Чек не прошёл предварительную проверку:\n• "
-                + "\n• ".join(hard_issues[:5])
-                + "\n\nПришлите полный корректный чек. Документ пока не выдан."
-            )
-            return
+    hard_issues = receipt_hard_issues(check, settings.document_price_kzt)
+    if hard_issues:
+        await message.answer(
+            "❌ Чек не прошёл предварительную проверку:\n• "
+            + "\n• ".join(hard_issues[:5])
+            + "\n\nПришлите полный корректный чек. Документ пока не выдан."
+        )
+        return
+
+    release_guard = can_release_paid_document(
+        kind=kind,
+        receipt_submitted=True,
+        receipt_precheck_passed=True,
+        admin_confirmed=False,
+    )
+    if release_guard.allowed:
+        # Defensive invariant: no document should ever be releasable before the
+        # explicit administrator confirmation step below.
+        LOGGER.critical("PAYMENT_GUARD_INVALID_PREADMIN_RELEASE user=%s kind=%s", user_id, kind)
+        await message.answer("Документ не выдан: ошибка защищённой проверки оплаты. Обратитесь в техподдержку.")
+        return
 
     try:
         await message.bot.copy_message(chat_id=admin_id, from_chat_id=message.chat.id, message_id=message.message_id)
@@ -216,7 +237,6 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
             kind=kind,
             language=language,
             amount=settings.document_price_kzt,
-            ai_error=ai_error,
         )
         await message.bot.send_message(
             admin_id,
@@ -269,6 +289,17 @@ async def admin_payment_decision(callback: CallbackQuery) -> None:
             "❌ Оплату пока не удалось подтвердить. Проверьте платёж/чек и нажмите «✅ Я оплатил» под карточкой оплаты повторно. "
             "Документ не выдан."
         )
+        return
+
+    release_guard = can_release_paid_document(
+        kind=kind,
+        receipt_submitted=True,
+        receipt_precheck_passed=True,
+        admin_confirmed=True,
+    )
+    if not release_guard.allowed:
+        LOGGER.error("PAYMENT_RELEASE_GUARD_BLOCKED user=%s kind=%s reason=%s", user_id, kind, release_guard.reason)
+        await callback.answer("Документ остаётся заблокирован: проверка оплаты не завершена.", show_alert=True)
         return
 
     try:
