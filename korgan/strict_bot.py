@@ -10,7 +10,6 @@ from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
-from korgan.auto_payment_runtime import install_auto_payment, router as auto_payment_router
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter, claim_pipeline_v2_mode
 from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.client_safe_ui import install_client_safe_runtime
@@ -52,7 +51,6 @@ install_stable_legal_release()
 install_client_safe_runtime()
 install_pretrial_response_transport()
 install_response_voice_guard()
-install_auto_payment()
 install_payment_pdf_hotfix()
 install_payment_gate()
 install_payment_delivery_bridge()
@@ -89,10 +87,9 @@ async def main() -> None:
     dp.include_router(admin_router)
     dp.include_router(start_router)
     dp.include_router(safety_router)
-    # Successful receipt images are consumed here first and release the held
-    # document immediately. The legacy manual router stays registered below as
-    # a compatibility fallback for its non-receipt callbacks/text prompts.
-    dp.include_router(auto_payment_router)
+    # Payment is intentionally manual-final: a receipt must first pass the AI
+    # pre-check, then an administrator verifies the real payment and explicitly
+    # unlocks the held Word file. There is no automatic receipt-to-file release.
     dp.include_router(payment_router)
     dp.include_router(contact_router)
     # Exact RU/KK consultation and price buttons are handled here before the
@@ -114,7 +111,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + AI receipt release=%s + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),

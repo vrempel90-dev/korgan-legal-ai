@@ -59,8 +59,17 @@ def install_payment_gate() -> None:
         try:
             user_id = int(method.chat_id)
         except (TypeError, ValueError):
-            LOGGER.error("PAYMENT_GATE_NON_PRIVATE_CHAT chat_id=%r", method.chat_id)
-            return await original_call(self, method, request_timeout=request_timeout)
+            # Paid generated documents must fail closed. An unexpected chat id
+            # must never become a bypass that sends the Word file for free.
+            LOGGER.error("PAYMENT_GATE_INVALID_CLIENT_CHAT chat_id=%r kind=%s", method.chat_id, kind)
+            failure = SendMessage(
+                chat_id=method.chat_id,
+                text=(
+                    "Не удалось открыть защищённую выдачу документа. Документ не выдан. "
+                    "Повторите запрос позже или обратитесь в техподдержку."
+                ),
+            )
+            return await ClientSafeBot.__call__(self, failure, request_timeout=request_timeout)
 
         admins = sorted(settings.admin_ids)
         storage_admin_id = _select_storage_admin(admins, user_id)
