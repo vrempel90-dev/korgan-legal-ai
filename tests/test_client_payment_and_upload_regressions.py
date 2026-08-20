@@ -27,7 +27,7 @@ def test_payment_gate_fails_closed_when_no_separate_storage_admin_exists() -> No
     assert "storage_admin_id = _select_storage_admin(admins, user_id)" in source
     assert "storage_admin_id is None" in source
     assert '"chat_id": storage_admin_id' in source
-    assert '"Оплата не требуется.' in source
+    assert "Оплата не требуется." in source
     assert '"chat_id": user_id' not in source
 
 
