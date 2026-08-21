@@ -10,6 +10,7 @@ from korgan.config import get_settings
 from korgan.language_context import current_language
 from korgan.localized_transport import LocalizedClientSafeBot, _generated_document_kind
 from korgan.payment import admin_storage_caption, payment_offer_markup, payment_offer_text
+from korgan.prepayment_gate import is_paid_delivery_authorized
 
 LOGGER = logging.getLogger(__name__)
 
@@ -25,17 +26,13 @@ def _select_storage_admin(admin_ids: Iterable[int], user_id: int) -> int | None:
 
 
 def install_payment_gate() -> None:
-    """Hold generated legal DOCX files until Kaspi payment is confirmed.
+    """Fail closed for every generated legal DOCX.
 
-    Aiogram can deliver documents through either ``Bot.__call__(SendDocument)``
-    or the convenience ``send_document()`` method depending on the caller/version.
-    KORGAN must gate both paths. The withheld DOCX is persisted as a Telegram
-    message in a configured administrator chat that is different from the payer,
-    and only the payment offer is sent to the client until the receipt is accepted.
-
-    Administrators are not exempt when they use the bot as a client. The private
-    storage copy is sent through ClientSafeBot.__call__ directly, so it bypasses
-    this LocalizedClientSafeBot gate without creating a recursion loop.
+    New requests are paid before generation. Their DOCX is allowed through only
+    while an admin-confirmed paid-generation context matches both client and kind.
+    Any generated document outside that narrow context falls back to the legacy
+    hold flow, which stores it privately and asks for payment instead of exposing
+    a free Word file. Positive-id legacy payment cards therefore remain usable.
     """
     if getattr(LocalizedClientSafeBot, "_kaspi_payment_gate_installed", False):
         return
@@ -59,8 +56,6 @@ def install_payment_gate() -> None:
         try:
             user_id = int(method.chat_id)
         except (TypeError, ValueError):
-            # Paid generated documents must fail closed. An unexpected chat id
-            # must never become a bypass that sends the Word file for free.
             LOGGER.error("PAYMENT_GATE_INVALID_CLIENT_CHAT chat_id=%r kind=%s", method.chat_id, kind)
             failure = SendMessage(
                 chat_id=method.chat_id,
@@ -70,6 +65,12 @@ def install_payment_gate() -> None:
                 ),
             )
             return await ClientSafeBot.__call__(self, failure, request_timeout=request_timeout)
+
+        # This context is set only after receipt pre-check + explicit admin
+        # confirmation, and only around one paid generation task.
+        if is_paid_delivery_authorized(user_id, kind):
+            LOGGER.info("PREPAID_DOCUMENT_DELIVERY user=%s kind=%s", user_id, kind)
+            return await original_call(self, method, request_timeout=request_timeout)
 
         admins = sorted(settings.admin_ids)
         storage_admin_id = _select_storage_admin(admins, user_id)
@@ -101,8 +102,6 @@ def install_payment_gate() -> None:
         )
 
         try:
-            # Bypass LocalizedClientSafeBot.__call__ so the admin storage copy is
-            # neither payment-gated nor decorated with the client lawyer CTA.
             stored_message = await ClientSafeBot.__call__(self, stored_method, request_timeout=request_timeout)
         except Exception:
             LOGGER.exception("PAYMENT_GATE_ADMIN_STORAGE_FAILED user=%s kind=%s", user_id, kind)
@@ -118,8 +117,8 @@ def install_payment_gate() -> None:
             text=payment_offer_text(kind, language, settings.document_price_kzt),
             reply_markup=payment_offer_markup(settings, user_id, admin_doc_message_id, kind, language),
         )
-        LOGGER.info(
-            "PAYMENT_GATE_HELD user=%s kind=%s admin=%s admin_doc_message_id=%s amount=%s",
+        LOGGER.warning(
+            "PAYMENT_GATE_FALLBACK_HELD user=%s kind=%s admin=%s admin_doc_message_id=%s amount=%s",
             user_id,
             kind,
             storage_admin_id,
@@ -135,15 +134,21 @@ def install_payment_gate() -> None:
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        """Route generated DOCX convenience sends through the same payment gate."""
+        """Route generated DOCX convenience sends through the same fail-closed gate."""
         settings = get_settings()
         kind = _generated_document_kind(document)
         if kind is None or not settings.payments_enabled:
             return await original_send_document(self, chat_id, document, *args, **kwargs)
 
+        try:
+            user_id = int(chat_id)
+        except (TypeError, ValueError):
+            user_id = 0
+        if user_id and is_paid_delivery_authorized(user_id, kind):
+            LOGGER.info("PREPAID_DOCUMENT_SEND user=%s kind=%s", user_id, kind)
+            return await original_send_document(self, chat_id, document, *args, **kwargs)
+
         if args:
-            # Generated KORGAN sends use keyword options. Fail closed instead of
-            # silently bypassing payment if a future caller adds positional data.
             LOGGER.error("PAYMENT_GATE_UNSUPPORTED_POSITIONAL_SEND user=%r kind=%s", chat_id, kind)
             failure = SendMessage(
                 chat_id=chat_id,
@@ -158,4 +163,4 @@ def install_payment_gate() -> None:
     LocalizedClientSafeBot.__call__ = payment_aware_call  # type: ignore[method-assign]
     LocalizedClientSafeBot.send_document = payment_aware_send_document  # type: ignore[method-assign]
     LocalizedClientSafeBot._kaspi_payment_gate_installed = True  # type: ignore[attr-defined]
-    LOGGER.info("KORGAN Kaspi payment gate installed")
+    LOGGER.info("KORGAN Kaspi payment gate installed (prepay-aware fallback)")
