@@ -1,1 +1,1 @@
-worker: python -m korgan.bot
+worker: pytest -q tests
