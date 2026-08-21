@@ -12,6 +12,8 @@ def _callbacks(markup) -> list[str]:
 
 
 def test_pretrial_response_intent_is_separate_from_pretrial_and_claim_response() -> None:
+    # Low-level parser keeps the former alias for compatibility with already
+    # stored/internal text. Runtime/category routing no longer exposes it.
     assert is_pretrial_response_request("подготовь отзыв на претензию по этим материалам")
     assert is_pretrial_response_request("составь ответ на досудебную претензию")
     assert not is_pretrial_response_request("подготовь досудебную претензию")
@@ -20,7 +22,7 @@ def test_pretrial_response_intent_is_separate_from_pretrial_and_claim_response()
 
 
 def test_document_category_prefers_pretrial_response() -> None:
-    assert preferred_document_category("подготовь отзыв на претензию") == "pretrial_response"
+    assert preferred_document_category("подготовь отзыв на претензию") is None
     assert preferred_document_category("составь ответ на досудебную претензию") == "pretrial_response"
     assert preferred_document_category("подготовь досудебную претензию") == "pretrial"
     assert preferred_document_category("подготовь отзыв на иск") == "response"
@@ -43,9 +45,12 @@ def test_new_document_is_known_to_transport_and_payment() -> None:
     from korgan import localized_transport, payment
 
     install_pretrial_response_transport()
+    assert localized_transport._DOCUMENT_KINDS["korgan_otvet_na_pretenziyu.docx"] == "pretrial_response"
+    # Legacy filename remains recognized only so an already-held document from
+    # an older deployment can still be released after payment.
     assert localized_transport._DOCUMENT_KINDS["korgan_otzyv_na_pretenziyu.docx"] == "pretrial_response"
-    assert payment.document_label("pretrial_response", "ru") == "отзыв на претензию"
-    assert "Отзыв на претензию" in localized_transport._document_client_caption("pretrial_response", "ru")
+    assert payment.document_label("pretrial_response", "ru") == "ответ на претензию"
+    assert "Ответ на претензию" in localized_transport._document_client_caption("pretrial_response", "ru")
 
 
 def test_payment_offer_no_longer_requires_admin_confirmation() -> None:
