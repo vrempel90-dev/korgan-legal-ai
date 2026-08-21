@@ -13,6 +13,8 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
+    base_branches:
+      - "feature/openai-docs-claims"
   path_instructions:
     - path: "korgan/**/*.py"
       instructions: |
@@ -27,6 +29,8 @@ reviews:
         - Results from stale requests must never be delivered after the user opens another request.
         - Persistent menu buttons must never be swallowed as legal facts or require a second tap.
         - New requests must clear request-scoped legal/payment data but preserve language, consent and account/session settings.
+        - Any production routing/state/generation fix must include regression coverage. Flag a PR that changes korgan/**/*.py in these areas without adding or updating meaningful tests.
+        - Prefer regression tests proving all five document types remain isolated when the changed behavior can affect sibling routes.
         - Be especially alert to aiogram router ordering, overlapping filters, MemoryStorage state, async races, duplicate handlers and broad natural-language intent detectors.
         - Do not recommend broad refactors when a small fail-closed guard is safer.
         - Production runs from branch feature/openai-docs-claims with entrypoint python -m korgan.strict_bot; do not assume main is production.
