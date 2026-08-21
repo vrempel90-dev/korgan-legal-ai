@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from pathlib import Path
 
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_category_router import PreferredDocumentCategory, preferred_document_category
-from korgan.document_section_lock import SelectedDocumentSection
+from korgan.document_section_lock import SelectedDocumentSection, route_selected_document_section
 from korgan.request_scope import active_document_kind
 from korgan.response_intent import is_response_to_claim_request
 
@@ -67,6 +68,22 @@ def test_each_button_owns_its_waiting_section() -> None:
     for kind, mode in cases.items():
         result = _selected(kind, mode, text)
         assert result == {"selected_document_kind": kind}, kind
+
+
+def test_screenshot_claim_payload_is_owned_by_claim_button() -> None:
+    text = (
+        "Мне нужно подготовить исковое заявление. Я заключил с ИП договор на изготовление кухни. "
+        "Хочу отказаться от договора и взыскать уплаченную сумму. Претензия была направлена ответчику."
+    )
+    assert _selected("claim", "universal_claim_waiting", text) == {"selected_document_kind": "claim"}
+
+
+def test_selected_section_never_reclassifies_case_text() -> None:
+    source = inspect.getsource(route_selected_document_section)
+    assert "preferred_document_category" not in source
+    assert "request_label" not in source
+    assert "selected_document_kind == \"claim\"" in source
+    assert "selected_document_kind == \"contract\"" in source
 
 
 def test_section_lock_does_not_capture_other_special_states() -> None:
