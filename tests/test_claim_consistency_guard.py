@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import korgan.senior_claim_preflight as senior_claim_preflight
 from korgan.claim_consistency_guard import claim_consistency_errors
-from korgan.legal_types import ClaimDraft, VerificationStatus
+from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 
 
 def _draft(*, legal_basis: list[str], requests: list[str]) -> ClaimDraft:
@@ -21,6 +22,18 @@ def _draft(*, legal_basis: list[str], requests: list[str]) -> ClaimDraft:
         attachments=[],
         verification_notes=[],
         source_urls=[],
+    )
+
+
+def _research() -> LegalResearch:
+    return LegalResearch(
+        status=VerificationStatus.NEEDS_VERIFICATION,
+        applicable_law=[],
+        procedural_requirements=[],
+        verified_claims=[],
+        unverified_claims=[],
+        source_urls=[],
+        notes=[],
     )
 
 
@@ -104,3 +117,24 @@ def test_penalty_without_amount_cannot_be_filing_ready() -> None:
     errors = claim_consistency_errors(context, draft)
 
     assert any("без конкретного размера" in error for error in errors)
+
+
+def test_package_install_extends_existing_senior_preflight() -> None:
+    context = (
+        "Я полностью оплатил работы, ответчик нарушил срок изготовления и установки кухни. "
+        "Прошу взыскать 1 200 000 тенге, неустойку и судебные расходы."
+    )
+    draft = _draft(
+        legal_basis=[
+            "Неоплата покупателем предварительной оплаты считается отказом от исполнения договора.",
+            "За просрочку возврата товара ненадлежащего качества выплачивается неустойка 1% стоимости товара.",
+        ],
+        requests=["Взыскать с Ответчика 1 200 000 тенге."],
+    )
+
+    errors = senior_claim_preflight.deterministic_claim_preflight(context, _research(), draft)
+
+    assert getattr(senior_claim_preflight.deterministic_claim_preflight, "_korgan_claim_consistency_guard", False)
+    assert any("неустойку/пеню" in error and "исчезло" in error for error in errors)
+    assert any("судебные расходы" in error for error in errors)
+    assert any("другой фактической ситуации" in error for error in errors)
