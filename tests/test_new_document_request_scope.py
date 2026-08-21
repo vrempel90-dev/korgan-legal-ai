@@ -9,7 +9,7 @@ import korgan.pretrial_runtime as pretrial_runtime
 import korgan.universal_claim_runtime as universal_claim_runtime
 import korgan.universal_document_runtime as universal_document_runtime
 from korgan.document_category_router import PreferredDocumentCategory
-from korgan.request_scope import start_new_document_request
+from korgan.request_scope import request_label, start_new_document_request
 
 
 class _State:
@@ -125,3 +125,13 @@ def test_user_facing_generating_banners_are_removed() -> None:
     assert "Формирую досудебную" not in source
     assert "Анализирую претензию" not in source
     assert "send_chat_action" in source
+
+
+def test_fresh_request_labels_are_specific_in_both_languages() -> None:
+    assert request_label("claim", "ru") == "Исковое заявление"
+    assert request_label("pretrial", "ru") == "Досудебная претензия"
+    assert request_label("pretrial_response", "ru") == "Ответ на претензию"
+    assert request_label("response", "ru") == "Отзыв на иск"
+    assert request_label("contract", "ru") == "Договор"
+    assert request_label("claim", "kk") == "Талап қою арызы"
+    assert request_label("pretrial_response", "kk") == "Сотқа дейінгі талапқа жауап"
