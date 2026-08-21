@@ -61,13 +61,17 @@ def test_claim_waiting_mode_cannot_be_stolen_by_pretrial_words() -> None:
     assert result == {"document_category": "claim"}
 
 
-def test_other_active_document_modes_are_not_intercepted() -> None:
+def test_explicit_document_request_can_start_new_request_from_active_mode() -> None:
     class State:
         async def get_data(self):
             return {"mode": "contract_details"}
 
     message = SimpleNamespace(text="Подготовь исковое заявление")
-    assert asyncio.run(PreferredDocumentCategory()(message, State())) is False
+    result = asyncio.run(PreferredDocumentCategory()(message, State()))
+    assert result == {
+        "document_category": "claim",
+        "document_request_explicit": True,
+    }
 
 
 def test_generated_document_kind_is_exact_for_all_four_categories() -> None:
