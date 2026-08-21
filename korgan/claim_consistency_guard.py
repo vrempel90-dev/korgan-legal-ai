@@ -103,7 +103,11 @@ def _text(values: list[str]) -> str:
 def _positive_term_in_segment(segment: str, term_re: Pattern[str]) -> bool:
     """Return True when at least one remedy term is not explicitly excluded."""
     for term in term_re.finditer(segment):
-        before = segment[max(0, term.start() - 70):term.start()]
+        before_start = max(0, term.start() - 70)
+        prior_intents = list(_INTENT_VERB_RE.finditer(segment, 0, term.start()))
+        if prior_intents:
+            before_start = max(before_start, prior_intents[-1].end())
+        before = segment[before_start:term.start()]
         after = segment[term.end():min(len(segment), term.end() + 50)]
         term_text = term.group(0).lower()
         if _TERM_EXCLUSION_BEFORE_RE.search(before):
