@@ -20,6 +20,7 @@ from korgan.consultation_quota_runtime import router as consultation_quota_route
 from korgan.consultation_ui_runtime import router as consultation_ui_router
 from korgan.contact_handlers import router as contact_router
 from korgan.document_category_router import router as document_category_router
+from korgan.document_menu_entry import router as document_menu_entry_router
 from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
 from korgan.kazakh_ui import router as kazakh_router
@@ -87,6 +88,10 @@ async def main() -> None:
     dp.include_router(admin_router)
     dp.include_router(start_router)
     dp.include_router(safety_router)
+    # Persistent navigation must win over every active document/payment/intake
+    # state. Otherwise the first tap on «Документ / Құжат» can be swallowed as
+    # case text and the client has to tap twice.
+    dp.include_router(document_menu_entry_router)
     # Payment is intentionally manual-final: a receipt must first pass the AI
     # pre-check, then an administrator verifies the real payment and explicitly
     # unlocks the held Word file. There is no automatic receipt-to-file release.
