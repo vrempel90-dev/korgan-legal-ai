@@ -49,6 +49,23 @@ async def _save_text(message: Message, state: FSMContext) -> None:
     await state.update_data(facts=facts[-20:])
 
 
+async def _ask_pretrial(message: Message, state: FSMContext) -> None:
+    """Open a fresh pretrial request without starting generation."""
+    lang = await _lang(state)
+    await state.update_data(mode="pretrial_waiting")
+    prompt = (
+        f"🆕 Жаңа өтінім — {request_label('pretrial', lang)}.\n\n"
+        "Жағдайды бір хабарламада сипаттаңыз немесе материалдарды (PDF/DOCX/фото) тіркеңіз. "
+        "Алдыңғы өтінімнің деректері бұл өтінімге қолданылмайды."
+        if lang == KK
+        else
+        f"🆕 Новая заявка — {request_label('pretrial', lang)}.\n\n"
+        "Опишите ситуацию одним сообщением или приложите материалы (PDF/DOCX/фото). "
+        "Данные предыдущей заявки сюда не переносятся."
+    )
+    await message.answer(prompt, reply_markup=main_menu(lang))
+
+
 async def _generate(message: Message, state: FSMContext) -> None:
     await _save_text(message, state)
     lang = await _lang(state)
@@ -56,18 +73,7 @@ async def _generate(message: Message, state: FSMContext) -> None:
     menu = main_menu(lang)
 
     if not context.strip():
-        await state.update_data(mode="pretrial_waiting")
-        prompt = (
-            f"🆕 Жаңа өтінім — {request_label('pretrial', lang)}.\n\n"
-            "Жағдайды бір хабарламада сипаттаңыз немесе материалдарды (PDF/DOCX/фото) тіркеңіз. "
-            "Алдыңғы өтінімнің деректері бұл өтінімге қолданылмайды."
-            if lang == KK
-            else
-            f"🆕 Новая заявка — {request_label('pretrial', lang)}.\n\n"
-            "Опишите ситуацию одним сообщением или приложите материалы (PDF/DOCX/фото). "
-            "Данные предыдущей заявки сюда не переносятся."
-        )
-        await message.answer(prompt, reply_markup=menu)
+        await _ask_pretrial(message, state)
         return
 
     service = base_bot.service
@@ -125,7 +131,9 @@ async def pretrial_callback(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if callback.message is not None:
         await start_new_document_request(state, kind="pretrial", mode="pretrial_waiting")
-        await _generate(callback.message, state)
+        # A menu click only opens a fresh request. Never pass the bot's callback
+        # message into the generator: generation/payment must require new client input.
+        await _ask_pretrial(callback.message, state)
 
 
 @router.message(_Waiting(), F.text)

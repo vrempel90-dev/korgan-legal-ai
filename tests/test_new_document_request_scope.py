@@ -124,6 +124,50 @@ def test_user_facing_generating_banners_are_removed() -> None:
     assert "send_chat_action" in source
 
 
+def test_pretrial_menu_click_only_opens_request_and_never_generates() -> None:
+    source = inspect.getsource(pretrial_runtime.pretrial_callback)
+    assert "start_new_document_request" in source
+    assert "_ask_pretrial(" in source
+    assert "_generate(" not in source
+
+
+def test_all_document_menu_callbacks_only_open_fresh_requests() -> None:
+    callbacks = {
+        "claim": (
+            universal_document_runtime.claim_callback,
+            "begin_claim_request(",
+            ("_generate_now(", "_send_claim(", "answer_document("),
+        ),
+        "pretrial": (
+            pretrial_runtime.pretrial_callback,
+            "_ask_pretrial(",
+            ("_generate(", "answer_document("),
+        ),
+        "pretrial_response": (
+            pretrial_response_runtime.pretrial_response_callback,
+            "_ask_materials(",
+            ("_generate(", "answer_document("),
+        ),
+        "response": (
+            universal_document_runtime.response_callback,
+            "_ask_response(",
+            ("_send_response(", "answer_document("),
+        ),
+        "contract": (
+            universal_document_runtime.contract_callback,
+            "_ask_contract(",
+            ("_send_contract(", "answer_document("),
+        ),
+    }
+
+    for kind, (callback, prompt_call, forbidden_calls) in callbacks.items():
+        source = inspect.getsource(callback)
+        assert "start_new_document_request" in source, kind
+        assert prompt_call in source, kind
+        for forbidden in forbidden_calls:
+            assert forbidden not in source, f"{kind}: menu click must not call {forbidden}"
+
+
 def test_fresh_request_labels_are_specific_in_both_languages() -> None:
     assert request_label("claim", "ru") == "Исковое заявление"
     assert request_label("pretrial", "ru") == "Досудебная претензия"
