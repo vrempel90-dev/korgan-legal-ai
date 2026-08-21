@@ -92,15 +92,23 @@ def _text(values: list[str]) -> str:
 
 
 def _explicit_intent(text: str, term_re: Pattern[str]) -> bool:
-    """Match a positive explicit request in a bounded multiline window."""
+    """Match a positive request inside its sentence while allowing multiline lists."""
     value = text or ""
     for verb in _INTENT_VERB_RE.finditer(value):
         prefix = value[max(0, verb.start() - 16):verb.start()]
         if _NEGATION_BEFORE_RE.search(prefix):
             continue
-        start = max(0, verb.start() - 80)
-        end = min(len(value), verb.end() + 220)
-        if term_re.search(value[start:end]):
+
+        previous_boundaries = [value.rfind(mark, 0, verb.start()) for mark in ".?!"]
+        sentence_start = max(previous_boundaries) + 1
+        sentence_start = max(sentence_start, verb.start() - 100)
+
+        next_boundaries = [value.find(mark, verb.end()) for mark in ".?!"]
+        next_boundaries = [position for position in next_boundaries if position >= 0]
+        sentence_end = min(next_boundaries) if next_boundaries else len(value)
+        sentence_end = min(sentence_end, verb.end() + 260)
+
+        if term_re.search(value[sentence_start:sentence_end]):
             return True
     return False
 
