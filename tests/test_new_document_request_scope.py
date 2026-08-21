@@ -9,7 +9,12 @@ import korgan.pretrial_runtime as pretrial_runtime
 import korgan.universal_claim_runtime as universal_claim_runtime
 import korgan.universal_document_runtime as universal_document_runtime
 from korgan.document_category_router import PreferredDocumentCategory
-from korgan.request_scope import request_label, start_new_document_request
+from korgan.request_scope import (
+    is_main_menu_text,
+    request_is_current,
+    request_label,
+    start_new_document_request,
+)
 
 
 class _State:
@@ -106,6 +111,68 @@ def test_explicit_request_from_response_waiting_starts_new_category() -> None:
         "document_category": "pretrial",
         "document_request_explicit": True,
     }
+
+
+def test_main_menu_buttons_are_navigation_not_case_materials() -> None:
+    assert is_main_menu_text("📄 Документ")
+    assert is_main_menu_text("📄 Құжат")
+    assert is_main_menu_text("⚖️ Консультация")
+    assert is_main_menu_text("💰 Цены")
+    assert not is_main_menu_text("Ответчик должен 600 000 тенге")
+
+
+def test_document_button_is_not_consumed_by_any_waiting_document_flow() -> None:
+    ru_document = SimpleNamespace(text="📄 Документ")
+    kk_document = SimpleNamespace(text="📄 Құжат")
+
+    claim_state = _State({"mode": "universal_claim_waiting"})
+    pretrial_state = _State({"mode": "pretrial_waiting"})
+    pretrial_response_state = _State({"mode": "pretrial_response_waiting"})
+    contract_state = _State({"mode": "contract_details"})
+    response_state = _State({"mode": "response_details"})
+
+    assert asyncio.run(PreferredDocumentCategory()(ru_document, claim_state)) is False
+    assert asyncio.run(universal_claim_runtime._ClaimWaiting()(ru_document, claim_state)) is False
+    assert asyncio.run(pretrial_runtime._Waiting()(ru_document, pretrial_state)) is False
+    assert asyncio.run(pretrial_response_runtime._Waiting()(ru_document, pretrial_response_state)) is False
+    assert asyncio.run(universal_document_runtime.ContractDetailsFilter()(ru_document, contract_state)) is False
+    assert asyncio.run(universal_document_runtime.ResponseDetailsFilter()(ru_document, response_state)) is False
+
+    assert asyncio.run(PreferredDocumentCategory()(kk_document, claim_state)) is False
+    assert asyncio.run(universal_claim_runtime._ClaimWaiting()(kk_document, claim_state)) is False
+    assert asyncio.run(pretrial_runtime._Waiting()(kk_document, pretrial_state)) is False
+    assert asyncio.run(pretrial_response_runtime._Waiting()(kk_document, pretrial_response_state)) is False
+    assert asyncio.run(universal_document_runtime.ContractDetailsFilter()(kk_document, contract_state)) is False
+    assert asyncio.run(universal_document_runtime.ResponseDetailsFilter()(kk_document, response_state)) is False
+
+
+def test_old_request_becomes_stale_as_soon_as_new_document_is_selected() -> None:
+    state = _State({"language": "ru", "terms_accepted": True})
+    old_id = asyncio.run(
+        start_new_document_request(state, kind="pretrial_response", mode="pretrial_response_waiting")
+    )
+    assert asyncio.run(request_is_current(state, old_id, "pretrial_response")) is True
+
+    new_id = asyncio.run(
+        start_new_document_request(state, kind="claim", mode="universal_claim_waiting")
+    )
+    assert old_id != new_id
+    assert asyncio.run(request_is_current(state, old_id, "pretrial_response")) is False
+    assert asyncio.run(request_is_current(state, new_id, "claim")) is True
+
+
+def test_every_generator_has_a_stale_request_release_guard() -> None:
+    generators = {
+        "claim": universal_claim_runtime._send_claim,
+        "pretrial": pretrial_runtime._generate,
+        "pretrial_response": pretrial_response_runtime._generate,
+        "response": universal_document_runtime._send_response,
+        "contract": universal_document_runtime._send_contract,
+    }
+    for kind, generator in generators.items():
+        source = inspect.getsource(generator)
+        assert "request_is_current" in source, kind
+        assert "STALE_DOCUMENT_SUPPRESSED" in source, kind
 
 
 def test_user_facing_generating_banners_are_removed() -> None:
