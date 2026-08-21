@@ -10,7 +10,13 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from korgan import bot as base_bot
 from korgan.i18n import KK, normalize_language
 from korgan.pretrial import build_pretrial_docx, is_pretrial_request, pretrial_quality_issues
-from korgan.request_scope import request_label, start_new_document_request
+from korgan.request_scope import (
+    current_request_id,
+    is_main_menu_text,
+    request_is_current,
+    request_label,
+    start_new_document_request,
+)
 from korgan.ui import main_menu
 
 LOGGER = logging.getLogger(__name__)
@@ -21,7 +27,13 @@ _PRETRIAL_BUTTONS = {"📨 Досудебная претензия", "📨 Со�
 class _Waiting(BaseFilter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
-        return data.get("mode") == "pretrial_waiting" and bool(message.text) and not message.text.startswith("/")
+        text = message.text or ""
+        return (
+            data.get("mode") == "pretrial_waiting"
+            and bool(text)
+            and not text.startswith("/")
+            and not is_main_menu_text(text)
+        )
 
 
 class _Intent(BaseFilter):
@@ -40,7 +52,7 @@ async def _save_text(message: Message, state: FSMContext) -> None:
     if message.from_user is not None and message.from_user.is_bot:
         return
     text = (message.text or "").strip()
-    if not text or text in _PRETRIAL_BUTTONS:
+    if not text or text in _PRETRIAL_BUTTONS or is_main_menu_text(text):
         return
     data = await state.get_data()
     facts = list(data.get("facts", []) or [])
@@ -68,6 +80,7 @@ async def _ask_pretrial(message: Message, state: FSMContext) -> None:
 
 async def _generate(message: Message, state: FSMContext) -> None:
     await _save_text(message, state)
+    request_id = await current_request_id(state, "pretrial")
     lang = await _lang(state)
     context = await base_bot._case_context(state)
     menu = main_menu(lang)
@@ -96,12 +109,19 @@ async def _generate(message: Message, state: FSMContext) -> None:
         file_bytes = build_pretrial_docx(draft, language=lang)
     except Exception:
         LOGGER.exception("Pretrial demand generation failed")
+        if not await request_is_current(state, request_id, "pretrial"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=pretrial request_id=%s", request_id)
+            return
         await message.answer(
             "Сотқа дейінгі талапты қауіпсіз қалыптастыру мүмкін болмады. Қайта көріңіз."
             if lang == KK else
             "Не удалось безопасно сформировать досудебную претензию. Попробуйте повторить.",
             reply_markup=menu,
         )
+        return
+
+    if not await request_is_current(state, request_id, "pretrial"):
+        LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=pretrial request_id=%s", request_id)
         return
 
     if issues:
