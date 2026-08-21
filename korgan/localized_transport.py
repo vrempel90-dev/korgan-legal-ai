@@ -18,6 +18,8 @@ _DOCUMENT_KINDS = {
     "korgan_dogovor.docx": "contract",
     "korgan_dosudebnaya_pretenziya.docx": "pretrial",
     "korgan_sotqa_deyingi_talap.docx": "pretrial",
+    "korgan_otvet_na_pretenziyu.docx": "pretrial_response",
+    "korgan_sotqa_deyingi_talapqa_zhauap.docx": "pretrial_response",
 }
 
 
@@ -31,12 +33,14 @@ def _document_client_caption(kind: str, language: str) -> str:
         return {
             "claim": "✅ Талап қою арызы Word (.docx) форматында дайын.",
             "pretrial": "✅ Сотқа дейінгі талап Word (.docx) форматында дайын.",
+            "pretrial_response": "✅ Сотқа дейінгі талапқа жауап Word (.docx) форматында дайын.",
             "response": "✅ Талап қою арызына пікір Word (.docx) форматында дайын.",
             "contract": "✅ Шарт Word (.docx) форматында дайын.",
         }[kind]
     return {
         "claim": "✅ Иск сформирован в Word (.docx).",
         "pretrial": "✅ Досудебная претензия сформирована в Word (.docx).",
+        "pretrial_response": "✅ Ответ на претензию сформирован в Word (.docx).",
         "response": "✅ Отзыв на иск сформирован в Word (.docx).",
         "contract": "✅ Договор сформирован в Word (.docx).",
     }[kind]
@@ -52,6 +56,7 @@ def _document_review_text(kind: str, language: str) -> str:
         document = {
             "claim": "талап қою арызын",
             "pretrial": "сотқа дейінгі талапты",
+            "pretrial_response": "сотқа дейінгі талапқа жауапты",
             "response": "пікірді",
             "contract": "шартты",
         }[kind]
@@ -64,6 +69,7 @@ def _document_review_text(kind: str, language: str) -> str:
     document = {
         "claim": "иск",
         "pretrial": "досудебную претензию",
+        "pretrial_response": "ответ на претензию",
         "response": "отзыв на иск",
         "contract": "договор",
     }[kind]
