@@ -8,6 +8,7 @@ import korgan.pretrial_response_runtime as pretrial_response_runtime
 import korgan.pretrial_runtime as pretrial_runtime
 import korgan.universal_claim_runtime as universal_claim_runtime
 import korgan.universal_document_runtime as universal_document_runtime
+from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.document_category_router import PreferredDocumentCategory
 from korgan.request_scope import (
     is_main_menu_text,
@@ -44,6 +45,7 @@ def test_new_document_request_clears_only_case_scope() -> None:
             "claim_draft": {"old": True},
             "pending_fields": ["old"],
             "mode": "response_details",
+            "payment_accepted_receipts": {"old-hash": "old-transaction"},
             "some_session_setting": "keep-me",
         }
     )
@@ -66,6 +68,7 @@ def test_new_document_request_clears_only_case_scope() -> None:
     assert state.data["language"] == "ru"
     assert state.data["terms_accepted"] is True
     assert state.data["privacy_consent"] is True
+    assert state.data["payment_accepted_receipts"] == {"old-hash": "old-transaction"}
     assert state.data["some_session_setting"] == "keep-me"
 
 
@@ -173,6 +176,15 @@ def test_every_generator_has_a_stale_request_release_guard() -> None:
         source = inspect.getsource(generator)
         assert "request_is_current" in source, kind
         assert "STALE_DOCUMENT_SUPPRESSED" in source, kind
+
+
+def test_claim_quality_hotfix_preserves_request_scoped_delivery() -> None:
+    source = inspect.getsource(install_runtime_hotfix)
+    assert "request_id: str" in source
+    assert "request_still_current" in source
+    assert "request_scope_guard" in source
+    assert source.count("await request_still_current()") >= 6
+    assert source.index("await request_still_current()") < source.index("await state.update_data(")
 
 
 def test_user_facing_generating_banners_are_removed() -> None:

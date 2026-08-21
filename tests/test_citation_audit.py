@@ -89,6 +89,25 @@ def test_every_citation_is_checked_separately_in_one_document() -> None:
     assert len(audit.blocking) == 2
 
 
+def test_hyphenated_article_number_is_preserved_for_lookup() -> None:
+    finding = audit_citations("Согласно статье 353-1 ГК РК это правило требует проверки.").findings[0]
+    assert finding.article == "353-1"
+    assert "353-1" in finding.reference
+
+
+def test_same_reference_in_different_paragraphs_is_audited_twice() -> None:
+    text = (
+        "Согласно статье 953 ГК РК первое утверждение требует проверки.\n"
+        "Согласно статье 953 ГК РК второе утверждение требует отдельной проверки."
+    )
+    assert len(audit_citations(text).findings) == 2
+
+
+def test_duplicate_reference_in_one_paragraph_is_still_deduplicated() -> None:
+    text = "Статья 953 ГК РК упомянута повторно как статья 953 ГК РК в том же абзаце."
+    assert len(audit_citations(text).findings) == 1
+
+
 def test_glued_fragment_after_a_closing_quote_is_detected() -> None:
     """The reported artefact: «...не предусмотрено иное».евидно"""
     broken = "Стороны согласовали, что иное не предусмотрено».евидно, что требование заявлено."

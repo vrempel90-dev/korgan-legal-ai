@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 
 import korgan.payment_release_guard as payment_release_guard
 import korgan.prepayment_gate as prepayment_gate
@@ -115,3 +117,27 @@ def test_payment_confirmation_guard_covers_every_menu_document() -> None:
         )
         assert blocked.allowed is False, kind
         assert allowed.allowed is True, kind
+
+
+def test_consumed_prepayment_cannot_reenter_generation(monkeypatch) -> None:
+    class State:
+        async def get_data(self):
+            return {
+                "request_id": "request-1",
+                "request_kind": "claim",
+                "language": "ru",
+                "prepayment_confirmed_request_id": "request-1",
+                "prepayment_confirmed_kind": "claim",
+                "prepayment_consumed_request_id": "request-1",
+            }
+
+    answers: list[str] = []
+
+    async def answer(text, **_kwargs):
+        answers.append(text)
+
+    monkeypatch.setattr(prepayment_gate, "get_settings", lambda: SimpleNamespace(payments_enabled=True))
+    message = SimpleNamespace(chat=SimpleNamespace(id=123), answer=answer)
+
+    assert asyncio.run(prepayment_gate.ensure_prepayment(message, State(), kind="claim")) is False
+    assert answers and "уже использован" in answers[0]
