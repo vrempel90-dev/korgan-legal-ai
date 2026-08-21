@@ -52,7 +52,7 @@ def language_menu() -> InlineKeyboardMarkup:
 def documents_menu(language: str = RU) -> InlineKeyboardMarkup:
     lang = normalize_language(language)
     pretrial = "📨 Сотқа дейінгі талап" if lang == KK else "📨 Досудебная претензия"
-    pretrial_response = "🛡 Сотқа дейінгі талапқа жауап" if lang == KK else "🛡 Отзыв на претензию"
+    pretrial_response = "🛡 Сотқа дейінгі талапқа жауап" if lang == KK else "🛡 Ответ на претензию"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=button(lang, "claim"), callback_data="doc:claim")],
