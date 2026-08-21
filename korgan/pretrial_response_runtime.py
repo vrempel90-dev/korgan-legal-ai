@@ -54,13 +54,29 @@ async def _save_text(message: Message, state: FSMContext) -> None:
     await state.update_data(facts=facts[-20:])
 
 
-def _looks_like_pretrial_materials(context: str) -> bool:
-    value = " ".join((context or "").split()).lower()
+def _looks_like_pretrial_materials(text: str) -> bool:
+    value = " ".join((text or "").split()).lower()
     return bool(
         re.search(r"\b(?:досудебн\w*\s+)?претензи\w*\b", value)
         or re.search(r"\bсотқа\s+дейінгі\s+талап\w*\b", value)
         or re.search(r"\bталап\s+хат\w*\b", value)
     )
+
+
+async def _has_real_pretrial_materials(state: FSMContext) -> bool:
+    """Do not treat the command «подготовь ответ на претензию» as the pretension itself."""
+    data = await state.get_data()
+    documents = [str(item) for item in data.get("documents", []) or []]
+    if any(_looks_like_pretrial_materials(item) for item in documents):
+        return True
+
+    facts = [str(item).strip() for item in data.get("facts", []) or []]
+    for fact in facts:
+        if not fact or is_pretrial_response_request(fact):
+            continue
+        if _looks_like_pretrial_materials(fact) and len(fact) >= 60:
+            return True
+    return False
 
 
 async def _ask_for_pretrial(message: Message, state: FSMContext) -> None:
@@ -83,12 +99,12 @@ async def _generate(message: Message, state: FSMContext) -> None:
     await _save_text(message, state)
     lang = await _lang(state)
     menu = main_menu(lang)
-    context = await base_bot._case_context(state)
 
-    if not context.strip() or not _looks_like_pretrial_materials(context):
+    if not await _has_real_pretrial_materials(state):
         await _ask_for_pretrial(message, state)
         return
 
+    context = await base_bot._case_context(state)
     service = base_bot.service
     if service is None:
         await message.answer(
@@ -151,8 +167,7 @@ async def pretrial_response_callback(callback: CallbackQuery, state: FSMContext)
     await callback.answer()
     if callback.message is None:
         return
-    context = await base_bot._case_context(state)
-    if _looks_like_pretrial_materials(context):
+    if await _has_real_pretrial_materials(state):
         await _generate(callback.message, state)
     else:
         await _ask_for_pretrial(callback.message, state)
