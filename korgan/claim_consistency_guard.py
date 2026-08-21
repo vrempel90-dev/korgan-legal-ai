@@ -20,6 +20,15 @@ _INTENT_VERB_RE = re.compile(
     re.IGNORECASE,
 )
 _NEGATION_BEFORE_RE = re.compile(r"(?:\bне\s+|\bемес\s+)$", re.IGNORECASE)
+_TERM_EXCLUSION_BEFORE_RE = re.compile(
+    r"(?:\bбез\b[^,.;:]{0,60}|\b(?:но\s+)?не\s+(?:взыскать|взыскивать|требовать|просить)?\s*|"
+    r"\bисключая\b[^,.;:]{0,60})$",
+    re.IGNORECASE,
+)
+_TERM_EXCLUSION_AFTER_RE = re.compile(
+    r"^(?:[^,.;:]{0,40}(?:талап\s+етпеймін|сұрамаймын|өндір\w*маймын|қажет\s+емес))",
+    re.IGNORECASE,
+)
 _AMOUNT_RE = re.compile(
     r"(?<!\d)\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸)",
     re.IGNORECASE,
@@ -91,6 +100,22 @@ def _text(values: list[str]) -> str:
     return "\n".join(str(value) for value in values or [] if str(value).strip())
 
 
+def _positive_term_in_segment(segment: str, term_re: Pattern[str]) -> bool:
+    """Return True when at least one remedy term is not explicitly excluded."""
+    for term in term_re.finditer(segment):
+        before = segment[max(0, term.start() - 70):term.start()]
+        after = segment[term.end():min(len(segment), term.end() + 50)]
+        term_text = term.group(0).lower()
+        if _TERM_EXCLUSION_BEFORE_RE.search(before):
+            continue
+        if _TERM_EXCLUSION_AFTER_RE.search(after):
+            continue
+        if term_text.endswith(("сыз", "сіз")):
+            continue
+        return True
+    return False
+
+
 def _explicit_intent(text: str, term_re: Pattern[str]) -> bool:
     """Match a positive request inside its sentence while allowing multiline lists."""
     value = text or ""
@@ -108,7 +133,7 @@ def _explicit_intent(text: str, term_re: Pattern[str]) -> bool:
         sentence_end = min(next_boundaries) if next_boundaries else len(value)
         sentence_end = min(sentence_end, verb.end() + 260)
 
-        if term_re.search(value[sentence_start:sentence_end]):
+        if _positive_term_in_segment(value[sentence_start:sentence_end], term_re):
             return True
     return False
 
