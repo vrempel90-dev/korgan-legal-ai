@@ -1,0 +1,133 @@
+# Source Verification
+
+## Authority hierarchy
+
+For current Kazakhstan legal conclusions, prefer authoritative materials supplied by the host application, such as:
+- official consolidated legal acts;
+- official publication/effective-date metadata;
+- official court or authority materials;
+- verified internal legal knowledge approved by KORGAN.
+
+The host application decides which sources are approved.
+
+## Mandatory verification targets
+
+Verify before asserting:
+- exact article number;
+- exact wording of a legal provision;
+- effective date;
+- limitation/appeal/procedural deadline;
+- jurisdiction or venue rule;
+- state duty/fee;
+- mandatory pre-trial procedure;
+- validity of a specific legal act;
+- current status of an amendment;
+- binding force of court guidance.
+
+## Citation rules
+
+A citation must:
+- correspond to the proposition it supports;
+- identify the act/source clearly;
+- use article/paragraph/subparagraph only when present in verified context;
+- avoid invented quotations;
+- avoid citing a repealed version as current.
+
+## Paraphrase verification
+
+Проверки номера статьи недостаточно. Верифицируется не ссылка, а **утверждение**,
+которое на ней построено. Норма, найденная правильно и процитированная по номеру
+верно, может быть пересказана неверно — и документ будет выглядеть безупречно.
+
+Обязательный порядок для каждого пересказа нормы (не дословной цитаты), в любом
+типе документа:
+
+1. **Получить дословный текст** той части/пункта, на которую идёт ссылка, из
+   официального источника. Пересказ без текста нормы под рукой запрещён.
+2. **Сверить построчно**: каждое смысловое утверждение формулировки сопоставить с
+   текстом нормы — субъект, действие, условие, последствие, круг охвата.
+3. **Заблокировать или понизить**: если формулировка добавляет требование,
+   подменяет предмет, обобщает узкое условие до общего правила, меняет право на
+   обязанность или опускает исключение — переписать точнее либо пометить
+   `NEEDS_VERIFICATION`. Выпускать «примерно верную» формулировку нельзя.
+
+Типовой отказ, который эта проверка ловит: норма устанавливает требование для
+документа, **подписанного представителем**, а пересказ распространяет его на все
+такие документы. Ограничение по субъекту, случаю, сроку или виду документа обязано
+сохраниться в пересказе дословно по смыслу.
+
+Проверка входит в FINAL LEGAL QA, блок C — см.
+[final-legal-qa.md](final-legal-qa.md).
+
+## Дословные цитаты
+
+Норма, приведённая в кавычках, — самое опасное место документа: она читается как
+воспроизведение закона, а на деле может быть воспроизведением того, что модель
+помнит. Отменённая редакция вспоминается так же уверенно, как действующая, и
+номер статьи при этом остаётся верным.
+
+Поэтому дословная цитата допускается **только** при выполнении всех условий:
+
+1. текст части/пункта получен из официального источника или из датированного
+   проверенного корпуса норм KORGAN на момент генерации;
+2. приведённый текст совпадает с источником **симметрично, строка в строку**.
+   Частичное совпадение, сокращение, «по смыслу то же самое» — не основание;
+3. если запись корпуса не сверялась с официальным источником, цитата
+   сопровождается видимой пометкой о необходимости сверки.
+
+Если получить текст нормы нельзя — цитата запрещена. Документ вправе назвать
+номер статьи и обязан пометить её `NEEDS_VERIFICATION`, **не утверждая её
+содержания** ни цитатой, ни уверенным пересказом.
+
+## Каждая норма проверяется отдельно
+
+Проверка выполняется для **каждой** ссылки в документе, а не один раз «по пути».
+Наблюдаемый отказ выглядел так: в одном документе две статьи процитированы
+безупречно, а третья — по отменённой редакции. Сбой происходит не на уровне
+документа, а на уровне отдельной цитаты.
+
+Когда черновик готов, пройди по нему заново и обработай каждую ссылку на норму
+как самостоятельную задачу: получить текст → сравнить → вынести вердикт. Число
+проверок равно числу ссылок. Уверенность, что «нормы уже проверены при
+составлении», не заменяет этот проход.
+
+В коде этот проход реализован как обязательный пост-процессинг перед выдачей
+(`korgan/citation_audit.py`), а не как часть промпта составления.
+
+## Conflicting sources
+
+If sources conflict:
+1. identify the conflict;
+2. compare dates/effective status;
+3. prefer the source verified as currently effective;
+4. if unresolved, do not give a definitive conclusion.
+
+## No-source behavior
+
+When current law is required but verified context is absent:
+- do not invent a citation;
+- explain the preliminary legal logic;
+- state what must be verified;
+- request/rely on host retrieval before a filing-ready answer.
+
+## Model memory
+
+Model memory may help identify likely legal topics and search targets, but it is not authoritative evidence of current Kazakhstan law.
+
+
+## Web browsing rule
+
+If web browsing is available, first search official Kazakhstan sources. Secondary websites may be used only to discover a possible issue and must not appear as the legal authority in the final answer.
+
+For a client-facing answer, each exact current-law claim should be traceable to an official source. If that cannot be done, downgrade the claim to a preliminary explanation and mark it for verification.
+
+## High-risk hallucination traps
+
+Do not assert without official verification:
+- that an employee may suspend work after a specific duration of salary nonpayment;
+- that a person may proceed directly to court without first checking conciliation-commission requirements;
+- that a prosecutor is the required or best route for a routine wage claim;
+- that termination by the employee automatically creates extra compensation;
+- that a criminal offence is established merely because wages are late.
+
+For criminal liability, verify every element of the offence, not only the article number.
