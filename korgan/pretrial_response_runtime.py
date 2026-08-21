@@ -20,6 +20,13 @@ from korgan.ui import main_menu
 LOGGER = logging.getLogger(__name__)
 router = Router(name="korgan-pretrial-response")
 
+# «Отзыв» is reserved for a court response to a claim. The pre-trial workflow
+# uses «Ответ на претензию» in Russian. Reject the old mixed wording instead of
+# letting it collide with another document category.
+_LEGACY_MIXED_RU = re.compile(
+    r"(?i)\bотзыв\w*\s+на\s+(?:досудебн\w*\s+)?претензи\w*\b"
+)
+
 
 class _Waiting(BaseFilter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
@@ -32,16 +39,22 @@ class _Intent(BaseFilter):
         data = await state.get_data()
         if data.get("mode") in {"consultation", "contract_details", "response_details", "pretrial_waiting"}:
             return False
-        return is_pretrial_response_request(message.text)
+        text = message.text or ""
+        if _LEGACY_MIXED_RU.search(text):
+            return False
+        return is_pretrial_response_request(text)
 
 
 def install_pretrial_response_transport() -> None:
-    """Register the new generated filename without changing existing transport code."""
+    """Register generated filenames without changing the payment architecture."""
     from korgan import localized_transport, payment
 
+    # New client-facing filename. Keep the old name recognized only for already
+    # held/generated documents from previous deployments.
+    localized_transport._DOCUMENT_KINDS["korgan_otvet_na_pretenziyu.docx"] = "pretrial_response"
     localized_transport._DOCUMENT_KINDS["korgan_otzyv_na_pretenziyu.docx"] = "pretrial_response"
     localized_transport._DOCUMENT_KINDS["korgan_sotqa_deyingi_talapqa_zhauap.docx"] = "pretrial_response"
-    payment._KIND_RU["pretrial_response"] = "отзыв на претензию"
+    payment._KIND_RU["pretrial_response"] = "ответ на претензию"
     payment._KIND_KK["pretrial_response"] = "сотқа дейінгі талапқа жауап"
 
     original_caption = localized_transport._document_client_caption
@@ -52,7 +65,7 @@ def install_pretrial_response_transport() -> None:
             return original_caption(kind, language)
         if language == KK:
             return "✅ Сотқа дейінгі талапқа жауап Word (.docx) форматында дайын."
-        return "✅ Отзыв на претензию сформирован в Word (.docx)."
+        return "✅ Ответ на претензию сформирован в Word (.docx)."
 
     def document_review_text(kind: str, language: str) -> str:
         if kind != "pretrial_response":
@@ -64,7 +77,7 @@ def install_pretrial_response_transport() -> None:
                 "Заңгерге жіберу керек пе?"
             )
         return (
-            "⚠️ Рекомендуем проверить отзыв на претензию у профессионального юриста.\n"
+            "⚠️ Рекомендуем проверить ответ на претензию у профессионального юриста.\n"
             "Проверка платная. Доп. услуги — платные.\n"
             "Передать юристу?"
         )
@@ -109,7 +122,7 @@ async def _ask_materials(message: Message, state: FSMContext, language: str) -> 
         )
     else:
         text = (
-            "🛡 Чтобы подготовить отзыв на претензию, пришлите саму претензию (PDF/DOCX/фото) или вставьте её основные требования текстом.\n\n"
+            "🛡 Чтобы подготовить ответ на претензию, пришлите саму претензию (PDF/DOCX/фото) или вставьте её основные требования текстом.\n\n"
             "Если можете, одним сообщением добавьте свою позицию: что признаёте или оспариваете, какие факты неверны и какие доказательства у вас есть."
         )
     await message.answer(text, reply_markup=main_menu(language))
@@ -132,7 +145,7 @@ async def _generate(message: Message, state: FSMContext) -> None:
         await message.answer(
             "Сотқа дейінгі талапқа жауап модулі жүктелмеді."
             if language == KK
-            else "Модуль отзыва на претензию не загружен.",
+            else "Модуль ответа на претензию не загружен.",
             reply_markup=menu,
         )
         return
@@ -141,7 +154,7 @@ async def _generate(message: Message, state: FSMContext) -> None:
     await message.answer(
         "Сотқа дейінгі талапты талдап, құқықтық негізді тексеріп, жауапты дайындап жатырмын…"
         if language == KK
-        else "Анализирую претензию, проверяю правовую основу и формирую отзыв…",
+        else "Анализирую претензию, проверяю правовую основу и формирую ответ…",
         reply_markup=menu,
     )
     await message.bot.send_chat_action(message.chat.id, "typing")
@@ -156,7 +169,7 @@ async def _generate(message: Message, state: FSMContext) -> None:
         await message.answer(
             "Сотқа дейінгі талапқа жауапты қауіпсіз қалыптастыру мүмкін болмады. Материалдарды тексеріп, қайта көріңіз."
             if language == KK
-            else "Не удалось безопасно сформировать отзыв на претензию. Проверьте материалы и повторите запрос.",
+            else "Не удалось безопасно сформировать ответ на претензию. Проверьте материалы и повторите запрос.",
             reply_markup=menu,
         )
         return
@@ -166,19 +179,19 @@ async def _generate(message: Message, state: FSMContext) -> None:
         caption = (
             "✅ Сотқа дейінгі талапқа жауаптың жобасы Word (.docx) форматында дайын. Жіберер алдында деректемелер мен позицияны тексеріңіз."
             if language == KK
-            else "✅ Проект отзыва на претензию сформирован в Word (.docx). Перед направлением проверьте реквизиты и позицию."
+            else "✅ Проект ответа на претензию сформирован в Word (.docx). Перед направлением проверьте реквизиты и позицию."
         )
     else:
         caption = (
             "✅ Сотқа дейінгі талапқа жауап Word (.docx) форматында дайын."
             if language == KK
-            else "✅ Отзыв на претензию сформирован в Word (.docx)."
+            else "✅ Ответ на претензию сформирован в Word (.docx)."
         )
 
     filename = (
         "KORGAN_sotqa_deyingi_talapqa_zhauap.docx"
         if language == KK
-        else "KORGAN_otzyv_na_pretenziyu.docx"
+        else "KORGAN_otvet_na_pretenziyu.docx"
     )
     await message.answer_document(
         BufferedInputFile(file_bytes, filename=filename),
