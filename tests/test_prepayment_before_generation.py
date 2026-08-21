@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import korgan.payment_release_guard as payment_release_guard
 import korgan.prepayment_gate as prepayment_gate
 import korgan.prepayment_runtime as prepayment_runtime
 import korgan.request_scope as request_scope
-import korgan.strict_bot as strict_bot
 
 
 def test_all_five_document_generators_are_wrapped_by_prepayment_gate() -> None:
@@ -24,7 +24,7 @@ def test_all_five_document_generators_are_wrapped_by_prepayment_gate() -> None:
 
 
 def test_production_runtime_does_not_install_old_post_generation_payment_gate() -> None:
-    source = inspect.getsource(strict_bot)
+    source = Path("korgan/strict_bot.py").read_text(encoding="utf-8")
     assert "from korgan.payment_gate import install_payment_gate" not in source
     assert "install_payment_gate()" not in source
     assert "install_generation_prepayment_gate()" in source
