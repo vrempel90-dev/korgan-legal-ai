@@ -30,6 +30,7 @@ from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
 from korgan.payment_delivery_bridge import install_payment_delivery_bridge
+from korgan.payment_gate import install_payment_gate
 from korgan.payment_pdf_hotfix import install_payment_pdf_hotfix
 from korgan.payment_runtime import router as payment_router
 from korgan.prepayment_gate import install_generation_prepayment_gate
@@ -55,10 +56,10 @@ install_client_safe_runtime()
 install_pretrial_response_transport()
 install_response_voice_guard()
 install_payment_pdf_hotfix()
-# The old gate generated and privately stored a DOCX before asking for payment.
-# Production now uses request-scoped prepayment instead, so that gate is
-# intentionally not installed. Legacy positive-id payment cards remain supported
-# by payment_runtime for already-created documents from previous deployments.
+# Keep the transport-level gate as a fail-closed fallback. Normal new requests
+# are paid before generation; only an admin-confirmed paid-generation context can
+# pass this gate directly. Any unexpected generator still gets held, never free.
+install_payment_gate()
 install_payment_delivery_bridge()
 install_upload_followup_guard()
 install_request_race_guard()
@@ -67,9 +68,9 @@ install_consultation_quota_bridge()
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
 
-# Install only after all active generator modules are loaded. Every path that can
-# enter legal research/drafting is wrapped by the same payment-before-generation
-# rule; menu/intake prompts remain free and do not generate a Word document.
+# Install only after all active generator modules are loaded. Every normal path
+# that can enter legal research/drafting is wrapped by the same prepayment rule;
+# menu/intake prompts remain free and do not generate a Word document.
 install_generation_prepayment_gate()
 
 LOGGER = logging.getLogger(__name__)
@@ -130,7 +131,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: payment-before-generation + >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: payment-before-generation + fail-closed payment fallback + >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
