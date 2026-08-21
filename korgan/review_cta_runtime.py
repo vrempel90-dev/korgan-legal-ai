@@ -11,6 +11,7 @@ router = Router(name="korgan-review-cta")
 _DECLINE_CALLBACKS = {
     "lawyer_review:claim:no": "claim",
     "lawyer_review:pretrial:no": "pretrial",
+    "lawyer_review:pretrial_response:no": "pretrial_response",
     "lawyer_review:response:no": "response",
     "lawyer_review:contract:no": "contract",
 }
@@ -21,12 +22,14 @@ def _decline_text(kind: str, language: str) -> str:
         return {
             "claim": "Түсінікті. Талап қою арызы чатта қалады.",
             "pretrial": "Түсінікті. Сотқа дейінгі талап чатта қалады.",
+            "pretrial_response": "Түсінікті. Сотқа дейінгі талапқа жауап чатта қалады.",
             "response": "Түсінікті. Пікір чатта қалады.",
             "contract": "Түсінікті. Шарт чатта қалады.",
         }[kind]
     return {
         "claim": "Хорошо. Иск остаётся у вас в чате.",
         "pretrial": "Хорошо. Досудебная претензия остаётся у вас в чате.",
+        "pretrial_response": "Хорошо. Ответ на претензию остаётся у вас в чате.",
         "response": "Хорошо. Отзыв на иск остаётся у вас в чате.",
         "contract": "Хорошо. Договор остаётся у вас в чате.",
     }[kind]

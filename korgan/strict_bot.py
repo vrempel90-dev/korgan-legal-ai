@@ -30,6 +30,8 @@ from korgan.menu_start import router as start_router
 from korgan.payment_gate import install_payment_gate
 from korgan.payment_runtime import router as payment_router
 from korgan.pretrial import PretrialProductionService
+from korgan.pretrial_response_payment import install_pretrial_response_payment_labels
+from korgan.pretrial_response_runtime import router as pretrial_response_router
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
 from korgan.reply_menu_handlers import router as reply_menu_router
@@ -43,6 +45,7 @@ install_kazakh_article_forms()
 install_professional_rag_bridge()
 install_stable_legal_release()
 install_client_safe_runtime()
+install_pretrial_response_payment_labels()
 install_payment_gate()
 install_consultation_quota_bridge()
 
@@ -80,6 +83,10 @@ async def main() -> None:
     # Exact RU/KK consultation and price buttons are handled here before the
     # legacy language/menu routers, so client-facing tariff text stays in sync.
     dp.include_router(consultation_ui_router)
+    # This one narrow router must precede the broad Kazakh free-text router,
+    # otherwise a Kazakh answer-to-pretension request/waiting reply is consumed
+    # as a consultation before the dedicated document flow can see it.
+    dp.include_router(pretrial_response_router)
     dp.include_router(kazakh_router)
     dp.include_router(review_cta_router)
     dp.include_router(document_category_router)
@@ -95,7 +102,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + no-questionnaire claims/pretrial + stable citation release + Kaspi payment gate=%s + consultation limit=%s",
+        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + isolated claim/pretrial/pretrial-response routes + stable citation release + Kaspi payment gate=%s + consultation limit=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
     )

@@ -16,6 +16,7 @@ from docx.shared import Cm, Pt
 
 from korgan.document_release import review_lines
 from korgan.legal_types import LegalResearch, VerificationStatus
+from korgan.pretrial_response import is_pretrial_response_request
 from korgan.stable_legal_release import StableLegalProductionService, clean_language_labels, sanitize_research_sources
 
 _PRETRIAL_SCHEMA: dict[str, Any] = {
@@ -53,6 +54,10 @@ _LANG_VERSION_RE = re.compile(r"(?i)английск\w*\s+верси\w*|англ
 def is_pretrial_request(text: str | None) -> bool:
     value = " ".join((text or "").split())
     if not value or _ADVICE_RU.search(value) or _ADVICE_KK.search(value):
+        return False
+    # An answer to an incoming pretension is a separate legal document and must
+    # never be routed into the outgoing-demand generator.
+    if is_pretrial_response_request(value):
         return False
     return bool((_INTENT_RU.search(value) or _INTENT_KK.search(value)) and _ACTION.search(value))
 
