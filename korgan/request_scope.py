@@ -26,6 +26,21 @@ _REQUEST_SCOPED_KEYS = {
     "field_attempts",
     "pending_document_kind",
     "pending_document_request",
+    # Payment is bound to one immutable request_id. A new document request must
+    # never inherit either an old receipt session or an already-confirmed payment.
+    "payment_admin_doc_message_id",
+    "payment_kind",
+    "payment_language",
+    "payment_signature",
+    "prepayment_transaction_id",
+    "prepayment_request_id",
+    "prepayment_kind",
+    "prepayment_language",
+    "prepayment_confirmed_request_id",
+    "prepayment_confirmed_kind",
+    "prepayment_confirmed_transaction_id",
+    "prepayment_generation_started_request_id",
+    "prepayment_consumed_request_id",
 }
 
 # These are persistent reply-keyboard actions, not legal facts. A document flow
