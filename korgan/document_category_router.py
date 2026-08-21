@@ -7,7 +7,7 @@ from aiogram.filters import Filter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from korgan.request_scope import is_main_menu_text
+from korgan.request_scope import active_document_kind, is_main_menu_text
 
 router = Router(name="strict-document-category-router")
 
@@ -108,6 +108,12 @@ class PreferredDocumentCategory(Filter):
         data = await state.get_data()
         mode = data.get("mode")
 
+        # Once a document button has opened a request, that button owns the whole
+        # request. Text inside the matter is evidence/facts, not navigation. The
+        # client switches document type only by pressing another document button.
+        if active_document_kind(data) is not None:
+            return False
+
         # Consultation owns ordinary consultation text. Document buttons/callbacks
         # are handled separately and can still start a new request explicitly.
         if mode == "consultation":
@@ -115,18 +121,10 @@ class PreferredDocumentCategory(Filter):
 
         category = preferred_document_category(text)
         if category is not None:
-            # An explicit "prepare X" always means a new document request, even
-            # if the previous document workflow was waiting for more details.
             return {
                 "document_category": category,
                 "document_request_explicit": True,
             }
-
-        # Non-command text while the claim workflow is waiting remains case facts
-        # for that same request. Keep the legacy filter payload shape so existing
-        # claim-waiting behavior and tests remain stable.
-        if mode == "universal_claim_waiting":
-            return {"document_category": "claim"}
 
         return False
 
