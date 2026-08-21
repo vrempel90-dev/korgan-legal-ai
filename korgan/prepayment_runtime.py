@@ -12,7 +12,12 @@ from korgan.config import get_settings
 from korgan.i18n import KK
 from korgan.payment import verify_admin_action
 from korgan.payment_release_guard import can_release_paid_document
-from korgan.prepayment_gate import paid_generation_markup, verify_paid_generation
+from korgan.prepayment_gate import (
+    begin_paid_delivery,
+    end_paid_delivery,
+    paid_generation_markup,
+    verify_paid_generation,
+)
 from korgan.request_scope import is_main_menu_text
 
 LOGGER = logging.getLogger(__name__)
@@ -233,6 +238,7 @@ async def paid_generation_requested(
     )
     await callback.answer("Оплата подтверждена.")
 
+    delivery_token = begin_paid_delivery(user_id, kind)
     try:
         await _run_paid_generation(kind, callback.message, state)
     except Exception:
@@ -251,6 +257,8 @@ async def paid_generation_requested(
             "Құжатты дайындауды іске қосу мүмкін болмады. Төлем осы өтінімге сақталды; түймені қайта басыңыз немесе техқолдауға жүгініңіз."
         )
         return
+    finally:
+        end_paid_delivery(delivery_token)
 
     # One confirmed payment opens one generation attempt for one immutable
     # request scope. A new document always gets a new request_id and a new payment.
