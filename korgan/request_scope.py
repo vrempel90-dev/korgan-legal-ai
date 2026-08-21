@@ -7,6 +7,14 @@ from aiogram.fsm.context import FSMContext
 
 from korgan.i18n import BUTTONS, KK, RU
 
+DOCUMENT_REQUEST_KINDS = frozenset({
+    "claim",
+    "pretrial",
+    "pretrial_response",
+    "response",
+    "contract",
+})
+
 # Only request/case-specific keys are reset. Consent, selected language,
 # consultation counters and other account/session settings are preserved.
 _REQUEST_SCOPED_KEYS = {
@@ -69,6 +77,21 @@ def is_main_menu_text(text: str | None) -> bool:
     return (text or "").strip() in _MAIN_MENU_TEXTS
 
 
+def active_document_kind(data: dict) -> str | None:
+    """Return the document section that owns the current request, if any.
+
+    A selected document button is the source of truth for the request. Words such
+    as «договор», «претензия» or «отзыв» inside case facts must never move the
+    client into another document workflow. Switching sections requires starting
+    another request through its document button/callback.
+    """
+    kind = str(data.get("request_kind") or "")
+    request_id = str(data.get("request_id") or "")
+    if request_id and kind in DOCUMENT_REQUEST_KINDS:
+        return kind
+    return None
+
+
 def request_label(kind: str, language: str = "ru") -> str:
     kk = language == "kk"
     labels = {
@@ -117,6 +140,9 @@ async def start_new_document_request(
     materials. This prevents facts/uploads from a previous matter from triggering
     generation of a new document before the user supplies new materials.
     """
+    if kind not in DOCUMENT_REQUEST_KINDS:
+        raise ValueError(f"Unsupported document request kind: {kind}")
+
     data = dict(await state.get_data())
     for key in _REQUEST_SCOPED_KEYS:
         data.pop(key, None)
