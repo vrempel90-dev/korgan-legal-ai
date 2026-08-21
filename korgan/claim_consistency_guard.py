@@ -1,24 +1,17 @@
 from __future__ import annotations
 
 import re
+from typing import Pattern
 
 import korgan.senior_claim_preflight as senior_claim_preflight
 from korgan.legal_types import ClaimDraft, LegalResearch
 
-_PENALTY_TERM = r"(?:неустойк\w*|пен[яию]\b|штраф\w*)"
-_COST_TERM = r"(?:судебн\w*\s+расход\w*|расход\w*\s+на\s+представител\w*|расход\w*\s+по\s+делу)"
-_PENALTY_INTENT_RE = re.compile(
-    rf"(?:прошу|требую|хочу|нужно|необходимо|взыска\w*)[^\n]{{0,220}}{_PENALTY_TERM}|"
-    rf"взыска\w*[^\n]{{0,120}}{_PENALTY_TERM}",
+_PENALTY_REQUEST_RE = re.compile(r"(?:неустойк\w*|пен[яию]\b|штраф\w*)", re.IGNORECASE)
+_COST_REQUEST_RE = re.compile(
+    r"(?:судебн\w*\s+расход\w*|расход\w*\s+на\s+представител\w*|расход\w*\s+по\s+делу)",
     re.IGNORECASE,
 )
-_COST_INTENT_RE = re.compile(
-    rf"(?:прошу|требую|хочу|нужно|необходимо|взыска\w*)[^\n]{{0,220}}{_COST_TERM}|"
-    rf"взыска\w*[^\n]{{0,120}}{_COST_TERM}",
-    re.IGNORECASE,
-)
-_PENALTY_REQUEST_RE = re.compile(_PENALTY_TERM, re.IGNORECASE)
-_COST_REQUEST_RE = re.compile(_COST_TERM, re.IGNORECASE)
+_INTENT_VERB_RE = re.compile(r"(?:прошу|требую|хочу|нужно|необходимо|взыска\w*)", re.IGNORECASE)
 _AMOUNT_RE = re.compile(r"(?<!\d)\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|тг\b|₸)", re.IGNORECASE)
 
 _PAID_IN_FULL_RE = re.compile(
@@ -62,6 +55,26 @@ def _text(values: list[str]) -> str:
     return "\n".join(str(value) for value in values or [] if str(value).strip())
 
 
+def _explicit_intent(text: str, term_re: Pattern[str]) -> bool:
+    """Match an explicit request within a bounded window, including line breaks."""
+    value = text or ""
+    for verb in _INTENT_VERB_RE.finditer(value):
+        start = max(0, verb.start() - 80)
+        end = min(len(value), verb.end() + 220)
+        if term_re.search(value[start:end]):
+            return True
+    return False
+
+
+def _penalty_request_without_amount(requests: list[str]) -> bool:
+    """Require the amount to belong to the penalty request itself."""
+    for request in requests or []:
+        text = str(request)
+        if _PENALTY_REQUEST_RE.search(text) and not _AMOUNT_RE.search(text):
+            return True
+    return False
+
+
 def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
     """Return deterministic claim contradictions that must survive model repair."""
     context = case_context or ""
@@ -72,8 +85,8 @@ def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
 
     errors: list[str] = []
 
-    penalty_requested = bool(_PENALTY_INTENT_RE.search(context))
-    costs_requested = bool(_COST_INTENT_RE.search(context))
+    penalty_requested = _explicit_intent(context, _PENALTY_REQUEST_RE)
+    costs_requested = _explicit_intent(context, _COST_REQUEST_RE)
     penalty_in_prayer = bool(_PENALTY_REQUEST_RE.search(requests))
     costs_in_prayer = bool(_COST_REQUEST_RE.search(requests))
 
@@ -89,7 +102,7 @@ def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
             "Добавьте процессуально корректное требование о судебных расходах либо явно объясните, почему оно не может быть заявлено по текущим материалам."
         )
 
-    if penalty_in_prayer and not _AMOUNT_RE.search(requests):
+    if penalty_in_prayer and _penalty_request_without_amount(list(draft.requests or [])):
         errors.append(
             "В разделе «ПРОШУ СУД» заявлена денежная неустойка/пеня без конкретного размера или проверяемого расчета. "
             "До статуса filing-ready размер должен быть рассчитан по VERIFIED-норме и фактам дела либо документ должен остаться preliminary."
