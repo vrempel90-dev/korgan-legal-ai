@@ -37,6 +37,7 @@ from korgan.pretrial_response_runtime import install_pretrial_response_transport
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
 from korgan.reply_menu_handlers import router as reply_menu_router
+from korgan.request_race_guard import install_request_race_guard
 from korgan.response_voice_guard import install_response_voice_guard
 from korgan.review_cta_runtime import router as review_cta_router
 from korgan.stable_legal_release import install_stable_legal_release
@@ -55,6 +56,7 @@ install_payment_pdf_hotfix()
 install_payment_gate()
 install_payment_delivery_bridge()
 install_upload_followup_guard()
+install_request_race_guard()
 install_consultation_quota_bridge()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
