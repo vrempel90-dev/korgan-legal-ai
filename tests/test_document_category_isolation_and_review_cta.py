@@ -14,6 +14,7 @@ from korgan.localized_transport import (
     _document_review_text,
     _generated_document_kind,
 )
+from korgan.pretrial_response import is_pretrial_response_request
 from korgan.review_cta_runtime import _decline_text
 
 
@@ -33,6 +34,20 @@ def test_pretrial_wins_over_factual_contract_mention() -> None:
     assert preferred_document_category(text) == "pretrial"
 
 
+def test_pretrial_response_is_its_own_category() -> None:
+    assert preferred_document_category("Подготовь ответ на досудебную претензию поставщика.") == "pretrial_response"
+    assert preferred_document_category("Составь ответ на претензию о взыскании 600 000 тенге.") == "pretrial_response"
+    assert is_pretrial_response_request("Подготовь ответ на претензию поставщика.") is True
+
+
+def test_pretrial_response_never_becomes_outgoing_pretrial_or_court_response() -> None:
+    assert preferred_document_category("Подготовь досудебную претензию должнику.") == "pretrial"
+    assert preferred_document_category("Подготовь отзыв на исковое заявление истца.") == "response"
+    assert preferred_document_category("Подготовь ответ на исковое заявление истца.") == "response"
+    assert is_pretrial_response_request("Подготовь отзыв на исковое заявление истца.") is False
+    assert is_pretrial_response_request("Подготовь досудебную претензию должнику.") is False
+
+
 def test_contract_owns_contract_request_even_when_claim_is_mentioned() -> None:
     text = (
         "Стороны хотят урегулировать спор до иска. Составь договор возмездного оказания юридических услуг."
@@ -47,6 +62,7 @@ def test_response_owns_response_request_not_claim() -> None:
 def test_kazakh_categories_are_isolated() -> None:
     assert preferred_document_category("Сотқа дейінгі талап жіберілді. Талап қою арызын дайында.") == "claim"
     assert preferred_document_category("Шарт бойынша берешек бар. Сотқа дейінгі талапты дайында.") == "pretrial"
+    assert preferred_document_category("Сотқа дейінгі талапқа жауапты дайында.") == "pretrial_response"
     assert preferred_document_category("Талап қою туралы дау бар. Шартты дайында.") == "contract"
     assert preferred_document_category("Талап қою арызына пікірді дайында.") == "response"
 
@@ -70,11 +86,13 @@ def test_other_active_document_modes_are_not_intercepted() -> None:
     assert asyncio.run(PreferredDocumentCategory()(message, State())) is False
 
 
-def test_generated_document_kind_is_exact_for_all_four_categories() -> None:
+def test_generated_document_kind_is_exact_for_all_five_categories() -> None:
     expected = {
         "KORGAN_iskovoe_zayavlenie.docx": "claim",
         "KORGAN_dosudebnaya_pretenziya.docx": "pretrial",
         "KORGAN_sotqa_deyingi_talap.docx": "pretrial",
+        "KORGAN_otvet_na_pretenziyu.docx": "pretrial_response",
+        "KORGAN_sotqa_deyingi_talapqa_zhauap.docx": "pretrial_response",
         "KORGAN_otzyv_na_isk.docx": "response",
         "KORGAN_dogovor.docx": "contract",
     }
@@ -89,6 +107,7 @@ def test_every_review_cta_is_small_paid_yes_no_and_link_is_only_in_yes_button() 
     expected = {
         "claim": "Рекомендуем проверить иск у профессионального юриста",
         "pretrial": "Рекомендуем проверить досудебную претензию у профессионального юриста",
+        "pretrial_response": "Рекомендуем проверить ответ на претензию у профессионального юриста",
         "response": "Рекомендуем проверить отзыв на иск у профессионального юриста",
         "contract": "Рекомендуем проверить договор у профессионального юриста",
     }
@@ -116,7 +135,7 @@ def test_every_review_cta_is_small_paid_yes_no_and_link_is_only_in_yes_button() 
 
 
 def test_document_caption_contains_compact_review_cta_on_same_message() -> None:
-    for kind in ("claim", "pretrial", "response", "contract"):
+    for kind in ("claim", "pretrial", "pretrial_response", "response", "contract"):
         caption = _document_caption_with_review(kind, "ru")
         assert _document_client_caption(kind, "ru") in caption
         assert _document_review_text(kind, "ru") in caption
@@ -130,6 +149,7 @@ def test_every_generated_document_caption_hides_internal_quality_diagnostics() -
     expected_ru = {
         "claim": "✅ Иск сформирован в Word (.docx).",
         "pretrial": "✅ Досудебная претензия сформирована в Word (.docx).",
+        "pretrial_response": "✅ Ответ на претензию сформирован в Word (.docx).",
         "response": "✅ Отзыв на иск сформирован в Word (.docx).",
         "contract": "✅ Договор сформирован в Word (.docx).",
     }
@@ -144,7 +164,7 @@ def test_every_generated_document_caption_hides_internal_quality_diagnostics() -
 
 
 def test_kazakh_review_cta_is_compact_and_link_is_hidden_in_yes_button() -> None:
-    for kind in ("claim", "pretrial", "response", "contract"):
+    for kind in ("claim", "pretrial", "pretrial_response", "response", "contract"):
         text = _document_review_text(kind, "kk")
         assert "Тексеру ақылы. Қосымша қызметтер ақылы." in text
         assert "http" not in text
@@ -165,7 +185,8 @@ def test_kazakh_review_cta_is_compact_and_link_is_hidden_in_yes_button() -> None
 def test_decline_copy_is_specific_for_each_document_category() -> None:
     assert "Иск" in _decline_text("claim", "ru")
     assert "Досудебная претензия" in _decline_text("pretrial", "ru")
+    assert "Ответ на претензию" in _decline_text("pretrial_response", "ru")
     assert "Отзыв на иск" in _decline_text("response", "ru")
     assert "Договор" in _decline_text("contract", "ru")
-    for kind in ("claim", "pretrial", "response", "contract"):
+    for kind in ("claim", "pretrial", "pretrial_response", "response", "contract"):
         assert _decline_text(kind, "kk").startswith("Түсінікті.")
