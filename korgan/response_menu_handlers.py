@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import logging
 import re
 
 from aiogram import F, Router
 from aiogram.filters import BaseFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message
 
 from korgan import bot as base_bot
-from korgan.response_docx import build_response_to_claim_docx
 from korgan.response_intent import is_response_to_claim_request
 from korgan.ui import main_menu
 
-LOGGER = logging.getLogger(__name__)
 router = Router(name="korgan-response-to-claim")
 
 
@@ -72,48 +69,9 @@ async def _ask_for_claim(message: Message, state: FSMContext) -> None:
 
 
 async def _send_response_as_word(message: Message, state: FSMContext) -> None:
-    await _save_user_text(message, state)
-    context = await base_bot._case_context(state)
-    if not _looks_like_claim_materials(context):
-        await _ask_for_claim(message, state)
-        return
+    from korgan import universal_document_runtime
 
-    service = base_bot.service
-    research_method = getattr(service, "research_response_to_claim", None) if service is not None else None
-    draft_method = getattr(service, "draft_response_to_claim", None) if service is not None else None
-    if research_method is None or draft_method is None:
-        await message.answer("Функция отзыва на иск ещё не загружена в текущую версию сервиса.", reply_markup=main_menu())
-        return
-
-    await state.update_data(mode="main")
-    data = await state.get_data()
-    lang = str(data.get("language", "ru"))
-    await message.answer("Проверяю требования иска и актуальные нормы РК, затем формирую отзыв в Word…")
-    await message.bot.send_chat_action(message.chat.id, "typing")
-
-    try:
-        research = await research_method(context, language=lang)
-        draft = await draft_method(context, research, language=lang)
-        file_bytes = build_response_to_claim_docx(draft)
-    except Exception:
-        LOGGER.exception("Response-to-claim generation failed")
-        await message.answer(
-            "Не удалось сформировать отзыв из текущих материалов. Пришлите иск и позицию ответчика ещё раз — точные нормы KORGAN не будет придумывать.",
-            reply_markup=main_menu(),
-        )
-        return
-
-    marker = "✅ VERIFIED" if draft.status.value == "VERIFIED" else "⚠️ NEEDS_VERIFICATION"
-    caption = f"{marker}\nОтзыв на иск сформирован в Word (.docx)."
-    if draft.verification_notes:
-        notes = "\n".join(f"• {item}" for item in draft.verification_notes[:8])
-        caption += f"\n\nПеред подачей проверьте:\n{notes[:700]}"
-
-    await message.answer_document(
-        BufferedInputFile(file_bytes, filename="KORGAN_otzyv_na_isk.docx"),
-        caption=caption[:1000],
-        reply_markup=main_menu(),
-    )
+    await universal_document_runtime._send_response(message, state)
 
 
 @router.message(ResponseDetailsFilter())
