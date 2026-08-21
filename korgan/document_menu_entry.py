@@ -17,7 +17,7 @@ def is_document_menu_button(text: str | None) -> bool:
 
 @router.message(F.text.in_(_DOCUMENT_MENU_BUTTONS))
 async def open_document_menu(message: Message, state: FSMContext) -> None:
-    """Open the document chooser on the first tap, regardless of active request mode.
+    """Open the RU/KK document chooser on the first tap in every active mode.
 
     This router is intentionally included before all document waiting routers.
     A persistent reply-keyboard button is navigation, never case facts, so an
