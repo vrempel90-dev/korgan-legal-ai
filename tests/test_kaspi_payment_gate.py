@@ -55,7 +55,8 @@ def test_admin_client_requests_are_not_exempt_from_payment_gate() -> None:
     source = Path("korgan/payment_gate.py").read_text(encoding="utf-8")
     assert "if user_id in settings.admin_ids" not in source
     assert "stored_message = await ClientSafeBot.__call__(self, stored_method" in source
-    assert "PAYMENT_GATE_HELD" in source
+    assert "PAYMENT_GATE_FALLBACK_HELD" in source
+    assert "is_paid_delivery_authorized" in source
 
 
 def test_admin_decision_is_signed_and_bound_to_user_document_and_kind() -> None:
@@ -112,8 +113,6 @@ def test_receipt_precheck_never_auto_releases_even_when_fields_match() -> None:
         notes=(),
     )
     assert receipt_hard_issues(check, 1000) == []
-    # Passing the AI pre-check only means the receipt may be sent to an admin;
-    # actual document release exists only in the signed admin callback handler.
     assert check.payment_successful is True
 
 
