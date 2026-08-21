@@ -58,6 +58,9 @@ def test_response_draft_normalizes_raw_objection_dicts() -> None:
     assert len(draft.objections) == 1
     objection = draft.objections[0]
     assert isinstance(objection, ResponseObjection)
+    assert objection.text == "Основное возражение"
+    assert objection.subclauses == ["Частный довод"]
+    assert objection.prose == ["Дополнительное пояснение."]
     assert objection.body_lines() == [
         "Основное возражение",
         "Частный довод",
