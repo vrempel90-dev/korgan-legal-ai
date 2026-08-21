@@ -14,7 +14,7 @@ class _FakeBot:
 
     async def send_document(self, *args, **kwargs):
         self.calls.append({"args": args, "kwargs": kwargs})
-        return "held-by-payment-gate"
+        return "sent-after-confirmed-prepayment"
 
 
 def test_generated_claim_answer_document_routes_through_bot_send_document() -> None:
@@ -39,7 +39,7 @@ def test_generated_claim_answer_document_routes_through_bot_send_document() -> N
             )
         )
 
-        assert result == "held-by-payment-gate"
+        assert result == "sent-after-confirmed-prepayment"
         assert len(bot.calls) == 1
         call = bot.calls[0]
         assert call["kwargs"]["chat_id"] == 777
@@ -51,8 +51,9 @@ def test_generated_claim_answer_document_routes_through_bot_send_document() -> N
         payment_delivery_bridge._ORIGINAL_ANSWER_DOCUMENT = old_original
 
 
-def test_runtime_installs_delivery_bridge_after_payment_gate() -> None:
+def test_runtime_keeps_delivery_bridge_but_uses_prepayment_before_generation() -> None:
     source = __import__("pathlib").Path("korgan/strict_bot.py").read_text(encoding="utf-8")
-    assert "install_payment_gate()" in source
+    assert "install_payment_gate()" not in source
     assert "install_payment_delivery_bridge()" in source
-    assert source.index("install_payment_gate()") < source.index("install_payment_delivery_bridge()")
+    assert "install_generation_prepayment_gate()" in source
+    assert source.index("install_payment_delivery_bridge()") < source.index("install_generation_prepayment_gate()")
