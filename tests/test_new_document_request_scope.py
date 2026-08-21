@@ -124,6 +124,13 @@ def test_user_facing_generating_banners_are_removed() -> None:
     assert "send_chat_action" in source
 
 
+def test_pretrial_menu_click_only_opens_request_and_never_generates() -> None:
+    source = inspect.getsource(pretrial_runtime.pretrial_callback)
+    assert "start_new_document_request" in source
+    assert "_ask_pretrial(" in source
+    assert "_generate(" not in source
+
+
 def test_fresh_request_labels_are_specific_in_both_languages() -> None:
     assert request_label("claim", "ru") == "Исковое заявление"
     assert request_label("pretrial", "ru") == "Досудебная претензия"
