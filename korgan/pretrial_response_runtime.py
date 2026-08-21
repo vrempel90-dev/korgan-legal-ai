@@ -124,6 +124,8 @@ async def _generate(message: Message, state: FSMContext) -> None:
 
     try:
         draft, research = await generate_pretrial_response(service, context, language=lang)
+        # Document identity is deterministic and never delegated to the model.
+        draft.title = "СОТҚА ДЕЙІНГІ ТАЛАПҚА ЖАУАП" if lang == KK else "ОТВЕТ НА ДОСУДЕБНУЮ ПРЕТЕНЗИЮ"
         issues = pretrial_response_quality_issues(draft, research)
         file_bytes = build_pretrial_response_docx(draft, language=lang)
     except Exception:
