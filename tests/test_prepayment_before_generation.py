@@ -41,6 +41,12 @@ def test_prepayment_copy_never_claims_document_is_already_ready() -> None:
     assert "AI құжатты әлі дайындаған жоқ" in kk
 
 
+def test_admin_reservation_explicitly_says_generation_has_not_started() -> None:
+    text = prepayment_gate._reservation_text(123, "request-1", "claim", "ru", 1000)
+    assert "Документ ещё НЕ генерировался" in text
+    assert "Ожидается подтверждение оплаты" in text
+
+
 def test_prepayment_admin_callbacks_use_negative_transaction_ids_only() -> None:
     negative = prepayment_runtime._parse_admin_callback("pay:ok:123:-456:claim:ru:abcdef123456")
     positive = prepayment_runtime._parse_admin_callback("pay:ok:123:456:claim:ru:abcdef123456")
