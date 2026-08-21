@@ -93,10 +93,7 @@ def test_plain_details_stay_in_current_claim_request() -> None:
 
     result = asyncio.run(PreferredDocumentCategory()(message, state))
 
-    assert result == {
-        "document_category": "claim",
-        "document_request_explicit": False,
-    }
+    assert result == {"document_category": "claim"}
 
 
 def test_explicit_request_from_response_waiting_starts_new_category() -> None:
