@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+
+from korgan import auto_payment_runtime, payment_runtime
 from korgan.auto_payment_runtime import install_auto_payment
 from korgan.document_category_router import preferred_document_category
 from korgan.pretrial_response import is_pretrial_response_request
@@ -53,11 +56,25 @@ def test_new_document_is_known_to_transport_and_payment() -> None:
     assert "Ответ на претензию" in localized_transport._document_client_caption("pretrial_response", "ru")
 
 
-def test_payment_offer_no_longer_requires_admin_confirmation() -> None:
+def test_auto_payment_offer_preserves_admin_confirmation() -> None:
     from korgan import payment_gate
 
     install_auto_payment()
     text = payment_gate.payment_offer_text("claim", "ru", 1000)
     assert "KORGAN AI" in text
-    assert "администратор" not in text.lower()
-    assert "ручн" not in text.lower()
+    assert "администратор" in text.lower()
+
+
+def test_auto_payment_receipt_delegates_to_canonical_manual_confirmation(monkeypatch) -> None:
+    calls: list[tuple[object, object]] = []
+
+    async def fake_payment_receipt_received(message, state) -> None:
+        calls.append((message, state))
+
+    monkeypatch.setattr(payment_runtime, "payment_receipt_received", fake_payment_receipt_received)
+    message = object()
+    state = object()
+
+    asyncio.run(auto_payment_runtime.auto_payment_receipt_received(message, state))
+
+    assert calls == [(message, state)]
