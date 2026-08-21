@@ -121,13 +121,10 @@ class PreferredDocumentCategory(Filter):
             }
 
         # Non-command text while the claim workflow is waiting remains case facts
-        # for that same request. Other document waiting modes have their own
-        # state-bound handlers and therefore fall through.
+        # for that same request. Keep the legacy filter payload shape so existing
+        # claim-waiting behavior and tests remain stable.
         if mode == "universal_claim_waiting":
-            return {
-                "document_category": "claim",
-                "document_request_explicit": False,
-            }
+            return {"document_category": "claim"}
 
         return False
 
@@ -137,7 +134,7 @@ async def route_explicit_document_request(
     message: Message,
     state: FSMContext,
     document_category: str,
-    document_request_explicit: bool,
+    document_request_explicit: bool = False,
 ) -> None:
     # Lazy imports are deliberate. The production runtime installs its
     # quality/RAG hotfix layer before importing these generator modules; category
