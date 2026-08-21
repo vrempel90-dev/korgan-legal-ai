@@ -7,6 +7,8 @@ from aiogram.filters import Filter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from korgan.request_scope import is_main_menu_text
+
 router = Router(name="strict-document-category-router")
 
 # This router does not generate anything itself. It only decides which existing,
@@ -100,7 +102,7 @@ def preferred_document_category(text: str | None) -> str | None:
 class PreferredDocumentCategory(Filter):
     async def __call__(self, message: Message, state: FSMContext):
         text = message.text or ""
-        if not text or text.startswith("/"):
+        if not text or text.startswith("/") or is_main_menu_text(text):
             return False
 
         data = await state.get_data()
