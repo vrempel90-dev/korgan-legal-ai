@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 
 import korgan.payment_release_guard as payment_release_guard
 import korgan.prepayment_gate as prepayment_gate
 import korgan.prepayment_runtime as prepayment_runtime
 import korgan.request_scope as request_scope
+from korgan import pretrial_response_runtime, pretrial_runtime, universal_claim_runtime, universal_document_runtime
 
 
 def test_all_five_document_generators_are_wrapped_by_prepayment_gate() -> None:
@@ -115,3 +118,82 @@ def test_payment_confirmation_guard_covers_every_menu_document() -> None:
         )
         assert blocked.allowed is False, kind
         assert allowed.allowed is True, kind
+
+
+def test_consumed_prepayment_blocks_all_five_guarded_generators(monkeypatch) -> None:
+    class State:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+
+        async def get_data(self) -> dict[str, object]:
+            return {
+                "request_id": f"request-{self.kind}",
+                "request_kind": self.kind,
+                "language": "ru",
+                "prepayment_confirmed_request_id": f"request-{self.kind}",
+                "prepayment_confirmed_kind": self.kind,
+                "prepayment_consumed_request_id": f"request-{self.kind}",
+            }
+
+    class Message:
+        def __init__(self) -> None:
+            self.answers: list[str] = []
+            self.chat = SimpleNamespace(id=123)
+            self.text = "достаточно подробные материалы для подготовки документа"
+
+        async def answer(self, text: str, **_kwargs: object) -> None:
+            self.answers.append(text)
+
+    called: list[str] = []
+
+    async def original_claim(_message, _state) -> None:
+        called.append("claim")
+
+    async def original_pretrial(_message, _state) -> None:
+        called.append("pretrial")
+
+    async def original_pretrial_response(_message, _state) -> None:
+        called.append("pretrial_response")
+
+    async def original_response(_message, _state) -> None:
+        called.append("response")
+
+    async def original_contract(_message, _state) -> None:
+        called.append("contract")
+
+    async def context(_state) -> str:
+        return "Факты дела и доказательства. " * 10
+
+    async def no_save(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(prepayment_gate, "_INSTALLED", False)
+    monkeypatch.setattr(prepayment_gate, "_context", context)
+    monkeypatch.setattr(prepayment_gate, "get_settings", lambda: SimpleNamespace(payments_enabled=True))
+    monkeypatch.setattr(universal_claim_runtime, "_generate_now", original_claim)
+    monkeypatch.setattr(pretrial_runtime, "_generate", original_pretrial)
+    monkeypatch.setattr(pretrial_response_runtime, "_generate", original_pretrial_response)
+    monkeypatch.setattr(universal_document_runtime, "_send_response", original_response)
+    monkeypatch.setattr(universal_document_runtime, "_send_contract", original_contract)
+    monkeypatch.setattr(pretrial_runtime, "_save_text", no_save)
+    monkeypatch.setattr(pretrial_response_runtime, "_save_text", no_save)
+    monkeypatch.setattr(pretrial_response_runtime, "_looks_like_pretrial_materials", lambda _text: True)
+    monkeypatch.setattr(universal_document_runtime, "_save_user_text", no_save)
+    monkeypatch.setattr(universal_document_runtime, "_looks_like_claim_materials", lambda _text: True)
+
+    prepayment_gate.install_generation_prepayment_gate()
+    guarded = {
+        "claim": universal_claim_runtime._generate_now,
+        "pretrial": pretrial_runtime._generate,
+        "pretrial_response": pretrial_response_runtime._generate,
+        "response": universal_document_runtime._send_response,
+        "contract": universal_document_runtime._send_contract,
+    }
+
+    for kind, entrypoint in guarded.items():
+        message = Message()
+        asyncio.run(entrypoint(message, State(kind)))
+        assert message.answers, kind
+        assert "уже запускался" in message.answers[-1], kind
+
+    assert called == []

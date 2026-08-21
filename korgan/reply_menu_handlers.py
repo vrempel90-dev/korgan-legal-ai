@@ -1,22 +1,15 @@
 from __future__ import annotations
 
-import logging
-
 from aiogram import F, Router
 from aiogram.filters import BaseFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from korgan import bot as base_bot
 from korgan.claim_intent import is_claim_drafting_request
-from korgan.contract_docx import build_contract_docx
-from korgan.document_release import review_lines
-from korgan.telegram_text import bullets, fit_caption
 from korgan.contract_intent import is_contract_drafting_request
-from korgan.legal_types import VerificationStatus
 from korgan.ui import documents_menu, main_menu
 
-LOGGER = logging.getLogger(__name__)
 router = Router(name="korgan-reply-main-menu")
 
 
@@ -80,71 +73,9 @@ async def _send_claim_as_word(message: Message, state: FSMContext) -> None:
 
 
 async def _send_contract_as_word(message: Message, state: FSMContext) -> None:
-    await _save_user_text_as_facts(message, state)
-    context = await base_bot._case_context(state)
+    from korgan import universal_document_runtime
 
-    if not context.strip() or len(context.strip()) < 80:
-        await state.update_data(mode="contract_details")
-        await message.answer(
-            "🤝 Опишите договор одним сообщением:\n"
-            "• какой договор нужен;\n"
-            "• кто стороны и их роли;\n"
-            "• предмет договора;\n"
-            "• цена/оплата, если есть;\n"
-            "• срок;\n"
-            "• важные особые условия.\n\n"
-            "Можно также прикрепить документы или переписку. KORGAN сам определит точный вид договора и проверит применимые нормы РК.",
-            reply_markup=main_menu(),
-        )
-        return
-
-    service = base_bot.service
-    research_contract = getattr(service, "research_contract", None) if service is not None else None
-    draft_contract = getattr(service, "draft_contract", None) if service is not None else None
-    if research_contract is None or draft_contract is None:
-        await message.answer("Функция договоров ещё не загружена в текущую версию сервиса.", reply_markup=main_menu())
-        return
-
-    await state.update_data(mode="main")
-    data = await state.get_data()
-    lang = str(data.get("language", "ru"))
-    await message.answer("Проверяю вид договора и актуальные нормы РК, затем формирую Word-документ…")
-    await message.bot.send_chat_action(message.chat.id, "typing")
-
-    try:
-        research = await research_contract(context, language=lang)
-        draft = await draft_contract(context, research, language=lang)
-        file_bytes = build_contract_docx(draft)
-    except Exception:
-        LOGGER.exception("Contract generation failed")
-        await message.answer(
-            "Не удалось безопасно сформировать договор. KORGAN не будет выдавать юридически неподтверждённый текст. Проверьте исходные условия и повторите запрос.",
-            reply_markup=main_menu(),
-        )
-        return
-
-    report = review_lines(draft.body_lines())
-    if not report.released:
-        LOGGER.warning("CONTRACT_RELEASE_BLOCKED issues=%s", report.blocking[:5])
-        await message.answer(
-            "Договор не выпущен: обнаружены дефекты правовых ссылок или целостности текста.\n\n"
-            + bullets(report.blocking[:6])
-            + "\n\nУточните условия и повторите запрос.",
-            reply_markup=main_menu(),
-        )
-        return
-
-    marker = "✅ VERIFIED" if draft.status == VerificationStatus.VERIFIED else "⚠️ NEEDS_VERIFICATION"
-    caption = f"{marker}\nПроект договора сформирован в Word (.docx)."
-    checklist = report.checklist(draft.verification_notes)
-    if checklist:
-        caption += "\n\nПеред подписанием проверьте:\n" + bullets(checklist)
-
-    await message.answer_document(
-        BufferedInputFile(file_bytes, filename="KORGAN_dogovor.docx"),
-        caption=fit_caption(caption),
-        reply_markup=main_menu(),
-    )
+    await universal_document_runtime._send_contract(message, state)
 
 
 @router.message(ContractDetailsFilter())

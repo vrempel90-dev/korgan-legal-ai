@@ -89,6 +89,26 @@ def test_every_citation_is_checked_separately_in_one_document() -> None:
     assert len(audit.blocking) == 2
 
 
+def test_hyphenated_article_number_is_preserved_for_lookup(monkeypatch) -> None:
+    looked_up: list[tuple[str, str, str]] = []
+
+    def capture_lookup(act: str, article: str, part: str):
+        looked_up.append((act, article, part))
+        return None
+
+    monkeypatch.setattr("korgan.citation_audit.lookup", capture_lookup)
+    audit_citations("Согласно статье 353-1 ГК РК требование подлежит проверке.")
+    assert looked_up == [("ГК РК", "353-1", "")]
+
+
+def test_same_reference_is_deduplicated_only_within_one_paragraph() -> None:
+    same_paragraph = "Статья 953 ГК РК; статья 953 ГК РК."
+    separate_paragraphs = "Статья 953 ГК РК.\nСтатья 953 ГК РК."
+
+    assert len(audit_citations(same_paragraph).findings) == 1
+    assert len(audit_citations(separate_paragraphs).findings) == 2
+
+
 def test_glued_fragment_after_a_closing_quote_is_detected() -> None:
     """The reported artefact: «...не предусмотрено иное».евидно"""
     broken = "Стороны согласовали, что иное не предусмотрено».евидно, что требование заявлено."

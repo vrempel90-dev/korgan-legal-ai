@@ -7,7 +7,7 @@ from docx import Document
 from korgan.legal_types import VerificationStatus
 from korgan.response_docx import build_response_to_claim_docx
 from korgan.response_intent import is_response_to_claim_request
-from korgan.response_types import ResponseToClaimDraft
+from korgan.response_types import ResponseObjection, ResponseToClaimDraft
 
 
 def test_response_intent_does_not_steal_feedback() -> None:
@@ -41,6 +41,31 @@ def test_response_docx_contains_court_structure_without_internal_qa() -> None:
     assert "ПРОШУ СУД" in text
     assert "KORGAN QA STATUS" not in text
     assert "https://" not in text
+
+
+def test_response_draft_normalizes_raw_objection_dicts() -> None:
+    draft = ResponseToClaimDraft(
+        status=VerificationStatus.VERIFIED,
+        objections=[
+            {
+                "text": "1. Основное возражение",
+                "subclauses": ["1.1. Частный довод"],
+                "prose": ["Дополнительное пояснение."],
+            }
+        ],
+    )
+
+    assert len(draft.objections) == 1
+    objection = draft.objections[0]
+    assert isinstance(objection, ResponseObjection)
+    assert objection.text == "Основное возражение"
+    assert objection.subclauses == ["Частный довод"]
+    assert objection.prose == ["Дополнительное пояснение."]
+    assert objection.body_lines() == [
+        "Основное возражение",
+        "Частный довод",
+        "Дополнительное пояснение.",
+    ]
 
 
 def test_response_docx_uses_a4() -> None:
