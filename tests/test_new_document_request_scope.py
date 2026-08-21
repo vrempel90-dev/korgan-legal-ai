@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from types import SimpleNamespace
 
+import korgan.pretrial_response_runtime as pretrial_response_runtime
+import korgan.pretrial_runtime as pretrial_runtime
+import korgan.universal_claim_runtime as universal_claim_runtime
+import korgan.universal_document_runtime as universal_document_runtime
 from korgan.document_category_router import PreferredDocumentCategory
 from korgan.request_scope import start_new_document_request
 
@@ -104,3 +109,19 @@ def test_explicit_request_from_response_waiting_starts_new_category() -> None:
         "document_category": "pretrial",
         "document_request_explicit": True,
     }
+
+
+def test_user_facing_generating_banners_are_removed() -> None:
+    source = "\n".join(
+        [
+            inspect.getsource(universal_claim_runtime._generate_now),
+            inspect.getsource(universal_document_runtime._send_contract),
+            inspect.getsource(universal_document_runtime._send_response),
+            inspect.getsource(pretrial_runtime._generate),
+            inspect.getsource(pretrial_response_runtime._generate),
+        ]
+    )
+    assert "Формирую и проверяю" not in source
+    assert "Формирую досудебную" not in source
+    assert "Анализирую претензию" not in source
+    assert "send_chat_action" in source
