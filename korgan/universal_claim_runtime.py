@@ -21,6 +21,7 @@ from korgan.gate_instructions import keep_accepted_provisions
 from korgan.instant_claim_runtime import _strip_reference_token
 from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
+from korgan.request_scope import request_label, start_new_document_request
 from korgan.response_intent import is_response_to_claim_request
 from korgan.telegram_text import bullets, fit_caption
 
@@ -55,6 +56,25 @@ async def _append_fact_once(state: FSMContext, text: str) -> None:
     if not facts or str(facts[-1]).strip() != value:
         facts.append(value)
     await state.update_data(facts=facts[-20:])
+
+
+async def begin_claim_request(message: Message, state: FSMContext) -> None:
+    """Prompt for new-case materials without starting generation."""
+    lang = await base_bot._language(state)
+    await state.update_data(mode="universal_claim_waiting")
+    if lang == "kk":
+        text = (
+            f"🆕 Жаңа өтінім — {request_label('claim', lang)}.\n\n"
+            "Істің мән-жайын бір хабарламада сипаттаңыз немесе материалдарды (PDF/DOCX/фото) тіркеңіз. "
+            "Алдыңғы өтінімнің деректері бұл іске қолданылмайды."
+        )
+    else:
+        text = (
+            f"🆕 Новая заявка — {request_label('claim', lang)}.\n\n"
+            "Опишите обстоятельства дела одним сообщением или приложите материалы (PDF/DOCX/фото). "
+            "Данные предыдущей заявки в это дело не переносятся."
+        )
+    await message.answer(text, reply_markup=base_bot.MENU)
 
 
 def _fill_only_empty_structural_blocks(draft: ClaimDraft) -> None:
@@ -245,11 +265,7 @@ async def _generate_now(message: Message, state: FSMContext) -> None:
 
     context = await base_bot._case_context(state)
     if not context.strip():
-        await state.update_data(mode="universal_claim_waiting")
-        await message.answer(
-            "Опишите обстоятельства дела одним сообщением — после этого сразу сформирую иск без анкеты по реквизитам.",
-            reply_markup=base_bot.MENU,
-        )
+        await begin_claim_request(message, state)
         return
 
     await state.update_data(
@@ -261,7 +277,6 @@ async def _generate_now(message: Message, state: FSMContext) -> None:
         claim_draft=None,
     )
     lang = await base_bot._language(state)
-    await message.answer("Формирую и проверяю проект иска…", reply_markup=base_bot.MENU)
     await message.bot.send_chat_action(message.chat.id, "typing")
 
     started = time.perf_counter()
@@ -298,7 +313,8 @@ async def _generate_now(message: Message, state: FSMContext) -> None:
 @router.message(Command("claim"))
 @router.message(F.text == "📄 Подготовить иск")
 async def claim_button(message: Message, state: FSMContext) -> None:
-    await _generate_now(message, state)
+    await start_new_document_request(state, kind="claim", mode="universal_claim_waiting")
+    await begin_claim_request(message, state)
 
 
 @router.message(_ClaimWaiting(), F.text)
@@ -309,6 +325,7 @@ async def claim_description(message: Message, state: FSMContext) -> None:
 
 @router.message(_ClaimIntent(), F.text)
 async def claim_from_one_message(message: Message, state: FSMContext) -> None:
+    await start_new_document_request(state, kind="claim", mode="main")
     if (message.text or "").strip() != "📄 Подготовить иск":
         await _append_fact_once(state, message.text or "")
     await _generate_now(message, state)

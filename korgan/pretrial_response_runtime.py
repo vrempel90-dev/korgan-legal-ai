@@ -15,6 +15,7 @@ from korgan.pretrial_response import (
     is_pretrial_response_request,
     pretrial_response_quality_issues,
 )
+from korgan.request_scope import request_label, start_new_document_request
 from korgan.ui import main_menu
 
 LOGGER = logging.getLogger(__name__)
@@ -117,13 +118,17 @@ async def _ask_materials(message: Message, state: FSMContext, language: str) -> 
     await state.update_data(mode="pretrial_response_waiting")
     if language == KK:
         text = (
-            "🛡 Сотқа дейінгі талапқа жауап дайындау үшін талаптың өзін (PDF/DOCX/фото) жіберіңіз немесе негізгі талаптарын мәтінмен енгізіңіз.\n\n"
-            "Мүмкін болса, бір хабарламада өз ұстанымыңызды, қандай фактілермен келіспейтініңізді және қандай дәлелдеріңіз бар екенін жазыңыз."
+            f"🆕 Жаңа өтінім — {request_label('pretrial_response', language)}.\n\n"
+            "Талаптың өзін (PDF/DOCX/фото) жіберіңіз немесе негізгі талаптарын мәтінмен енгізіңіз. "
+            "Мүмкін болса, өз ұстанымыңызды, қандай фактілермен келіспейтініңізді және қандай дәлелдеріңіз бар екенін қосыңыз.\n\n"
+            "Алдыңғы өтінімнің материалдары бұл өтінімге қолданылмайды."
         )
     else:
         text = (
-            "🛡 Чтобы подготовить ответ на претензию, пришлите саму претензию (PDF/DOCX/фото) или вставьте её основные требования текстом.\n\n"
-            "Если можете, одним сообщением добавьте свою позицию: что признаёте или оспариваете, какие факты неверны и какие доказательства у вас есть."
+            f"🆕 Новая заявка — {request_label('pretrial_response', language)}.\n\n"
+            "Пришлите саму претензию (PDF/DOCX/фото) или вставьте её основные требования текстом. "
+            "Если можете, добавьте свою позицию: что признаёте или оспариваете, какие факты неверны и какие доказательства у вас есть.\n\n"
+            "Материалы предыдущей заявки сюда не переносятся."
         )
     await message.answer(text, reply_markup=main_menu(language))
 
@@ -151,12 +156,6 @@ async def _generate(message: Message, state: FSMContext) -> None:
         return
 
     await state.update_data(mode="main")
-    await message.answer(
-        "Сотқа дейінгі талапты талдап, құқықтық негізді тексеріп, жауапты дайындап жатырмын…"
-        if language == KK
-        else "Анализирую претензию, проверяю правовую основу и формирую ответ…",
-        reply_markup=menu,
-    )
     await message.bot.send_chat_action(message.chat.id, "typing")
 
     try:
@@ -204,7 +203,9 @@ async def _generate(message: Message, state: FSMContext) -> None:
 async def pretrial_response_callback(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if callback.message is not None:
-        await _generate(callback.message, state)
+        language = await _lang(state)
+        await start_new_document_request(state, kind="pretrial_response", mode="pretrial_response_waiting")
+        await _ask_materials(callback.message, state, language)
 
 
 @router.message(_Waiting(), F.text)
@@ -214,4 +215,5 @@ async def pretrial_response_waiting(message: Message, state: FSMContext) -> None
 
 @router.message(_Intent(), F.text)
 async def pretrial_response_natural(message: Message, state: FSMContext) -> None:
+    await start_new_document_request(state, kind="pretrial_response", mode="main")
     await _generate(message, state)

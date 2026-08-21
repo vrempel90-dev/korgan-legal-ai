@@ -106,19 +106,27 @@ class PreferredDocumentCategory(Filter):
         data = await state.get_data()
         mode = data.get("mode")
 
-        # Once the user entered the claim section and KORGAN is waiting for the
-        # case description, the next text belongs to the claim workflow only.
-        if mode == "universal_claim_waiting":
-            return {"document_category": "claim"}
-
-        # Other active sections already have their own state-bound handlers.
-        if mode not in {None, "", "main"}:
+        # Consultation owns ordinary consultation text. Document buttons/callbacks
+        # are handled separately and can still start a new request explicitly.
+        if mode == "consultation":
             return False
 
         category = preferred_document_category(text)
-        if category is None:
-            return False
-        return {"document_category": category}
+        if category is not None:
+            # An explicit "prepare X" always means a new document request, even
+            # if the previous document workflow was waiting for more details.
+            return {
+                "document_category": category,
+                "document_request_explicit": True,
+            }
+
+        # Non-command text while the claim workflow is waiting remains case facts
+        # for that same request. Keep the legacy filter payload shape so existing
+        # claim-waiting behavior and tests remain stable.
+        if mode == "universal_claim_waiting":
+            return {"document_category": "claim"}
+
+        return False
 
 
 @router.message(PreferredDocumentCategory(), F.text)
@@ -126,19 +134,18 @@ async def route_explicit_document_request(
     message: Message,
     state: FSMContext,
     document_category: str,
+    document_request_explicit: bool = False,
 ) -> None:
-    # Lazy imports are deliberate. The morning production runtime installs its
+    # Lazy imports are deliberate. The production runtime installs its
     # quality/RAG hotfix layer before importing these generator modules; category
     # isolation must not change that initialization order.
     from korgan import pretrial_response_runtime, pretrial_runtime, universal_claim_runtime, universal_document_runtime
 
-    data = await state.get_data()
-
     if document_category == "claim":
-        if data.get("mode") == "universal_claim_waiting":
-            await universal_claim_runtime.claim_description(message, state)
-        else:
+        if document_request_explicit:
             await universal_claim_runtime.claim_from_one_message(message, state)
+        else:
+            await universal_claim_runtime.claim_description(message, state)
         return
 
     if document_category == "pretrial_response":

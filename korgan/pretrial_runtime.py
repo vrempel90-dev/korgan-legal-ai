@@ -10,6 +10,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from korgan import bot as base_bot
 from korgan.i18n import KK, normalize_language
 from korgan.pretrial import build_pretrial_docx, is_pretrial_request, pretrial_quality_issues
+from korgan.request_scope import request_label, start_new_document_request
 from korgan.ui import main_menu
 
 LOGGER = logging.getLogger(__name__)
@@ -57,12 +58,14 @@ async def _generate(message: Message, state: FSMContext) -> None:
     if not context.strip():
         await state.update_data(mode="pretrial_waiting")
         prompt = (
-            "Сотқа дейінгі талапты дайындау үшін жағдайды бір хабарламада сипаттаңыз немесе құжаттарды тіркеңіз. "
-            "KORGAN сауалнама толтырмайды: мән-жайларды өзі шығарып, құқықтық негізді тексереді."
+            f"🆕 Жаңа өтінім — {request_label('pretrial', lang)}.\n\n"
+            "Жағдайды бір хабарламада сипаттаңыз немесе материалдарды (PDF/DOCX/фото) тіркеңіз. "
+            "Алдыңғы өтінімнің деректері бұл өтінімге қолданылмайды."
             if lang == KK
             else
-            "Чтобы подготовить досудебную претензию, опишите ситуацию одним сообщением или приложите документы. "
-            "KORGAN не будет вести анкету: сам извлечёт обстоятельства и проверит правовую основу."
+            f"🆕 Новая заявка — {request_label('pretrial', lang)}.\n\n"
+            "Опишите ситуацию одним сообщением или приложите материалы (PDF/DOCX/фото). "
+            "Данные предыдущей заявки сюда не переносятся."
         )
         await message.answer(prompt, reply_markup=menu)
         return
@@ -78,12 +81,6 @@ async def _generate(message: Message, state: FSMContext) -> None:
         return
 
     await state.update_data(mode="main")
-    await message.answer(
-        "Сотқа дейінгі талапты дайындап, құқықтық негізін тексеріп жатырмын…"
-        if lang == KK else
-        "Формирую досудебную претензию и проверяю правовую основу…",
-        reply_markup=menu,
-    )
     await message.bot.send_chat_action(message.chat.id, "typing")
 
     try:
@@ -127,6 +124,7 @@ async def _generate(message: Message, state: FSMContext) -> None:
 async def pretrial_callback(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if callback.message is not None:
+        await start_new_document_request(state, kind="pretrial", mode="pretrial_waiting")
         await _generate(callback.message, state)
 
 
@@ -137,4 +135,5 @@ async def pretrial_waiting(message: Message, state: FSMContext) -> None:
 
 @router.message(_Intent(), F.text)
 async def pretrial_natural(message: Message, state: FSMContext) -> None:
+    await start_new_document_request(state, kind="pretrial", mode="main")
     await _generate(message, state)

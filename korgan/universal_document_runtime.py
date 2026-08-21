@@ -13,11 +13,12 @@ from korgan.contract_docx import build_contract_docx
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
 from korgan.legal_types import VerificationStatus
+from korgan.request_scope import request_label, start_new_document_request
 from korgan.response_docx import build_response_to_claim_docx
 from korgan.response_intent import is_response_to_claim_request
 from korgan.telegram_text import bullets, fit_caption
 from korgan.ui import main_menu
-from korgan.universal_claim_runtime import _generate_now as generate_claim_now
+from korgan.universal_claim_runtime import begin_claim_request
 
 LOGGER = logging.getLogger(__name__)
 router = Router(name="universal-quality-documents")
@@ -82,20 +83,26 @@ def _looks_like_claim_materials(context: str) -> bool:
 
 
 async def _ask_contract(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    lang = str(data.get("language", "ru"))
     await state.update_data(mode="contract_details")
     await message.answer(
-        "🤝 Опишите договор одним сообщением: вид/цель договора, стороны и роли, предмет, цена/оплата, срок и важные условия. "
-        "После этого KORGAN проверит право РК и сформирует Word.",
-        reply_markup=main_menu(),
+        f"🆕 Новая заявка — {request_label('contract', lang)}.\n\n"
+        "Опишите договор одним сообщением: вид/цель договора, стороны и роли, предмет, цена/оплата, срок и важные условия. "
+        "Можно также приложить материалы. После этого KORGAN проверит право РК и подготовит Word.",
+        reply_markup=main_menu(lang),
     )
 
 
 async def _ask_response(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    lang = str(data.get("language", "ru"))
     await state.update_data(mode="response_details")
     await message.answer(
-        "🛡 Пришлите иск (PDF/DOCX/фото) или вставьте его требования текстом. Если можете, одним сообщением добавьте позицию ответчика, "
-        "оспариваемые факты, доказательства, суд и номер дела. После этого KORGAN сформирует отзыв в Word.",
-        reply_markup=main_menu(),
+        f"🆕 Новая заявка — {request_label('response', lang)}.\n\n"
+        "Пришлите иск (PDF/DOCX/фото) или вставьте его требования текстом. Если можете, одним сообщением добавьте позицию ответчика, "
+        "оспариваемые факты, доказательства, суд и номер дела. После этого KORGAN подготовит отзыв в Word.",
+        reply_markup=main_menu(lang),
     )
 
 
@@ -115,7 +122,6 @@ async def _send_contract(message: Message, state: FSMContext) -> None:
 
     await state.update_data(mode="main")
     lang = str((await state.get_data()).get("language", "ru"))
-    await message.answer("Формирую и проверяю договор…", reply_markup=main_menu())
     await message.bot.send_chat_action(message.chat.id, "typing")
 
     try:
@@ -169,7 +175,6 @@ async def _send_response(message: Message, state: FSMContext) -> None:
 
     await state.update_data(mode="main")
     lang = str((await state.get_data()).get("language", "ru"))
-    await message.answer("Формирую и проверяю отзыв на иск…", reply_markup=main_menu())
     await message.bot.send_chat_action(message.chat.id, "typing")
 
     try:
@@ -223,11 +228,13 @@ async def response_details(message: Message, state: FSMContext) -> None:
 
 @router.message(ResponseRequestFilter())
 async def response_request(message: Message, state: FSMContext) -> None:
+    await start_new_document_request(state, kind="response", mode="main")
     await _send_response(message, state)
 
 
 @router.message(ContractRequestFilter())
 async def contract_request(message: Message, state: FSMContext) -> None:
+    await start_new_document_request(state, kind="contract", mode="main")
     await _send_contract(message, state)
 
 
@@ -235,23 +242,21 @@ async def contract_request(message: Message, state: FSMContext) -> None:
 async def claim_callback(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if callback.message is not None:
-        await generate_claim_now(callback.message, state)
+        await start_new_document_request(state, kind="claim", mode="universal_claim_waiting")
+        await begin_claim_request(callback.message, state)
 
 
 @router.callback_query(F.data == "doc:contract")
 async def contract_callback(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if callback.message is not None:
+        await start_new_document_request(state, kind="contract", mode="contract_details")
         await _ask_contract(callback.message, state)
 
 
 @router.callback_query(F.data == "doc:response")
 async def response_callback(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    if callback.message is None:
-        return
-    context = await base_bot._case_context(state)
-    if _looks_like_claim_materials(context):
-        await _send_response(callback.message, state)
-    else:
+    if callback.message is not None:
+        await start_new_document_request(state, kind="response", mode="response_details")
         await _ask_response(callback.message, state)
