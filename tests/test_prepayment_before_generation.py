@@ -23,11 +23,12 @@ def test_all_five_document_generators_are_wrapped_by_prepayment_gate() -> None:
         assert f'kind="{kind}"' in source, kind
 
 
-def test_production_runtime_does_not_install_old_post_generation_payment_gate() -> None:
+def test_production_runtime_installs_prepayment_before_generators_and_keeps_fallback_gate() -> None:
     source = Path("korgan/strict_bot.py").read_text(encoding="utf-8")
-    assert "from korgan.payment_gate import install_payment_gate" not in source
-    assert "install_payment_gate()" not in source
+    assert "from korgan.payment_gate import install_payment_gate" in source
+    assert "install_payment_gate()" in source
     assert "install_generation_prepayment_gate()" in source
+    assert source.index("install_payment_gate()") < source.index("install_generation_prepayment_gate()")
     assert "dp.include_router(prepayment_router)" in source
     assert source.index("dp.include_router(prepayment_router)") < source.index("dp.include_router(payment_router)")
 
@@ -45,6 +46,18 @@ def test_admin_reservation_explicitly_says_generation_has_not_started() -> None:
     text = prepayment_gate._reservation_text(123, "request-1", "claim", "ru", 1000)
     assert "Документ ещё НЕ генерировался" in text
     assert "Ожидается подтверждение оплаты" in text
+
+
+def test_paid_delivery_context_is_exactly_scoped_to_user_and_kind() -> None:
+    assert not prepayment_gate.is_paid_delivery_authorized(123, "claim")
+    token = prepayment_gate.begin_paid_delivery(123, "claim")
+    try:
+        assert prepayment_gate.is_paid_delivery_authorized(123, "claim")
+        assert not prepayment_gate.is_paid_delivery_authorized(123, "contract")
+        assert not prepayment_gate.is_paid_delivery_authorized(124, "claim")
+    finally:
+        prepayment_gate.end_paid_delivery(token)
+    assert not prepayment_gate.is_paid_delivery_authorized(123, "claim")
 
 
 def test_prepayment_admin_callbacks_use_negative_transaction_ids_only() -> None:
