@@ -156,6 +156,16 @@ async def ensure_prepayment(message: Message, state: FSMContext, *, kind: str) -
         )
         return False
 
+    if str(data.get("prepayment_consumed_request_id") or "") == request_id:
+        LOGGER.warning("PREPAY_ALREADY_CONSUMED request_id=%s kind=%s", request_id, kind)
+        await message.answer(
+            "Оплаченный запуск по этой заявке уже использован. Откройте новую заявку для ещё одного документа."
+            if language != KK
+            else
+            "Бұл өтінім бойынша ақылы іске қосу бұрын пайдаланылған. Басқа құжат үшін жаңа өтінім ашыңыз."
+        )
+        return False
+
     if (
         str(data.get("prepayment_confirmed_request_id") or "") == request_id
         and str(data.get("prepayment_confirmed_kind") or "") == kind

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import inspect
 
 from docx import Document
 
@@ -13,6 +14,8 @@ from korgan.fast_v2_production_legal import (
 )
 from korgan.legal_routing import detect_claim_profile, detect_contract_profile
 from korgan.legal_types import ClaimDraft, ContractDraft, ContractSection, VerificationStatus
+from korgan.reply_menu_handlers import _send_contract_as_word, document_contract_callback
+from korgan.response_menu_handlers import _send_response_as_word, document_response_callback
 
 
 def _claim() -> ClaimDraft:
@@ -93,3 +96,23 @@ def test_contract_docx_contains_sections_and_no_source_urls() -> None:
     assert "1. Предмет договора" in text
     assert "2. Порядок оплаты" in text
     assert "https://" not in text
+
+
+def test_legacy_document_senders_delegate_to_scoped_universal_runtime() -> None:
+    contract_source = inspect.getsource(_send_contract_as_word)
+    response_source = inspect.getsource(_send_response_as_word)
+
+    assert "universal_document_runtime._send_contract" in contract_source
+    assert "build_contract_docx" not in contract_source
+    assert "universal_document_runtime._send_response" in response_source
+    assert "build_response_to_claim_docx" not in response_source
+
+
+def test_legacy_document_callbacks_always_start_fresh_requests() -> None:
+    contract_source = inspect.getsource(document_contract_callback)
+    response_source = inspect.getsource(document_response_callback)
+
+    assert 'start_new_document_request(state, kind="contract"' in contract_source
+    assert 'start_new_document_request(state, kind="response"' in response_source
+    assert "current_request_id" not in contract_source
+    assert "current_request_id" not in response_source

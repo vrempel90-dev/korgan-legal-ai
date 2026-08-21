@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import weakref
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import AsyncIterator
 from uuid import uuid4
 
 from aiogram.fsm.context import FSMContext
@@ -14,6 +18,10 @@ DOCUMENT_REQUEST_KINDS = frozenset({
     "response",
     "contract",
 })
+_REQUEST_LOCKS: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop,
+    dict[object, asyncio.Lock],
+] = weakref.WeakKeyDictionary()
 
 # Only request/case-specific keys are reset. Consent, selected language,
 # consultation counters and other account/session settings are preserved.
@@ -34,12 +42,14 @@ _REQUEST_SCOPED_KEYS = {
     "field_attempts",
     "pending_document_kind",
     "pending_document_request",
-    # Payment is bound to one immutable request_id. A new document request must
-    # never inherit either an old receipt session or an already-confirmed payment.
+    # Payment authorization is bound to one immutable request_id. Accepted
+    # receipt hashes intentionally remain account-scoped to prevent reuse.
     "payment_admin_doc_message_id",
     "payment_kind",
     "payment_language",
     "payment_signature",
+    "payment_released_transactions",
+    "payment_admin_confirmed_transactions",
     "prepayment_transaction_id",
     "prepayment_request_id",
     "prepayment_kind",
@@ -128,6 +138,24 @@ async def request_is_current(state: FSMContext, request_id: str, kind: str) -> b
     )
 
 
+def _request_lock(state: FSMContext) -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    locks = _REQUEST_LOCKS.setdefault(loop, {})
+    key = getattr(state, "key", None)
+    try:
+        hash(key)
+    except TypeError:
+        key = None
+    return locks.setdefault(key if key is not None else id(state), asyncio.Lock())
+
+
+@asynccontextmanager
+async def request_scope_guard(state: FSMContext) -> AsyncIterator[None]:
+    """Serialize request replacement with request-scoped state/delivery commits."""
+    async with _request_lock(state):
+        yield
+
+
 async def start_new_document_request(
     state: FSMContext,
     *,
@@ -140,6 +168,11 @@ async def start_new_document_request(
     materials. This prevents facts/uploads from a previous matter from triggering
     generation of a new document before the user supplies new materials.
     """
+    async with request_scope_guard(state):
+        return await _start_new_document_request(state, kind=kind, mode=mode)
+
+
+async def _start_new_document_request(state: FSMContext, *, kind: str, mode: str) -> str:
     if kind not in DOCUMENT_REQUEST_KINDS:
         raise ValueError(f"Unsupported document request kind: {kind}")
 

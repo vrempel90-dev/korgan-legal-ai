@@ -7,7 +7,7 @@ from docx import Document
 from korgan.legal_types import VerificationStatus
 from korgan.response_docx import build_response_to_claim_docx
 from korgan.response_intent import is_response_to_claim_request
-from korgan.response_types import ResponseToClaimDraft
+from korgan.response_types import ResponseObjection, ResponseToClaimDraft
 
 
 def test_response_intent_does_not_steal_feedback() -> None:
@@ -49,3 +49,13 @@ def test_response_docx_uses_a4() -> None:
     section = doc.sections[0]
     assert abs(section.page_width.mm - 210) < 0.2
     assert abs(section.page_height.mm - 297) < 0.2
+
+
+def test_response_draft_coerces_structured_objection_payloads() -> None:
+    draft = ResponseToClaimDraft(
+        status=VerificationStatus.VERIFIED,
+        objections=[{"text": "Основной довод", "subclauses": ["Подпункт"], "prose": ["Пояснение"]}],
+    )
+
+    assert isinstance(draft.objections[0], ResponseObjection)
+    assert draft.objections[0].body_lines() == ["Основной довод", "Подпункт", "Пояснение"]
