@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
-
-import pytest
 
 from korgan import bot as base_bot
 from korgan.claim_release_repair import _client_block_message, repair_claim_release
@@ -88,8 +87,7 @@ def _bad_draft() -> ClaimDraft:
     )
 
 
-@pytest.mark.asyncio
-async def test_final_release_blocker_gets_one_verified_only_repair(monkeypatch) -> None:
+def test_final_release_blocker_gets_one_verified_only_repair(monkeypatch) -> None:
     service = _RepairService()
     monkeypatch.setattr(base_bot, "service", _Adapter(service))
     release = SimpleNamespace(
@@ -103,15 +101,17 @@ async def test_final_release_blocker_gets_one_verified_only_repair(monkeypatch) 
         integrity=[],
     )
 
-    repaired = await repair_claim_release(
-        context=(
-            "Истец оплатил 500 000 тенге по договору. Ответчик обязательство не исполнил. "
-            "Истец просит взыскать 500 000 тенге."
-        ),
-        research=_research(),
-        draft=_bad_draft(),
-        language="ru",
-        release=release,
+    repaired = asyncio.run(
+        repair_claim_release(
+            context=(
+                "Истец оплатил 500 000 тенге по договору. Ответчик обязательство не исполнил. "
+                "Истец просит взыскать 500 000 тенге."
+            ),
+            research=_research(),
+            draft=_bad_draft(),
+            language="ru",
+            release=release,
+        )
     )
 
     assert repaired is not None
