@@ -83,12 +83,13 @@ async def main() -> None:
     # Exact RU/KK consultation and price buttons are handled here before the
     # legacy language/menu routers, so client-facing tariff text stays in sync.
     dp.include_router(consultation_ui_router)
+    # This one narrow router must precede the broad Kazakh free-text router,
+    # otherwise a Kazakh answer-to-pretension request/waiting reply is consumed
+    # as a consultation before the dedicated document flow can see it.
+    dp.include_router(pretrial_response_router)
     dp.include_router(kazakh_router)
     dp.include_router(review_cta_router)
     dp.include_router(document_category_router)
-    # Keep incoming pre-trial responses separate from outgoing pre-trial demands.
-    # This router must get first refusal for its own waiting mode and callback.
-    dp.include_router(pretrial_response_router)
     dp.include_router(pretrial_router)
     dp.include_router(universal_claim_router)
     dp.include_router(universal_document_router)
