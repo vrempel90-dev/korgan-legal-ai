@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import korgan.document_menu_entry as document_menu_entry
-import korgan.strict_bot as strict_bot
 
 
 def test_document_reply_button_is_navigation_in_both_languages() -> None:
@@ -13,7 +13,10 @@ def test_document_reply_button_is_navigation_in_both_languages() -> None:
 
 
 def test_priority_document_router_is_registered_before_all_request_consumers() -> None:
-    source = inspect.getsource(strict_bot.main)
+    # Read the runtime source instead of importing strict_bot. Importing that
+    # module intentionally installs production hooks and would mutate the test
+    # process during collection.
+    source = Path("korgan/strict_bot.py").read_text(encoding="utf-8")
     priority = source.index("dp.include_router(document_menu_entry_router)")
 
     # Any of these routers can legitimately consume free text depending on the
