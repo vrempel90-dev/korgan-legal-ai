@@ -30,9 +30,10 @@ from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
 from korgan.payment_delivery_bridge import install_payment_delivery_bridge
-from korgan.payment_gate import install_payment_gate
 from korgan.payment_pdf_hotfix import install_payment_pdf_hotfix
 from korgan.payment_runtime import router as payment_router
+from korgan.prepayment_gate import install_generation_prepayment_gate
+from korgan.prepayment_runtime import router as prepayment_router
 from korgan.pretrial_response import PretrialResponseProductionService
 from korgan.pretrial_response_runtime import install_pretrial_response_transport, router as pretrial_response_router
 from korgan.pretrial_runtime import router as pretrial_router
@@ -54,7 +55,10 @@ install_client_safe_runtime()
 install_pretrial_response_transport()
 install_response_voice_guard()
 install_payment_pdf_hotfix()
-install_payment_gate()
+# The old gate generated and privately stored a DOCX before asking for payment.
+# Production now uses request-scoped prepayment instead, so that gate is
+# intentionally not installed. Legacy positive-id payment cards remain supported
+# by payment_runtime for already-created documents from previous deployments.
 install_payment_delivery_bridge()
 install_upload_followup_guard()
 install_request_race_guard()
@@ -62,6 +66,11 @@ install_consultation_quota_bridge()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
+
+# Install only after all active generator modules are loaded. Every path that can
+# enter legal research/drafting is wrapped by the same payment-before-generation
+# rule; menu/intake prompts remain free and do not generate a Word document.
+install_generation_prepayment_gate()
 
 LOGGER = logging.getLogger(__name__)
 
@@ -94,9 +103,12 @@ async def main() -> None:
     # state. Otherwise the first tap on «Документ / Құжат» can be swallowed as
     # case text and the client has to tap twice.
     dp.include_router(document_menu_entry_router)
-    # Payment is intentionally manual-final: a receipt must first pass the AI
-    # pre-check, then an administrator verifies the real payment and explicitly
-    # unlocks the held Word file. There is no automatic receipt-to-file release.
+    # Negative transaction ids are pre-generation payments. This router must
+    # receive their admin decisions before the legacy held-document runtime.
+    dp.include_router(prepayment_router)
+    # Receipt flow remains conservative: AI pre-check first, then explicit admin
+    # confirmation against Kaspi Pay history. Positive legacy transactions can
+    # still release documents created before this deployment.
     dp.include_router(payment_router)
     dp.include_router(contact_router)
     # Exact RU/KK consultation and price buttons are handled here before the
@@ -118,7 +130,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: payment-before-generation + >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
