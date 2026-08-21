@@ -53,6 +53,25 @@ def test_explicit_penalty_and_costs_cannot_disappear_from_prayer() -> None:
     assert any("судебные расходы" in error and "нет в разделе" in error for error in errors)
 
 
+def test_multiline_explicit_penalty_and_costs_cannot_disappear() -> None:
+    context = (
+        "Я полностью оплатил работы. Ответчик нарушил срок выполнения.\n"
+        "Прошу взыскать:\n"
+        "- 1 200 000 тенге;\n"
+        "- неустойку;\n"
+        "- судебные расходы."
+    )
+    draft = _draft(
+        legal_basis=["Исполнитель отвечает за нарушение срока выполнения работы."],
+        requests=["Взыскать с Ответчика 1 200 000 тенге."],
+    )
+
+    errors = claim_consistency_errors(context, draft)
+
+    assert any("неустойку/пеню" in error and "исчезло" in error for error in errors)
+    assert any("судебные расходы" in error and "нет в разделе" in error for error in errors)
+
+
 def test_buyer_nonpayment_rule_is_blocked_when_claimant_paid_in_full() -> None:
     context = (
         "Истец полностью оплатил 1 200 000 тенге. "
@@ -112,6 +131,21 @@ def test_penalty_without_amount_cannot_be_filing_ready() -> None:
     draft = _draft(
         legal_basis=["За нарушение срока выполнения работы исполнитель уплачивает неустойку."],
         requests=["Взыскать с Ответчика неустойку."],
+    )
+
+    errors = claim_consistency_errors(context, draft)
+
+    assert any("без конкретного размера" in error for error in errors)
+
+
+def test_principal_amount_does_not_satisfy_separate_penalty_amount() -> None:
+    context = "Прошу взыскать 1 200 000 тенге и неустойку за нарушение срока выполнения работ."
+    draft = _draft(
+        legal_basis=["За нарушение срока выполнения работы исполнитель уплачивает неустойку."],
+        requests=[
+            "Взыскать с Ответчика 1 200 000 тенге.",
+            "Взыскать с Ответчика неустойку.",
+        ],
     )
 
     errors = claim_consistency_errors(context, draft)
