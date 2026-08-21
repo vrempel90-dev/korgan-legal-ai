@@ -16,12 +16,19 @@ _ACTION = re.compile(
     r"дайында\w*|жаса\w*|әзірле\w*|құрастыр\w*|жаз\w*|қалыптастыр\w*)\b"
 )
 
+# Client terminology is intentionally strict:
+# - «отзыв» belongs only to a court response to a claim;
+# - a pre-trial demand gets an «ответ на претензию» / «возражение на претензию».
+# Do not silently reinterpret the old mixed phrase as another document type.
+_LEGACY_MIXED_RU = re.compile(
+    r"(?i)\bотзыв\w*\s+на\s+(?:досудебн\w*\s+)?претензи\w*\b"
+)
+
 _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "pretrial_response",
         re.compile(
-            r"(?i)(?:\bотзыв\w*\s+на\s+(?:досудебн\w*\s+)?претензи\w*|"
-            r"\bответ\w*\s+на\s+(?:досудебн\w*\s+)?претензи\w*|"
+            r"(?i)(?:\bответ\w*\s+на\s+(?:досудебн\w*\s+)?претензи\w*|"
             r"\bвозражен\w*\s+на\s+(?:досудебн\w*\s+)?претензи\w*|"
             r"\bсотқа\s+дейінгі\s+талап\w*\s+(?:жауап\w*|пікір\w*)|"
             r"\bталап\s+хат\w*\s+(?:жауап\w*|пікір\w*))"
@@ -59,6 +66,12 @@ def preferred_document_category(text: str | None) -> str | None:
     """
     value = " ".join((text or "").split())
     if not value:
+        return None
+
+    # «Отзыв на претензию» was the old UI wording. It is deliberately not routed
+    # anywhere now: otherwise the generic word «претензия» could steal the
+    # pre-trial-demand workflow. The new UI says «Ответ на претензию».
+    if _LEGACY_MIXED_RU.search(value):
         return None
 
     actions = list(_ACTION.finditer(value))
