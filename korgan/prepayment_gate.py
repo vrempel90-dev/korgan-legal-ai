@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-from typing import Any, Awaitable, Callable
+from contextvars import ContextVar, Token
 
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -15,6 +15,24 @@ from korgan.payment import document_label, payment_offer_markup
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
+_PAID_DELIVERY: ContextVar[tuple[int, str] | None] = ContextVar(
+    "korgan_paid_document_delivery",
+    default=None,
+)
+
+
+def begin_paid_delivery(user_id: int, kind: str) -> Token[tuple[int, str] | None]:
+    """Authorize DOCX delivery only inside one confirmed generation task."""
+    return _PAID_DELIVERY.set((int(user_id), str(kind)))
+
+
+def end_paid_delivery(token: Token[tuple[int, str] | None]) -> None:
+    _PAID_DELIVERY.reset(token)
+
+
+def is_paid_delivery_authorized(user_id: int, kind: str) -> bool:
+    """True only while an admin-confirmed paid generation is executing."""
+    return _PAID_DELIVERY.get() == (int(user_id), str(kind))
 
 
 def _secret(settings: Settings) -> bytes:
