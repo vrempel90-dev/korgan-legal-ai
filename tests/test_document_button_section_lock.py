@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_category_router import PreferredDocumentCategory, preferred_document_category
