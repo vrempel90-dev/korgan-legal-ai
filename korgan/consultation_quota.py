@@ -12,7 +12,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from korgan.config import Settings
 from korgan.i18n import KK
-from korgan.payment import ReceiptCheck, receipt_hard_issues
+from korgan.payment import ReceiptCheck, receipt_fingerprint, receipt_hard_issues
 
 ALMATY_TZ = ZoneInfo("Asia/Almaty")
 _POOL: asyncpg.Pool | None = None
@@ -74,10 +74,6 @@ class ConsultationOrder:
 def almaty_today(now: datetime | None = None) -> date:
     current = now.astimezone(ALMATY_TZ) if now is not None else datetime.now(ALMATY_TZ)
     return current.date()
-
-
-def receipt_fingerprint(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _require_pool() -> asyncpg.Pool:
