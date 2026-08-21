@@ -11,7 +11,7 @@ _RESPONSE_OBJECT = (
 )
 _DIRECT_RESPONSE_REQUEST = re.compile(
     rf"(?:"
-    rf"\b(?:(?:мне|нам)\s+)?(?:нужен|нужна|нужно|хочу|прошу)\s+(?:проект\s+)?{_RESPONSE_OBJECT}\b|"
+    rf"\b(?:(?:мне|нам)\s+)?(?:нужен|нужна|нужно|нужны|хочу|прошу)\s+(?:проект\s+)?{_RESPONSE_OBJECT}\b|"
     rf"^\s*{_RESPONSE_OBJECT}\s*$"
     rf")",
     re.IGNORECASE,
@@ -19,12 +19,7 @@ _DIRECT_RESPONSE_REQUEST = re.compile(
 
 
 def is_response_to_claim_request(text: str | None) -> bool:
-    """True only for an actual request to prepare a response to a court claim.
-
-    A factual mention that an отзыв на иск already exists must not silently start
-    a new response workflow. Explicit drafting commands are resolved by the same
-    strict category classifier used by the top-level document router.
-    """
+    """True only for an actual request to prepare a response to a court claim."""
     value = " ".join((text or "").split())
     if not value:
         return False
