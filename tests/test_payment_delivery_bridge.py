@@ -51,9 +51,10 @@ def test_generated_claim_answer_document_routes_through_bot_send_document() -> N
         payment_delivery_bridge._ORIGINAL_ANSWER_DOCUMENT = old_original
 
 
-def test_runtime_keeps_delivery_bridge_but_uses_prepayment_before_generation() -> None:
+def test_runtime_keeps_delivery_bridge_and_fail_closed_gate_around_prepayment() -> None:
     source = __import__("pathlib").Path("korgan/strict_bot.py").read_text(encoding="utf-8")
-    assert "install_payment_gate()" not in source
+    assert "install_payment_gate()" in source
     assert "install_payment_delivery_bridge()" in source
     assert "install_generation_prepayment_gate()" in source
+    assert source.index("install_payment_gate()") < source.index("install_payment_delivery_bridge()")
     assert source.index("install_payment_delivery_bridge()") < source.index("install_generation_prepayment_gate()")
