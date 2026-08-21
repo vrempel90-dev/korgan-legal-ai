@@ -6,59 +6,98 @@ from typing import Pattern
 import korgan.senior_claim_preflight as senior_claim_preflight
 from korgan.legal_types import ClaimDraft, LegalResearch
 
-_PENALTY_REQUEST_RE = re.compile(r"(?:неустойк\w*|пен[яию]\b|штраф\w*)", re.IGNORECASE)
-_COST_REQUEST_RE = re.compile(
-    r"(?:судебн\w*\s+расход\w*|расход\w*\s+на\s+представител\w*|расход\w*\s+по\s+делу)",
+_PENALTY_REQUEST_RE = re.compile(
+    r"(?:неустойк\w*|пен[яию]\b|штраф\w*|тұрақсыздық\s+айыб\w*|өсімпұл\w*|айыппұл\w*)",
     re.IGNORECASE,
 )
-_INTENT_VERB_RE = re.compile(r"(?:прошу|требую|хочу|нужно|необходимо|взыска\w*)", re.IGNORECASE)
-_AMOUNT_RE = re.compile(r"(?<!\d)\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|тг\b|₸)", re.IGNORECASE)
+_COST_REQUEST_RE = re.compile(
+    r"(?:судебн\w*\s+расход\w*|расход\w*\s+на\s+представител\w*|расход\w*\s+по\s+делу|"
+    r"сот\s+шығын\w*|сот\s+шығыс\w*|өкіл\w*\s+шығын\w*)",
+    re.IGNORECASE,
+)
+_INTENT_VERB_RE = re.compile(
+    r"(?:прошу|требую|хочу|нужно|необходимо|взыска\w*|сұраймын|талап\s+етемін|өндір\w*)",
+    re.IGNORECASE,
+)
+_NEGATION_BEFORE_RE = re.compile(r"(?:\bне\s+|\bемес\s+)$", re.IGNORECASE)
+_AMOUNT_RE = re.compile(
+    r"(?<!\d)\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸)",
+    re.IGNORECASE,
+)
+_RATE_RE = re.compile(r"(?<!\d)\d+(?:[.,]\d+)?\s*%")
+_PERIOD_RE = re.compile(
+    r"(?:\b\d+\s*(?:дн\w*|күн\w*)\b|"
+    r"\b(?:с|с\s+даты|бастап)\s*\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?.{0,80}"
+    r"(?:по|дейін)\s*\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)",
+    re.IGNORECASE,
+)
+_EXPLICIT_PENALTY_AMOUNT_RE = re.compile(
+    r"(?:неустойк\w*|пен[яию]\b|штраф\w*|тұрақсыздық\s+айыб\w*|өсімпұл\w*|айыппұл\w*)"
+    r"[\s:,-]{0,16}\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸)|"
+    r"\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸)[\s:,-]{0,16}"
+    r"(?:неустойк\w*|пен[яию]\b|штраф\w*|тұрақсыздық\s+айыб\w*|өсімпұл\w*|айыппұл\w*)",
+    re.IGNORECASE,
+)
 
 _PAID_IN_FULL_RE = re.compile(
     r"(?:оплат\w*|уплат\w*|внес\w*)[^\n]{0,90}(?:полностью|в\s+полном\s+объ[её]ме|всю\s+сумм\w*)|"
-    r"(?:полностью|в\s+полном\s+объ[её]ме)[^\n]{0,70}(?:оплат\w*|уплат\w*)",
+    r"(?:полностью|в\s+полном\s+объ[её]ме)[^\n]{0,70}(?:оплат\w*|уплат\w*)|"
+    r"(?:толық|толығымен)[^\n]{0,70}(?:төлед\w*|төлен\w*)|(?:төлед\w*|төлен\w*)[^\n]{0,70}(?:толық|толығымен)",
     re.IGNORECASE,
 )
 _COUNTERPARTY_NONPERFORMANCE_RE = re.compile(
-    r"(?:ответчик|исполнитель|подрядчик|продавец|изготовитель)[^\n]{0,140}"
-    r"(?:не\s+исполнил|не\s+выполнил|не\s+изготовил|не\s+установил|не\s+передал|просроч\w*)",
+    r"(?:ответчик|исполнитель|подрядчик|продавец|изготовитель|жауапкер|орындаушы|мердігер|сатушы)"
+    r"[^\n]{0,140}(?:не\s+исполнил|не\s+выполнил|не\s+изготовил|не\s+установил|не\s+передал|просроч\w*|"
+    r"орындама\w*|жасама\w*|орнатпа\w*|берме\w*|кешіктір\w*|мерзім\w*\s+бұз\w*)",
     re.IGNORECASE,
 )
 _BUYER_NONPAYMENT_BASIS_RE = re.compile(
     r"неоплат\w*\s+покупател\w*|"
     r"неисполнени\w*\s+покупател\w*[^\n]{0,140}предварительн\w*\s+оплат\w*|"
-    r"покупател\w*[^\n]{0,140}не\s+исполн\w*[^\n]{0,90}предварительн\w*\s+оплат\w*",
+    r"покупател\w*[^\n]{0,140}не\s+исполн\w*[^\n]{0,90}предварительн\w*\s+оплат\w*|"
+    r"сатып\s+алушы[^\n]{0,140}(?:төлеме\w*|алдын\s+ала\s+төлем\w*[^\n]{0,80}(?:орындама\w*|төлеме\w*))",
     re.IGNORECASE,
 )
 _WORKS_CONTEXT_RE = re.compile(
-    r"работ\w*|услуг\w*|подряд\w*|ремонт\w*|монтаж\w*|изготовлен\w*|установк\w*|установил\w*",
+    r"работ\w*|услуг\w*|подряд\w*|ремонт\w*|монтаж\w*|изготовлен\w*|установк\w*|установил\w*|"
+    r"жұмыс\w*|қызмет\w*|мердігер\w*|жөндеу\w*|монтаж\w*|дайында\w*|орнат\w*",
     re.IGNORECASE,
 )
 _WORK_DELAY_RE = re.compile(
     r"срок\w*[^\n]{0,120}(?:работ\w*|услуг\w*|изготовлен\w*|установк\w*)|"
-    r"(?:работ\w*|услуг\w*|изготовлен\w*|установк\w*)[^\n]{0,120}(?:срок\w*|просроч\w*)",
+    r"(?:работ\w*|услуг\w*|изготовлен\w*|установк\w*)[^\n]{0,120}(?:срок\w*|просроч\w*)|"
+    r"мерзім\w*[^\n]{0,120}(?:жұмыс\w*|қызмет\w*|дайында\w*|орнат\w*)|"
+    r"(?:жұмыс\w*|қызмет\w*|дайында\w*|орнат\w*)[^\n]{0,120}(?:мерзім\w*|кешіктір\w*)",
     re.IGNORECASE,
 )
 _GOODS_RETURN_PENALTY_BASIS_RE = re.compile(
     r"(?:обмен\w*|возврат\w*)[^\n]{0,140}товар\w*|"
-    r"товар\w*[^\n]{0,180}(?:ненадлежащ\w*\s+качеств\w*|надлежащ\w*\s+качеств\w*)",
+    r"товар\w*[^\n]{0,180}(?:ненадлежащ\w*\s+качеств\w*|надлежащ\w*\s+качеств\w*)|"
+    r"(?:айырбастау\w*|қайтар\w*)[^\n]{0,140}тауар\w*|"
+    r"тауар\w*[^\n]{0,180}(?:сапасыз\w*|тиісті\s+сапа\w*)",
     re.IGNORECASE,
 )
 _WORK_DELAY_PENALTY_BASIS_RE = re.compile(
     r"нарушен\w*\s+срок\w*[^\n]{0,160}(?:начал\w*|окончан\w*|выполнени\w*)[^\n]{0,120}(?:работ\w*|услуг\w*)|"
-    r"(?:работ\w*|услуг\w*)[^\n]{0,180}неустойк\w*[^\n]{0,120}(?:кажд\w*\s+день|просроч\w*)",
+    r"(?:работ\w*|услуг\w*)[^\n]{0,180}неустойк\w*[^\n]{0,120}(?:кажд\w*\s+день|просроч\w*)|"
+    r"мерзім\w*[^\n]{0,160}(?:бастал\w*|аяқтал\w*|орында\w*)[^\n]{0,120}(?:жұмыс\w*|қызмет\w*)|"
+    r"(?:жұмыс\w*|қызмет\w*)[^\n]{0,180}(?:тұрақсыздық\s+айыб\w*|өсімпұл\w*)[^\n]{0,120}(?:әр\s+күн|кешіктір\w*)",
     re.IGNORECASE,
 )
 
 
 def _text(values: list[str]) -> str:
+    """Join non-empty draft lines for deterministic matching."""
     return "\n".join(str(value) for value in values or [] if str(value).strip())
 
 
 def _explicit_intent(text: str, term_re: Pattern[str]) -> bool:
-    """Match an explicit request within a bounded window, including line breaks."""
+    """Match a positive explicit request in a bounded multiline window."""
     value = text or ""
     for verb in _INTENT_VERB_RE.finditer(value):
+        prefix = value[max(0, verb.start() - 16):verb.start()]
+        if _NEGATION_BEFORE_RE.search(prefix):
+            continue
         start = max(0, verb.start() - 80)
         end = min(len(value), verb.end() + 220)
         if term_re.search(value[start:end]):
@@ -66,11 +105,19 @@ def _explicit_intent(text: str, term_re: Pattern[str]) -> bool:
     return False
 
 
+def _has_complete_penalty_calculation(text: str) -> bool:
+    """Accept only an explicit penalty amount or a rate + money base + period."""
+    value = text or ""
+    if _EXPLICIT_PENALTY_AMOUNT_RE.search(value):
+        return True
+    return bool(_RATE_RE.search(value) and _AMOUNT_RE.search(value) and _PERIOD_RE.search(value))
+
+
 def _penalty_request_without_amount(requests: list[str]) -> bool:
-    """Require the amount to belong to the penalty request itself."""
+    """Require each penalty demand to carry its own amount or complete calculation."""
     for request in requests or []:
         text = str(request)
-        if _PENALTY_REQUEST_RE.search(text) and not _AMOUNT_RE.search(text):
+        if _PENALTY_REQUEST_RE.search(text) and not _has_complete_penalty_calculation(text):
             return True
     return False
 
@@ -104,8 +151,8 @@ def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
 
     if penalty_in_prayer and _penalty_request_without_amount(list(draft.requests or [])):
         errors.append(
-            "В разделе «ПРОШУ СУД» заявлена денежная неустойка/пеня без конкретного размера или проверяемого расчета. "
-            "До статуса filing-ready размер должен быть рассчитан по VERIFIED-норме и фактам дела либо документ должен остаться preliminary."
+            "В разделе «ПРОШУ СУД» заявлена денежная неустойка/пеня без конкретного размера или полного проверяемого расчета. "
+            "До статуса filing-ready должны быть указаны размер неустойки либо ставка, денежная база и период расчета; иначе документ должен остаться preliminary."
         )
 
     if (
@@ -141,6 +188,7 @@ def install_claim_consistency_guard() -> None:
         return
 
     def guarded(case_context: str, research: LegalResearch, draft: ClaimDraft) -> list[str]:
+        """Preserve original preflight errors and append consistency defects."""
         base = current(case_context, research, draft)
         extra = claim_consistency_errors(case_context, draft)
         return list(dict.fromkeys([*base, *extra]))
