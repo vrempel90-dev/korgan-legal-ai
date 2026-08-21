@@ -45,8 +45,10 @@ def test_upload_followup_no_longer_pushes_claim_for_other_document_types() -> No
     assert "попросить подготовить иск" not in sink.messages[0]
 
 
-def test_runtime_installs_upload_followup_guard_without_replacing_document_routes() -> None:
+def test_runtime_installs_upload_followup_guard_with_prepayment_and_delivery_fallback() -> None:
     source = Path("korgan/strict_bot.py").read_text(encoding="utf-8")
     assert "install_upload_followup_guard()" in source
     assert "install_payment_gate()" in source
+    assert "install_generation_prepayment_gate()" in source
     assert "install_payment_delivery_bridge()" in source
+    assert source.index("install_payment_gate()") < source.index("install_generation_prepayment_gate()")

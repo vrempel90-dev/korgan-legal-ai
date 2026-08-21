@@ -2,7 +2,7 @@ from korgan.payment_release_guard import PAID_DOCUMENT_KINDS, can_release_paid_d
 
 
 def test_every_paid_document_stays_locked_without_receipt_and_admin_confirmation() -> None:
-    assert PAID_DOCUMENT_KINDS == {"claim", "pretrial", "response", "contract"}
+    assert PAID_DOCUMENT_KINDS == {"claim", "pretrial", "pretrial_response", "response", "contract"}
     for kind in PAID_DOCUMENT_KINDS:
         assert not can_release_paid_document(
             kind=kind,
@@ -24,7 +24,7 @@ def test_every_paid_document_stays_locked_without_receipt_and_admin_confirmation
         ).allowed
 
 
-def test_paid_document_releases_only_after_all_payment_checks() -> None:
+def test_paid_document_releases_or_generates_only_after_all_payment_checks() -> None:
     for kind in PAID_DOCUMENT_KINDS:
         decision = can_release_paid_document(
             kind=kind,
