@@ -23,8 +23,6 @@ def test_payment_storage_never_uses_the_paying_client_chat() -> None:
 
 
 def test_payment_gate_fails_closed_when_no_separate_storage_admin_exists() -> None:
-    # Legacy gate remains covered for compatibility with already-created held DOCX
-    # transactions, even though new production requests use prepayment first.
     source = Path("korgan/payment_gate.py").read_text(encoding="utf-8")
     assert "storage_admin_id = _select_storage_admin(admins, user_id)" in source
     assert "storage_admin_id is None" in source
@@ -47,9 +45,10 @@ def test_upload_followup_no_longer_pushes_claim_for_other_document_types() -> No
     assert "попросить подготовить иск" not in sink.messages[0]
 
 
-def test_runtime_installs_upload_followup_guard_with_prepayment_generation_gate() -> None:
+def test_runtime_installs_upload_followup_guard_with_prepayment_and_delivery_fallback() -> None:
     source = Path("korgan/strict_bot.py").read_text(encoding="utf-8")
     assert "install_upload_followup_guard()" in source
-    assert "install_payment_gate()" not in source
+    assert "install_payment_gate()" in source
     assert "install_generation_prepayment_gate()" in source
     assert "install_payment_delivery_bridge()" in source
+    assert source.index("install_payment_gate()") < source.index("install_generation_prepayment_gate()")
