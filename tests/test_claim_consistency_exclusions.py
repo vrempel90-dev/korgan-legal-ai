@@ -39,6 +39,15 @@ def test_mixed_positive_and_excluded_remedies_are_separated() -> None:
     assert any("судебные расходы" in error and "нет в разделе" in error for error in errors)
 
 
+def test_new_intent_verb_resets_previous_exclusion_without_comma() -> None:
+    errors = claim_consistency_errors(
+        "Прошу взыскать основную сумму без неустойки и взыскать судебные расходы.",
+        _draft(),
+    )
+    assert not any("неустойку/пеню" in error and "исчезло" in error for error in errors)
+    assert any("судебные расходы" in error and "нет в разделе" in error for error in errors)
+
+
 def test_without_penalty_and_costs_excludes_both() -> None:
     errors = claim_consistency_errors(
         "Прошу взыскать только основную сумму без неустойки и судебных расходов.",
