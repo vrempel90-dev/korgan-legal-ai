@@ -21,7 +21,13 @@ from korgan.gate_instructions import keep_accepted_provisions
 from korgan.instant_claim_runtime import _strip_reference_token
 from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
-from korgan.request_scope import request_label, start_new_document_request
+from korgan.request_scope import (
+    current_request_id,
+    is_main_menu_text,
+    request_is_current,
+    request_label,
+    start_new_document_request,
+)
 from korgan.response_intent import is_response_to_claim_request
 from korgan.telegram_text import bullets, fit_caption
 
@@ -33,7 +39,13 @@ _SENIOR_SCORE_RE = re.compile(r"SENIOR_PREFLIGHT_SCORE:\s*(\d+(?:[.,]\d+)?)\s*/\
 class _ClaimWaiting(Filter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
-        return data.get("mode") == "universal_claim_waiting"
+        text = message.text or ""
+        return (
+            data.get("mode") == "universal_claim_waiting"
+            and bool(text)
+            and not text.startswith("/")
+            and not is_main_menu_text(text)
+        )
 
 
 class _ClaimIntent(Filter):
@@ -42,6 +54,8 @@ class _ClaimIntent(Filter):
         if data.get("mode") in {"consultation", "contract_details", "response_details"}:
             return False
         text = message.text or ""
+        if is_main_menu_text(text):
+            return False
         if is_response_to_claim_request(text) or is_contract_drafting_request(text):
             return False
         return bool(text and is_claim_drafting_request(text))
@@ -49,7 +63,7 @@ class _ClaimIntent(Filter):
 
 async def _append_fact_once(state: FSMContext, text: str) -> None:
     value = (text or "").strip()
-    if not value:
+    if not value or is_main_menu_text(value):
         return
     data = await state.get_data()
     facts = list(data.get("facts", []) or [])
@@ -192,7 +206,12 @@ async def _send_claim(
     context: str,
     research: LegalResearch,
     draft: ClaimDraft,
+    request_id: str,
 ) -> None:
+    if not await request_is_current(state, request_id, "claim"):
+        LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+        return
+
     fit = enforce_legal_basis_fit(draft)
     if fit:
         draft.status = VerificationStatus.NEEDS_VERIFICATION
@@ -208,6 +227,9 @@ async def _send_claim(
             [x.as_note() for x in release.citations.blocking[:4]],
             [x.as_note() for x in release.integrity[:4]],
         )
+        if not await request_is_current(state, request_id, "claim"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return
         await message.answer(
             "Не удалось безопасно выпустить Word: финальная проверка обнаружила повреждённый текст или неподтверждённую правовую ссылку.",
             reply_markup=base_bot.MENU,
@@ -227,6 +249,9 @@ async def _send_claim(
     try:
         file_bytes = build_claim_docx(draft)
     except Exception as exc:
+        if not await request_is_current(state, request_id, "claim"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return
         await base_bot._report_claim_failure(
             message,
             failure_from_exception(exc, stage=ClaimStage.RENDER),
@@ -236,10 +261,17 @@ async def _send_claim(
     export_blockers = rendered_docx_blockers(file_bytes, ready_expected=quality.ready)
     if quality.ready and export_blockers:
         LOGGER.error("UNIVERSAL_CLAIM_DOCX_BLOCK quality=%.1f issues=%s", quality.score, export_blockers)
+        if not await request_is_current(state, request_id, "claim"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return
         await message.answer(
             "Не удалось безопасно выпустить готовый Word: экспорт не прошёл финальную проверку качества.",
             reply_markup=base_bot.MENU,
         )
+        return
+
+    if not await request_is_current(state, request_id, "claim"):
+        LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
         return
 
     await state.update_data(mode="main", gate_issues=[], claim_draft=None, pending_fields=[])
@@ -251,6 +283,9 @@ async def _send_claim(
         if checks:
             caption += "\n\nПеред подачей требуется:\n" + bullets(checks)
 
+    if not await request_is_current(state, request_id, "claim"):
+        LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+        return
     await message.answer_document(
         BufferedInputFile(file_bytes, filename="KORGAN_iskovoe_zayavlenie.docx"),
         caption=fit_caption(caption),
@@ -263,6 +298,7 @@ async def _generate_now(message: Message, state: FSMContext) -> None:
     if service is None:
         return
 
+    request_id = await current_request_id(state, "claim")
     context = await base_bot._case_context(state)
     if not context.strip():
         await begin_claim_request(message, state)
@@ -283,6 +319,9 @@ async def _generate_now(message: Message, state: FSMContext) -> None:
     try:
         research = await service.research_case(context, language=lang)
     except Exception as exc:
+        if not await request_is_current(state, request_id, "claim"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return
         await base_bot._report_claim_failure(
             message,
             failure_from_exception(exc, stage=ClaimStage.RESEARCH),
@@ -292,6 +331,9 @@ async def _generate_now(message: Message, state: FSMContext) -> None:
     try:
         draft = await service.draft_claim(context, research, language=lang)
     except Exception as exc:
+        if not await request_is_current(state, request_id, "claim"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return
         await base_bot._report_claim_failure(
             message,
             failure_from_exception(exc, stage=ClaimStage.DRAFT),
@@ -307,7 +349,14 @@ async def _generate_now(message: Message, state: FSMContext) -> None:
         time.perf_counter() - started,
         draft.status.value,
     )
-    await _send_claim(message, state, context=context, research=research, draft=draft)
+    await _send_claim(
+        message,
+        state,
+        context=context,
+        research=research,
+        draft=draft,
+        request_id=request_id,
+    )
 
 
 @router.message(Command("claim"))

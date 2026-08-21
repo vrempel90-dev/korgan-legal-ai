@@ -15,7 +15,13 @@ from korgan.pretrial_response import (
     is_pretrial_response_request,
     pretrial_response_quality_issues,
 )
-from korgan.request_scope import request_label, start_new_document_request
+from korgan.request_scope import (
+    current_request_id,
+    is_main_menu_text,
+    request_is_current,
+    request_label,
+    start_new_document_request,
+)
 from korgan.ui import main_menu
 
 LOGGER = logging.getLogger(__name__)
@@ -32,7 +38,13 @@ _LEGACY_MIXED_RU = re.compile(
 class _Waiting(BaseFilter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
-        return data.get("mode") == "pretrial_response_waiting" and bool(message.text) and not message.text.startswith("/")
+        text = message.text or ""
+        return (
+            data.get("mode") == "pretrial_response_waiting"
+            and bool(text)
+            and not text.startswith("/")
+            and not is_main_menu_text(text)
+        )
 
 
 class _Intent(BaseFilter):
@@ -95,7 +107,7 @@ async def _save_text(message: Message, state: FSMContext) -> None:
     if message.from_user is not None and message.from_user.is_bot:
         return
     text = (message.text or "").strip()
-    if not text:
+    if not text or is_main_menu_text(text):
         return
     data = await state.get_data()
     facts = list(data.get("facts", []) or [])
@@ -135,6 +147,7 @@ async def _ask_materials(message: Message, state: FSMContext, language: str) -> 
 
 async def _generate(message: Message, state: FSMContext) -> None:
     await _save_text(message, state)
+    request_id = await current_request_id(state, "pretrial_response")
     language = await _lang(state)
     context = await base_bot._case_context(state)
     menu = main_menu(language)
@@ -165,12 +178,19 @@ async def _generate(message: Message, state: FSMContext) -> None:
         file_bytes = build_pretrial_response_docx(draft, language=language)
     except Exception:
         LOGGER.exception("Pretrial response generation failed")
+        if not await request_is_current(state, request_id, "pretrial_response"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=pretrial_response request_id=%s", request_id)
+            return
         await message.answer(
             "Сотқа дейінгі талапқа жауапты қауіпсіз қалыптастыру мүмкін болмады. Материалдарды тексеріп, қайта көріңіз."
             if language == KK
             else "Не удалось безопасно сформировать ответ на претензию. Проверьте материалы и повторите запрос.",
             reply_markup=menu,
         )
+        return
+
+    if not await request_is_current(state, request_id, "pretrial_response"):
+        LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=pretrial_response request_id=%s", request_id)
         return
 
     if issues:

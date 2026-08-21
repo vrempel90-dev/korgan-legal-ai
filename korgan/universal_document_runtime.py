@@ -13,7 +13,13 @@ from korgan.contract_docx import build_contract_docx
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
 from korgan.legal_types import VerificationStatus
-from korgan.request_scope import request_label, start_new_document_request
+from korgan.request_scope import (
+    current_request_id,
+    is_main_menu_text,
+    request_is_current,
+    request_label,
+    start_new_document_request,
+)
 from korgan.response_docx import build_response_to_claim_docx
 from korgan.response_intent import is_response_to_claim_request
 from korgan.telegram_text import bullets, fit_caption
@@ -27,19 +33,33 @@ router = Router(name="universal-quality-documents")
 class ContractDetailsFilter(BaseFilter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
-        return data.get("mode") == "contract_details" and bool(message.text) and not message.text.startswith("/")
+        text = message.text or ""
+        return (
+            data.get("mode") == "contract_details"
+            and bool(text)
+            and not text.startswith("/")
+            and not is_main_menu_text(text)
+        )
 
 
 class ResponseDetailsFilter(BaseFilter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
-        return data.get("mode") == "response_details" and bool(message.text) and not message.text.startswith("/")
+        text = message.text or ""
+        return (
+            data.get("mode") == "response_details"
+            and bool(text)
+            and not text.startswith("/")
+            and not is_main_menu_text(text)
+        )
 
 
 class ContractRequestFilter(BaseFilter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
         if data.get("mode") in {"consultation", "response_details"}:
+            return False
+        if is_main_menu_text(message.text):
             return False
         if is_response_to_claim_request(message.text):
             return False
@@ -51,6 +71,8 @@ class ResponseRequestFilter(BaseFilter):
         data = await state.get_data()
         if data.get("mode") in {"consultation", "contract_details"}:
             return False
+        if is_main_menu_text(message.text):
+            return False
         return is_response_to_claim_request(message.text)
 
 
@@ -58,7 +80,7 @@ async def _save_user_text(message: Message, state: FSMContext, *, min_length: in
     if message.from_user is not None and message.from_user.is_bot:
         return
     text = (message.text or "").strip()
-    if not text or len(text) < min_length:
+    if not text or len(text) < min_length or is_main_menu_text(text):
         return
     if text in {"📄 Документ", "🤝 Договор", "🛡 Отзыв на иск", "⚖️ Исковое заявление"}:
         return
@@ -108,6 +130,7 @@ async def _ask_response(message: Message, state: FSMContext) -> None:
 
 async def _send_contract(message: Message, state: FSMContext) -> None:
     await _save_user_text(message, state, min_length=24)
+    request_id = await current_request_id(state, "contract")
     context = await base_bot._case_context(state)
     if not context.strip() or len(context.strip()) < 80:
         await _ask_contract(message, state)
@@ -132,10 +155,17 @@ async def _send_contract(message: Message, state: FSMContext) -> None:
         file_bytes = build_contract_docx(draft)
     except Exception:
         LOGGER.exception("Universal contract generation failed")
+        if not await request_is_current(state, request_id, "contract"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=contract request_id=%s", request_id)
+            return
         await message.answer(
             "Не удалось безопасно сформировать договор. KORGAN не будет выдавать неподтверждённый текст как готовый документ.",
             reply_markup=main_menu(),
         )
+        return
+
+    if not await request_is_current(state, request_id, "contract"):
+        LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=contract request_id=%s", request_id)
         return
 
     export_blockers = rendered_docx_blockers(file_bytes, ready_expected=quality.ready)
@@ -161,6 +191,7 @@ async def _send_contract(message: Message, state: FSMContext) -> None:
 
 async def _send_response(message: Message, state: FSMContext) -> None:
     await _save_user_text(message, state)
+    request_id = await current_request_id(state, "response")
     context = await base_bot._case_context(state)
     if not _looks_like_claim_materials(context):
         await _ask_response(message, state)
@@ -185,10 +216,17 @@ async def _send_response(message: Message, state: FSMContext) -> None:
         file_bytes = build_response_to_claim_docx(draft)
     except Exception:
         LOGGER.exception("Universal response-to-claim generation failed")
+        if not await request_is_current(state, request_id, "response"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=response request_id=%s", request_id)
+            return
         await message.answer(
             "Не удалось безопасно сформировать отзыв. KORGAN не будет выдавать неподтверждённый текст как готовый документ.",
             reply_markup=main_menu(),
         )
+        return
+
+    if not await request_is_current(state, request_id, "response"):
+        LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=response request_id=%s", request_id)
         return
 
     export_blockers = rendered_docx_blockers(file_bytes, ready_expected=quality.ready)

@@ -5,6 +5,8 @@ from uuid import uuid4
 
 from aiogram.fsm.context import FSMContext
 
+from korgan.i18n import BUTTONS, KK, RU
+
 # Only request/case-specific keys are reset. Consent, selected language,
 # consultation counters and other account/session settings are preserved.
 _REQUEST_SCOPED_KEYS = {
@@ -26,6 +28,31 @@ _REQUEST_SCOPED_KEYS = {
     "pending_document_request",
 }
 
+# These are persistent reply-keyboard actions, not legal facts. A document flow
+# waiting for text must always yield to them on the first tap.
+_MAIN_MENU_KEYS = (
+    "consultation",
+    "document",
+    "prices",
+    "case",
+    "lawyer",
+    "help",
+    "support",
+    "feedback",
+    "language",
+    "delete",
+)
+_MAIN_MENU_TEXTS = frozenset(
+    BUTTONS[language][key]
+    for language in (RU, KK)
+    for key in _MAIN_MENU_KEYS
+)
+
+
+def is_main_menu_text(text: str | None) -> bool:
+    """Return True for persistent navigation buttons in either client language."""
+    return (text or "").strip() in _MAIN_MENU_TEXTS
+
 
 def request_label(kind: str, language: str = "ru") -> str:
     kk = language == "kk"
@@ -37,6 +64,30 @@ def request_label(kind: str, language: str = "ru") -> str:
         "contract": "Шарт" if kk else "Договор",
     }
     return labels.get(kind, kind)
+
+
+async def current_request_id(state: FSMContext, kind: str) -> str:
+    """Return the active request id only when it still belongs to ``kind``."""
+    data = await state.get_data()
+    if data.get("request_kind") != kind:
+        return ""
+    return str(data.get("request_id") or "")
+
+
+async def request_is_current(state: FSMContext, request_id: str, kind: str) -> bool:
+    """Protect clients from results produced by a request they already left.
+
+    Legal drafting can take several seconds. During that time the client may open
+    another document. The old task must then become silent: it may finish its
+    internal work, but it must never release a DOCX or trigger the payment gate.
+    """
+    if not request_id:
+        return False
+    data = await state.get_data()
+    return (
+        str(data.get("request_id") or "") == request_id
+        and data.get("request_kind") == kind
+    )
 
 
 async def start_new_document_request(
