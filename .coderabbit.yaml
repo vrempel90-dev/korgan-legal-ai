@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "ru-RU"
+early_access: false
+tone_instructions: "Ищи реальные баги и регрессии в изменениях PR. Приоритет: корректность, безопасность состояния, гонки и неверная маршрутизация. Не придирайся к стилю без риска для работы."
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "korgan/**/*.py"
+      instructions: |
+        KORGAN Legal AI — production Telegram AI-agent for legal documents in Kazakhstan.
+        Treat routing/state bugs as critical, especially when one document type can trigger another generator.
+
+        Review invariants:
+        - A document selected by button is authoritative for that request: claim, pretrial, pretrial_response, response, or contract.
+        - request_kind + request_id must own the whole request. Text mentioning another legal document must not switch generators.
+        - A generator must fail closed before any OpenAI research/drafting call if it does not own the active request.
+        - Menu callbacks may only create a fresh request and prompt for client materials; they must never generate DOCX or trigger payment/delivery directly.
+        - Results from stale requests must never be delivered after the user opens another request.
+        - Persistent menu buttons must never be swallowed as legal facts or require a second tap.
+        - New requests must clear request-scoped legal/payment data but preserve language, consent and account/session settings.
+        - Be especially alert to aiogram router ordering, overlapping filters, MemoryStorage state, async races, duplicate handlers and broad natural-language intent detectors.
+        - Do not recommend broad refactors when a small fail-closed guard is safer.
+        - Production runs from branch feature/openai-docs-claims with entrypoint python -m korgan.strict_bot; do not assume main is production.
+
+    - path: "tests/**/*.py"
+      instructions: |
+        Require regression tests for every routing/state bug. Prefer tests that prove all five document types remain isolated.
+        A fix is incomplete if it only tests the originally failing document while sibling document routes can still regress.
+        Flag tests that only inspect source strings when a behavioral async/state test would materially improve confidence.
+
+    - path: "korgan/strict_bot.py"
+      instructions: |
+        Router registration order is behavior-critical. Flag changes that let generic/natural-intent handlers run before authoritative menu/document ownership guards.
+        Preserve the production entrypoint and avoid silently switching deployment assumptions to main.
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
