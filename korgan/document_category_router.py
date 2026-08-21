@@ -7,21 +7,14 @@ from aiogram.filters import Filter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from korgan.request_scope import is_main_menu_text
+from korgan.request_scope import active_document_kind, is_main_menu_text
 
 router = Router(name="strict-document-category-router")
 
-# This router does not generate anything itself. It only decides which existing,
-# already-tested document workflow owns an explicit drafting request.
 _ACTION = re.compile(
     r"(?i)\b(?:подготов\w*|состав\w*|сформир\w*|сдел\w*|напиш\w*|напис\w*|созда\w*|сгенерир\w*|оформ\w*|разработ\w*|"
     r"дайында\w*|жаса\w*|әзірле\w*|құрастыр\w*|жаз\w*|қалыптастыр\w*)\b"
 )
-
-# Client terminology is intentionally strict:
-# - «отзыв» belongs only to a court response to a claim;
-# - a pre-trial demand gets an «ответ на претензию» / «возражение на претензию».
-# Do not silently reinterpret the old mixed phrase as another document type.
 _LEGACY_MIXED_RU = re.compile(
     r"(?i)\bотзыв\w*\s+на\s+(?:досудебн\w*\s+)?претензи\w*\b"
 )
@@ -59,20 +52,9 @@ _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 
 def preferred_document_category(text: str | None) -> str | None:
-    """Return the category explicitly requested nearest to the last drafting verb.
-
-    A case description can contain phrases such as «досудебная претензия
-    направлена» or «договор заключён», while the final instruction is
-    «подготовь иск». The document noun nearest to the last drafting verb owns the
-    request, so factual mentions cannot steal another category's workflow.
-    """
     value = " ".join((text or "").split())
     if not value:
         return None
-
-    # «Отзыв на претензию» was the old UI wording. It is deliberately not routed
-    # anywhere now: otherwise the generic word «претензия» could steal the
-    # pre-trial-demand workflow. The new UI says «Ответ на претензию».
     if _LEGACY_MIXED_RU.search(value):
         return None
 
@@ -108,23 +90,24 @@ class PreferredDocumentCategory(Filter):
         data = await state.get_data()
         mode = data.get("mode")
 
-        # Consultation owns ordinary consultation text. Document buttons/callbacks
-        # are handled separately and can still start a new request explicitly.
+        # A button-created request is authoritative. Case text may mention any
+        # other legal document, but cannot switch the current section.
+        if active_document_kind(data) is not None:
+            return False
+
         if mode == "consultation":
             return False
 
         category = preferred_document_category(text)
         if category is not None:
-            # An explicit "prepare X" always means a new document request, even
-            # if the previous document workflow was waiting for more details.
             return {
                 "document_category": category,
                 "document_request_explicit": True,
             }
 
-        # Non-command text while the claim workflow is waiting remains case facts
-        # for that same request. Keep the legacy filter payload shape so existing
-        # claim-waiting behavior and tests remain stable.
+        # Backward compatibility for legacy in-memory claim states created before
+        # request_id/request_kind existed. New production requests are handled by
+        # document_section_lock instead.
         if mode == "universal_claim_waiting":
             return {"document_category": "claim"}
 
@@ -138,9 +121,6 @@ async def route_explicit_document_request(
     document_category: str,
     document_request_explicit: bool = False,
 ) -> None:
-    # Lazy imports are deliberate. The production runtime installs its
-    # quality/RAG hotfix layer before importing these generator modules; category
-    # isolation must not change that initialization order.
     from korgan import pretrial_response_runtime, pretrial_runtime, universal_claim_runtime, universal_document_runtime
 
     if document_category == "claim":

@@ -21,6 +21,7 @@ from korgan.consultation_ui_runtime import router as consultation_ui_router
 from korgan.contact_handlers import router as contact_router
 from korgan.document_category_router import router as document_category_router
 from korgan.document_menu_entry import router as document_menu_entry_router
+from korgan.document_section_lock import router as document_section_lock_router
 from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
 from korgan.kazakh_ui import router as kazakh_router
@@ -117,6 +118,10 @@ async def main() -> None:
     dp.include_router(consultation_ui_router)
     dp.include_router(kazakh_router)
     dp.include_router(review_cta_router)
+    # The selected document button owns all intake text. This router must run
+    # before text-based intent/category routers so case facts cannot switch a
+    # claim into a contract, pretrial demand or response (and vice versa).
+    dp.include_router(document_section_lock_router)
     dp.include_router(document_category_router)
     dp.include_router(pretrial_response_router)
     dp.include_router(pretrial_router)
@@ -131,7 +136,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: payment-before-generation + fail-closed payment fallback + >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: payment-before-generation + fail-closed payment fallback + strict document section lock + >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
