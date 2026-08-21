@@ -156,6 +156,15 @@ async def ensure_prepayment(message: Message, state: FSMContext, *, kind: str) -
         )
         return False
 
+    if str(data.get("prepayment_consumed_request_id") or "") == request_id:
+        await message.answer(
+            "Документ по этой оплаченной заявке уже запускался. Для нового документа откройте новую заявку."
+            if language != KK
+            else
+            "Осы төленген өтінім бойынша құжат бұрын іске қосылған. Жаңа құжат үшін жаңа өтінім ашыңыз."
+        )
+        return False
+
     if (
         str(data.get("prepayment_confirmed_request_id") or "") == request_id
         and str(data.get("prepayment_confirmed_kind") or "") == kind

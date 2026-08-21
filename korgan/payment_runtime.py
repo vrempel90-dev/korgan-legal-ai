@@ -133,6 +133,7 @@ async def payment_proof_requested(callback: CallbackQuery, state: FSMContext) ->
         payment_kind=kind,
         payment_language=language,
         payment_signature=signature,
+        payment_admin_confirmed_transaction_key=None,
     )
     await callback.answer()
     if callback.message:

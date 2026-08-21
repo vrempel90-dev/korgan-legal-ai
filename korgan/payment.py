@@ -144,6 +144,11 @@ class ReceiptAnalyzer:
         )
 
 
+def receipt_fingerprint(data: bytes) -> str:
+    """Return the stable single-use identity shared by receipt workflows."""
+    return hashlib.sha256(data).hexdigest()
+
+
 def document_label(kind: str, language: str) -> str:
     return (_KIND_KK if language == KK else _KIND_RU)[kind]
 

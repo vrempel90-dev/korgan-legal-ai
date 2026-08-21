@@ -53,11 +53,10 @@ def test_new_document_is_known_to_transport_and_payment() -> None:
     assert "Ответ на претензию" in localized_transport._document_client_caption("pretrial_response", "ru")
 
 
-def test_payment_offer_no_longer_requires_admin_confirmation() -> None:
+def test_auto_payment_offer_preserves_admin_confirmation() -> None:
     from korgan import payment_gate
 
     install_auto_payment()
     text = payment_gate.payment_offer_text("claim", "ru", 1000)
     assert "KORGAN AI" in text
-    assert "администратор" not in text.lower()
-    assert "ручн" not in text.lower()
+    assert "администратор" in text.lower()
