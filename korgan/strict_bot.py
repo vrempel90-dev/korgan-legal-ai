@@ -20,6 +20,7 @@ from korgan.consultation_quota_runtime import router as consultation_quota_route
 from korgan.consultation_ui_runtime import router as consultation_ui_router
 from korgan.contact_handlers import router as contact_router
 from korgan.document_category_router import router as document_category_router
+from korgan.document_generator_ownership_guard import install_document_generator_ownership_guard
 from korgan.document_menu_entry import router as document_menu_entry_router
 from korgan.document_section_lock import router as document_section_lock_router
 from korgan.kazakh_article_forms import install_kazakh_article_forms
@@ -68,6 +69,11 @@ install_consultation_quota_bridge()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
+
+# The selected button must remain authoritative all the way down to the actual
+# research/drafting function. Install this after every document runtime exists,
+# but before the prepayment wrapper is layered on top of the generators.
+install_document_generator_ownership_guard()
 
 # Install only after all active generator modules are loaded. Every normal path
 # that can enter legal research/drafting is wrapped by the same prepayment rule;
@@ -136,7 +142,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: payment-before-generation + fail-closed payment fallback + strict document section lock + >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + >=8.5 quality core + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
