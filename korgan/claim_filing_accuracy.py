@@ -20,6 +20,7 @@ from korgan.provision_check import paraphrase_defects
 
 FILING_ACTION_PREFIX = "FILING_ACTION: "
 LEGAL_GROUNDING_PREFIX = "LEGAL_GROUNDING: "
+LEGAL_CORRECTION_PREFIX = "LEGAL_CORRECTION: "
 
 _VERIFIED_LINE_RE = re.compile(
     r"^(?P<statement>.*?)\s*\[основание:\s*(?P<article>.*?);\s*"
@@ -27,6 +28,7 @@ _VERIFIED_LINE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _ARTICLE_RE = re.compile(r"(?:статья|статьи|ст\.)\s*(\d+(?:-\d+)?)", re.IGNORECASE)
+_ARTICLE_REPLACE_RE = re.compile(r"((?:статья|статьи|ст\.)\s*)\d+(?:-\d+)?", re.IGNORECASE)
 _PART_RE = re.compile(r"(?:част[ьи]|пункт|п\.)\s*(\d+(?:-\d+)?)", re.IGNORECASE)
 _INTERNAL_MARKER_RE = re.compile(
     r"\[(?:ТРЕБУЕТ\s+(?:ПРОВЕРКИ|УТОЧНЕНИЯ|ДОБАВИТЬ)|ТЕКСЕРУ\s+ҚАЖЕТ|НАҚТЫЛАУ\s+ҚАЖЕТ)[^\]]*\]",
@@ -64,7 +66,6 @@ _SOURCE_ACT_IDS: tuple[tuple[str, str], ...] = (
     ("Z100000274_", ACT_CONSUMER),
     ("K1500000414", ACT_LABOR),
 )
-
 _REGISTRY_PATH = Path(__file__).resolve().parent / "data" / "court_registry.json"
 
 
@@ -89,13 +90,17 @@ def _is_legal_entity(values: list[str]) -> bool:
 
 def _claimant_context(case_context: str) -> str:
     text = case_context or ""
-    match = re.search(r"(?is)(?:истец|талап\s+қоюшы)\s*:\s*(.*?)(?=\n\s*(?:ответчик|жауапкер)\s*:|\Z)", text)
+    match = re.search(
+        r"(?is)(?:истец|талап\s+қоюшы)\s*:\s*(.*?)(?=(?:\n|\s)(?:ответчик|жауапкер)\s*:|\Z)",
+        text,
+    )
     return match.group(1).strip() if match else text
 
 
 def _source_act_id(source_url: str) -> str | None:
+    lowered = (source_url or "").lower()
     for token, act_id in _SOURCE_ACT_IDS:
-        if token.lower() in (source_url or "").lower():
+        if token.lower() in lowered:
             return act_id
     return None
 
@@ -110,6 +115,10 @@ def _part_number(article: str) -> str:
     return match.group(1) if match else ""
 
 
+def _replace_article_number(article: str, article_no: str) -> str:
+    return _ARTICLE_REPLACE_RE.sub(lambda match: f"{match.group(1)}{article_no}", article, count=1)
+
+
 def _quote_matches_body(quote: str, body: str) -> bool:
     quote_norm = _normalized(quote)
     body_norm = _normalized(body)
@@ -117,24 +126,19 @@ def _quote_matches_body(quote: str, body: str) -> bool:
         return False
     if quote_norm in body_norm:
         return True
-
     quote_tokens = {token for token in re.findall(r"[0-9a-zа-яё]{4,}", (quote or "").lower())}
     body_tokens = {token for token in re.findall(r"[0-9a-zа-яё]{4,}", (body or "").lower())}
-    if not quote_tokens:
-        return False
-    return len(quote_tokens & body_tokens) / len(quote_tokens) >= 0.88
+    return bool(quote_tokens) and len(quote_tokens & body_tokens) / len(quote_tokens) >= 0.88
 
 
-def _article_rows(corpus: Any, act_id: str, article_no: str) -> list[dict[str, str]]:
-    rows = corpus.connection.execute(
-        """
-        SELECT p.article_no, p.item_no, p.heading, p.body, p.url
-        FROM provisions p
-        WHERE p.act_id = ? AND p.article_no = ?
-        ORDER BY p.sort_key, p.item_no
-        """,
-        (act_id, article_no),
-    ).fetchall()
+def _rows(corpus: Any, act_id: str, article_no: str | None = None) -> list[dict[str, str]]:
+    sql = (
+        "SELECT p.article_no, p.item_no, p.heading, p.body, p.url FROM provisions p WHERE p.act_id = ?"
+        + (" AND p.article_no = ?" if article_no else "")
+        + " ORDER BY p.sort_key, p.item_no"
+    )
+    params: tuple[str, ...] = (act_id, article_no) if article_no else (act_id,)
+    raw_rows = corpus.connection.execute(sql, params).fetchall()
     return [
         {
             "article_no": str(row["article_no"] or ""),
@@ -143,8 +147,47 @@ def _article_rows(corpus: Any, act_id: str, article_no: str) -> list[dict[str, s
             "body": str(row["body"] or ""),
             "url": str(row["url"] or ""),
         }
-        for row in rows
+        for row in raw_rows
     ]
+
+
+def _actual_text(row: dict[str, str]) -> str:
+    return f"{row['heading']} {row['body']}".strip()
+
+
+def _find_quote_match(
+    rows: list[dict[str, str]],
+    quote: str,
+    statement: str,
+    *,
+    part_no: str = "",
+) -> dict[str, str] | None:
+    candidates = [row for row in rows if not part_no or row["item_no"] == part_no]
+    if not candidates:
+        candidates = rows
+    for row in candidates:
+        actual = _actual_text(row)
+        if _quote_matches_body(quote, actual) and not paraphrase_defects(statement, actual):
+            return row
+    return None
+
+
+def _find_unique_correction(
+    corpus: Any,
+    act_id: str,
+    quote: str,
+    statement: str,
+) -> dict[str, str] | None:
+    matches = [
+        row
+        for row in _rows(corpus, act_id)
+        if _quote_matches_body(quote, _actual_text(row)) and not paraphrase_defects(statement, _actual_text(row))
+    ]
+    article_numbers = {row["article_no"] for row in matches if row["article_no"]}
+    if len(article_numbers) != 1:
+        return None
+    article_no = next(iter(article_numbers))
+    return next(row for row in matches if row["article_no"] == article_no)
 
 
 def _add_note(draft: ClaimDraft, note: str) -> None:
@@ -154,12 +197,11 @@ def _add_note(draft: ClaimDraft, note: str) -> None:
 
 def _clean_basis_line(value: str) -> str:
     text = " ".join((value or "").split()).strip()
-    text = re.sub(r"\.{2,}$", ".", text)
-    return text
+    return re.sub(r"\.{2,}$", ".", text)
 
 
 def _ground_legal_basis(research: LegalResearch, draft: ClaimDraft) -> None:
-    """Re-bind filing citations to the local Adilet corpus before DOCX release."""
+    """Re-bind every filing citation to the local Adilet corpus before DOCX release."""
     if not local_corpus_enabled():
         cleaned: list[str] = []
         for value in draft.legal_basis:
@@ -207,42 +249,35 @@ def _ground_legal_basis(research: LegalResearch, draft: ClaimDraft) -> None:
             act_id = _source_act_id(source)
             article_no = _article_number(article)
             if not act_id or not article_no:
-                rejected.append(f"не удалось однозначно связать правовое основание с локальным корпусом: {article or 'без статьи'}")
+                rejected.append(f"не удалось однозначно связать правовое основание с корпусом: {article or 'без статьи'}")
                 continue
 
-            rows = _article_rows(corpus, act_id, article_no)
-            if not rows:
-                rejected.append(f"статья {article_no} отсутствует в актуальном локальном корпусе для указанного официального акта")
-                continue
-
-            part_no = _part_number(article)
-            candidates = [row for row in rows if not part_no or row["item_no"] == part_no]
-            if not candidates:
-                candidates = rows
-
-            matched = next(
-                (
-                    row
-                    for row in candidates
-                    if _quote_matches_body(quote, f"{row['heading']} {row['body']}")
-                ),
-                None,
+            article_rows = _rows(corpus, act_id, article_no)
+            matched = _find_quote_match(
+                article_rows,
+                quote,
+                statement,
+                part_no=_part_number(article),
             )
+            rendered_article = article
+
+            if matched is None:
+                correction = _find_unique_correction(corpus, act_id, quote, statement)
+                if correction is not None and correction["article_no"] != article_no:
+                    rendered_article = _replace_article_number(article, correction["article_no"])
+                    correction_note = f"{article} -> {rendered_article}; дословный фрагмент однозначно совпал с локальным корпусом Adilet"
+                    audit = LEGAL_CORRECTION_PREFIX + correction_note
+                    if audit not in research.notes:
+                        research.notes.append(audit)
+                    matched = correction
+
             if matched is None:
                 rejected.append(
-                    f"текст нормы не принадлежит указанной статье {article_no}; ссылка исключена из судебного текста"
+                    f"текст нормы не принадлежит указанной статье {article_no}, а безопасная однозначная коррекция не найдена"
                 )
                 continue
 
-            actual_text = f"{matched['heading']} {matched['body']}"
-            drift = paraphrase_defects(statement, actual_text)
-            if drift:
-                rejected.append(
-                    f"пересказ статьи {article_no} не прошёл сверку с текстом нормы: {'; '.join(drift[:2])}"
-                )
-                continue
-
-            rendered = _clean_basis_line(f"{statement}. Правовое основание: {article}.")
+            rendered = _clean_basis_line(f"{statement}. Правовое основание: {rendered_article}.")
             if rendered not in accepted:
                 accepted.append(rendered)
     finally:
@@ -298,21 +333,15 @@ def _gpk27_supports_business_court() -> bool:
     if corpus is None:
         return False
     try:
-        rows = _article_rows(corpus, ACT_GPK, "27")
+        article_rows = _rows(corpus, ACT_GPK, "27")
     finally:
         corpus.close()
-    text = " ".join(f"{row['heading']} {row['body']}" for row in rows).lower().replace("ё", "е")
-    return (
-        "экономическ" in text
-        and "юридическ" in text
-        and ("предпринимател" in text or "индивидуальн" in text)
-    )
+    text = " ".join(_actual_text(row) for row in article_rows).lower().replace("ё", "е")
+    return "экономическ" in text and "юридическ" in text and "предпринимател" in text
 
 
 def _apply_court_gate(research: LegalResearch, draft: ClaimDraft) -> None:
-    claimant_business = _is_business_subject(draft.claimant)
-    defendant_business = _is_business_subject(draft.defendant)
-    if not (claimant_business and defendant_business):
+    if not (_is_business_subject(draft.claimant) and _is_business_subject(draft.defendant)):
         return
 
     verified = _verified_court(research)
@@ -333,8 +362,7 @@ def _apply_court_gate(research: LegalResearch, draft: ClaimDraft) -> None:
             draft.court = "[ТРЕБУЕТ УТОЧНЕНИЯ: специализированный межрайонный экономический суд по территориальной подсудности]"
         return
 
-    city = _city_from_party(draft.defendant)
-    court = _economic_registry_court(city)
+    court = _economic_registry_court(_city_from_party(draft.defendant))
     if court:
         draft.court = court
         note = f"VERIFIED_COURT: {court}"
