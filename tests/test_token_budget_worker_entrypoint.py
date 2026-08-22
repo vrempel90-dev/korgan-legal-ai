@@ -20,7 +20,12 @@ def test_strict_runtime_applies_budget_guard_before_legal_service() -> None:
             consultation_limit_enabled=False,
         )
         strict_bot.get_settings = lambda: settings
-        strict_bot.apply_token_budget_guard = lambda received: events.append("budget_guard")
+
+        def budget_guard(received):
+            assert received is settings
+            events.append("budget_guard")
+
+        strict_bot.apply_token_budget_guard = budget_guard
 
         def stable_service(received):
             assert received is settings
