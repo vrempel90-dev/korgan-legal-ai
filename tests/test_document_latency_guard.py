@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
-import pytest
-
+from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
 from korgan.contract_generation_hotfix import ProductionOpenAILegalService as ContractHotfixService
 from korgan.contract_repair_state import (
     contract_repair_completed,
@@ -60,8 +60,13 @@ def _contract_payload() -> dict:
     }
 
 
-@pytest.mark.asyncio
-async def test_outer_repair_is_skipped_only_after_lower_repair_completed(monkeypatch):
+def _production_adapter() -> ClaimPipelineV2Adapter:
+    inner = object.__new__(PretrialResponseProductionService)
+    inner.settings = SimpleNamespace(max_case_text_chars=42000)
+    return ClaimPipelineV2Adapter(inner)
+
+
+def test_outer_repair_is_skipped_only_after_lower_repair_completed(monkeypatch):
     draft = _incomplete_contract()
     calls = {"lower": 0, "outer_repair": 0}
 
@@ -77,11 +82,13 @@ async def test_outer_repair_is_skipped_only_after_lower_repair_completed(monkeyp
     monkeypatch.setattr(InstantClaimProductionService, "draft_contract", lower_contract)
     monkeypatch.setattr(UniversalQualityProductionService, "_quality_repair", forbidden_outer_repair)
 
-    service = object.__new__(UniversalQualityProductionService)
-    result = await service.draft_contract(
-        "Стороны: ТОО «Заказчик», БИН 150640012233; ТОО «Исполнитель», БИН 150640012244",
-        _research(),
-        language="ru",
+    adapter = _production_adapter()
+    result = asyncio.run(
+        adapter.draft_contract(
+            "Стороны: ТОО «Заказчик», БИН 150640012233; ТОО «Исполнитель», БИН 150640012244",
+            _research(),
+            language="ru",
+        )
     )
 
     assert result is draft
@@ -90,8 +97,7 @@ async def test_outer_repair_is_skipped_only_after_lower_repair_completed(monkeyp
     assert any("KORGAN QUALITY" in note for note in result.verification_notes)
 
 
-@pytest.mark.asyncio
-async def test_outer_repair_is_preserved_when_lower_pipeline_did_not_repair(monkeypatch):
+def test_outer_repair_is_preserved_when_lower_pipeline_did_not_repair(monkeypatch):
     draft = _incomplete_contract()
     calls = {"lower": 0, "outer_repair": 0}
 
@@ -106,19 +112,20 @@ async def test_outer_repair_is_preserved_when_lower_pipeline_did_not_repair(monk
     monkeypatch.setattr(InstantClaimProductionService, "draft_contract", lower_contract)
     monkeypatch.setattr(UniversalQualityProductionService, "_quality_repair", outer_repair)
 
-    service = object.__new__(UniversalQualityProductionService)
-    result = await service.draft_contract(
-        "Стороны: ТОО «Заказчик», БИН 150640012233; ТОО «Исполнитель», БИН 150640012244",
-        _research(),
-        language="ru",
+    adapter = _production_adapter()
+    result = asyncio.run(
+        adapter.draft_contract(
+            "Стороны: ТОО «Заказчик», БИН 150640012233; ТОО «Исполнитель», БИН 150640012244",
+            _research(),
+            language="ru",
+        )
     )
 
     assert calls == {"lower": 1, "outer_repair": 1}
     assert result.status == VerificationStatus.NEEDS_VERIFICATION
 
 
-@pytest.mark.asyncio
-async def test_contract_hotfix_marks_successful_lower_repair(monkeypatch):
+def test_contract_hotfix_marks_successful_lower_repair(monkeypatch):
     class FakeResponses:
         async def create(self, **kwargs):
             return SimpleNamespace(
@@ -135,19 +142,24 @@ async def test_contract_hotfix_marks_successful_lower_repair(monkeypatch):
     reset_contract_repair_state()
     assert contract_repair_completed() is False
 
-    await service._structured_response(
-        model="gpt-5.1",
-        instructions="repair",
-        content="{}",
-        schema_name="korgan_contract_repair",
-        schema={},
+    asyncio.run(
+        service._structured_response(
+            model="gpt-5.1",
+            instructions="repair",
+            content="{}",
+            schema_name="korgan_contract_repair",
+            schema={},
+        )
     )
 
     assert contract_repair_completed() is True
 
 
-def test_production_service_mro_keeps_quality_and_contract_hotfix_layers():
+def test_production_service_mro_and_adapter_expose_quality_contract_path():
     mro = PretrialResponseProductionService.mro()
     assert UniversalQualityProductionService in mro
     assert ContractHotfixService in mro
     assert mro.index(UniversalQualityProductionService) < mro.index(ContractHotfixService)
+
+    adapter = _production_adapter()
+    assert adapter.draft_contract.__func__ is UniversalQualityProductionService.draft_contract
