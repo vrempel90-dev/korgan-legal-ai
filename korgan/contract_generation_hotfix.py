@@ -5,6 +5,7 @@ import logging
 import time
 from typing import Any
 
+from korgan.contract_repair_state import mark_contract_repair_completed
 from korgan.late_interest_hotfix import ProductionOpenAILegalService as _BaseProductionOpenAILegalService
 from korgan.verified_openai import _actual_response_urls
 
@@ -102,6 +103,11 @@ class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
                 if attempt < len(limits):
                     continue
                 raise
+
+            if schema_name == "korgan_contract_repair":
+                # Request-local ContextVar: concurrent Telegram generations cannot
+                # suppress each other's quality repair pass.
+                mark_contract_repair_completed()
 
             LOGGER.info(
                 "KORGAN contract structured call: schema=%s attempt=%d max_tokens=%d status=%s reason=%s seconds=%.2f chars=%d actual_web_urls=%d",
