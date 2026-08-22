@@ -48,6 +48,7 @@ from korgan.request_race_guard import install_request_race_guard
 from korgan.response_voice_guard import install_response_voice_guard
 from korgan.review_cta_runtime import router as review_cta_router
 from korgan.stable_legal_release import install_stable_legal_release
+from korgan.token_budget_guard import apply_token_budget_guard
 from korgan.ui import main_menu
 from korgan.upload_followup_guard import install_upload_followup_guard
 
@@ -95,6 +96,7 @@ async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
 
 async def main() -> None:
     settings = get_settings()
+    apply_token_budget_guard(settings)
     stable_service = PretrialResponseProductionService(settings)
     base_bot.service = ClaimPipelineV2Adapter(stable_service)
     base_bot.MENU = main_menu()
