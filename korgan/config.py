@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     max_case_text_chars: int = 60000
     admin_telegram_ids: str = ""
 
+    # Shared four-month OpenAI target: ~$60 across KORGAN + NeuroBalance.
+    # KORGAN initially receives the larger $10/month slice because source-bound
+    # legal research is quality-critical. No legal model is downgraded here.
+    monthly_ai_budget_usd: float = 10.0
+    token_budget_guard_enabled: bool = True
+    # Experimental ClaimPipelineV2 adds several model calls around the proven
+    # production path. Enabling it under a tight budget requires an explicit opt-in.
+    allow_extra_ai_pipeline_calls: bool = False
+
     # Document payment gate.
     payments_enabled: bool = False
     kaspi_payment_url: str = ""
