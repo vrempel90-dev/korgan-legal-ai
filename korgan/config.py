@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     max_case_text_chars: int = 60000
     admin_telegram_ids: str = ""
 
+    # Cost-control target. This does not weaken source-bound research, drafting,
+    # validation or release gates; it prevents accidental opt-in to extra model
+    # stages unless explicitly allowed.
+    monthly_ai_budget_usd: float = 10.0
+    token_budget_guard_enabled: bool = True
+    allow_extra_ai_pipeline_calls: bool = False
+
     # Document payment gate.
     payments_enabled: bool = False
     kaspi_payment_url: str = ""
