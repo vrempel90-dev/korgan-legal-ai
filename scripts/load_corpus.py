@@ -220,21 +220,19 @@ def load_act_text(
 ) -> int:
     """Validate already-extracted official text and replace one act in the temp corpus.
 
-    ``source_url`` records where the refresh bytes actually came from. For ZAN
-    fallback refreshes, ``citation_url`` may remain the stable canonical Adilet
-    act URL used in filing-facing citations; the act row still records ZAN as
-    refresh provenance.
+    ``source_url`` records where the refresh bytes actually came from. ZAN may
+    therefore be stored as act provenance, but filing-facing provision links are
+    always canonical Adilet links for the same act.
     """
     if act_id not in KNOWN_ACTS:
         raise SourceRejected(f"акт {act_id} не входит в список загружаемых")
 
     adilet_id, title = KNOWN_ACTS[act_id]
     check_source(source_url, text, act_id=act_id)
-    if citation_url is not None and not (
-        is_allowed_adilet_url(citation_url, act_id=act_id)
-        or is_allowed_zan_pdf_url(citation_url, act_id=act_id)
-    ):
-        raise SourceRejected(f"citation URL не соответствует акту {act_id}: {citation_url}")
+
+    base_citation_url = citation_url or act_url(act_id)
+    if not is_allowed_adilet_url(base_citation_url, act_id=act_id):
+        raise SourceRejected(f"citation URL не соответствует canonical Adilet акту {act_id}: {base_citation_url}")
 
     provisions = parse_provisions(text, articles)
     if not provisions:
@@ -252,7 +250,6 @@ def load_act_text(
     )
     corpus.clear_act(act_id)
 
-    base_citation_url = citation_url or source_url
     for provision in provisions:
         corpus.upsert_provision(
             act_id=act_id,
