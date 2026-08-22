@@ -249,6 +249,9 @@ async def _send_claim(
             LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
             return
         lang = await base_bot._language(state)
+        if not await request_is_current(state, request_id, "claim"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return
         if lang == "kk":
             text = (
                 "Иск Word ретінде әлі шығарылмады: сотқа берілетін құжатта орындалатын талаптар "
