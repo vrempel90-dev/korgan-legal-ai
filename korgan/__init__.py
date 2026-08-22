@@ -2,6 +2,8 @@
 
 from korgan.claim_consistency_guard import install_claim_consistency_guard
 from korgan.claim_release_repair import install_claim_release_repair
+from korgan.client_document_feedback_safe import install_client_document_feedback_safe
 
 install_claim_consistency_guard()
 install_claim_release_repair()
+install_client_document_feedback_safe()

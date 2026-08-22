@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -14,6 +15,8 @@ DOCUMENT_REQUEST_KINDS = frozenset({
     "response",
     "contract",
 })
+
+_REQUEST_LOCKS: dict[tuple[object, ...], asyncio.Lock] = {}
 
 # Only request/case-specific keys are reset. Consent, selected language,
 # consultation counters and other account/session settings are preserved.
@@ -34,6 +37,10 @@ _REQUEST_SCOPED_KEYS = {
     "field_attempts",
     "pending_document_kind",
     "pending_document_request",
+    "client_checklist_request_id",
+    "client_checklist_kind",
+    "generation_progress_request_id",
+    "generation_progress_kind",
     # Payment is bound to one immutable request_id. A new document request must
     # never inherit either an old receipt session or an already-confirmed payment.
     "payment_admin_doc_message_id",
@@ -51,8 +58,6 @@ _REQUEST_SCOPED_KEYS = {
     "prepayment_consumed_request_id",
 }
 
-# These are persistent reply-keyboard actions, not legal facts. A document flow
-# waiting for text must always yield to them on the first tap.
 _MAIN_MENU_KEYS = (
     "consultation",
     "document",
@@ -72,19 +77,37 @@ _MAIN_MENU_TEXTS = frozenset(
 )
 
 
+def _request_lock_key(state: FSMContext) -> tuple[object, ...]:
+    """Build a stable per-Telegram-session lock key across FSMContext instances."""
+    key = getattr(state, "key", None)
+    if key is None:
+        return ("state", id(state))
+    return (
+        "telegram",
+        getattr(key, "bot_id", None),
+        getattr(key, "chat_id", None),
+        getattr(key, "user_id", None),
+        getattr(key, "thread_id", None),
+    )
+
+
+def document_request_lock(state: FSMContext) -> asyncio.Lock:
+    """Return the lock shared by request replacement and final client notices."""
+    key = _request_lock_key(state)
+    lock = _REQUEST_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _REQUEST_LOCKS[key] = lock
+    return lock
+
+
 def is_main_menu_text(text: str | None) -> bool:
     """Return True for persistent navigation buttons in either client language."""
     return (text or "").strip() in _MAIN_MENU_TEXTS
 
 
 def active_document_kind(data: dict) -> str | None:
-    """Return the document section that owns the current request, if any.
-
-    A selected document button is the source of truth for the request. Words such
-    as «договор», «претензия» or «отзыв» inside case facts must never move the
-    client into another document workflow. Switching sections requires starting
-    another request through its document button/callback.
-    """
+    """Return the document section that owns the current request, if any."""
     kind = str(data.get("request_kind") or "")
     request_id = str(data.get("request_id") or "")
     if request_id and kind in DOCUMENT_REQUEST_KINDS:
@@ -113,12 +136,7 @@ async def current_request_id(state: FSMContext, kind: str) -> str:
 
 
 async def request_is_current(state: FSMContext, request_id: str, kind: str) -> bool:
-    """Protect clients from results produced by a request they already left.
-
-    Legal drafting can take several seconds. During that time the client may open
-    another document. The old task must then become silent: it may finish its
-    internal work, but it must never release a DOCX or trigger the payment gate.
-    """
+    """Return whether an async result still belongs to the active request."""
     if not request_id:
         return False
     data = await state.get_data()
@@ -134,30 +152,26 @@ async def start_new_document_request(
     kind: str,
     mode: str,
 ) -> str:
-    """Start a clean legal-document request without touching consent/session settings.
-
-    Every explicit document selection gets a fresh request id and empty case
-    materials. This prevents facts/uploads from a previous matter from triggering
-    generation of a new document before the user supplies new materials.
-    """
+    """Atomically replace the active document request without touching consent settings."""
     if kind not in DOCUMENT_REQUEST_KINDS:
         raise ValueError(f"Unsupported document request kind: {kind}")
 
-    data = dict(await state.get_data())
-    for key in _REQUEST_SCOPED_KEYS:
-        data.pop(key, None)
+    async with document_request_lock(state):
+        data = dict(await state.get_data())
+        for key in _REQUEST_SCOPED_KEYS:
+            data.pop(key, None)
 
-    request_id = uuid4().hex
-    data.update(
-        {
-            "documents": [],
-            "facts": [],
-            "consulted_articles": [],
-            "mode": mode,
-            "request_kind": kind,
-            "request_id": request_id,
-            "request_started_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
-    await state.set_data(data)
-    return request_id
+        request_id = uuid4().hex
+        data.update(
+            {
+                "documents": [],
+                "facts": [],
+                "consulted_articles": [],
+                "mode": mode,
+                "request_kind": kind,
+                "request_id": request_id,
+                "request_started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        await state.set_data(data)
+        return request_id
