@@ -19,10 +19,11 @@ import os
 import re
 import ssl
 import urllib.request
+from collections.abc import Callable
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from pypdf import PdfReader
 
@@ -53,8 +54,39 @@ _PINNED_INTERMEDIATES: tuple[tuple[str, str], ...] = (
         "8AADF068A1B7C04B3E346F7C97FD9619FFF14ECC6C82C2F15594B9732F3F3E72",
     ),
 )
-_PINNED_CA_HOSTS = {"gogetssl-cdn.s3.eu-central-1.amazonaws.com"}
+_PINNED_CA_URLS = frozenset(url for url, _ in _PINNED_INTERMEDIATES)
 _EDITION_RE = re.compile(r"Дата\s+редакции\s+(\d{2}\.\d{2}\.\d{4})", re.IGNORECASE)
+
+
+class _AllowlistedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject every redirect target before urllib can contact it."""
+
+    def __init__(self, allow_url: Callable[[str], bool]) -> None:
+        super().__init__()
+        self._allow_url = allow_url
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        absolute = urljoin(req.full_url, newurl)
+        if not self._allow_url(absolute):
+            raise RuntimeError(f"redirect target rejected before request: {absolute}")
+        return super().redirect_request(req, fp, code, msg, headers, absolute)
+
+
+def _open_allowlisted(
+    request: urllib.request.Request,
+    *,
+    context: ssl.SSLContext,
+    timeout: int,
+    allow_url: Callable[[str], bool],
+):
+    """Open one HTTPS request with source-specific pre-request redirect validation."""
+    if not allow_url(request.full_url):
+        raise RuntimeError(f"URL rejected before request: {request.full_url}")
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=context),
+        _AllowlistedRedirectHandler(allow_url),
+    )
+    return opener.open(request, timeout=timeout)  # noqa: S310 - strict allowlist handler
 
 
 def autoload_enabled() -> bool:
@@ -75,30 +107,54 @@ def _is_allowed_adilet_url(url: str) -> bool:
     return is_allowed_adilet_url(url)
 
 
-def _read_https(url: str, *, context: ssl.SSLContext, timeout: int = 60) -> tuple[str, str]:
-    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.3"})
-    with urllib.request.urlopen(request, timeout=timeout, context=context) as response:  # noqa: S310
+def _act_id_for_adilet_url(url: str) -> str | None:
+    for act_id in KNOWN_ACTS:
+        if is_allowed_adilet_url(url, act_id=act_id):
+            return act_id
+    return None
+
+
+def _read_https(
+    url: str,
+    *,
+    context: ssl.SSLContext,
+    act_id: str,
+    timeout: int = 60,
+) -> tuple[str, str]:
+    allow_url = lambda target: is_allowed_adilet_url(target, act_id=act_id)
+    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.4"})
+    with _open_allowlisted(
+        request,
+        context=context,
+        timeout=timeout,
+        allow_url=allow_url,
+    ) as response:
         final_url = response.geturl()
-        if not is_allowed_adilet_url(final_url):
+        if not allow_url(final_url):
             raise RuntimeError(f"Adilet redirect rejected: {final_url}")
         charset = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(charset, errors="replace"), final_url
 
 
-def _download_pinned_intermediate(url: str, expected_sha256: str) -> str:
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname not in _PINNED_CA_HOSTS:
-        raise RuntimeError(f"CA download host rejected: {url}")
+def _is_allowed_pinned_ca_url(url: str) -> bool:
+    """Pinned CA downloads may use only the exact fingerprint-bound URL."""
+    return url in _PINNED_CA_URLS
 
-    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.3"})
-    with urllib.request.urlopen(
+
+def _download_pinned_intermediate(url: str, expected_sha256: str) -> str:
+    if not _is_allowed_pinned_ca_url(url):
+        raise RuntimeError(f"CA download URL rejected: {url}")
+
+    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.4"})
+    with _open_allowlisted(
         request,
         timeout=30,
         context=ssl.create_default_context(),
-    ) as response:  # noqa: S310
-        final = urlparse(response.geturl())
-        if final.scheme != "https" or final.hostname not in _PINNED_CA_HOSTS:
-            raise RuntimeError(f"CA redirect rejected: {response.geturl()}")
+        allow_url=_is_allowed_pinned_ca_url,
+    ) as response:
+        final_url = response.geturl()
+        if not _is_allowed_pinned_ca_url(final_url):
+            raise RuntimeError(f"CA redirect rejected: {final_url}")
         pem = response.read().decode("ascii").strip()
 
     if "-----BEGIN CERTIFICATE-----" not in pem or "-----END CERTIFICATE-----" not in pem:
@@ -129,9 +185,10 @@ def _adilet_context_with_pinned_intermediates() -> ssl.SSLContext:
 
 
 def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
-    """Fetch an official Russian Adilet page with TLS verification always on."""
-    if not is_allowed_adilet_url(url):
-        raise RuntimeError(f"Adilet URL rejected: {url}")
+    """Fetch one expected Adilet act with verified TLS and bound redirects."""
+    act_id = _act_id_for_adilet_url(url)
+    if act_id is None:
+        raise RuntimeError(f"Adilet URL rejected or not bound to a known act: {url}")
 
     parsed = urlparse(url)
     alt_host = (
@@ -143,14 +200,24 @@ def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
     errors: list[str] = []
     for candidate in candidates:
         try:
-            return _read_https(candidate, context=standard, timeout=timeout)
+            return _read_https(
+                candidate,
+                context=standard,
+                act_id=act_id,
+                timeout=timeout,
+            )
         except Exception as exc:
             errors.append(f"{candidate}: {type(exc).__name__}: {exc}")
 
     supplemented = _adilet_context_with_pinned_intermediates()
     for candidate in candidates:
         try:
-            return _read_https(candidate, context=supplemented, timeout=timeout)
+            return _read_https(
+                candidate,
+                context=supplemented,
+                act_id=act_id,
+                timeout=timeout,
+            )
         except Exception as exc:
             errors.append(f"{candidate} + pinned CA: {type(exc).__name__}: {exc}")
 
@@ -160,20 +227,22 @@ def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
 def _read_zan_pdf(act_id: str, *, timeout: int = 90) -> tuple[bytes, str]:
     """Download one allowlisted ZAN PDF using the platform trust store."""
     url = zan_pdf_url(act_id)
-    if not is_allowed_zan_pdf_url(url, act_id=act_id):
+    allow_url = lambda target: is_allowed_zan_pdf_url(target, act_id=act_id)
+    if not allow_url(url):
         raise RuntimeError(f"ZAN URL rejected before request: {url}")
 
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "KORGAN-corpus-loader/1.3", "Accept": "application/pdf"},
+        headers={"User-Agent": "KORGAN-corpus-loader/1.4", "Accept": "application/pdf"},
     )
-    with urllib.request.urlopen(  # noqa: S310 - strict official allowlist above/below
+    with _open_allowlisted(
         request,
         timeout=timeout,
         context=ssl.create_default_context(),
+        allow_url=allow_url,
     ) as response:
         final_url = response.geturl()
-        if not is_allowed_zan_pdf_url(final_url, act_id=act_id):
+        if not allow_url(final_url):
             raise RuntimeError(f"ZAN redirect rejected: {final_url}")
         content_type = (response.headers.get_content_type() or "").lower()
         if content_type not in {"application/pdf", "application/octet-stream"}:
