@@ -57,6 +57,17 @@ _SPECIAL_JURISDICTION_RE = re.compile(
     r"(?:административн\w*\s+суд|военн\w*\s+суд|суд\s+по\s+делам\s+несовершеннолетн\w*)",
     re.IGNORECASE,
 )
+_PRIVATE_LAW_RE = re.compile(
+    r"(?:договор\w*|задолженн\w*|неустойк\w*|убытк\w*|поставк\w*|услуг\w*|подряд\w*|аренд\w*|"
+    r"за[её]м\w*|купл\w*[- ]продаж\w*|оплат\w*|неосновательн\w*\s+обогащен\w*)",
+    re.IGNORECASE,
+)
+_PUBLIC_LAW_RE = re.compile(
+    r"(?:административн\w*\s+(?:иск|дел|судопроизвод)|оспарив\w*\s+(?:акт|решен|действ)|"
+    r"обжалован\w*\s+(?:акт|решен|предписан|постановлен)|налогов\w*\s+(?:уведомлен|предписан|решен)|"
+    r"государственн\w*\s+орган\w*\s+(?:издал|принял|вынес))",
+    re.IGNORECASE,
+)
 
 _SOURCE_ACT_IDS: tuple[tuple[str, str], ...] = (
     ("K940001000_", ACT_GK_GENERAL),
@@ -162,8 +173,11 @@ def _find_quote_match(
     *,
     part_no: str = "",
 ) -> dict[str, str] | None:
-    candidates = [row for row in rows if not part_no or row["item_no"] == part_no]
-    if not candidates:
+    if part_no:
+        candidates = [row for row in rows if row["item_no"] == part_no]
+        if not candidates:
+            return None
+    else:
         candidates = rows
     for row in candidates:
         actual = _actual_text(row)
@@ -177,22 +191,31 @@ def _find_unique_correction(
     act_id: str,
     quote: str,
     statement: str,
+    *,
+    required_part: str = "",
 ) -> dict[str, str] | None:
     matches = [
         row
         for row in _rows(corpus, act_id)
-        if _quote_matches_body(quote, _actual_text(row)) and not paraphrase_defects(statement, _actual_text(row))
+        if (not required_part or row["item_no"] == required_part)
+        and _quote_matches_body(quote, _actual_text(row))
+        and not paraphrase_defects(statement, _actual_text(row))
     ]
-    article_numbers = {row["article_no"] for row in matches if row["article_no"]}
-    if len(article_numbers) != 1:
+    keys = {(row["article_no"], row["item_no"]) for row in matches if row["article_no"]}
+    if len(keys) != 1:
         return None
-    article_no = next(iter(article_numbers))
-    return next(row for row in matches if row["article_no"] == article_no)
+    article_no, item_no = next(iter(keys))
+    return next(row for row in matches if row["article_no"] == article_no and row["item_no"] == item_no)
 
 
 def _add_note(draft: ClaimDraft, note: str) -> None:
     if note and note not in draft.verification_notes:
         draft.verification_notes.append(note)
+
+
+def _add_filing_action(draft: ClaimDraft, message: str) -> None:
+    draft.status = VerificationStatus.NEEDS_VERIFICATION
+    _add_note(draft, FILING_ACTION_PREFIX + message)
 
 
 def _clean_basis_line(value: str) -> str:
@@ -203,16 +226,13 @@ def _clean_basis_line(value: str) -> str:
 def _ground_legal_basis(research: LegalResearch, draft: ClaimDraft) -> None:
     """Re-bind every filing citation to the local Adilet corpus before DOCX release."""
     if not local_corpus_enabled():
-        cleaned: list[str] = []
-        for value in draft.legal_basis:
-            line = _clean_basis_line(str(value))
-            if not line or _INTERNAL_MARKER_RE.search(line):
-                if line:
-                    _add_note(draft, LEGAL_GROUNDING_PREFIX + "служебная пометка удалена из правового обоснования.")
-                continue
-            if line not in cleaned:
-                cleaned.append(line)
-        draft.legal_basis = cleaned
+        draft.legal_basis = []
+        draft.status = VerificationStatus.NEEDS_VERIFICATION
+        _add_note(
+            draft,
+            LEGAL_GROUNDING_PREFIX
+            + "локальная сверка Adilet отключена; непроверенные правовые основания не выпущены в судебный текст.",
+        )
         return
 
     corpus = open_corpus()
@@ -252,28 +272,32 @@ def _ground_legal_basis(research: LegalResearch, draft: ClaimDraft) -> None:
                 rejected.append(f"не удалось однозначно связать правовое основание с корпусом: {article or 'без статьи'}")
                 continue
 
+            part_no = _part_number(article)
             article_rows = _rows(corpus, act_id, article_no)
-            matched = _find_quote_match(
-                article_rows,
-                quote,
-                statement,
-                part_no=_part_number(article),
-            )
+            matched = _find_quote_match(article_rows, quote, statement, part_no=part_no)
             rendered_article = article
 
             if matched is None:
-                correction = _find_unique_correction(corpus, act_id, quote, statement)
+                correction = _find_unique_correction(
+                    corpus,
+                    act_id,
+                    quote,
+                    statement,
+                    required_part=part_no,
+                )
                 if correction is not None and correction["article_no"] != article_no:
                     rendered_article = _replace_article_number(article, correction["article_no"])
-                    correction_note = f"{article} -> {rendered_article}; дословный фрагмент однозначно совпал с локальным корпусом Adilet"
-                    audit = LEGAL_CORRECTION_PREFIX + correction_note
+                    audit = (
+                        LEGAL_CORRECTION_PREFIX
+                        + f"{article} -> {rendered_article}; дословный фрагмент однозначно совпал с одним положением локального корпуса Adilet"
+                    )
                     if audit not in research.notes:
                         research.notes.append(audit)
                     matched = correction
 
             if matched is None:
                 rejected.append(
-                    f"текст нормы не принадлежит указанной статье {article_no}, а безопасная однозначная коррекция не найдена"
+                    f"текст нормы/части не принадлежит указанной ссылке {article}, а безопасная однозначная коррекция не найдена"
                 )
                 continue
 
@@ -340,7 +364,7 @@ def _gpk27_supports_business_court() -> bool:
     return "экономическ" in text and "юридическ" in text and "предпринимател" in text
 
 
-def _apply_court_gate(research: LegalResearch, draft: ClaimDraft) -> None:
+def _apply_court_gate(case_context: str, research: LegalResearch, draft: ClaimDraft) -> None:
     if not (_is_business_subject(draft.claimant) and _is_business_subject(draft.defendant)):
         return
 
@@ -348,15 +372,20 @@ def _apply_court_gate(research: LegalResearch, draft: ClaimDraft) -> None:
     if verified and _ECONOMIC_COURT_RE.search(verified):
         draft.court = verified
         return
-    if verified and _SPECIAL_JURISDICTION_RE.search(verified):
+    if (verified and _SPECIAL_JURISDICTION_RE.search(verified)) or _SPECIAL_JURISDICTION_RE.search(draft.court or ""):
+        return
+
+    if _PUBLIC_LAW_RE.search(case_context or "") or not _PRIVATE_LAW_RE.search(case_context or ""):
+        _add_filing_action(
+            draft,
+            "подтвердить, что спор между организациями относится к гражданскому/экономическому судопроизводству до выбора экономического суда.",
+        )
         return
 
     if not _gpk27_supports_business_court():
-        draft.status = VerificationStatus.NEEDS_VERIFICATION
-        _add_note(
+        _add_filing_action(
             draft,
-            FILING_ACTION_PREFIX
-            + "подтвердить компетенцию суда для спора между субъектами предпринимательства по актуальной редакции ГПК РК.",
+            "подтвердить компетенцию экономического суда по актуальной редакции ГПК РК для данного частноправового спора.",
         )
         if "экономическ" not in (draft.court or "").lower():
             draft.court = "[ТРЕБУЕТ УТОЧНЕНИЯ: специализированный межрайонный экономический суд по территориальной подсудности]"
@@ -375,11 +404,10 @@ def _apply_court_gate(research: LegalResearch, draft: ClaimDraft) -> None:
         ]
         return
 
-    draft.status = VerificationStatus.NEEDS_VERIFICATION
     draft.court = "[ТРЕБУЕТ УТОЧНЕНИЯ: специализированный межрайонный экономический суд по территориальной подсудности]"
-    _add_note(
+    _add_filing_action(
         draft,
-        FILING_ACTION_PREFIX + "подтвердить точное официальное наименование экономического суда по месту надлежащей подсудности.",
+        "подтвердить точное официальное наименование экономического суда по месту надлежащей подсудности.",
     )
 
 
@@ -400,23 +428,18 @@ def _positive_state_duty(draft: ClaimDraft) -> bool:
 def _apply_filing_prerequisites(case_context: str, draft: ClaimDraft) -> None:
     claimant_text = " ".join([_party_text(draft.claimant), _claimant_context(case_context)])
     if _is_legal_entity(draft.claimant) and not _BANK_RE.search(claimant_text):
-        _add_note(
-            draft,
-            FILING_ACTION_PREFIX + "указать банковские реквизиты истца-юридического лица перед подачей иска.",
-        )
+        _add_filing_action(draft, "указать банковские реквизиты истца-юридического лица перед подачей иска.")
 
     attachments = "\n".join(str(item or "") for item in draft.attachments)
     if _positive_state_duty(draft) and not _DUTY_PROOF_RE.search(attachments):
-        _add_note(
+        _add_filing_action(
             draft,
-            FILING_ACTION_PREFIX
-            + "приложить документ об уплате государственной пошлины либо документ/ходатайство, подтверждающее законное основание не прикладывать оплату.",
+            "приложить документ об уплате государственной пошлины либо документ/ходатайство, подтверждающее законное основание не прикладывать оплату.",
         )
     if _is_legal_entity(draft.claimant) and not _REGISTRATION_RE.search(attachments):
-        _add_note(
+        _add_filing_action(
             draft,
-            FILING_ACTION_PREFIX
-            + "приложить документ о государственной регистрации/перерегистрации истца-юридического лица, если он требуется для подачи.",
+            "приложить документ о государственной регистрации/перерегистрации истца-юридического лица, если он требуется для подачи.",
         )
 
 
@@ -427,6 +450,6 @@ def apply_claim_filing_accuracy(
 ) -> None:
     """Apply zero-call, fail-closed filing accuracy rules to every claim draft."""
     _ground_legal_basis(research, draft)
-    _apply_court_gate(research, draft)
+    _apply_court_gate(case_context, research, draft)
     _apply_filing_prerequisites(case_context, draft)
     draft.verification_notes = list(dict.fromkeys(str(item) for item in draft.verification_notes if str(item).strip()))
