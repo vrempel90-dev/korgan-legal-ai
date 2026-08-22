@@ -1,20 +1,83 @@
+from pathlib import Path
+
+import pytest
+
+from korgan.legal import pipeline
+from korgan.legal.corpus import ACT_GK_SPECIAL, ACT_GPK, LegalCorpus
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.professional_claim_finalizer import finalize_professional_claim
 from korgan.provision_check import verified_claim_line
 
+GPK_URL = "https://adilet.zan.kz/rus/docs/K1500000377"
+GK_SPECIAL_URL = "https://adilet.zan.kz/rus/docs/K990000409_"
+ARTICLE_30_PART_9 = (
+    "Иски о защите прав потребителей могут быть предъявлены по месту жительства истца "
+    "либо по месту заключения или исполнения договора."
+)
+ARTICLE_627 = (
+    "Если подрядчик не приступает своевременно к исполнению договора подряда или выполняет работу настолько медленно, "
+    "что окончание ее к сроку становится явно невозможным, заказчик вправе отказаться от договора и потребовать возмещения убытков."
+)
+
+
+@pytest.fixture()
+def grounded_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    path = tmp_path / "corpus.sqlite3"
+    with LegalCorpus(path) as db:
+        db.upsert_act(
+            ACT_GPK,
+            "K1500000377",
+            "Гражданский процессуальный кодекс Республики Казахстан",
+            GPK_URL,
+            "2026-08-22",
+            "2026-08-22",
+        )
+        db.upsert_act(
+            ACT_GK_SPECIAL,
+            "K990000409_",
+            "Гражданский кодекс Республики Казахстан (Особенная часть)",
+            GK_SPECIAL_URL,
+            "2026-08-22",
+            "2026-08-22",
+        )
+        db.upsert_provision(
+            act_id=ACT_GPK,
+            article_no="30",
+            item_no="9",
+            heading="Подсудность по выбору истца",
+            body=ARTICLE_30_PART_9,
+            edition_date="2026-08-22",
+            url=GPK_URL,
+            sort_key=30,
+        )
+        db.upsert_provision(
+            act_id=ACT_GK_SPECIAL,
+            article_no="627",
+            item_no=None,
+            heading="Права заказчика во время выполнения работы подрядчиком",
+            body=ARTICLE_627,
+            edition_date="2026-08-22",
+            url=GK_SPECIAL_URL,
+            sort_key=627,
+        )
+
+    monkeypatch.setenv("KORGAN_LOCAL_CORPUS", "1")
+    monkeypatch.setattr(pipeline, "DEFAULT_DB_PATH", path)
+    return path
+
 
 def _research() -> LegalResearch:
     venue = verified_claim_line(
-        "Иски о защите прав потребителей могут быть предъявлены по месту жительства истца.",
+        ARTICLE_30_PART_9,
         "часть 9 статьи 30 ГПК РК",
-        "Иски о защите прав потребителей могут быть предъявлены по месту жительства истца либо по месту заключения или исполнения договора.",
-        "https://adilet.zan.kz/rus/docs/K1500000377",
+        ARTICLE_30_PART_9,
+        GPK_URL,
     )
     substantive = verified_claim_line(
-        "Заказчик вправе отказаться от договора подряда при нарушении подрядчиком сроков в предусмотренных законом случаях.",
+        ARTICLE_627,
         "статья 627 ГК РК",
-        "Если подрядчик не приступает своевременно к исполнению договора подряда или выполняет работу настолько медленно, что окончание ее к сроку становится явно невозможным, заказчик вправе отказаться от договора и потребовать возмещения убытков.",
-        "https://adilet.zan.kz/rus/docs/K990000409_",
+        ARTICLE_627,
+        GK_SPECIAL_URL,
     )
     return LegalResearch(
         status=VerificationStatus.VERIFIED,
@@ -22,15 +85,12 @@ def _research() -> LegalResearch:
         procedural_requirements=[],
         verified_claims=[venue, substantive],
         unverified_claims=[],
-        source_urls=[
-            "https://adilet.zan.kz/rus/docs/K1500000377",
-            "https://adilet.zan.kz/rus/docs/K990000409_",
-        ],
+        source_urls=[GPK_URL, GK_SPECIAL_URL],
         notes=["REMEDY: EXCLUDE | судебное расторжение | внесудебный отказ уже совершен"],
     )
 
 
-def test_finalizer_turns_model_draft_into_fact_locked_filing_structure():
+def test_finalizer_turns_model_draft_into_fact_locked_filing_structure(grounded_corpus: Path):
     context = (
         "Истец: Ахметова Гульнара Сериковна, дата рождения 12.05.1988, ИИН 000000000001, "
         "адрес: г. Алматы, Медеуский район, ул. Абая, 150.\n"
