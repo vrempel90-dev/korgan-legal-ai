@@ -52,18 +52,22 @@ def _snapshot_issue(corpus: Any, act_id: str, *, today: date) -> str | None:
         (act_id,),
     ).fetchone()
     if row is None:
-        return f"акт {act_id} отсутствует в локальном корпусе Adilet"
+        return f"акт {act_id} отсутствует в локальном официальном корпусе"
 
+    # edition_date is the date of the legal text itself. A law may remain current
+    # for months without being amended, so its age is not snapshot staleness.
+    # loaded_at is the date KORGAN successfully fetched and re-verified the
+    # official current endpoint; that is the freshness clock.
     edition = _parse_iso(str(row["edition_date"] or ""))
     loaded = _parse_iso(str(row["loaded_at"] or ""))
     if edition is None or loaded is None:
         return f"акт {act_id} не содержит валидные edition_date/loaded_at"
     if (today - loaded).days < 0 or (today - edition).days < 0:
         return f"акт {act_id} имеет дату корпуса из будущего"
+    if edition > loaded:
+        return f"редакция акта {act_id} датирована позже даты официальной сверки"
     if (today - loaded).days > MAX_CORPUS_AGE_DAYS:
-        return f"акт {act_id} не обновлялся более {MAX_CORPUS_AGE_DAYS} дней"
-    if (today - edition).days > MAX_CORPUS_AGE_DAYS:
-        return f"редакция акта {act_id} не сверялась более {MAX_CORPUS_AGE_DAYS} дней"
+        return f"акт {act_id} не сверялся с официальным источником более {MAX_CORPUS_AGE_DAYS} дней"
     return None
 
 
@@ -84,11 +88,8 @@ def _provision_issue(
         edition = _parse_iso(str(row["edition_date"] or ""))
         if edition is None:
             return f"статья {article_no} акта {act_id} не содержит валидную edition_date"
-        age = (today - edition).days
-        if age < 0:
+        if (today - edition).days < 0:
             return f"статья {article_no} акта {act_id} имеет дату редакции из будущего"
-        if age > MAX_CORPUS_AGE_DAYS:
-            return f"статья {article_no} акта {act_id} не сверялась более {MAX_CORPUS_AGE_DAYS} дней"
     return None
 
 
@@ -115,7 +116,7 @@ def enforce_claim_corpus_health(
     *,
     today: date | None = None,
 ) -> None:
-    """Fail closed when a filing relies on an absent, damaged, incomplete or stale Adilet snapshot."""
+    """Fail closed when a filing relies on an absent, damaged, incomplete or stale official snapshot."""
     if not local_corpus_enabled():
         # The filing-accuracy gate already handles this case and supplies the
         # user-facing grounding note. Do not duplicate it here.
@@ -140,7 +141,7 @@ def enforce_claim_corpus_health(
             if issue:
                 issues.append(issue)
     except Exception as exc:
-        issues.append(f"локальный корпус Adilet не прошёл проверку целостности: {type(exc).__name__}")
+        issues.append(f"локальный официальный корпус не прошёл проверку целостности: {type(exc).__name__}")
     finally:
         corpus.close()
 

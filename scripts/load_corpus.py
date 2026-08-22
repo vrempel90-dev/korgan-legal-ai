@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Load Kazakhstan acts from adilet.zan.kz into the local corpus.
+"""Load Kazakhstan acts from official Ministry of Justice sources.
 
-Only adilet is accepted as a source, and only the Russian edition: the search
-path this replaces kept surfacing English translations of the codes, which then
-reached the documents. Both checks are explicit and refuse the load rather than
-degrade quietly.
+Adilet remains the normal source. The runtime refresh may also pass text
+extracted from the official ZAN.GOV.KZ electronic reference bank when Adilet is
+unreachable. Both source families are strict HTTPS allowlists and only Russian
+editions are accepted.
 
-Network access to adilet is required, so this runs where that host is
-reachable; the parsing and validation it relies on are pure functions covered by
-tests against saved fixtures.
+Network access is required only for the CLI's direct Adilet fetch. Parsing and
+validation are pure functions covered by tests against saved fixtures.
 
     python scripts/load_corpus.py --all
     python scripts/load_corpus.py --act GK_RK_OBSHAYA
@@ -25,6 +24,7 @@ from dataclasses import dataclass
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -32,6 +32,13 @@ from korgan.legal.corpus import (  # noqa: E402
     DEFAULT_DB_PATH,
     KNOWN_ACTS,
     LegalCorpus,
+)
+from korgan.legal.official_sources import (  # noqa: E402
+    ADILET_HOSTS,
+    ZAN_HOSTS,
+    is_allowed_adilet_url,
+    is_allowed_zan_pdf_url,
+    official_source_kind,
 )
 
 ADILET_HOST = "adilet.zan.kz"
@@ -47,7 +54,7 @@ _BLANK_LINES = re.compile(r"\n{3,}")
 
 
 class SourceRejected(RuntimeError):
-    """The document is not an acceptable source for the corpus."""
+    """The document is not an acceptable official source for the corpus."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +67,7 @@ class ParsedProvision:
 
 
 class _TextExtractor(HTMLParser):
-    """Minimal HTML-to-text pass; adilet pages are plain enough not to need more."""
+    """Minimal HTML-to-text pass; Adilet pages are plain enough not to need more."""
 
     _SKIP = {"script", "style", "head", "noscript"}
     _BREAK = {"p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "table"}
@@ -103,16 +110,27 @@ def cyrillic_share(text: str) -> float:
     return len(_CYRILLIC.findall(text)) / len(letters)
 
 
-def check_source(url: str, text: str) -> None:
-    """Reject anything that is not the Russian edition on adilet.
+def check_source(url: str, text: str, *, act_id: str | None = None) -> None:
+    """Reject non-official sources and bind official document identity when known."""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        host = ""
+        parsed = None
+    if parsed is not None and host in (ADILET_HOSTS | ZAN_HOSTS) and "/rus/" not in parsed.path:
+        # Preserve the long-standing error contract used by callers/tests.
+        raise SourceRejected(f"не русская редакция URL: {url}")
 
-    An English translation of a code parses just as cleanly as the Russian one,
-    so the language is checked on the content, not only on the URL.
-    """
-    if ADILET_HOST not in url:
-        raise SourceRejected(f"источник не adilet.zan.kz: {url}")
-    if RUSSIAN_PATH not in url:
-        raise SourceRejected(f"не русская редакция по URL (ожидается {RUSSIAN_PATH}): {url}")
+    source_kind = official_source_kind(url)
+    if source_kind is None:
+        raise SourceRejected(f"источник не adilet.zan.kz и не zan.gov.kz: {url}")
+
+    if act_id is not None:
+        if source_kind == "adilet" and not is_allowed_adilet_url(url, act_id=act_id):
+            raise SourceRejected(f"Adilet URL не соответствует акту {act_id}: {url}")
+        if source_kind == "zan" and not is_allowed_zan_pdf_url(url, act_id=act_id):
+            raise SourceRejected(f"ZAN URL не соответствует акту {act_id}: {url}")
 
     share = cyrillic_share(text)
     if share < MIN_CYRILLIC_SHARE:
@@ -185,40 +203,49 @@ def act_url(act_id: str) -> str:
 
 def fetch(url: str, timeout: int = 60) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.0"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - adilet only
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - CLI only; source checked after fetch
         charset = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(charset, errors="replace")
 
 
-def load_act(
+def load_act_text(
     corpus: LegalCorpus,
     act_id: str,
-    html: str,
+    text: str,
     *,
-    url: str | None = None,
+    source_url: str,
+    citation_url: str | None = None,
     edition_date: str | None = None,
     articles: set[str] | None = None,
 ) -> int:
-    """Parse one act and replace its provisions in the corpus."""
+    """Validate already-extracted official text and replace one act in the temp corpus.
+
+    ``source_url`` records where the refresh bytes actually came from. ZAN may
+    therefore be stored as act provenance, but filing-facing provision links are
+    always canonical Adilet links for the same act.
+    """
     if act_id not in KNOWN_ACTS:
         raise SourceRejected(f"акт {act_id} не входит в список загружаемых")
 
     adilet_id, title = KNOWN_ACTS[act_id]
-    source_url = url or act_url(act_id)
-    text = strip_html(html)
-    check_source(source_url, text)
+    check_source(source_url, text, act_id=act_id)
+
+    base_citation_url = citation_url or act_url(act_id)
+    if not is_allowed_adilet_url(base_citation_url, act_id=act_id):
+        raise SourceRejected(f"citation URL не соответствует canonical Adilet акту {act_id}: {base_citation_url}")
 
     provisions = parse_provisions(text, articles)
     if not provisions:
         raise SourceRejected(f"в документе {act_id} не найдено статей для загрузки")
 
     today = date.today().isoformat()
+    verified_on = edition_date or today
     corpus.upsert_act(
         act_id=act_id,
         adilet_id=adilet_id,
         title_ru=title,
         url=source_url,
-        edition_date=edition_date or today,
+        edition_date=verified_on,
         loaded_at=today,
     )
     corpus.clear_act(act_id)
@@ -230,11 +257,35 @@ def load_act(
             item_no=provision.item_no,
             heading=provision.heading,
             body=provision.body,
-            edition_date=edition_date or today,
-            url=f"{source_url}#z{provision.article_no}",
+            edition_date=verified_on,
+            url=f"{base_citation_url}#z{provision.article_no}",
             sort_key=provision.sort_key,
         )
     return len(provisions)
+
+
+def load_act(
+    corpus: LegalCorpus,
+    act_id: str,
+    html: str,
+    *,
+    url: str | None = None,
+    edition_date: str | None = None,
+    articles: set[str] | None = None,
+) -> int:
+    """Parse one official Adilet HTML act and replace its provisions in the corpus."""
+    if act_id not in KNOWN_ACTS:
+        raise SourceRejected(f"акт {act_id} не входит в список загружаемых")
+    source_url = url or act_url(act_id)
+    return load_act_text(
+        corpus,
+        act_id,
+        strip_html(html),
+        source_url=source_url,
+        citation_url=source_url,
+        edition_date=edition_date,
+        articles=articles,
+    )
 
 
 # Only the court-duty part of the Tax Code is in scope.
