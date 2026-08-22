@@ -5,7 +5,14 @@ import logging
 import time
 from typing import Any
 
+from korgan.contract_repair_state import (
+    contract_repair_attempted,
+    mark_contract_repair_attempted,
+    mark_contract_repair_completed,
+    reset_contract_repair_attempted,
+)
 from korgan.late_interest_hotfix import ProductionOpenAILegalService as _BaseProductionOpenAILegalService
+from korgan.legal_types import ContractDraft, LegalResearch
 from korgan.verified_openai import _actual_response_urls
 
 LOGGER = logging.getLogger(__name__)
@@ -35,6 +42,19 @@ def _contract_output_instruction(schema_name: str) -> str:
 
 class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
     """Article-353-safe runtime plus truncation-safe contract generation."""
+
+    async def draft_contract(
+        self,
+        case_context: str,
+        research: LegalResearch,
+        language: str = "ru",
+    ) -> ContractDraft:
+        """Mark a lower repair completed only after reconstruction and revalidation return."""
+        reset_contract_repair_attempted()
+        draft = await super().draft_contract(case_context, research, language=language)
+        if contract_repair_attempted():
+            mark_contract_repair_completed()
+        return draft
 
     async def _structured_response(
         self,
@@ -102,6 +122,12 @@ class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
                 if attempt < len(limits):
                     continue
                 raise
+
+            if schema_name == "korgan_contract_repair":
+                # Parsed JSON only means a repair was attempted. The completed
+                # marker is intentionally deferred until draft_contract returns
+                # after ContractDraft reconstruction and the lower revalidation.
+                mark_contract_repair_attempted()
 
             LOGGER.info(
                 "KORGAN contract structured call: schema=%s attempt=%d max_tokens=%d status=%s reason=%s seconds=%.2f chars=%d actual_web_urls=%d",
