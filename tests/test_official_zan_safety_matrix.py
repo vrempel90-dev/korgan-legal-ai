@@ -191,7 +191,7 @@ def test_explicit_zan_citation_url_is_rejected(tmp_path: Path) -> None:
     source = zan_pdf_url(ACT_GK_SPECIAL)
 
     with LegalCorpus(tmp_path / "corpus.sqlite3") as corpus:
-        with pytest.raises(SourceRejected, match="citation URL не соответствует акту"):
+        with pytest.raises(SourceRejected, match="citation URL не соответствует canonical Adilet акту"):
             load_act_text(
                 corpus,
                 ACT_GK_SPECIAL,
