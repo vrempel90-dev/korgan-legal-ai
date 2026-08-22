@@ -139,20 +139,19 @@ def test_contract_hotfix_marks_successful_lower_repair(monkeypatch):
     service.client = SimpleNamespace(responses=FakeResponses())
     monkeypatch.setattr(ContractHotfixService, "_json_schema", lambda self, name, schema: {})
 
-    reset_contract_repair_state()
-    assert contract_repair_completed() is False
-
-    asyncio.run(
-        service._structured_response(
+    async def exercise() -> bool:
+        reset_contract_repair_state()
+        assert contract_repair_completed() is False
+        await service._structured_response(
             model="gpt-5.1",
             instructions="repair",
             content="{}",
             schema_name="korgan_contract_repair",
             schema={},
         )
-    )
+        return contract_repair_completed()
 
-    assert contract_repair_completed() is True
+    assert asyncio.run(exercise()) is True
 
 
 def test_production_service_mro_and_adapter_expose_quality_contract_path():
