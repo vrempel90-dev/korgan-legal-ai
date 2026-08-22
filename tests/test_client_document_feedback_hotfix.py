@@ -4,27 +4,14 @@ import io
 
 from docx import Document
 
-from korgan import claim_consistency_guard
-from korgan.client_document_feedback_hotfix import checklist_text, material_law_issue
-from korgan.legal_types import ClaimDraft, VerificationStatus
+from korgan.client_document_feedback_hotfix import (
+    affirmative_penalty_statement,
+    checklist_text,
+    material_law_issue,
+    remedy_support_issues,
+)
+from korgan.legal_types import VerificationStatus
 from korgan.pretrial_response import PretrialResponseDraft, build_pretrial_response_docx
-
-
-def _claim(*, facts: list[str], legal_basis: list[str], requests: list[str]) -> ClaimDraft:
-    return ClaimDraft(
-        status=VerificationStatus.NEEDS_VERIFICATION,
-        title="Исковое заявление",
-        court="Суд",
-        claimant=["Истец"],
-        defendant=["Ответчик"],
-        price_of_claim="500 000 тенге",
-        facts=facts,
-        legal_basis=legal_basis,
-        requests=requests,
-        attachments=["Договор"],
-        verification_notes=[],
-        source_urls=[],
-    )
 
 
 def test_pretrial_response_keeps_required_heading_when_reference_exists() -> None:
@@ -37,76 +24,87 @@ def test_pretrial_response_keeps_required_heading_when_reference_exists() -> Non
         claim_summary=["Получена претензия о взыскании 500 000 тенге."],
         position=["Заявленные требования не признаём по изложенным ниже основаниям."],
         objections=["Оплата подтверждена платёжными документами."],
-        legal_basis=["Обязательства исполняются надлежащим образом согласно статье 272 ГК РК."],
+        legal_basis=["Материальная норма подтверждена официальным источником."],
         response_terms=["Просим учесть изложенную позицию."],
         attachments=["Платёжный документ"],
         verification_notes=[],
         source_urls=[],
     )
-
     payload = build_pretrial_response_docx(draft, language="ru")
-    doc = Document(io.BytesIO(payload))
-    paragraphs = [paragraph.text.strip() for paragraph in doc.paragraphs if paragraph.text.strip()]
-
+    paragraphs = [p.text.strip() for p in Document(io.BytesIO(payload)).paragraphs if p.text.strip()]
     assert "ОТВЕТ НА ПРЕТЕНЗИЮ" in paragraphs
-    assert any("исх. № 15" in value for value in paragraphs)
     assert paragraphs.index("ОТВЕТ НА ПРЕТЕНЗИЮ") < next(
         index for index, value in enumerate(paragraphs) if "исх. № 15" in value
     )
 
 
-def test_material_law_issue_rejects_gpk_only_basis_when_civil_law_is_verified() -> None:
+def test_material_law_issue_rejects_procedure_only_private_dispute() -> None:
     issue = material_law_issue(
-        ["Суд рассматривает дело по правилам статьи 148 ГПК РК."],
-        ["Обязательства должны исполняться надлежащим образом согласно статье 272 ГК РК."],
-        context="Спор возник из договора подряда и задолженности по оплате.",
+        ["Требования к иску определены статьёй 148 ГПК РК."],
+        ["Требования к иску определены статьёй 148 ГПК РК."],
+        context="Спор возник из договора услуг и возврата оплаты.",
         require_for_private_dispute=True,
     )
-
     assert issue is not None
     assert "материально" in issue.lower()
 
 
-def test_material_law_issue_flags_private_dispute_when_research_has_only_procedure() -> None:
+def test_verified_special_statute_counts_as_material_support() -> None:
+    verified = [
+        "Специальное право поддерживает требование "
+        "[основание: статья 10 Закона Республики Казахстан «Тестовый специальный закон»; "
+        "текст нормы: тест; источник: https://adilet.zan.kz/test]"
+    ]
     issue = material_law_issue(
-        ["Требования к иску определены статьёй 148 ГПК РК."],
-        ["Требования к иску определены статьёй 148 ГПК РК."],
-        context="По договору услуг заказчик требует возврат оплаты и неустойку.",
+        ["Основание требования: статья 10 Закона Республики Казахстан «Тестовый специальный закон»."],
+        verified,
+        context="Спор возник из договора оказания услуг.",
         require_for_private_dispute=True,
     )
-
-    assert issue is not None
-    assert "материально" in issue.lower()
+    assert issue is None
 
 
-def test_affirmative_penalty_in_body_cannot_disappear_from_prayer() -> None:
-    draft = _claim(
-        facts=["По договору начислена неустойка в размере 25 000 тенге, которая подлежит взысканию."],
-        legal_basis=["Обязательства исполняются надлежащим образом согласно статье 272 ГК РК."],
-        requests=["Взыскать основной долг 500 000 тенге."],
+def test_penalty_negations_are_not_affirmative() -> None:
+    assert not affirmative_penalty_statement("Неустойка не подлежит взысканию.")
+    assert not affirmative_penalty_statement("Неустойка не начислена.")
+    assert not affirmative_penalty_statement(
+        "Договорная неустойка составляет 0,1%, но истец её не требует."
     )
 
-    errors = claim_consistency_guard.claim_consistency_errors(
-        "Истец требует взыскать основной долг по договору.",
-        draft,
+
+def test_explicit_penalty_collection_is_affirmative() -> None:
+    assert affirmative_penalty_statement("Истец требует взыскать неустойку.")
+    assert affirmative_penalty_statement("Истец просит взыскать пеню в установленном размере.")
+    assert affirmative_penalty_statement("Неустойка начислена и подлежит взысканию.")
+
+
+def test_each_independent_remedy_needs_its_own_verified_material_support() -> None:
+    issues = remedy_support_issues(
+        ["Взыскать основной долг 500 000 тенге.", "Взыскать неустойку 25 000 тенге."],
+        ["Основание основного требования: статья 1 Кодекса TEST."],
+        [
+            "Обязательство должно исполняться надлежащим образом "
+            "[основание: статья 1 Кодекса TEST; текст нормы: тест; источник: https://adilet.zan.kz/test]"
+        ],
     )
+    assert any("неустойки/пени/штрафа" in issue and "VERIFIED" in issue for issue in issues)
 
-    assert any("неустойка/пеня" in error and "ПРОШУ СУД" in error for error in errors)
 
-
-def test_penalty_clause_mention_alone_does_not_force_unrequested_remedy() -> None:
-    draft = _claim(
-        facts=["Договор содержит условие о неустойке 0,1% за каждый день просрочки."],
-        legal_basis=["Обязательства исполняются надлежащим образом согласно статье 272 ГК РК."],
-        requests=["Взыскать основной долг 500 000 тенге."],
+def test_separate_verified_penalty_support_clears_per_remedy_issue() -> None:
+    issues = remedy_support_issues(
+        ["Взыскать основной долг 500 000 тенге.", "Взыскать неустойку 25 000 тенге."],
+        [
+            "Основание основного требования: статья 1 Кодекса TEST.",
+            "Основание неустойки: статья 2 Кодекса TEST.",
+        ],
+        [
+            "Обязательство должно исполняться надлежащим образом "
+            "[основание: статья 1 Кодекса TEST; текст нормы: тест; источник: https://adilet.zan.kz/test]",
+            "Неустойка может быть взыскана при подтвержденных условиях "
+            "[основание: статья 2 Кодекса TEST; текст нормы: тест; источник: https://adilet.zan.kz/test]",
+        ],
     )
-
-    errors = claim_consistency_guard.claim_consistency_errors(
-        "Истец просит взыскать только основной долг по договору.",
-        draft,
-    )
-
-    assert not any("Текст иска утверждает, что неустойка/пеня" in error for error in errors)
+    assert not issues
 
 
 def test_every_document_workflow_has_client_completion_checklist() -> None:
@@ -117,7 +115,6 @@ def test_every_document_workflow_has_client_completion_checklist() -> None:
         assert "📋" in kk
         assert "придумывать" in ru
         assert "ойдан шығармайды" in kk
-
     assert "неустой" in checklist_text("claim", "ru").lower()
-    assert "ОТВЕТ НА ПРЕТЕНЗИЮ" in checklist_text("pretrial_response", "ru")
-    assert "ОТЗЫВ НА ИСК" in checklist_text("response", "ru")
+    assert "ОТВЕТА НА ПРЕТЕНЗИЮ" in checklist_text("pretrial_response", "ru")
+    assert "ОТЗЫВА НА ИСК" in checklist_text("response", "ru")
