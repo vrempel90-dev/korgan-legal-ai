@@ -155,7 +155,7 @@ def test_partial_corpus_missing_cited_article_fails_closed(tmp_path: Path, monke
         (None, None, ""),
     ],
 )
-def test_stale_or_undated_corpus_fails_closed(
+def test_stale_snapshot_or_undated_revision_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     act_edition: str | None,
@@ -172,6 +172,27 @@ def test_stale_or_undated_corpus_fails_closed(
     monkeypatch.setenv("KORGAN_LOCAL_CORPUS", "1")
     monkeypatch.setattr(pipeline, "DEFAULT_DB_PATH", path)
     _assert_fail_closed()
+
+
+def test_old_legal_revision_is_valid_when_official_snapshot_was_fetched_today(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "unchanged-law.sqlite3"
+    _build_corpus(
+        path,
+        act_edition="2020-01-01",
+        loaded_at=date.today().isoformat(),
+        provision_edition="2020-01-01",
+    )
+    monkeypatch.setenv("KORGAN_LOCAL_CORPUS", "1")
+    monkeypatch.setattr(pipeline, "DEFAULT_DB_PATH", path)
+
+    draft = _draft()
+    finalize_professional_claim(_context(), _research(), draft)
+
+    assert draft.status == VerificationStatus.VERIFIED
+    assert any("статья 685" in item.lower() for item in draft.legal_basis)
 
 
 def test_fresh_complete_corpus_still_releases_grounded_basis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
