@@ -1,6 +1,13 @@
 {
-  "verified_on": "2026-08-17",
+  "verified_on": "2026-08-22",
   "entries": [
+    {
+      "city": "Алматы",
+      "district": "",
+      "court": "Специализированный межрайонный экономический суд города Алматы",
+      "jurisdiction": "economic",
+      "source_url": "https://www.gov.kz/memleket/entities/almaty/press/article/details/203196"
+    },
     {
       "city": "Алматы",
       "district": "Алатауский",
