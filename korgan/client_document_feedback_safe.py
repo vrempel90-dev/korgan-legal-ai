@@ -1,15 +1,14 @@
-"""Safe installer for the client-document feedback hardening.
+"""Production-safe installer for client-document feedback hardening.
 
-The canonical prepayment installer is intentionally left untouched because it is
-a protected production boundary. Only the authorization function is decorated
-with a post-authorization progress notice; runtime intake guidance is installed
-separately after the canonical prepayment layer.
+The canonical generator/prepayment installer is never replaced. Client notices
+only decorate its authorization function, while legal QA/renderer patches are
+idempotent and independent of payment routing.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from korgan import client_document_feedback_hotfix as core
 
@@ -17,17 +16,24 @@ LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 
 
-def _install_progress_notice() -> None:
-    from korgan import prepayment_gate
+def wrap_ensure_prepayment_with_client_notices(
+    original: Callable[..., Awaitable[bool]],
+) -> Callable[..., Awaitable[bool]]:
+    """Add checklist-before-gate and progress-after-authorization semantics."""
 
-    current = prepayment_gate.ensure_prepayment
-    if getattr(current, "_korgan_progress", False):
-        return
+    async def ensure_with_notices(message: Any, state: Any, *, kind: str) -> bool:
+        # This is a shared fallback for natural-language/direct generation paths.
+        # It never generates anything and silently yields when this is stale or
+        # not the currently selected document request.
+        try:
+            await core.send_checklist_once(message, state, kind)
+        except Exception:
+            LOGGER.exception("CLIENT_CHECKLIST_FAILED kind=%s", kind)
 
-    async def ensure_with_progress(message: Any, state: Any, *, kind: str) -> bool:
-        allowed = await current(message, state, kind=kind)
+        allowed = await original(message, state, kind=kind)
         if not allowed:
             return False
+
         try:
             data = await state.get_data()
             request_id = str(data.get("request_id") or "")
@@ -38,28 +44,44 @@ def _install_progress_notice() -> None:
                 and str(data.get("generation_progress_kind") or "") == kind
             )
             if request_id and request_kind == kind and not already:
+                # Mark before the await so the same immutable request cannot emit
+                # a second progress notice from a concurrent entry path.
                 await state.update_data(
                     generation_progress_request_id=request_id,
                     generation_progress_kind=kind,
                 )
-                await message.answer(core.progress_text(kind, language))
+                latest = await state.get_data()
+                if (
+                    str(latest.get("request_id") or "") == request_id
+                    and str(latest.get("request_kind") or "") == kind
+                ):
+                    await message.answer(core.progress_text(kind, language))
         except Exception:
             LOGGER.exception("GENERATION_PROGRESS_NOTICE_FAILED kind=%s", kind)
         return True
 
-    ensure_with_progress._korgan_progress = True  # type: ignore[attr-defined]
-    prepayment_gate.ensure_prepayment = ensure_with_progress
+    ensure_with_notices._korgan_progress = True  # type: ignore[attr-defined]
+    return ensure_with_notices
+
+
+def _install_payment_notices() -> None:
+    """Decorate only authorization; keep canonical generator assignments intact."""
+    from korgan import prepayment_gate
+
+    current = prepayment_gate.ensure_prepayment
+    if getattr(current, "_korgan_progress", False):
+        return
+    prepayment_gate.ensure_prepayment = wrap_ensure_prepayment_with_client_notices(current)
 
 
 def install_client_document_feedback_safe() -> None:
-    """Install feedback fixes without replacing the canonical prepayment installer."""
+    """Install CodeRabbit-reviewed QA/UI hooks without payment-routing changes."""
     global _INSTALLED
     if _INSTALLED:
         return
-    core._install_research_prompt_patch()
-    core._install_pretrial_quality_patches()
-    core._install_claim_consistency_patch()
-    core._install_response_title_patch()
-    _install_progress_notice()
+    core.install_research_prompt_patch()
+    core.install_quality_patches()
+    core.install_response_title_patch()
+    _install_payment_notices()
     _INSTALLED = True
     LOGGER.info("Installed KORGAN verified client document feedback hardening")
