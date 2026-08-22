@@ -12,6 +12,7 @@ from korgan import bot as base_bot
 from korgan.admin import router as admin_router
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter, claim_pipeline_v2_mode
 from korgan.claim_quality_hotfix import install_runtime_hotfix
+from korgan.client_document_runtime_guidance import install_client_document_runtime_guidance
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.consultation_quota import close_consultation_store, init_consultation_store
@@ -79,6 +80,9 @@ install_document_generator_ownership_guard()
 # that can enter legal research/drafting is wrapped by the same prepayment rule;
 # menu/intake prompts remain free and do not generate a Word document.
 install_generation_prepayment_gate()
+# Client guidance is presentation-only and must be layered after the canonical
+# generator/prepayment wiring. It wraps intake prompts, never generators.
+install_client_document_runtime_guidance()
 
 LOGGER = logging.getLogger(__name__)
 
