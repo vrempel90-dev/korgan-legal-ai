@@ -125,3 +125,29 @@ def test_zan_text_uses_same_article_parser_but_preserves_refresh_provenance(tmp_
     assert loaded == 8
     assert act is not None and str(act["url"]).startswith("https://zan.gov.kz/api/documents/3559/")
     assert provision is not None and str(provision["url"]).startswith(citation_url)
+
+
+def test_zan_source_without_explicit_citation_url_still_uses_canonical_adilet_links(tmp_path: Path) -> None:
+    text = strip_html((FIXTURES / "adilet_gk_osobennaya.html").read_text(encoding="utf-8"))
+    source_url = zan_pdf_url(ACT_GK_SPECIAL)
+    canonical = "https://adilet.zan.kz/rus/docs/K990000409_"
+
+    with LegalCorpus(tmp_path / "corpus.sqlite3") as corpus:
+        load_act_text(
+            corpus,
+            ACT_GK_SPECIAL,
+            text,
+            source_url=source_url,
+            edition_date="2026-08-22",
+        )
+        act = corpus.connection.execute(
+            "SELECT url FROM acts WHERE act_id = ?",
+            (ACT_GK_SPECIAL,),
+        ).fetchone()
+        provision = corpus.connection.execute(
+            "SELECT url FROM provisions WHERE act_id = ? ORDER BY sort_key LIMIT 1",
+            (ACT_GK_SPECIAL,),
+        ).fetchone()
+
+    assert act is not None and str(act["url"]).startswith("https://zan.gov.kz/api/documents/3559/")
+    assert provision is not None and str(provision["url"]).startswith(canonical)
