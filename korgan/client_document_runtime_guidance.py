@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Awaitable, Callable
 
-from korgan import client_document_feedback_hotfix as core
+from korgan import client_document_notices as notices
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
@@ -15,7 +15,7 @@ def _wrap_prompt(
     original: Callable[..., Awaitable[None]],
     kind: str,
 ) -> Callable[..., Awaitable[None]]:
-    """Append one checklist after the existing prompt for the current request."""
+    """Append one request-atomic checklist after the existing prompt."""
     if getattr(original, "_korgan_client_guidance", False):
         return original
 
@@ -24,7 +24,7 @@ def _wrap_prompt(
         if len(args) < 2:
             return
         try:
-            await core.send_checklist_once(args[0], args[1], kind)
+            await notices.send_checklist_once(args[0], args[1], kind)
         except Exception:
             LOGGER.exception("CLIENT_CHECKLIST_FAILED kind=%s", kind)
 
@@ -44,8 +44,6 @@ def install_client_document_runtime_guidance() -> None:
     universal_claim_runtime.begin_claim_request = _wrap_prompt(
         universal_claim_runtime.begin_claim_request, "claim"
     )
-    # universal_document_runtime imported this symbol by value; refresh the alias
-    # so its RU claim callback cannot bypass the checklist wrapper.
     if hasattr(universal_document_runtime, "begin_claim_request"):
         universal_document_runtime.begin_claim_request = universal_claim_runtime.begin_claim_request
 
@@ -60,8 +58,6 @@ def install_client_document_runtime_guidance() -> None:
         universal_document_runtime._ask_response, "response"
     )
 
-    # Runtime modules import these by value. Refresh only QA/renderer aliases;
-    # generation/payment functions themselves are never replaced here.
     pretrial_runtime.pretrial_quality_issues = pretrial.pretrial_quality_issues
     pretrial_response_runtime.pretrial_response_quality_issues = pretrial_response.pretrial_response_quality_issues
     pretrial_response_runtime.build_pretrial_response_docx = pretrial_response.build_pretrial_response_docx
