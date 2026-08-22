@@ -1,0 +1,2 @@
+PR head under test: 5d89b7f95bb26c07a3f17cb158e113c7d396941b
+Harness only: Procfile runs python -m pytest -q
