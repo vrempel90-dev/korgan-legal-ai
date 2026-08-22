@@ -22,9 +22,6 @@ def wrap_ensure_prepayment_with_client_notices(
     """Add checklist-before-gate and progress-after-authorization semantics."""
 
     async def ensure_with_notices(message: Any, state: Any, *, kind: str) -> bool:
-        # This is a shared fallback for natural-language/direct generation paths.
-        # It never generates anything and silently yields when this is stale or
-        # not the currently selected document request.
         try:
             await core.send_checklist_once(message, state, kind)
         except Exception:
@@ -44,8 +41,6 @@ def wrap_ensure_prepayment_with_client_notices(
                 and str(data.get("generation_progress_kind") or "") == kind
             )
             if request_id and request_kind == kind and not already:
-                # Mark before the await so the same immutable request cannot emit
-                # a second progress notice from a concurrent entry path.
                 await state.update_data(
                     generation_progress_request_id=request_id,
                     generation_progress_kind=kind,
@@ -81,6 +76,15 @@ def install_client_document_feedback_safe() -> None:
         return
     core.install_research_prompt_patch()
     core.install_quality_patches()
+    # The client per-remedy wrapper delegates to the already installed claim
+    # consistency guard. Preserve its public installation marker so existing
+    # safety checks (and other installers) still see that protection as active.
+    from korgan import senior_claim_preflight
+    setattr(
+        senior_claim_preflight.deterministic_claim_preflight,
+        "_korgan_claim_consistency_guard",
+        True,
+    )
     core.install_response_title_patch()
     _install_payment_notices()
     _INSTALLED = True
