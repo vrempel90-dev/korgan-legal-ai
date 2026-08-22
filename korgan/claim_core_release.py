@@ -2,21 +2,27 @@ from __future__ import annotations
 
 import re
 
+from korgan.citation_audit import extract_references, runtime_provisions
 from korgan.legal_types import ClaimDraft, LegalResearch
 
-_ARTICLE_RE = re.compile(r"(?:стать(?:я|и|е|ю|ёй|ей)|ст\.)\s*\d+(?:-\d+)?", re.IGNORECASE)
-_PLACEHOLDER_RE = re.compile(r"\[(?:ТРЕБУЕТ УТОЧНЕНИЯ|ТРЕБУЕТ ПРОВЕРКИ|ТРЕБУЕТ РАСЧ[ЕЁ]ТА|ТРЕБУЕТ ДОБАВИТЬ)[^\]]*\]", re.IGNORECASE)
-
-# Every civil filing needs a source-bound substantive cause of action. These are
-# the substantive acts currently supported by KORGAN's verified legal corpus;
-# GPK and the Tax Code remain procedural/fee sources and cannot satisfy this gate
-# by themselves.
-_MATERIAL_LAW_RE = re.compile(
-    r"ГК\s*РК|Гражданск\w*\s+кодекс\w*\s+Республик\w*\s+Казахстан|"
-    r"защит\w*\s+прав\w*\s+потребител|"
-    r"ТК\s*РК|Трудов\w*\s+кодекс\w*\s+Республик\w*\s+Казахстан",
+_PLACEHOLDER_RE = re.compile(
+    r"\[(?:ТРЕБУЕТ УТОЧНЕНИЯ|ТРЕБУЕТ ПРОВЕРКИ|ТРЕБУЕТ РАСЧ[ЕЁ]ТА|ТРЕБУЕТ ДОБАВИТЬ)[^\]]*\]",
     re.IGNORECASE,
 )
+_EXECUTABLE_RELIEF_RE = re.compile(
+    r"^\s*(?:\d+[.)]\s*)?(?:"
+    r"взыскать|обязать|признать|расторгнуть|прекратить|отменить|аннулировать|"
+    r"выселить|вселить|устранить|запретить|возвратить|вернуть|передать|"
+    r"присудить|возложить|обратить\s+взыскание|"
+    r"истребовать\s+(?:имущество|вещь)|установить\s+(?:право|обязанность|факт)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# GPK and the Tax Code are procedural/fee sources. They may support filing, but
+# cannot by themselves establish the substantive cause of action. These are the
+# material-law act labels understood by the shared citation parser.
+_MATERIAL_ACTS = frozenset({"ГК РК", "ТК РК", "ЗПП РК"})
 
 
 def _meaningful(values: list[str]) -> list[str]:
@@ -28,12 +34,36 @@ def _meaningful(values: list[str]) -> list[str]:
     return result
 
 
-def _has_source_bound_material_law(research: LegalResearch) -> bool:
-    for claim in research.verified_claims or []:
-        text = str(claim or "")
-        if _ARTICLE_RE.search(text) and _MATERIAL_LAW_RE.search(text) and "источник:" in text.lower():
-            return True
-    return False
+def _executable_requests(values: list[str]) -> list[str]:
+    return [value for value in _meaningful(values) if _EXECUTABLE_RELIEF_RE.search(value)]
+
+
+def _material_basis_references(basis: list[str]):
+    references = []
+    for reference in extract_references("\n".join(_meaningful(basis))):
+        if reference.act in _MATERIAL_ACTS and reference not in references:
+            references.append(reference)
+    return references
+
+
+def _has_source_bound_material_law(research: LegalResearch, basis: list[str]) -> bool:
+    """Require the exact material provision used in the draft to be source-bound.
+
+    ``runtime_provisions`` accepts only the canonical verified-claim shape with a
+    usable provision quote and an official Adilet host. Matching uses act,
+    article and, when present, part — an unrelated verified norm cannot promote
+    a different draft citation into release-ready status.
+    """
+    required = _material_basis_references(basis)
+    if not required:
+        return False
+    verified = runtime_provisions(research.verified_claims)
+    return any(
+        wanted.matches(record.reference)
+        for wanted in required
+        for record in verified
+        if record.reference.act in _MATERIAL_ACTS
+    )
 
 
 def core_claim_release_blockers(research: LegalResearch, draft: ClaimDraft) -> list[str]:
@@ -45,15 +75,14 @@ def core_claim_release_blockers(research: LegalResearch, draft: ClaimDraft) -> l
     """
     blockers: list[str] = []
 
-    requests = _meaningful(list(draft.requests or []))
-    if not requests:
+    if not _executable_requests(list(draft.requests or [])):
         blockers.append("не сформирована исполнимая просительная часть")
 
     basis = _meaningful(list(draft.legal_basis or []))
-    if not basis or not any(_ARTICLE_RE.search(item) for item in basis):
+    if not _material_basis_references(basis):
         blockers.append("в иске отсутствует конкретное материально-правовое основание")
 
-    if not _has_source_bound_material_law(research):
+    if not _has_source_bound_material_law(research, basis):
         blockers.append("материально-правовая основа не подтверждена source-bound официальным источником")
 
     return list(dict.fromkeys(blockers))
