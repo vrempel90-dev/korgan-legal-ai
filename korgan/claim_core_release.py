@@ -40,6 +40,18 @@ _VERIFIED_NORM_SOURCE_RE = re.compile(
     r"источник\s*:\s*(?P<url>https?://[^\]\s]+)",
     re.IGNORECASE | re.DOTALL,
 )
+_KK_MATERIAL_REFERENCE_RE = re.compile(
+    r"(?P<act>ҚР\s+(?:АК|ЕК))\s+"
+    r"(?P<article>\d+(?:-\d+)?)\s*[-–]?\s*"
+    r"бап(?:ы|тың|тің|та|те|қа|ке|пен|бында|бінде|тан|тен)?"
+    r"(?:ның|нің)?"
+    r"(?:\s+(?P<part>\d+)\s*[-–]?\s*(?:бөлігі|бөлім|тармағы|тармақ))?",
+    re.IGNORECASE,
+)
+_KK_MATERIAL_ACTS = {
+    "қр ак": "ГК РК",
+    "қр ек": "ТК РК",
+}
 
 # GPK and the Tax Code are procedural/fee sources. They may support filing, but
 # cannot by themselves establish the substantive cause of action.
@@ -68,13 +80,37 @@ def _consumer_references(text: str) -> list[ProvisionReference]:
     return refs
 
 
+def _kazakh_material_references(text: str) -> list[ProvisionReference]:
+    """Parse the localized material-law forms used in Kazakh claim drafts."""
+    refs: list[ProvisionReference] = []
+    for match in _KK_MATERIAL_REFERENCE_RE.finditer(text or ""):
+        act_key = " ".join(match.group("act").lower().split())
+        act = _KK_MATERIAL_ACTS.get(act_key)
+        if not act:
+            continue
+        ref = ProvisionReference(
+            act,
+            match.group("article"),
+            (match.group("part") or "").strip(),
+        )
+        if ref not in refs:
+            refs.append(ref)
+    return refs
+
+
 def _material_basis_references(basis: list[str]) -> list[ProvisionReference]:
     text = "\n".join(_meaningful(basis))
     references: list[ProvisionReference] = []
     # Resolve through the module at call time: install_kazakh_legal_bridge patches
     # citation_audit.extract_references with the proven bilingual parser after the
-    # Russian-first production runtime has been installed.
-    for reference in [*citation_audit.extract_references(text), *_consumer_references(text)]:
+    # Russian-first production runtime has been installed. Keep the small local
+    # parser as a deterministic fallback so the release gate never depends on
+    # test/import order for the standard localized material-law forms.
+    for reference in [
+        *citation_audit.extract_references(text),
+        *_consumer_references(text),
+        *_kazakh_material_references(text),
+    ]:
         if reference.act in _MATERIAL_ACTS and reference not in references:
             references.append(reference)
     return references
