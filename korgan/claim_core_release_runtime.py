@@ -85,6 +85,13 @@ def install_claim_core_release_guard() -> None:
         draft: ClaimDraft,
         request_id: str,
     ) -> Any:
+        # Keep the stale-request release guard on the actual installed sender as
+        # well as in the shared helper. Besides making the safety invariant
+        # locally auditable, this prevents any future refactor from delegating a
+        # stale request into the helper accidentally.
+        if not await request_is_current(state, request_id, "claim"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return None
         return await send_with_core_release_guard(
             current,
             message,
