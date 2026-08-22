@@ -11,6 +11,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from korgan import client_document_feedback_hotfix as core
+from korgan import client_document_notices as notices
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
@@ -23,7 +24,7 @@ def wrap_ensure_prepayment_with_client_notices(
 
     async def ensure_with_notices(message: Any, state: Any, *, kind: str) -> bool:
         try:
-            await core.send_checklist_once(message, state, kind)
+            await notices.send_checklist_once(message, state, kind)
         except Exception:
             LOGGER.exception("CLIENT_CHECKLIST_FAILED kind=%s", kind)
 
@@ -32,25 +33,7 @@ def wrap_ensure_prepayment_with_client_notices(
             return False
 
         try:
-            data = await state.get_data()
-            request_id = str(data.get("request_id") or "")
-            request_kind = str(data.get("request_kind") or "")
-            language = "kk" if str(data.get("language") or "ru") == "kk" else "ru"
-            already = (
-                str(data.get("generation_progress_request_id") or "") == request_id
-                and str(data.get("generation_progress_kind") or "") == kind
-            )
-            if request_id and request_kind == kind and not already:
-                await state.update_data(
-                    generation_progress_request_id=request_id,
-                    generation_progress_kind=kind,
-                )
-                latest = await state.get_data()
-                if (
-                    str(latest.get("request_id") or "") == request_id
-                    and str(latest.get("request_kind") or "") == kind
-                ):
-                    await message.answer(core.progress_text(kind, language))
+            await notices.send_progress_once(message, state, kind)
         except Exception:
             LOGGER.exception("GENERATION_PROGRESS_NOTICE_FAILED kind=%s", kind)
         return True
@@ -76,9 +59,6 @@ def install_client_document_feedback_safe() -> None:
         return
     core.install_research_prompt_patch()
     core.install_quality_patches()
-    # The client per-remedy wrapper delegates to the already installed claim
-    # consistency guard. Preserve its public installation marker so existing
-    # safety checks (and other installers) still see that protection as active.
     from korgan import senior_claim_preflight
     setattr(
         senior_claim_preflight.deterministic_claim_preflight,
