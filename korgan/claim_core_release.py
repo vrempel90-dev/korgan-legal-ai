@@ -3,20 +3,30 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from korgan.citation_audit import ProvisionReference, extract_references, runtime_provisions
+from korgan import citation_audit
+from korgan.citation_audit import ProvisionReference
 from korgan.legal_types import ClaimDraft, LegalResearch
+from korgan.provision_check import quote_is_usable
 
 _PLACEHOLDER_RE = re.compile(
-    r"\[(?:ТРЕБУЕТ УТОЧНЕНИЯ|ТРЕБУЕТ ПРОВЕРКИ|ТРЕБУЕТ РАСЧ[ЕЁ]ТА|ТРЕБУЕТ ДОБАВИТЬ)[^\]]*\]",
+    r"\[(?:ТРЕБУЕТ УТОЧНЕНИЯ|ТРЕБУЕТ ПРОВЕРКИ|ТРЕБУЕТ РАСЧ[ЕЁ]ТА|ТРЕБУЕТ ДОБАВИТЬ|"
+    r"НАҚТЫЛАУ ҚАЖЕТ|ТЕКСЕРУ ҚАЖЕТ|ЕСЕПТЕУ ҚАЖЕТ)[^\]]*\]",
     re.IGNORECASE,
 )
+# Requests are already isolated in the claim prayer field. Require a concrete
+# executable court remedy somewhere in that request, while allowing ordinary
+# lead-ins such as "Прошу:" / "Прошу суд:" and the Kazakh filing form used by
+# the production legal bridge.
 _EXECUTABLE_RELIEF_RE = re.compile(
-    r"^\s*(?:\d+[.)]\s*)?(?:"
-    r"взыскать|обязать|признать|расторгнуть|прекратить|отменить|аннулировать|"
-    r"выселить|вселить|устранить|запретить|возвратить|вернуть|передать|"
-    r"присудить|возложить|обратить\s+взыскание|"
-    r"истребовать\s+(?:имущество|вещь)|установить\s+(?:право|обязанность|факт)"
-    r")\b",
+    r"(?:"
+    r"\bвзыскать\b|\bобязать\b|\bпризнать\b|\bрасторгнуть\b|\bпрекратить\b|"
+    r"\bотменить\b|\bаннулировать\b|\bвыселить\b|\bвселить\b|\bустранить\b|"
+    r"\bзапретить\b|\bвозвратить\b|\bвернуть\b|\bпередать\b|\bприсудить\b|"
+    r"\bвозложить\b|\bобратить\s+взыскание\b|\bистребовать\s+(?:имущество|вещь)\b|"
+    r"\bустановить\s+(?:право|обязанность|факт)\b|"
+    r"өндіріп\s+алу|міндеттеу|тану|бұзу|тоқтату|жою|қайтару|беру|"
+    r"тыйым\s+салу|өтеу"
+    r")",
     re.IGNORECASE,
 )
 _CONSUMER_REFERENCE_RE = re.compile(
@@ -25,7 +35,11 @@ _CONSUMER_REFERENCE_RE = re.compile(
     r"[^.;\n]{0,140}защит\w*\s+прав\w*\s+потребител",
     re.IGNORECASE,
 )
-_SOURCE_URL_RE = re.compile(r"источник\s*:\s*(?P<url>https?://[^\]\s]+)", re.IGNORECASE)
+_VERIFIED_NORM_SOURCE_RE = re.compile(
+    r"текст\s+нормы\s*:\s*[«\"](?P<text>.*?)[»\"]\s*;\s*"
+    r"источник\s*:\s*(?P<url>https?://[^\]\s]+)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 # GPK and the Tax Code are procedural/fee sources. They may support filing, but
 # cannot by themselves establish the substantive cause of action.
@@ -57,7 +71,10 @@ def _consumer_references(text: str) -> list[ProvisionReference]:
 def _material_basis_references(basis: list[str]) -> list[ProvisionReference]:
     text = "\n".join(_meaningful(basis))
     references: list[ProvisionReference] = []
-    for reference in [*extract_references(text), *_consumer_references(text)]:
+    # Resolve through the module at call time: install_kazakh_legal_bridge patches
+    # citation_audit.extract_references with the proven bilingual parser after the
+    # Russian-first production runtime has been installed.
+    for reference in [*citation_audit.extract_references(text), *_consumer_references(text)]:
         if reference.act in _MATERIAL_ACTS and reference not in references:
             references.append(reference)
     return references
@@ -66,13 +83,14 @@ def _material_basis_references(basis: list[str]) -> list[ProvisionReference]:
 def _official_consumer_verified_references(verified_claims: list[str]) -> list[ProvisionReference]:
     refs: list[ProvisionReference] = []
     for line in verified_claims or []:
-        if "текст нормы:" not in str(line).lower():
+        match = _VERIFIED_NORM_SOURCE_RE.search(str(line))
+        if match is None:
             continue
-        source = _SOURCE_URL_RE.search(str(line))
-        if source is None:
+        provision_text = " ".join(match.group("text").split())
+        if not quote_is_usable(provision_text):
             continue
         try:
-            parsed = urlparse(source.group("url").rstrip(".,;)"))
+            parsed = urlparse(match.group("url").rstrip(".,;)"))
         except ValueError:
             continue
         if parsed.scheme != "https" or (parsed.hostname or "").lower() not in {
@@ -86,6 +104,16 @@ def _official_consumer_verified_references(verified_claims: list[str]) -> list[P
     return refs
 
 
+def _required_reference_matches(wanted: ProvisionReference, actual: ProvisionReference) -> bool:
+    if wanted.act != actual.act or wanted.article != actual.article:
+        return False
+    # If the draft relies on a particular part, article-level research is not
+    # enough. The verified evidence must identify that same part explicitly.
+    if wanted.part:
+        return wanted.part == actual.part
+    return True
+
+
 def _has_source_bound_material_law(research: LegalResearch, basis: list[str]) -> bool:
     """Require the exact material provision used in the draft to be source-bound.
 
@@ -93,8 +121,7 @@ def _has_source_bound_material_law(research: LegalResearch, basis: list[str]) ->
     usable provision quote and an official Adilet host. Consumer-law references
     use the same official-source requirement locally because the legacy shared
     citation parser does not yet classify that act. Matching is by act, article
-    and, when present, part, so an unrelated verified norm cannot authorize a
-    different draft citation.
+    and, when required by the draft, the exact part.
     """
     required = _material_basis_references(basis)
     if not required:
@@ -102,14 +129,18 @@ def _has_source_bound_material_law(research: LegalResearch, basis: list[str]) ->
 
     verified_refs = [
         record.reference
-        for record in runtime_provisions(research.verified_claims)
+        for record in citation_audit.runtime_provisions(research.verified_claims)
         if record.reference.act in _MATERIAL_ACTS
     ]
     for reference in _official_consumer_verified_references(research.verified_claims):
         if reference not in verified_refs:
             verified_refs.append(reference)
 
-    return any(wanted.matches(actual) for wanted in required for actual in verified_refs)
+    return any(
+        _required_reference_matches(wanted, actual)
+        for wanted in required
+        for actual in verified_refs
+    )
 
 
 def core_claim_release_blockers(research: LegalResearch, draft: ClaimDraft) -> list[str]:
