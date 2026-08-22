@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -32,7 +33,11 @@ from korgan.legal.corpus import (  # noqa: E402
     KNOWN_ACTS,
     LegalCorpus,
 )
-from korgan.legal.official_sources import official_source_kind  # noqa: E402
+from korgan.legal.official_sources import (  # noqa: E402
+    ADILET_HOSTS,
+    ZAN_HOSTS,
+    official_source_kind,
+)
 
 ADILET_HOST = "adilet.zan.kz"
 RUSSIAN_PATH = "/rus/"
@@ -105,6 +110,15 @@ def cyrillic_share(text: str) -> float:
 
 def check_source(url: str, text: str) -> None:
     """Reject anything outside official Russian Adilet/ZAN sources."""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        host = ""
+        parsed = None
+    if parsed is not None and host in (ADILET_HOSTS | ZAN_HOSTS) and "/rus/" not in parsed.path:
+        raise SourceRejected(f"URL ведёт не на русскую редакцию: {url}")
+
     source_kind = official_source_kind(url)
     if source_kind is None:
         raise SourceRejected(f"источник не adilet.zan.kz и не zan.gov.kz: {url}")
@@ -195,7 +209,7 @@ def load_act_text(
     edition_date: str | None = None,
     articles: set[str] | None = None,
 ) -> int:
-    """Validate already-extracted official text and replace one act atomically in the temp corpus.
+    """Validate already-extracted official text and replace one act in the temp corpus.
 
     ``source_url`` records where the refresh bytes actually came from. For ZAN
     fallback refreshes, ``citation_url`` may remain the stable canonical Adilet
