@@ -1,17 +1,13 @@
-"""Non-blocking refresh of the official Adilet-backed SQLite corpus.
+"""Non-blocking refresh of the official Kazakhstan legal SQLite corpus.
 
-Refreshing the corpus is deliberately decoupled from deployment. A broken
-network path or an incomplete TLS chain at adilet.zan.kz must never prevent the
-Telegram bot from starting. A complete refresh is built into a temporary
-database and atomically replaces the live file only after every supported act
-has loaded successfully.
+Adilet remains the primary source. If Railway cannot reach Adilet with verified
+TLS, KORGAN falls back per act to the Ministry of Justice ZAN.GOV.KZ electronic
+reference bank. TLS verification is never disabled for either source.
 
-TLS verification is never disabled. Adilet currently serves only its leaf
-certificate in Railway, omitting the issuer. KORGAN therefore supplements the
-normal platform trust context with exactly the current GoGetSSL intermediate
-published by the CA vendor. The downloaded certificate is accepted only when
-its DER SHA-256 fingerprint matches the pinned fingerprint; its parent remains
-the platform-trusted DigiCert Global Root G2.
+A complete refresh is always built in a temporary database. The live corpus is
+atomically replaced only after every supported act has passed source, identity,
+language and article validation. If both official sources fail for any act, the
+existing corpus remains untouched.
 """
 
 from __future__ import annotations
@@ -20,13 +16,25 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import ssl
 import urllib.request
+from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
 
+from pypdf import PdfReader
+
 from korgan.legal.corpus import DEFAULT_DB_PATH, KNOWN_ACTS, LegalCorpus
-from scripts.load_corpus import ACT_ARTICLE_FILTER, act_url, load_act
+from korgan.legal.official_sources import (
+    ZAN_IDENTITY_MARKERS,
+    is_allowed_adilet_url,
+    is_allowed_zan_pdf_url,
+    zan_pdf_url,
+    zan_pdf_url_details,
+)
+from scripts.load_corpus import ACT_ARTICLE_FILTER, act_url, load_act, load_act_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +42,8 @@ AUTOLOAD_ENV = "KORGAN_CORPUS_AUTOLOAD"
 REFRESH_HOURS_ENV = "KORGAN_CORPUS_REFRESH_HOURS"
 _TRUTHY = {"1", "true", "yes", "on"}
 DEFAULT_REFRESH_HOURS = 24.0
+MAX_ZAN_PDF_BYTES = 80 * 1024 * 1024
+MIN_ZAN_PDF_BYTES = 1024
 
 # GoGetSSL's official intermediate/root page publishes this exact PEM/TXT file.
 # SHA-256 is over the DER certificate and is also present in public CA metadata.
@@ -44,6 +54,7 @@ _PINNED_INTERMEDIATES: tuple[tuple[str, str], ...] = (
     ),
 )
 _PINNED_CA_HOSTS = {"gogetssl-cdn.s3.eu-central-1.amazonaws.com"}
+_EDITION_RE = re.compile(r"Дата\s+редакции\s+(\d{2}\.\d{2}\.\d{4})", re.IGNORECASE)
 
 
 def autoload_enabled() -> bool:
@@ -60,22 +71,15 @@ def refresh_hours() -> float:
 
 
 def _is_allowed_adilet_url(url: str) -> bool:
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return False
-    return (
-        parsed.scheme == "https"
-        and (parsed.hostname or "").lower() in {"adilet.zan.kz", "www.adilet.zan.kz"}
-        and parsed.path.startswith("/rus/")
-    )
+    """Compatibility wrapper used by existing tests and callers."""
+    return is_allowed_adilet_url(url)
 
 
 def _read_https(url: str, *, context: ssl.SSLContext, timeout: int = 60) -> tuple[str, str]:
-    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.2"})
+    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.3"})
     with urllib.request.urlopen(request, timeout=timeout, context=context) as response:  # noqa: S310
         final_url = response.geturl()
-        if not _is_allowed_adilet_url(final_url):
+        if not is_allowed_adilet_url(final_url):
             raise RuntimeError(f"Adilet redirect rejected: {final_url}")
         charset = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(charset, errors="replace"), final_url
@@ -86,7 +90,7 @@ def _download_pinned_intermediate(url: str, expected_sha256: str) -> str:
     if parsed.scheme != "https" or parsed.hostname not in _PINNED_CA_HOSTS:
         raise RuntimeError(f"CA download host rejected: {url}")
 
-    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.2"})
+    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.3"})
     with urllib.request.urlopen(
         request,
         timeout=30,
@@ -126,7 +130,7 @@ def _adilet_context_with_pinned_intermediates() -> ssl.SSLContext:
 
 def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
     """Fetch an official Russian Adilet page with TLS verification always on."""
-    if not _is_allowed_adilet_url(url):
+    if not is_allowed_adilet_url(url):
         raise RuntimeError(f"Adilet URL rejected: {url}")
 
     parsed = urlparse(url)
@@ -153,8 +157,161 @@ def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
     raise RuntimeError("Adilet fetch failed with verified TLS: " + " | ".join(errors))
 
 
+def _read_zan_pdf(act_id: str, *, timeout: int = 90) -> tuple[bytes, str]:
+    """Download one allowlisted ZAN PDF using the platform trust store."""
+    url = zan_pdf_url(act_id)
+    if not is_allowed_zan_pdf_url(url, act_id=act_id):
+        raise RuntimeError(f"ZAN URL rejected before request: {url}")
+
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "KORGAN-corpus-loader/1.3", "Accept": "application/pdf"},
+    )
+    with urllib.request.urlopen(  # noqa: S310 - strict official allowlist above/below
+        request,
+        timeout=timeout,
+        context=ssl.create_default_context(),
+    ) as response:
+        final_url = response.geturl()
+        if not is_allowed_zan_pdf_url(final_url, act_id=act_id):
+            raise RuntimeError(f"ZAN redirect rejected: {final_url}")
+        content_type = (response.headers.get_content_type() or "").lower()
+        if content_type not in {"application/pdf", "application/octet-stream"}:
+            raise RuntimeError(f"ZAN response is not PDF content-type: {content_type or 'missing'}")
+        declared = response.headers.get("Content-Length")
+        if declared:
+            try:
+                if int(declared) > MAX_ZAN_PDF_BYTES:
+                    raise RuntimeError(f"ZAN PDF exceeds size limit: {declared}")
+            except ValueError:
+                raise RuntimeError(f"ZAN invalid Content-Length: {declared}") from None
+        payload = response.read(MAX_ZAN_PDF_BYTES + 1)
+
+    if len(payload) > MAX_ZAN_PDF_BYTES:
+        raise RuntimeError("ZAN PDF exceeds size limit")
+    if len(payload) < MIN_ZAN_PDF_BYTES:
+        raise RuntimeError(f"ZAN PDF is unexpectedly small: {len(payload)} bytes")
+    if not payload.startswith(b"%PDF-"):
+        raise RuntimeError("ZAN payload does not have PDF magic")
+    return payload, final_url
+
+
+def _extract_zan_pdf_text(payload: bytes) -> str:
+    try:
+        reader = PdfReader(BytesIO(payload), strict=True)
+        if reader.is_encrypted:
+            raise RuntimeError("ZAN PDF is encrypted")
+        chunks = [page.extract_text() or "" for page in reader.pages]
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"ZAN PDF parse failed: {type(exc).__name__}: {exc}") from exc
+    text = "\n".join(chunks).strip()
+    if len(text) < 1000:
+        raise RuntimeError(f"ZAN PDF extracted text is unexpectedly short: {len(text)} chars")
+    return text
+
+
+def _identity_normalized(value: str) -> str:
+    text = (value or "").replace("ё", "е").replace("Ё", "Е").lower()
+    text = text.replace("–", "-").replace("—", "-").replace("‑", "-").replace("−", "-")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _zan_revision_date(text: str) -> tuple[str, str]:
+    match = _EDITION_RE.search(text or "")
+    if match is None:
+        raise RuntimeError("ZAN PDF does not contain 'Дата редакции'")
+    raw = match.group(1)
+    try:
+        iso = datetime.strptime(raw, "%d.%m.%Y").date().isoformat()
+    except ValueError as exc:
+        raise RuntimeError(f"ZAN invalid revision date: {raw}") from exc
+    return raw, iso
+
+
+def _validate_zan_identity(act_id: str, text: str, final_url: str) -> str:
+    """Bind a fixed ZAN document ID, document body and revision URL together."""
+    if not is_allowed_zan_pdf_url(final_url, act_id=act_id):
+        raise RuntimeError(f"ZAN final URL identity mismatch for {act_id}: {final_url}")
+    normalized = _identity_normalized(text)
+    missing = [
+        marker
+        for marker in ZAN_IDENTITY_MARKERS[act_id]
+        if _identity_normalized(marker) not in normalized
+    ]
+    if missing:
+        raise RuntimeError(f"ZAN document identity mismatch for {act_id}: missing {missing}")
+
+    raw_revision, iso_revision = _zan_revision_date(text)
+    details = zan_pdf_url_details(final_url)
+    if details is None:
+        raise RuntimeError(f"ZAN final URL rejected after fetch: {final_url}")
+    _, url_revision = details
+    if url_revision and url_revision != raw_revision:
+        raise RuntimeError(
+            f"ZAN revision mismatch for {act_id}: url={url_revision}, document={raw_revision}"
+        )
+    return iso_revision
+
+
+def fetch_zan(act_id: str, timeout: int = 90) -> tuple[str, str, str]:
+    """Fetch and validate the official current ZAN PDF for one known act."""
+    if act_id not in KNOWN_ACTS:
+        raise RuntimeError(f"Unknown act for ZAN fallback: {act_id}")
+    payload, final_url = _read_zan_pdf(act_id, timeout=timeout)
+    text = _extract_zan_pdf_text(payload)
+    revision_date = _validate_zan_identity(act_id, text, final_url)
+    return text, final_url, revision_date
+
+
+def _load_from_official_sources(corpus: LegalCorpus, act_id: str) -> tuple[int, str, str]:
+    """Load one act from Adilet first, then ZAN only if the primary path fails."""
+    canonical_url = act_url(act_id)
+    try:
+        html, final_url = fetch_adilet(canonical_url)
+        loaded = load_act(
+            corpus,
+            act_id,
+            html,
+            url=final_url,
+            articles=ACT_ARTICLE_FILTER.get(act_id),
+        )
+        return loaded, "adilet", final_url
+    except Exception as adilet_exc:
+        LOGGER.warning(
+            "KORGAN Adilet primary failed act=%s error=%s; trying official ZAN fallback",
+            act_id,
+            f"{type(adilet_exc).__name__}: {adilet_exc}",
+        )
+
+    try:
+        text, zan_url, source_revision = fetch_zan(act_id)
+        loaded = load_act_text(
+            corpus,
+            act_id,
+            text,
+            source_url=zan_url,
+            # Filing-facing links remain the stable canonical act URL. The act
+            # row records ZAN as the actual refresh provenance.
+            citation_url=canonical_url,
+            articles=ACT_ARTICLE_FILTER.get(act_id),
+        )
+        LOGGER.info(
+            "KORGAN ZAN fallback verified act=%s source_revision=%s source=%s",
+            act_id,
+            source_revision,
+            zan_url,
+        )
+        return loaded, "zan", zan_url
+    except Exception as zan_exc:
+        raise RuntimeError(
+            f"Both official sources failed for {act_id}; ZAN error: {type(zan_exc).__name__}: {zan_exc}"
+        ) from zan_exc
+
+
 def refresh_corpus_once(path: Path | str = DEFAULT_DB_PATH) -> int:
-    """Build a complete corpus and atomically swap it into place."""
+    """Build a complete verified corpus and atomically swap it into place."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(target.name + ".refreshing")
@@ -162,25 +319,20 @@ def refresh_corpus_once(path: Path | str = DEFAULT_DB_PATH) -> int:
 
     total = 0
     loaded_acts = 0
+    source_counts = {"adilet": 0, "zan": 0}
     try:
         with LegalCorpus(temporary) as corpus:
             for act_id in sorted(KNOWN_ACTS):
-                canonical_url = act_url(act_id)
-                html, final_url = fetch_adilet(canonical_url)
-                loaded = load_act(
-                    corpus,
-                    act_id,
-                    html,
-                    url=final_url,
-                    articles=ACT_ARTICLE_FILTER.get(act_id),
-                )
+                loaded, source_kind, source_url = _load_from_official_sources(corpus, act_id)
                 total += loaded
                 loaded_acts += 1
+                source_counts[source_kind] += 1
                 LOGGER.info(
-                    "KORGAN corpus refresh act=%s provisions=%d source=%s",
+                    "KORGAN corpus refresh act=%s provisions=%d provider=%s source=%s",
                     act_id,
                     loaded,
-                    final_url,
+                    source_kind,
+                    source_url,
                 )
 
             if loaded_acts != len(KNOWN_ACTS) or total <= 0:
@@ -190,9 +342,11 @@ def refresh_corpus_once(path: Path | str = DEFAULT_DB_PATH) -> int:
 
         os.replace(temporary, target)
         LOGGER.info(
-            "KORGAN corpus refresh SUCCESS acts=%d provisions=%d path=%s",
+            "KORGAN corpus refresh SUCCESS acts=%d provisions=%d adilet=%d zan=%d path=%s",
             loaded_acts,
             total,
+            source_counts["adilet"],
+            source_counts["zan"],
             target,
         )
         return total
