@@ -49,3 +49,24 @@ def test_response_docx_uses_a4() -> None:
     section = doc.sections[0]
     assert abs(section.page_width.mm - 210) < 0.2
     assert abs(section.page_height.mm - 297) < 0.2
+
+
+def test_raw_objection_dicts_are_normalized_by_the_draft_model() -> None:
+    draft = ResponseToClaimDraft(
+        status=VerificationStatus.VERIFIED,
+        objections=[{
+            "text": "1. Возражаем против расчёта.",
+            "subclauses": ["1.1. Расчёт не подтверждён."],
+            "prose": ["Доказательства в материалах отсутствуют."],
+        }],
+    )
+
+    objection = draft.objections[0]
+    assert objection.text == "Возражаем против расчёта."
+    assert objection.subclauses == ["Расчёт не подтверждён."]
+    assert objection.prose == ["Доказательства в материалах отсутствуют."]
+    assert objection.body_lines() == [
+        "Возражаем против расчёта.",
+        "Расчёт не подтверждён.",
+        "Доказательства в материалах отсутствуют.",
+    ]

@@ -14,6 +14,7 @@ from korgan.request_scope import (
     request_is_current,
     request_label,
     start_new_document_request,
+    update_current_request,
 )
 
 
@@ -159,6 +160,76 @@ def test_old_request_becomes_stale_as_soon_as_new_document_is_selected() -> None
     assert old_id != new_id
     assert asyncio.run(request_is_current(state, old_id, "pretrial_response")) is False
     assert asyncio.run(request_is_current(state, new_id, "claim")) is True
+
+
+def test_request_scoped_update_cannot_clear_a_replacement_request() -> None:
+    state = _State({"language": "ru", "terms_accepted": True})
+    old_id = asyncio.run(start_new_document_request(state, kind="claim", mode="main"))
+    state.data["claim_draft"] = {"old": True}
+    new_id = asyncio.run(start_new_document_request(state, kind="response", mode="response_details"))
+    state.data["claim_draft"] = {"new": True}
+
+    updated = asyncio.run(
+        update_current_request(
+            state,
+            old_id,
+            "claim",
+            clear_keys=("claim_draft",),
+            mode="main",
+        )
+    )
+
+    assert updated is False
+    assert state.data["request_id"] == new_id
+    assert state.data["claim_draft"] == {"new": True}
+
+
+def test_replacement_waits_for_atomic_request_update_then_wins() -> None:
+    async def scenario():
+        update_reached_write = asyncio.Event()
+        allow_update_write = asyncio.Event()
+
+        class PausingState(_State):
+            key = ("request-race-test", id(update_reached_write))
+
+            async def set_data(self, data):
+                if data.get("mode") == "finishing":
+                    update_reached_write.set()
+                    await allow_update_write.wait()
+                await super().set_data(data)
+
+        state = PausingState({
+            "request_id": "old-request",
+            "request_kind": "claim",
+            "claim_draft": {"old": True},
+        })
+        finishing = asyncio.create_task(
+            update_current_request(
+                state,
+                "old-request",
+                "claim",
+                clear_keys=("claim_draft",),
+                mode="finishing",
+            )
+        )
+        await update_reached_write.wait()
+
+        replacement = asyncio.create_task(
+            start_new_document_request(state, kind="response", mode="response_details")
+        )
+        await asyncio.sleep(0)
+        assert not replacement.done()
+
+        allow_update_write.set()
+        assert await finishing is True
+        new_id = await replacement
+        return state, new_id
+
+    state, new_id = asyncio.run(scenario())
+    assert state.data["request_id"] == new_id
+    assert state.data["request_kind"] == "response"
+    assert state.data["mode"] == "response_details"
+    assert "claim_draft" not in state.data
 
 
 def test_every_generator_has_a_stale_request_release_guard() -> None:

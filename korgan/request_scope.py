@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -14,6 +16,7 @@ DOCUMENT_REQUEST_KINDS = frozenset({
     "response",
     "contract",
 })
+_REQUEST_LOCKS = tuple(asyncio.Lock() for _ in range(64))
 
 # Only request/case-specific keys are reset. Consent, selected language,
 # consultation counters and other account/session settings are preserved.
@@ -40,6 +43,7 @@ _REQUEST_SCOPED_KEYS = {
     "payment_kind",
     "payment_language",
     "payment_signature",
+    "payment_confirmed_transaction_id",
     "prepayment_transaction_id",
     "prepayment_request_id",
     "prepayment_kind",
@@ -128,6 +132,57 @@ async def request_is_current(state: FSMContext, request_id: str, kind: str) -> b
     )
 
 
+def _request_lock(state: FSMContext) -> asyncio.Lock:
+    key = getattr(state, "key", None)
+    lock_key = key if key is not None else id(state)
+    return _REQUEST_LOCKS[hash(lock_key) % len(_REQUEST_LOCKS)]
+
+
+async def update_current_request(
+    state: FSMContext,
+    request_id: str,
+    kind: str,
+    *,
+    clear_keys: tuple[str, ...] = (),
+    **updates: object,
+) -> bool:
+    """Compare and update one request scope without racing a replacement request."""
+    if not request_id:
+        return False
+    async with _request_lock(state):
+        data = dict(await state.get_data())
+        if (
+            str(data.get("request_id") or "") != request_id
+            or data.get("request_kind") != kind
+        ):
+            return False
+        for key in clear_keys:
+            data.pop(key, None)
+        data.update(updates)
+        await state.set_data(data)
+        return True
+
+
+async def run_for_current_request(
+    state: FSMContext,
+    request_id: str,
+    kind: str,
+    operation: Callable[[], Awaitable[None]],
+) -> bool:
+    """Run one delivery while preventing the request from being replaced."""
+    if not request_id:
+        return False
+    async with _request_lock(state):
+        data = await state.get_data()
+        if (
+            str(data.get("request_id") or "") != request_id
+            or data.get("request_kind") != kind
+        ):
+            return False
+        await operation()
+        return True
+
+
 async def start_new_document_request(
     state: FSMContext,
     *,
@@ -143,21 +198,22 @@ async def start_new_document_request(
     if kind not in DOCUMENT_REQUEST_KINDS:
         raise ValueError(f"Unsupported document request kind: {kind}")
 
-    data = dict(await state.get_data())
-    for key in _REQUEST_SCOPED_KEYS:
-        data.pop(key, None)
+    async with _request_lock(state):
+        data = dict(await state.get_data())
+        for key in _REQUEST_SCOPED_KEYS:
+            data.pop(key, None)
 
-    request_id = uuid4().hex
-    data.update(
-        {
-            "documents": [],
-            "facts": [],
-            "consulted_articles": [],
-            "mode": mode,
-            "request_kind": kind,
-            "request_id": request_id,
-            "request_started_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
-    await state.set_data(data)
-    return request_id
+        request_id = uuid4().hex
+        data.update(
+            {
+                "documents": [],
+                "facts": [],
+                "consulted_articles": [],
+                "mode": mode,
+                "request_kind": kind,
+                "request_id": request_id,
+                "request_started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        await state.set_data(data)
+        return request_id

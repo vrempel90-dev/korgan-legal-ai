@@ -89,6 +89,44 @@ def test_every_citation_is_checked_separately_in_one_document() -> None:
     assert len(audit.blocking) == 2
 
 
+def test_hyphenated_article_number_is_preserved_for_lookup() -> None:
+    finding = audit_citations(
+        "Согласно статье 353-1 ГК РК к должнику применяются последствия просрочки."
+    ).findings[0]
+
+    assert finding.article == "353-1"
+    assert "353-1" in finding.reference
+
+
+def test_same_citation_in_different_paragraphs_is_audited_independently() -> None:
+    text = (
+        "Согласно статье 953 ГК РК истец утверждает, что вред подлежит возмещению.\n"
+        "По статье 953 ГК РК ответчик оспаривает наличие оснований для возмещения."
+    )
+
+    assert len(audit_citations(text).findings) == 2
+
+
+def test_duplicate_citation_within_one_paragraph_remains_deduplicated() -> None:
+    text = (
+        "Статья 953 ГК РК указана истцом, но повторная ссылка на статью 953 ГК РК "
+        "не создаёт отдельной проверки в том же абзаце."
+    )
+
+    assert len(audit_citations(text).findings) == 1
+
+
+def test_same_reference_with_different_quotes_remains_distinct() -> None:
+    text = (
+        "Статья 953 ГК РК: «Первая достаточно длинная цитата из проверяемой нормы».\n"
+        "Статья 953 ГК РК: «Вторая достаточно длинная цитата из проверяемой нормы»."
+    )
+
+    audit = audit_citations(text)
+    assert len(audit.findings) == 2
+    assert all(finding.quoted for finding in audit.findings)
+
+
 def test_glued_fragment_after_a_closing_quote_is_detected() -> None:
     """The reported artefact: «...не предусмотрено иное».евидно"""
     broken = "Стороны согласовали, что иное не предусмотрено».евидно, что требование заявлено."
