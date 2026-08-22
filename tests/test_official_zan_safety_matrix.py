@@ -8,7 +8,7 @@ import korgan.legal.corpus_refresh as refresh
 from korgan.legal.corpus import ACT_GK_SPECIAL, ACT_LABOR, ACT_GPK, KNOWN_ACTS, LegalCorpus
 from korgan.legal.corpus_refresh import _extract_zan_pdf_text, _read_zan_pdf, fetch_zan
 from korgan.legal.official_sources import zan_pdf_url
-from scripts.load_corpus import act_url, load_act_text, strip_html
+from scripts.load_corpus import SourceRejected, act_url, load_act_text, strip_html
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -184,6 +184,22 @@ def test_zan_provenance_and_canonical_citation_are_isolated_for_every_act(
     assert str(act["url"]) == zan_pdf_url(act_id)
     assert provision is not None
     assert str(provision["url"]).startswith(act_url(act_id))
+
+
+def test_explicit_zan_citation_url_is_rejected(tmp_path: Path) -> None:
+    text = strip_html((FIXTURES / "adilet_gk_osobennaya.html").read_text(encoding="utf-8"))
+    source = zan_pdf_url(ACT_GK_SPECIAL)
+
+    with LegalCorpus(tmp_path / "corpus.sqlite3") as corpus:
+        with pytest.raises(SourceRejected, match="citation URL не соответствует акту"):
+            load_act_text(
+                corpus,
+                ACT_GK_SPECIAL,
+                text,
+                source_url=source,
+                citation_url=source,
+                edition_date="2026-08-22",
+            )
 
 
 def test_adilet_and_zan_ids_cannot_cross_between_known_acts() -> None:
