@@ -11,6 +11,7 @@ from aiogram.types import BufferedInputFile, Message
 
 from korgan import bot as base_bot
 from korgan.citation_audit import ProvisionReference, extract_references
+from korgan.claim_core_release import core_claim_release_blockers
 from korgan.claim_docx import build_claim_docx, missing_required_fields
 from korgan.claim_failure import ClaimStage, failure_from_exception
 from korgan.claim_intent import is_claim_drafting_request
@@ -234,6 +235,36 @@ async def _send_claim(
             "Не удалось безопасно выпустить Word: финальная проверка обнаружила повреждённый текст или неподтверждённую правовую ссылку.",
             reply_markup=base_bot.MENU,
         )
+        return
+
+    core_blockers = core_claim_release_blockers(research, draft)
+    if core_blockers:
+        draft.status = VerificationStatus.NEEDS_VERIFICATION
+        LOGGER.error(
+            "UNIVERSAL_CLAIM_CORE_RELEASE_BLOCK request_id=%s blockers=%s",
+            request_id,
+            core_blockers[:4],
+        )
+        if not await request_is_current(state, request_id, "claim"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return
+        lang = await base_bot._language(state)
+        if not await request_is_current(state, request_id, "claim"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return
+        if lang == "kk":
+            text = (
+                "Иск Word ретінде әлі шығарылмады: сотқа берілетін құжатта орындалатын талаптар "
+                "және ресми дереккөзбен расталған материалдық-құқықтық негіз міндетті түрде болуы керек. "
+                "KORGAN тексеруді аяқтамайынша толық емес талап қою арызын дайын құжат ретінде бермейді."
+            )
+        else:
+            text = (
+                "Иск пока не выпущен в Word: в судебном документе обязательно должны быть "
+                "исполнимая просительная часть и подтверждённое официальным источником "
+                "материально-правовое основание. KORGAN не выдаёт неполный иск как готовый документ."
+            )
+        await message.answer(text, reply_markup=base_bot.MENU)
         return
 
     quality = assess_document_quality("claim", context, research, draft)
