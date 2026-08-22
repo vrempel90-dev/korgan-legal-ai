@@ -372,7 +372,8 @@ def _apply_court_gate(case_context: str, research: LegalResearch, draft: ClaimDr
     if verified and _ECONOMIC_COURT_RE.search(verified):
         draft.court = verified
         return
-    if (verified and _SPECIAL_JURISDICTION_RE.search(verified)) or _SPECIAL_JURISDICTION_RE.search(draft.court or ""):
+    if verified and _SPECIAL_JURISDICTION_RE.search(verified):
+        draft.court = verified
         return
 
     if _PUBLIC_LAW_RE.search(case_context or "") or not _PRIVATE_LAW_RE.search(case_context or ""):
