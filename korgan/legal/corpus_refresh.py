@@ -295,6 +295,7 @@ def _load_from_official_sources(corpus: LegalCorpus, act_id: str) -> tuple[int, 
             # Filing-facing links remain the stable canonical act URL. The act
             # row records ZAN as the actual refresh provenance.
             citation_url=canonical_url,
+            edition_date=source_revision,
             articles=ACT_ARTICLE_FILTER.get(act_id),
         )
         LOGGER.info(
