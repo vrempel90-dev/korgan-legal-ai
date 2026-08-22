@@ -68,13 +68,13 @@ def grounded_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _research() -> LegalResearch:
     venue = verified_claim_line(
-        "Иски о защите прав потребителей могут быть предъявлены по месту жительства истца.",
+        ARTICLE_30_PART_9,
         "часть 9 статьи 30 ГПК РК",
         ARTICLE_30_PART_9,
         GPK_URL,
     )
     substantive = verified_claim_line(
-        "Заказчик вправе отказаться от договора подряда при нарушении подрядчиком сроков в предусмотренных законом случаях.",
+        ARTICLE_627,
         "статья 627 ГК РК",
         ARTICLE_627,
         GK_SPECIAL_URL,
