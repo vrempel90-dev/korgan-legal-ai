@@ -36,6 +36,8 @@ from korgan.legal.corpus import (  # noqa: E402
 from korgan.legal.official_sources import (  # noqa: E402
     ADILET_HOSTS,
     ZAN_HOSTS,
+    is_allowed_adilet_url,
+    is_allowed_zan_pdf_url,
     official_source_kind,
 )
 
@@ -108,8 +110,8 @@ def cyrillic_share(text: str) -> float:
     return len(_CYRILLIC.findall(text)) / len(letters)
 
 
-def check_source(url: str, text: str) -> None:
-    """Reject anything outside official Russian Adilet/ZAN sources."""
+def check_source(url: str, text: str, *, act_id: str | None = None) -> None:
+    """Reject non-official sources and bind official document identity when known."""
     try:
         parsed = urlparse(url)
         host = (parsed.hostname or "").lower()
@@ -117,11 +119,18 @@ def check_source(url: str, text: str) -> None:
         host = ""
         parsed = None
     if parsed is not None and host in (ADILET_HOSTS | ZAN_HOSTS) and "/rus/" not in parsed.path:
-        raise SourceRejected(f"URL ведёт не на русскую редакцию: {url}")
+        # Preserve the long-standing error contract used by callers/tests.
+        raise SourceRejected(f"не русская редакция URL: {url}")
 
     source_kind = official_source_kind(url)
     if source_kind is None:
         raise SourceRejected(f"источник не adilet.zan.kz и не zan.gov.kz: {url}")
+
+    if act_id is not None:
+        if source_kind == "adilet" and not is_allowed_adilet_url(url, act_id=act_id):
+            raise SourceRejected(f"Adilet URL не соответствует акту {act_id}: {url}")
+        if source_kind == "zan" and not is_allowed_zan_pdf_url(url, act_id=act_id):
+            raise SourceRejected(f"ZAN URL не соответствует акту {act_id}: {url}")
 
     share = cyrillic_share(text)
     if share < MIN_CYRILLIC_SHARE:
@@ -194,7 +203,7 @@ def act_url(act_id: str) -> str:
 
 def fetch(url: str, timeout: int = 60) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.0"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - allowlisted by caller
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - CLI only; source checked after fetch
         charset = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(charset, errors="replace")
 
@@ -220,7 +229,13 @@ def load_act_text(
         raise SourceRejected(f"акт {act_id} не входит в список загружаемых")
 
     adilet_id, title = KNOWN_ACTS[act_id]
-    check_source(source_url, text)
+    check_source(source_url, text, act_id=act_id)
+    if citation_url is not None and not (
+        is_allowed_adilet_url(citation_url, act_id=act_id)
+        or is_allowed_zan_pdf_url(citation_url, act_id=act_id)
+    ):
+        raise SourceRejected(f"citation URL не соответствует акту {act_id}: {citation_url}")
+
     provisions = parse_provisions(text, articles)
     if not provisions:
         raise SourceRejected(f"в документе {act_id} не найдено статей для загрузки")
