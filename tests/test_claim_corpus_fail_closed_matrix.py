@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -65,11 +66,16 @@ def _context() -> str:
 def _build_corpus(
     path: Path,
     *,
-    act_edition: str = "2026-08-22",
-    loaded_at: str = "2026-08-22",
-    provision_edition: str = "2026-08-22",
+    act_edition: str | None = None,
+    loaded_at: str | None = None,
+    provision_edition: str | None = None,
     include_cited_article: bool = True,
 ) -> None:
+    fresh_date = date.today().isoformat()
+    act_edition = fresh_date if act_edition is None else act_edition
+    loaded_at = fresh_date if loaded_at is None else loaded_at
+    provision_edition = fresh_date if provision_edition is None else provision_edition
+
     with LegalCorpus(path) as db:
         db.upsert_act(
             ACT_GK_SPECIAL,
@@ -99,7 +105,7 @@ def _build_corpus(
                 item_no=None,
                 heading="Исполнение договора возмездного оказания услуг",
                 body=ARTICLE_684,
-                edition_date=provision_edition or "2026-08-22",
+                edition_date=provision_edition or fresh_date,
                 url=GK_SPECIAL_URL,
                 sort_key=684,
             )
@@ -143,18 +149,18 @@ def test_partial_corpus_missing_cited_article_fails_closed(tmp_path: Path, monke
 @pytest.mark.parametrize(
     ("act_edition", "loaded_at", "provision_edition"),
     [
-        ("2026-08-01", "2026-08-01", "2026-08-01"),
-        ("", "2026-08-22", "2026-08-22"),
-        ("2026-08-22", "", "2026-08-22"),
-        ("2026-08-22", "2026-08-22", ""),
+        ("2000-01-01", "2000-01-01", "2000-01-01"),
+        ("", None, None),
+        (None, "", None),
+        (None, None, ""),
     ],
 )
 def test_stale_or_undated_corpus_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    act_edition: str,
-    loaded_at: str,
-    provision_edition: str,
+    act_edition: str | None,
+    loaded_at: str | None,
+    provision_edition: str | None,
 ) -> None:
     path = tmp_path / "unhealthy.sqlite3"
     _build_corpus(
