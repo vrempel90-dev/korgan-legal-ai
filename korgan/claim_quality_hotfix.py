@@ -214,11 +214,24 @@ def install_runtime_hotfix() -> None:
     from korgan.claim_docx import build_claim_docx
     from korgan.claim_failure import ClaimStage, failure_from_exception
     from korgan.document_quality import rendered_docx_blockers
+    from korgan.request_scope import request_is_current, run_for_current_request, update_current_request
     from korgan.telegram_text import bullets, fit_caption
     from aiogram.types import BufferedInputFile
     from korgan import bot as base_bot
 
-    async def _send_claim(message, state, *, context: str, research: LegalResearch, draft: ClaimDraft) -> None:
+    async def _send_claim(
+        message,
+        state,
+        *,
+        context: str,
+        research: LegalResearch,
+        draft: ClaimDraft,
+        request_id: str,
+    ) -> None:
+        if not await request_is_current(state, request_id, "claim"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return
+
         fit = runtime.enforce_legal_basis_fit(draft)
         if fit:
             draft.status = VerificationStatus.NEEDS_VERIFICATION
@@ -234,6 +247,9 @@ def install_runtime_hotfix() -> None:
                 [x.as_note() for x in release.citations.blocking[:4]],
                 [x.as_note() for x in release.integrity[:4]],
             )
+            if not await request_is_current(state, request_id, "claim"):
+                LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+                return
             await message.answer(
                 "Не удалось безопасно выпустить Word: финальная проверка обнаружила повреждённый текст или неподтверждённую правовую ссылку.",
                 reply_markup=base_bot.MENU,
@@ -255,19 +271,33 @@ def install_runtime_hotfix() -> None:
         try:
             file_bytes = build_claim_docx(draft)
         except Exception as exc:
+            if not await request_is_current(state, request_id, "claim"):
+                LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+                return
             await base_bot._report_claim_failure(message, failure_from_exception(exc, stage=ClaimStage.RENDER))
             return
 
         export_blockers = rendered_docx_blockers(file_bytes, ready_expected=quality.ready and not filing)
         if quality.ready and not filing and export_blockers:
             LOGGER.error("UNIVERSAL_CLAIM_DOCX_BLOCK quality=%.1f issues=%s", quality.score, export_blockers)
+            if not await request_is_current(state, request_id, "claim"):
+                LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+                return
             await message.answer(
                 "Не удалось безопасно выпустить готовый Word: экспорт не прошёл финальную проверку качества.",
                 reply_markup=base_bot.MENU,
             )
             return
 
-        await state.update_data(mode="main", gate_issues=[], claim_draft=None, pending_fields=[])
+        if not await update_current_request(
+            state,
+            request_id,
+            "claim",
+            clear_keys=("gate_issues", "claim_draft", "pending_fields"),
+            mode="main",
+        ):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return
         if quality.ready and not filing:
             caption = f"✅ KORGAN QUALITY {quality.score:.1f}/10\nИск сформирован в Word (.docx)."
         elif quality.ready and filing:
@@ -284,11 +314,16 @@ def install_runtime_hotfix() -> None:
             if checks:
                 caption += "\n\nПеред подачей требуется:\n" + bullets(checks)
 
-        await message.answer_document(
-            BufferedInputFile(file_bytes, filename="KORGAN_iskovoe_zayavlenie.docx"),
-            caption=fit_caption(caption),
-            reply_markup=base_bot.MENU,
-        )
+        async def deliver() -> None:
+            await message.answer_document(
+                BufferedInputFile(file_bytes, filename="KORGAN_iskovoe_zayavlenie.docx"),
+                caption=fit_caption(caption),
+                reply_markup=base_bot.MENU,
+            )
+
+        if not await run_for_current_request(state, request_id, "claim", deliver):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
+            return
 
     runtime._send_claim = _send_claim
     LOGGER.info("Installed KORGAN claim quality hotfix: production-scoped filing policy")

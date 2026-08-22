@@ -28,7 +28,7 @@ from korgan.provision_corpus import ProvisionRecord, lookup, normalize_text
 # «часть 4 статьи 166 ГПК РК», «ст. 953 ГК РК», «пункт 1 статьи 960 ГК РК»
 _REFERENCE_RE = re.compile(
     r"(?:(?:част[ьияею]\w*|ч\.|подпункт\w*|пп\.|пункт\w*|п\.)\s*(?P<part>\d+)\s*)?"
-    r"(?:стать[ияеёю]\w*|ст\.)\s*(?P<article>\d+)"
+    r"(?:стать[ияеёю]\w*|ст\.)\s*(?P<article>\d+(?:-\d+)?)"
     r"(?P<tail>[^.;)\n]{0,60})",
     re.IGNORECASE,
 )
@@ -307,7 +307,7 @@ def audit_citations(
 ) -> CitationAudit:
     """Re-check every provision reference in a finished document, one by one."""
     audit = CitationAudit()
-    seen: set[tuple[str, str, str, bool]] = set()
+    seen: set[tuple[str, str, str, str, str]] = set()
     runtime_records = runtime_provisions(verified_claims)
 
     for match in _REFERENCE_RE.finditer(text or ""):
@@ -321,7 +321,7 @@ def audit_citations(
 
         context = _paragraph_around(text, match.start())
         quote = _quote_in(context)
-        signature = (act, article, part, bool(quote))
+        signature = (act, article, part, normalize_text(quote), context)
         if signature in seen:
             continue
         seen.add(signature)

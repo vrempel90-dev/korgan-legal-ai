@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
+import re
 
 from aiogram import Router
 from aiogram.filters import BaseFilter
@@ -9,11 +11,18 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from korgan.config import get_settings
+from korgan.consultation_quota import receipt_fingerprint
 from korgan.localized_transport import _document_caption_with_review, _document_review_markup
 from korgan.payment import ReceiptAnalyzer, receipt_hard_issues, verify_user_payment
+from korgan.payment_release_guard import can_release_paid_document
 
 LOGGER = logging.getLogger(__name__)
 router = Router(name="korgan-auto-payment-runtime")
+_RELEASE_LOCK = asyncio.Lock()
+
+
+def _normalized_transaction_id(value: str) -> str:
+    return re.sub(r"[^0-9a-zа-яё]+", "", (value or "").casefold())
 
 
 class AutoPaymentReceiptFilter(BaseFilter):
@@ -61,21 +70,21 @@ def install_auto_payment() -> None:
                 "💳 Құжат дайын\n\n"
                 f"Қызмет құны: {formatted} ₸\n"
                 f"Құжат: {label}.\n\n"
-                "Word-файл төлем чегін KORGAN AI тексергеннен кейін беріледі.\n"
+                "Word-файл чек AI-тексеруден өтіп, төлемді әкімші растағаннан кейін беріледі.\n"
                 "1. Kaspi арқылы төлеңіз.\n"
                 "2. «✅ Төледім» түймесін басыңыз.\n"
                 "3. Толық чекті фото немесе PDF түрінде жіберіңіз.\n\n"
-                "AI чек сомасын, сәтті төлем мәртебесін және көрінетін реквизиттерді тексереді. Күмәнді немесе толық емес чек құжатты ашпайды."
+                "AI чек сомасын, сәтті төлем мәртебесін және көрінетін реквизиттерді тексереді. Одан кейін әкімші төлемді Kaspi Pay тарихымен салыстырады."
             )
         return (
             "💳 Документ готов\n\n"
             f"Стоимость: {formatted} ₸\n"
             f"Документ: {label}.\n\n"
-            "Word-файл будет выдан после проверки чека самим KORGAN AI.\n"
+            "Word-файл будет выдан после AI-проверки чека и подтверждения платежа администратором.\n"
             "1. Оплатите через Kaspi.\n"
             "2. Нажмите «✅ Я оплатил».\n"
             "3. Пришлите полный чек фото или PDF.\n\n"
-            "AI проверит сумму, успешный статус платежа и видимые реквизиты. Подозрительный или неполный чек документ не разблокирует."
+            "AI проверит сумму, успешный статус платежа и видимые реквизиты. Затем администратор сверит платёж с историей Kaspi Pay."
         )
 
     payment_gate.payment_offer_text = auto_payment_offer_text
@@ -149,6 +158,77 @@ async def auto_payment_receipt_received(message: Message, state: FSMContext) -> 
                 + "\n\nПришлите полный корректный чек. Документ пока не выдан."
             )
         return
+
+    bank_transaction_id = _normalized_transaction_id(check.receipt_or_transaction_id)
+    if not bank_transaction_id:
+        LOGGER.warning("AUTO_PAYMENT_TRANSACTION_ID_MISSING user=%s", user_id)
+        await message.answer(
+            "На чеке не удалось надёжно прочитать номер операции. Документ остаётся заблокирован до ручной сверки платежа."
+            if language != "kk"
+            else "Чектегі операция нөмірін сенімді оқу мүмкін болмады. Төлем қолмен салыстырылғанға дейін құжат бұғаттаулы күйде қалады."
+        )
+        return
+
+    transaction_key = f"{user_id}:{admin_doc_message_id}:{kind}"
+    fingerprint = receipt_fingerprint(raw)
+    async with _RELEASE_LOCK:
+        latest = await state.get_data()
+        used_fingerprints = {
+            str(item) for item in latest.get("auto_payment_receipt_fingerprints", []) or []
+        }
+        released_transactions = {
+            str(item) for item in latest.get("auto_payment_released_transactions", []) or []
+        }
+        used_bank_transactions = {
+            str(item) for item in latest.get("auto_payment_bank_transaction_ids", []) or []
+        }
+        if (
+            fingerprint in used_fingerprints
+            or bank_transaction_id in used_bank_transactions
+            or transaction_key in released_transactions
+        ):
+            LOGGER.warning("AUTO_PAYMENT_REPLAY_BLOCKED user=%s transaction=%s", user_id, transaction_key)
+            await message.answer(
+                "Этот чек или платёжная заявка уже использованы. Документ повторно не выдан."
+                if language != "kk"
+                else "Бұл чек немесе төлем өтінімі бұрын пайдаланылған. Құжат қайта берілген жоқ."
+            )
+            return
+
+        release_guard = can_release_paid_document(
+            kind=kind,
+            receipt_submitted=True,
+            receipt_precheck_passed=True,
+            admin_confirmed=(
+                str(latest.get("payment_confirmed_transaction_id") or "")
+                == str(admin_doc_message_id)
+            ),
+        )
+        if not release_guard.allowed:
+            LOGGER.warning(
+                "AUTO_PAYMENT_RELEASE_GUARD_BLOCKED user=%s kind=%s reason=%s",
+                user_id,
+                kind,
+                release_guard.reason,
+            )
+            await message.answer(
+                "Чек прошёл AI-проверку, но документ остаётся заблокирован до подтверждения платежа администратором."
+                if language != "kk"
+                else "Чек AI-тексеруден өтті, бірақ әкімші төлемді растағанға дейін құжат бұғаттаулы күйде қалады."
+            )
+            return
+
+        # Reserve both single-use markers before delivery. If Telegram delivery
+        # fails, support may recover the already-paid document without allowing
+        # the same receipt or transaction to race through this handler again.
+        used_fingerprints.add(fingerprint)
+        used_bank_transactions.add(bank_transaction_id)
+        released_transactions.add(transaction_key)
+        await state.update_data(
+            auto_payment_receipt_fingerprints=sorted(used_fingerprints),
+            auto_payment_bank_transaction_ids=sorted(used_bank_transactions),
+            auto_payment_released_transactions=sorted(released_transactions),
+        )
 
     try:
         await message.bot.copy_message(

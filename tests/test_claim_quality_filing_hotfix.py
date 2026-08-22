@@ -1,6 +1,11 @@
+import asyncio
+from types import SimpleNamespace
+
+from korgan import universal_claim_runtime
 from korgan.claim_quality_hotfix import (
     FILING_ACTION_PREFIX,
     _patched_assess_document_quality,
+    install_runtime_hotfix,
     polish_claim_before_quality,
 )
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
@@ -68,3 +73,32 @@ def test_unknown_exact_court_is_filing_action_not_substantive_hard_blocker() -> 
     assert not any("наименование суда" in item.lower() for item in report.hard_blockers)
     assert any(str(item).startswith(FILING_ACTION_PREFIX) for item in report.issues)
     assert report.score >= 8.5
+
+
+def test_runtime_hotfix_suppresses_a_stale_claim_before_any_response() -> None:
+    class StaleState:
+        async def get_data(self):
+            return {"request_id": "new-request", "request_kind": "claim"}
+
+        async def update_data(self, **kwargs):
+            raise AssertionError(f"stale request cleared state: {kwargs}")
+
+    async def unexpected_response(*args, **kwargs):
+        raise AssertionError("stale request emitted a user-visible response")
+
+    original = universal_claim_runtime._send_claim
+    install_runtime_hotfix()
+    try:
+        message = SimpleNamespace(answer=unexpected_response, answer_document=unexpected_response)
+        asyncio.run(
+            universal_claim_runtime._send_claim(
+                message,
+                StaleState(),
+                context="old context",
+                research=_research(),
+                draft=_draft(),
+                request_id="old-request",
+            )
+        )
+    finally:
+        universal_claim_runtime._send_claim = original
