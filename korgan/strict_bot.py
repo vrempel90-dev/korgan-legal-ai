@@ -12,6 +12,7 @@ from korgan import bot as base_bot
 from korgan.admin import router as admin_router
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter, claim_pipeline_v2_mode
 from korgan.claim_quality_hotfix import install_runtime_hotfix
+from korgan.client_document_guidance_router import router as client_document_guidance_router
 from korgan.client_document_runtime_guidance import install_client_document_runtime_guidance
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
@@ -126,6 +127,9 @@ async def main() -> None:
     # Exact RU/KK consultation and price buttons are handled here before the
     # legacy language/menu routers, so client-facing tariff text stays in sync.
     dp.include_router(consultation_ui_router)
+    # These three KK document callbacks must enter the same immutable request
+    # scope as RU and the other document kinds before the legacy Kazakh router.
+    dp.include_router(client_document_guidance_router)
     dp.include_router(kazakh_router)
     dp.include_router(review_cta_router)
     # The selected document button owns all intake text. This router must run
