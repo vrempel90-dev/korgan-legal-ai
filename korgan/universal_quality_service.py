@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Any
 
+from korgan.contract_repair_state import contract_repair_completed, reset_contract_repair_state
 from korgan.document_quality import MIN_READY_SCORE, assess_document_quality
 from korgan.fast_v2_production_legal import _deterministic_pre_qa
 from korgan.instant_claim_runtime import InstantClaimProductionService
@@ -144,15 +145,35 @@ class UniversalQualityProductionService(InstantClaimProductionService):
         research: LegalResearch,
         language: str = "ru",
     ) -> ContractDraft:
+        """Run at most one contract repair while preserving every quality gate."""
+        reset_contract_repair_state()
         draft = await super().draft_contract(case_context, research, language=language)
+        lower_repaired = contract_repair_completed()
         first = assess_document_quality("contract", case_context, research, draft)
         LOGGER.info(
-            "DOCUMENT_QUALITY kind=contract stage=first score=%.1f ready=%s blockers=%s",
+            "DOCUMENT_QUALITY kind=contract stage=first score=%.1f ready=%s blockers=%s lower_repaired=%s",
             first.score,
             first.ready,
             first.hard_blockers[:6],
+            lower_repaired,
         )
         if first.ready:
+            return draft
+
+        if lower_repaired:
+            # The lower production contract pipeline already ran its bounded AI
+            # repair and revalidated the repaired result. Never spend a second
+            # repair call on the same request. The deterministic >=8.5 gate is
+            # still authoritative: unresolved defects remain PRELIMINARY.
+            draft.status = VerificationStatus.NEEDS_VERIFICATION
+            note = _quality_note(first.score, first.repair_issues())
+            if note not in draft.verification_notes:
+                draft.verification_notes.append(note)
+            LOGGER.info(
+                "DOCUMENT_QUALITY kind=contract duplicate_outer_repair_skipped score=%.1f blockers=%s",
+                first.score,
+                first.hard_blockers[:6],
+            )
             return draft
 
         current = {
