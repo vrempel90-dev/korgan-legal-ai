@@ -1,1 +1,2 @@
-worker: python -m korgan.claim_release_entrypoint
+worker: python -m pytest -q
+# exact PR snapshot e569d50
