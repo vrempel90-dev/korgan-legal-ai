@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 from korgan.legal.corpus import (
     ACT_CONSUMER,
@@ -64,16 +64,18 @@ ZAN_IDENTITY_MARKERS: dict[str, tuple[str, ...]] = {
 _ZAN_PDF_PATH_RE = re.compile(
     r"^/api/documents/(?P<document_id>\d+)/rus(?:/(?P<edition>\d{2}\.\d{2}\.\d{4}))?/download/pdf$"
 )
+_ZAN_IDS = frozenset(ZAN_DOCUMENT_IDS.values())
 
 
-def _parsed_https(url: str):
+def _parsed_https(url: str) -> ParseResult | None:
     try:
         parsed = urlparse(url)
+        port = parsed.port
     except ValueError:
         return None
     if parsed.scheme != "https" or parsed.username or parsed.password:
         return None
-    if parsed.port not in (None, 443):
+    if port not in (None, 443):
         return None
     if parsed.query or parsed.fragment:
         return None
@@ -110,7 +112,7 @@ def is_allowed_zan_pdf_url(url: str, *, act_id: str | None = None) -> bool:
         return False
     document_id, _ = details
     if act_id is None:
-        return document_id in set(ZAN_DOCUMENT_IDS.values())
+        return document_id in _ZAN_IDS
     return ZAN_DOCUMENT_IDS.get(act_id) == document_id
 
 
