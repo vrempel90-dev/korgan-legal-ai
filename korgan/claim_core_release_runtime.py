@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import Any, Awaitable, Callable
 
-from korgan import bot as base_bot
 from korgan.claim_core_release import core_claim_release_blockers
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.request_scope import request_is_current
@@ -36,6 +35,8 @@ async def send_with_core_release_guard(
     request_id: str,
 ) -> Any:
     """Fail closed before whichever claim sender is actually installed in prod."""
+    from korgan import bot as base_bot
+
     if not await request_is_current(state, request_id, "claim"):
         LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
         return None
