@@ -10,6 +10,24 @@ from korgan import bot as base_bot
 LOGGER = logging.getLogger(__name__)
 
 
+def _upload_followup(request_kind: str, language: str) -> str:
+    """Keep the post-upload CTA inside the document section the client selected."""
+    if request_kind == "pretrial_response":
+        if language == "kk":
+            return (
+                "Егер бәрі дұрыс болса, тағы құжаттар қосуға немесе "
+                "сотқа дейінгі талапқа жауапты дайындауды жалғастыруға болады."
+            )
+        return (
+            "Если всё верно, можно добавить ещё документы или продолжить "
+            "подготовку ответа на претензию."
+        )
+    return (
+        "Если всё верно, можно добавить ещё документы или попросить подготовить иск — "
+        "он придёт файлом Word (.docx)."
+    )
+
+
 def install_request_race_guard() -> None:
     """Prevent a slow upload from being written into a newer legal request.
 
@@ -35,6 +53,7 @@ def install_request_race_guard() -> None:
         before = await state.get_data()
         request_id = str(before.get("request_id") or "")
         request_kind = str(before.get("request_kind") or "")
+        language = str(before.get("language") or "ru")
 
         await message.bot.send_chat_action(message.chat.id, "typing")
         try:
@@ -91,7 +110,7 @@ def install_request_race_guard() -> None:
         preview = extracted.as_context()
         await message.answer(
             f"✅ Материал разобран и добавлен в дело ({count}).\n\n{preview[:3200]}\n\n"
-            "Если всё верно, можно добавить ещё документы или попросить подготовить иск — он придёт файлом Word (.docx).",
+            + _upload_followup(request_kind, language),
             reply_markup=base_bot.MENU,
         )
 
