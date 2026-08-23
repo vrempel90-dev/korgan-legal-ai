@@ -1,6 +1,13 @@
 {
-  "verified_on": "2026-08-22",
+  "verified_on": "2026-08-23",
   "entries": [
+    {
+      "city": "Астана",
+      "district": "",
+      "court": "Специализированный межрайонный экономический суд города Астаны",
+      "jurisdiction": "economic",
+      "source_url": "https://www.gov.kz/memleket/entities/astana/press/news/details/943750?lang=ru"
+    },
     {
       "city": "Алматы",
       "district": "",
