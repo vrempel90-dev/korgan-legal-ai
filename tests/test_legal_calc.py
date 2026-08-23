@@ -8,6 +8,7 @@ from korgan.legal_calc import (
     claimant_is_individual,
     format_kzt,
     gosposhlina_line,
+    parse_all_amounts_kzt,
     parse_amount_kzt,
 )
 
@@ -57,6 +58,14 @@ def test_parse_amount_kzt(text: str, expected: int | None) -> None:
     assert parse_amount_kzt(text) == expected
 
 
+def test_parse_all_amounts_kzt_returns_every_currency_amount() -> None:
+    assert parse_all_amounts_kzt("Долг 12 000 000 тенге, неустойка 996 000 ₸, всего 12 996 000 теңге") == [
+        12_000_000,
+        996_000,
+        12_996_000,
+    ]
+
+
 def test_format_kzt() -> None:
     assert format_kzt(24_000) == "24 000 тенге"
 
@@ -93,3 +102,34 @@ def test_gosposhlina_line_without_price_needs_calculation() -> None:
 
 def test_gosposhlina_line_without_party_type_needs_calculation() -> None:
     assert gosposhlina_line("Стороны: не установлено", "2 400 000 тенге") == NEEDS_CALCULATION_MARKER
+
+
+def test_claimant_is_legal_entity_from_labeled_bins_without_role_lines() -> None:
+    context = "Стороны спора: ТОО «A» (БИН 230740012345) и ТОО «B» (БИН 210940067891)"
+    assert claimant_is_individual(context) is False
+
+
+def test_claimant_is_individual_from_single_labeled_iin_without_role_lines() -> None:
+    context = "Материалы заявителя: ИИН 900101300123, адрес г. Астана."
+    assert claimant_is_individual(context) is True
+
+
+def test_mixed_labeled_iin_and_bin_without_resolvable_claimant_is_fail_closed() -> None:
+    context = "Участники: ИИН 900101300123; БИН 230740012345."
+    assert claimant_is_individual(context) is None
+
+
+def test_bare_twelve_digits_without_label_are_not_treated_as_iin() -> None:
+    assert claimant_is_individual("Идентификатор 900101300123") is None
+
+
+def test_parenthetical_and_dash_claimant_roles_are_recognized() -> None:
+    assert claimant_is_individual("ТОО «A» (Истец); ТОО «B» (Ответчик)") is False
+    assert claimant_is_individual("Стороны: ТОО «A» — истец; ТОО «B» — ответчик") is False
+
+
+def test_gosposhlina_line_for_legal_entity_from_12_996_000() -> None:
+    context = "Стороны спора: ТОО «A» (БИН 230740012345) и ТОО «B» (БИН 210940067891)"
+    line = gosposhlina_line(context, "12 996 000 тенге")
+    assert line.startswith("389 880 тенге")
+    assert "3%" in line
