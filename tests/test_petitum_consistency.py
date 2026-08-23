@@ -96,6 +96,22 @@ def test_historical_payment_and_contract_price_do_not_create_amount_mismatch() -
     assert check_amount_consistency(draft) == []
 
 
+def test_nonproperty_amount_on_same_line_does_not_hide_unclaimed_debt() -> None:
+    draft = _draft()
+    draft.title = "Исковое заявление о взыскании задолженности"
+    draft.price_of_claim = "10 000 000 тенге"
+    draft.requests = ["Взыскать основной долг 10 000 000 тенге."]
+    draft.facts = [
+        "Задолженность составляет 12 000 000 тенге; судебные расходы составили 100 000 тенге."
+    ]
+    draft.attachments = []
+
+    errors = check_amount_consistency(draft)
+
+    assert any("12 000 000" in item for item in errors)
+    assert all("100 000" not in item for item in errors)
+
+
 def test_explicit_penalty_with_unknown_due_date_is_kept_for_verification() -> None:
     context = (
         "Истец: ТОО «A», БИН 230740012345. Ответчик: ТОО «B», БИН 210940067891. "
@@ -110,6 +126,22 @@ def test_explicit_penalty_with_unknown_due_date_is_kept_for_verification() -> No
     assert all("12 000 000" not in item for item in draft.requests if "неустой" in item.lower())
     assert "ТРЕБУЕТ РАСЧЁТА" in draft.price_of_claim
     assert any("дату начала просрочки" in note for note in draft.verification_notes)
+
+
+def test_penalty_before_principal_does_not_bind_principal_amount_to_penalty() -> None:
+    context = (
+        "Истец: ТОО «A», БИН 230740012345. Ответчик: ТОО «B», БИН 210940067891. "
+        "Пункт 6.3 договора: неустойка 0,1% за каждый день просрочки. "
+        "Прошу взыскать договорную неустойку и основной долг в размере 12 000 000 тенге."
+    )
+    draft = _draft()
+    _apply_verified_penalty(context, _research(), draft, filing_date=date(2026, 8, 21))
+
+    penalty_requests = [item for item in draft.requests if "неустой" in item.lower()]
+    assert penalty_requests
+    assert all("12 000 000" not in item for item in penalty_requests)
+    assert all("ТРЕБУЕТ ПРОВЕРКИ" in item for item in penalty_requests)
+    assert "ТРЕБУЕТ РАСЧЁТА" in draft.price_of_claim
 
 
 def test_source_bound_penalty_amount_stays_unresolved_until_due_date_is_verified() -> None:
