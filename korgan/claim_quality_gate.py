@@ -39,10 +39,23 @@ _AWARDED_AMOUNT_RE = re.compile(
     r"(?P<amount>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))",
     re.IGNORECASE,
 )
-_SOURCE_AMOUNT_EXEMPT_RE = re.compile(
+_SOURCE_LINE_EXEMPT_RE = re.compile(
     r"(?:государственн\w*\s+пошлин\w*|госпошлин\w*|судебн\w*\s+(?:расход\w*|издерж\w*)|"
     r"расход\w*\s+на\s+(?:оплат\w*\s+)?представител\w*|мемлекеттік\s+баж|сот\s+шығын\w*|"
     r"стоимост\w*\s+отдельн\w*\s+позиц\w*|цен\w*\s+(?:за\s+)?единиц\w*)",
+    re.IGNORECASE,
+)
+_CLAIM_AMOUNT_CONTEXT_RE = re.compile(
+    r"(?:задолженн\w*|основн\w*\s+долг\w*|неустойк\w*|пен[яиюь]\w*|штраф\w*|"
+    r"к\s+взыскан\w*|взыск\w*|итого\s+ко\s+взыскан\w*|берешек\w*|негізгі\s+қарыз\w*|"
+    r"тұрақсыздық\s+айыб\w*|өсімпұл\w*|өндір\w*)",
+    re.IGNORECASE,
+)
+_NONCLAIMED_AMOUNT_CONTEXT_RE = re.compile(
+    r"(?:частичн\w*\s+оплат\w*|оплатил\w*|оплачено|уплачено|погашено|внесено|"
+    r"зач[её]т\w*|зачтено|цена\s+договор\w*|стоимост\w*\s+договор\w*|"
+    r"общ\w*\s+стоимост\w*|аванс\w*\s+(?:уплачен\w*|внес[её]н\w*)|"
+    r"ішінара\s+төлен\w*|төленді|есепке\s+жатқыз\w*|шарт\w*\s+бағас\w*)",
     re.IGNORECASE,
 )
 _UNRESOLVED_AMOUNT_RE = re.compile(r"\[ТРЕБУЕТ\s+(?:ПРОВЕРКИ|РАСЧ[ЕЁ]ТА)[^\]]*\]", re.IGNORECASE)
@@ -83,12 +96,28 @@ def _awarded_amount(request: str) -> int | None:
     return amounts[0]
 
 
+def _source_amount_is_exempt(text: str, start: int, end: int) -> bool:
+    """Whitelist only clearly non-claimed factual amounts around one money token."""
+    before = text[max(0, start - 55):start]
+    after = text[end:min(len(text), end + 40)]
+    local = before + " " + after
+    # A direct debt/sanction label wins over nearby history such as an earlier
+    # partial payment in the same sentence.
+    immediate = text[max(0, start - 32):min(len(text), end + 24)]
+    if _CLAIM_AMOUNT_CONTEXT_RE.search(immediate):
+        return False
+    return bool(_NONCLAIMED_AMOUNT_CONTEXT_RE.search(local))
+
+
 def check_amount_consistency(draft: ClaimDraft) -> list[str]:
     """Return blocking monetary contradictions between reasoning and prayer.
 
     A deliberately unresolved preliminary demand marked ``ТРЕБУЕТ ПРОВЕРКИ``
-    is not a silent mismatch. In every other case, amounts mentioned as claimed
+    is not a silent mismatch. In every other case, amounts presented as claimed
     debt/sanctions must survive into the prayer and the claim-price arithmetic.
+    Historical payments, contract price and set-offs are checked per money token
+    and are exempt only when their local wording clearly says they are not a
+    separate amount sought from the court.
     """
     errors: list[str] = []
     target_amounts: set[int] = set()
@@ -99,9 +128,12 @@ def check_amount_consistency(draft: ClaimDraft) -> list[str]:
     for field_name, values in (("facts", draft.facts), ("attachments", draft.attachments)):
         for line in values or []:
             text = str(line)
-            if _SOURCE_AMOUNT_EXEMPT_RE.search(text):
+            if _SOURCE_LINE_EXEMPT_RE.search(text):
                 continue
-            for amount in parse_all_amounts_kzt(text):
+            for match in _MONEY_RE.finditer(text):
+                amount = parse_amount_kzt(match.group(0))
+                if amount is None or _source_amount_is_exempt(text, match.start(), match.end()):
+                    continue
                 if amount not in target_amounts:
                     errors.append(
                         f"Сумма {amount:,} тенге из {field_name} отсутствует одновременно в петитуме и цене иска."
