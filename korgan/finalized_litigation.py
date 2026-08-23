@@ -14,14 +14,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class FinalizedProductionClaimService(ProductionClaimService):
-    """Current production quality core plus a zero-call claim finalizer.
-
-    `claim_quality_hotfix` remains authoritative for separating filing-only
-    prerequisites from substantive legal quality. This adapter runs after its
-    fast research/draft/optional-repair path and removes the remaining model
-    discretion from court selection, legal-basis transfer, relief cleanup and
-    price/state-duty synchronization. No additional model or web call is added.
-    """
+    """Current production quality core plus a zero-call claim finalizer."""
 
     async def draft_claim(
         self,
@@ -31,19 +24,13 @@ class FinalizedProductionClaimService(ProductionClaimService):
     ) -> ClaimDraft:
         draft = await super().draft_claim(case_context, research, language=language)
 
-        # Enforce filing invariants in code, then let the existing deterministic
-        # arithmetic/cleanup run on the corrected relief set.
-        finalize_professional_claim(case_context, research, draft)
+        finalize_professional_claim(case_context, research, draft, language=language)
         _deterministic_pre_qa(case_context, research, draft)
         _apply_verified_article_353(case_context, research, draft, filing_date=_today_kz())
 
-        # Article 353 or deterministic cleanup may alter monetary relief. Finish
-        # once more and recompute price/state duty without another model call.
-        finalize_professional_claim(case_context, research, draft)
+        finalize_professional_claim(case_context, research, draft, language=language)
         _deterministic_pre_qa(case_context, research, draft)
 
-        # Read through the modules because claim_quality_hotfix monkeypatches
-        # these functions at startup; bound imports would bypass the active policy.
         deterministic = _sp.deterministic_claim_preflight(case_context, research, draft)
         quality = _dq.assess_document_quality("claim", case_context, research, draft)
         LOGGER.info(
@@ -68,8 +55,6 @@ class FinalizedProductionClaimService(ProductionClaimService):
 
         if quality.ready and not deterministic and not nonfiling:
             if filing:
-                # Filing-only prerequisites stay visible without pretending the
-                # substantive legal work failed quality review.
                 draft.status = VerificationStatus.NEEDS_VERIFICATION
                 draft.verification_notes = filing
             else:
