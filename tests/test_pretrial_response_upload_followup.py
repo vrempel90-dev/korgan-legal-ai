@@ -13,11 +13,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from korgan.legal_types import ExtractedDocument
 from korgan.request_race_guard import _upload_followup
 from korgan.request_scope import start_new_document_request
-from korgan.upload_followup_guard import (
-    _OLD_FOLLOWUP_KK,
-    _PRETRIAL_RESPONSE_FOLLOWUP_KK,
-    _UploadMessageProxy,
-)
 
 _STATE_IDS = count(1000)
 
@@ -74,7 +69,7 @@ def test_pretrial_response_upload_followup_has_no_claim_reference_ru() -> None:
 def test_pretrial_response_upload_followup_has_no_claim_reference_kk() -> None:
     text = _upload_followup("pretrial_response", "kk")
     assert "сотқа дейінгі талапқа жауап" in text.lower()
-    assert "талап қою арыз" not in text.lower()
+    assert "талап қою арызын дайындауды" not in text.lower()
 
 
 def test_claim_upload_followup_remains_unchanged() -> None:
@@ -87,22 +82,6 @@ def test_unknown_upload_followup_is_document_neutral() -> None:
     text = _upload_followup("", "ru")
     assert "выбранным документом" in text.lower()
     assert "подготовить иск" not in text.lower()
-
-
-def test_kazakh_pretrial_response_proxy_replaces_claim_cta_only() -> None:
-    async def scenario() -> None:
-        message = _Message()
-        proxy = _UploadMessageProxy(
-            message,
-            old_followup=_OLD_FOLLOWUP_KK,
-            new_followup=_PRETRIAL_RESPONSE_FOLLOWUP_KK,
-        )
-        await proxy.answer(f"Материал.\n\n{_OLD_FOLLOWUP_KK}")
-        assert len(message.answers) == 1
-        assert "сотқа дейінгі талапқа жауап" in message.answers[0].lower()
-        assert "талап қою арыз" not in message.answers[0].lower()
-
-    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize(
@@ -195,15 +174,27 @@ def test_installed_upload_handler_suppresses_notice_when_request_switches_during
     asyncio.run(scenario())
 
 
-def test_kazakh_installed_pretrial_response_upload_has_no_claim_cta(
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        ("claim", "талап қою арызын дайындауды жалғастыру"),
+        ("pretrial", "сотқа дейінгі талапты дайындауды жалғастыру"),
+        ("pretrial_response", "сотқа дейінгі талапқа жауапты дайындауды жалғастыру"),
+        ("response", "талап қою арызына пікірді дайындауды жалғастыру"),
+        ("contract", "шартты дайындауды жалғастыру"),
+    ],
+)
+def test_kazakh_installed_upload_handler_uses_active_request_kind(
     monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    expected: str,
 ) -> None:
     async def scenario() -> None:
         import korgan.strict_bot  # noqa: F401
         from korgan import bot as base_bot
         from korgan import kazakh_ui
 
-        storage, state = await _state("pretrial_response", "kk")
+        storage, state = await _state(kind, "kk")
         message = _Message()
         monkeypatch.setattr(base_bot, "service", _Service())
 
@@ -219,8 +210,11 @@ def test_kazakh_installed_pretrial_response_upload_has_no_claim_cta(
             await kazakh_ui._analyze_upload_kk(message, state, b"pdf", "claim.pdf", "application/pdf")
             assert len(message.answers) == 1
             text = message.answers[0].lower()
-            assert "сотқа дейінгі талапқа жауап" in text
-            assert "талап қою арыз" not in text
+            assert expected in text
+            if kind != "claim":
+                assert "талап қою арызын дайындауды жалғастыру" not in text
+            if kind != "pretrial_response":
+                assert "сотқа дейінгі талапқа жауапты дайындауды жалғастыру" not in text
         finally:
             await storage.close()
 
@@ -282,4 +276,4 @@ def test_strict_bot_installs_contextual_handlers_on_actual_upload_paths() -> Non
     assert base_bot._analyze_upload.__module__ == "korgan.request_race_guard"
     assert "_upload_followup" in inspect.getsource(base_bot._analyze_upload)
     assert kazakh_ui._analyze_upload_kk.__module__ == "korgan.upload_followup_guard"
-    assert "pretrial_response" in inspect.getsource(kazakh_ui._analyze_upload_kk)
+    assert "_upload_followup" in inspect.getsource(kazakh_ui._analyze_upload_kk)
