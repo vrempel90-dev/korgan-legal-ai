@@ -191,6 +191,85 @@ def test_installed_upload_handler_suppresses_notice_when_request_switches_during
     asyncio.run(scenario())
 
 
+def test_kazakh_installed_pretrial_response_upload_has_no_claim_cta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        import korgan.strict_bot  # noqa: F401
+        from korgan import bot as base_bot
+        from korgan import kazakh_ui
+
+        storage, state = await _state("pretrial_response", "kk")
+        message = _Message()
+        monkeypatch.setattr(base_bot, "service", _Service())
+
+        async def save_document(current_state: FSMContext, extracted: ExtractedDocument) -> int:
+            data = await current_state.get_data()
+            documents = list(data.get("documents", []) or [])
+            documents.append(extracted.as_context())
+            await current_state.update_data(documents=documents)
+            return len(documents)
+
+        monkeypatch.setattr(base_bot, "_save_document", save_document)
+        try:
+            await kazakh_ui._analyze_upload_kk(message, state, b"pdf", "claim.pdf", "application/pdf")
+            assert len(message.answers) == 1
+            text = message.answers[0].lower()
+            assert "сотқа дейінгі талапқа жауап" in text
+            assert "талап қою арыз" not in text
+        finally:
+            await storage.close()
+
+    asyncio.run(scenario())
+
+
+def test_kazakh_upload_suppresses_stale_notice_and_material_on_request_switch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        import korgan.strict_bot  # noqa: F401
+        from korgan import bot as base_bot
+        from korgan import kazakh_ui
+
+        storage, state = await _state("pretrial_response", "kk")
+        message = _Message()
+        monkeypatch.setattr(base_bot, "service", _Service())
+        save_started = asyncio.Event()
+        release_save = asyncio.Event()
+
+        async def slow_save(current_state: FSMContext, extracted: ExtractedDocument) -> int:
+            data = await current_state.get_data()
+            documents = list(data.get("documents", []) or [])
+            documents.append(extracted.as_context())
+            await current_state.update_data(documents=documents)
+            save_started.set()
+            await release_save.wait()
+            return len(documents)
+
+        monkeypatch.setattr(base_bot, "_save_document", slow_save)
+        try:
+            upload_task = asyncio.create_task(
+                kazakh_ui._analyze_upload_kk(message, state, b"pdf", "claim.pdf", "application/pdf")
+            )
+            await save_started.wait()
+            switch_task = asyncio.create_task(
+                start_new_document_request(state, kind="contract", mode="contract_details")
+            )
+            await asyncio.sleep(0)
+            release_save.set()
+            await upload_task
+            await switch_task
+
+            assert message.answers == []
+            latest = await state.get_data()
+            assert latest.get("request_kind") == "contract"
+            assert latest.get("documents") == []
+        finally:
+            await storage.close()
+
+    asyncio.run(scenario())
+
+
 def test_strict_bot_installs_contextual_handlers_on_actual_upload_paths() -> None:
     import korgan.strict_bot  # noqa: F401
     from korgan import bot as base_bot
