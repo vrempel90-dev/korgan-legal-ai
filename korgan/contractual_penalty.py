@@ -86,6 +86,28 @@ def _nearest_clause(text: str, position: int) -> str:
     return next(iter(best)) if len(best) == 1 else ""
 
 
+def _paragraph_for_position(text: str, position: int) -> str:
+    """Return the logical paragraph containing ``position``.
+
+    Contract clauses extracted from DOCX/PDF can contain long prose between the
+    daily rate and the cap. A fixed character window can silently drop the cap,
+    so the cap search uses the full paragraph while ambiguity still fails closed.
+    """
+    if not text:
+        return ""
+    separators = list(re.finditer(r"\n\s*\n", text))
+    start = 0
+    end = len(text)
+    for separator in separators:
+        if separator.end() <= position:
+            start = separator.end()
+            continue
+        if separator.start() >= position:
+            end = separator.start()
+            break
+    return text[start:end]
+
+
 def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerms | None:
     """Parse an explicit contractual daily penalty without guessing missing terms.
 
@@ -110,7 +132,8 @@ def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerm
     if not _CONTRACT_RE.search(local):
         return None
 
-    cap_matches = list(_CAP_RE.finditer(local))
+    paragraph = _paragraph_for_position(text, rate_position)
+    cap_matches = list(_CAP_RE.finditer(paragraph))
     caps = _unique_numeric(cap_matches)
     if len(caps) > 1:
         return None
