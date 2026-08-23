@@ -87,6 +87,18 @@ def test_restores_kazakh_judicial_cost_request_without_duplication() -> None:
     assert "взыскать" not in requests
 
 
+def test_negated_cost_request_does_not_restore_ru_or_kk_costs() -> None:
+    ru = _draft()
+    ru.requests = ["Взыскать основной долг."]
+    enforce_claim_release_invariants("Судебные расходы не прошу взыскивать.", ru, language="ru")
+    assert not any("судебные расходы" in item.lower() for item in ru.requests)
+
+    kk = _draft()
+    kk.requests = ["Негізгі берешекті өндіріп алу."]
+    enforce_claim_release_invariants("Сот шығындарын өндіріп алуды сұрамаймын.", kk, language="kk")
+    assert not any("сот шығын" in item.lower() for item in kk.requests)
+
+
 def test_same_day_pretrial_demand_adds_filing_action_and_downgrades() -> None:
     draft = _draft()
     today = datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
