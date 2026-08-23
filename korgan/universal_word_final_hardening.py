@@ -96,9 +96,12 @@ def penalty_amount_from_source(case_context: str, draft: ClaimDraft) -> int | No
             ),
             key=lambda item: (item[0], item[1]),
         )
-        distance, start, amount, end = nearest
-        local = segment[max(0, start - 48): min(len(segment), end + 24)]
-        if _PRINCIPAL_AMOUNT_CONTEXT_RE.search(local):
+        distance, start, amount, _end = nearest
+        # Bind a principal-debt label only to the amount immediately following
+        # it. A wider window would wrongly reject the later phrase
+        # «...долг 12 000 000 и неустойка составила 996 000».
+        local_prefix = segment[max(0, start - 30):start]
+        if _PRINCIPAL_AMOUNT_CONTEXT_RE.search(local_prefix):
             LOGGER.warning(
                 "UNIVERSAL_WORD_MONEY ambiguous_penalty_segment rejected amount=%s segment=%r",
                 amount,
