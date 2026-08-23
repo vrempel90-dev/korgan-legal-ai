@@ -43,13 +43,20 @@ class _UploadMessageProxy:
         return await self._original.answer(value, *args, **kwargs)
 
 
+def _same_request(data: dict[str, Any], request_id: str, request_kind: str) -> bool:
+    return (
+        str(data.get("request_id") or "") == request_id
+        and str(data.get("request_kind") or "") == request_kind
+    )
+
+
 def install_upload_followup_guard() -> None:
     """Prevent legacy claim CTAs from leaking into another selected document flow.
 
     The base analyzer predates the document-category router. The Kazakh UI also
-    owns its own upload analyzer, so `pretrial_response` needs the same surgical
-    CTA correction on that path. Extraction, saved state, and document generation
-    remain untouched.
+    owns its own upload analyzer. Its replacement preserves the existing Kazakh
+    client text while applying the same request-id isolation as the production
+    base upload path.
     """
     global _INSTALLED, _ORIGINAL_ANALYZE_UPLOAD, _ORIGINAL_ANALYZE_UPLOAD_KK
     if _INSTALLED:
@@ -57,6 +64,9 @@ def install_upload_followup_guard() -> None:
 
     from korgan import bot as base_bot
     from korgan import kazakh_ui
+    from korgan.i18n import KK, tr
+    from korgan.request_scope import document_request_lock
+    from korgan.ui import main_menu
 
     original = base_bot._analyze_upload
     original_kk = kazakh_ui._analyze_upload_kk
@@ -79,14 +89,80 @@ def install_upload_followup_guard() -> None:
         filename: str,
         mime_type: str | None,
     ) -> None:
-        state_data = await state.get_data()
-        if state_data.get("request_kind") == "pretrial_response":
-            message = _UploadMessageProxy(
-                message,
-                old_followup=_OLD_FOLLOWUP_KK,
-                new_followup=_PRETRIAL_RESPONSE_FOLLOWUP_KK,
-            )
-        await original_kk(message, state, data, filename, mime_type)
+        service = base_bot.service
+        if service is None:
+            return
+
+        before = await state.get_data()
+        request_id = str(before.get("request_id") or "")
+        request_kind = str(before.get("request_kind") or "")
+
+        await message.bot.send_chat_action(message.chat.id, "typing")
+        try:
+            extracted = await service.extract_document(data, filename, mime_type)
+        except ValueError as exc:
+            LOGGER.info("Kazakh upload rejected filename=%s error=%s", filename, exc)
+            async with document_request_lock(state):
+                latest = await state.get_data()
+                if not _same_request(latest, request_id, request_kind):
+                    LOGGER.info(
+                        "STALE_UPLOAD_SUPPRESSED request_id=%s kind=%s file=%s",
+                        request_id,
+                        request_kind,
+                        filename,
+                    )
+                    return
+                await message.answer(
+                    "PDF, DOCX, TXT, JPG, JPEG, PNG және WEBP форматтары қолдау табады.",
+                    reply_markup=main_menu(KK),
+                )
+            return
+        except Exception:
+            LOGGER.exception("Kazakh document analysis failed")
+            async with document_request_lock(state):
+                latest = await state.get_data()
+                if not _same_request(latest, request_id, request_kind):
+                    LOGGER.info(
+                        "STALE_UPLOAD_SUPPRESSED request_id=%s kind=%s file=%s",
+                        request_id,
+                        request_kind,
+                        filename,
+                    )
+                    return
+                await message.answer(tr(KK, "upload_error"), reply_markup=main_menu(KK))
+            return
+
+        async with document_request_lock(state):
+            latest = await state.get_data()
+            if not _same_request(latest, request_id, request_kind):
+                LOGGER.info(
+                    "STALE_UPLOAD_SUPPRESSED request_id=%s kind=%s file=%s",
+                    request_id,
+                    request_kind,
+                    filename,
+                )
+                return
+            count = await base_bot._save_document(state, extracted)
+            preview = extracted.as_context()
+
+        async with document_request_lock(state):
+            latest = await state.get_data()
+            if not _same_request(latest, request_id, request_kind):
+                LOGGER.info(
+                    "STALE_UPLOAD_SUPPRESSED request_id=%s kind=%s file=%s",
+                    request_id,
+                    request_kind,
+                    filename,
+                )
+                return
+            if request_kind == "pretrial_response":
+                text = (
+                    f"✅ Материал талданып, іске қосылды ({count}).\n\n{preview[:3200]}\n\n"
+                    + _PRETRIAL_RESPONSE_FOLLOWUP_KK
+                )
+            else:
+                text = tr(KK, "upload_ok", count=count, preview=preview[:3200])
+            await message.answer(text, reply_markup=main_menu(KK))
 
     base_bot._analyze_upload = guarded_analyze_upload
     kazakh_ui._analyze_upload_kk = guarded_analyze_upload_kk
