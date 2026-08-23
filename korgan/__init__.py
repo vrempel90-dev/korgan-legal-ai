@@ -4,10 +4,12 @@ from korgan import claim_quality_hotfix as _claim_quality_hotfix
 from korgan.claim_consistency_guard import install_claim_consistency_guard
 from korgan.claim_core_release_runtime import install_claim_core_release_guard
 from korgan.claim_release_repair import install_claim_release_repair
+from korgan.claim_upload_material_bridge import install_claim_upload_material_bridge
 from korgan.client_document_feedback_safe import install_client_document_feedback_safe
 
 install_claim_consistency_guard()
 install_claim_release_repair()
+install_claim_upload_material_bridge()
 install_client_document_feedback_safe()
 
 # strict_bot imports install_runtime_hotfix only after package initialization.
