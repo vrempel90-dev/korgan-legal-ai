@@ -29,16 +29,8 @@ def _research() -> LegalResearch:
     )
 
 
-def test_quality_target_is_ten_without_removing_preliminary_fallback() -> None:
-    assert TARGET_READY_SCORE == 10.0
-
-
-def test_astana_economic_court_is_in_verified_registry() -> None:
-    assert _economic_registry_court("Астана") == "Специализированный межрайонный экономический суд города Астаны"
-
-
-def test_claim_restores_secondary_penalty_recalculates_price_and_state_duty() -> None:
-    draft = ClaimDraft(
+def _claim_for_penalty() -> ClaimDraft:
+    return ClaimDraft(
         status=VerificationStatus.VERIFIED,
         title="Исковое заявление о взыскании задолженности и договорной неустойки",
         court="Специализированный межрайонный экономический суд города Астаны",
@@ -59,6 +51,18 @@ def test_claim_restores_secondary_penalty_recalculates_price_and_state_duty() ->
         verification_notes=["KORGAN QUALITY 8.0/10: потеряна неустойка"],
         source_urls=[],
     )
+
+
+def test_quality_target_is_ten_without_removing_preliminary_fallback() -> None:
+    assert TARGET_READY_SCORE == 10.0
+
+
+def test_astana_economic_court_is_in_verified_registry() -> None:
+    assert _economic_registry_court("Астана") == "Специализированный межрайонный экономический суд города Астаны"
+
+
+def test_claim_restores_secondary_penalty_recalculates_price_and_state_duty() -> None:
+    draft = _claim_for_penalty()
     context = (
         "Файл: pretenziya.pdf\n"
         "Тип: Досудебная претензия\n"
@@ -76,6 +80,34 @@ def test_claim_restores_secondary_penalty_recalculates_price_and_state_duty() ->
     assert "[ТРЕБУЕТ РАСЧЁТА" not in draft.state_duty
     assert all("при наличии указать" not in item.lower() for item in draft.claimant)
     assert all(not note.startswith("KORGAN QUALITY") for note in draft.verification_notes)
+
+
+def test_claim_does_not_invent_penalty_when_source_only_describes_contract_clause() -> None:
+    draft = _claim_for_penalty()
+    context = (
+        "Договор предусматривает неустойку 0,1% за каждый день просрочки, но не более 10%.\n"
+        "Клиент просит взыскать только основной долг 12 000 000 тенге."
+    )
+
+    finalize_claim_for_release(context, draft)
+
+    prayer = "\n".join(draft.requests).lower()
+    assert "996 000" not in prayer
+    assert "неустой" not in prayer
+    assert draft.price_of_claim == "12 000 000 тенге"
+
+
+def test_restored_penalty_respects_kazakh_document_language() -> None:
+    draft = _claim_for_penalty()
+    draft.requests = ["Жауапкерден 12 000 000 теңге негізгі борышты өндіріп алу."]
+    context = "ТРЕБОВАНИЕ ИЗ ДОКУМЕНТА: 996 000 теңге тұрақсыздық айыбын өндіріп алу."
+
+    finalize_claim_for_release(context, draft, language="kk")
+
+    prayer = "\n".join(draft.requests)
+    assert "996 000 теңге" in prayer
+    assert "тұрақсыздық айыбын" in prayer
+    assert "Взыскать" not in prayer
 
 
 def test_instruction_cleanup_applies_to_all_five_document_shapes() -> None:
@@ -205,6 +237,48 @@ def test_pretrial_gets_one_bounded_repair_for_any_release_issue() -> None:
     asyncio.run(scenario())
 
 
+def test_pretrial_repair_failure_returns_original_preliminary_instead_of_killing_word() -> None:
+    async def scenario() -> None:
+        defective = PretrialDraft(
+            status=VerificationStatus.NEEDS_VERIFICATION,
+            title="Досудебная претензия",
+            sender=["ТОО А"],
+            recipient=["ТОО Б"],
+            facts=["Товар поставлен, оплата не поступила."],
+            legal_basis=[],
+            demands=[],
+            deadline="",
+            consequences=[],
+            attachments=["Договор"],
+            verification_notes=[],
+            source_urls=[],
+        )
+
+        async def original(_self, _context, _research, language="ru"):
+            return defective
+
+        class FailingService:
+            settings = SimpleNamespace(max_case_text_chars=20_000)
+
+            async def _quality_repair(self, **_kwargs):
+                raise TimeoutError("repair timeout")
+
+        result = await repair_pretrial_to_target(
+            FailingService(),
+            original,
+            "ТОО Б не оплатило 500 000 тенге",
+            _research(),
+            "ru",
+        )
+        assert result is defective
+        assert result.status is VerificationStatus.NEEDS_VERIFICATION
+        assert result.sender == ["ТОО А"]
+        assert result.recipient == ["ТОО Б"]
+        assert result.verification_notes
+
+    asyncio.run(scenario())
+
+
 def test_pretrial_response_gets_one_bounded_repair_for_any_release_issue() -> None:
     async def scenario() -> None:
         defective = PretrialResponseDraft(
@@ -257,5 +331,46 @@ def test_pretrial_response_gets_one_bounded_repair_for_any_release_issue() -> No
         assert len(calls) == 1
         assert result.position
         assert result.objections
+
+    asyncio.run(scenario())
+
+
+def test_pretrial_response_repair_failure_returns_original_preliminary() -> None:
+    async def scenario() -> None:
+        defective = PretrialResponseDraft(
+            status=VerificationStatus.NEEDS_VERIFICATION,
+            title="Ответ на претензию",
+            sender=["ТОО Б"],
+            recipient=["ТОО А"],
+            reference="Претензия №1",
+            claim_summary=["Требуется оплатить 500 000 тенге."],
+            position=[],
+            objections=[],
+            legal_basis=[],
+            response_terms=[],
+            attachments=[],
+            verification_notes=[],
+            source_urls=[],
+        )
+
+        async def original(_self, _context, _research, language="ru"):
+            return defective
+
+        class FailingService:
+            settings = SimpleNamespace(max_case_text_chars=20_000)
+
+            async def _quality_repair(self, **_kwargs):
+                raise RuntimeError("malformed repair")
+
+        result = await repair_pretrial_response_to_target(
+            FailingService(),
+            original,
+            "Претензия требует оплатить 500 000 тенге; клиент оспаривает сумму.",
+            _research(),
+            "ru",
+        )
+        assert result is defective
+        assert result.status is VerificationStatus.NEEDS_VERIFICATION
+        assert result.verification_notes
 
     asyncio.run(scenario())
