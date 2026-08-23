@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 RATE_SOURCE_ARTICLE = "статья 665 Налогового кодекса РК (Кодекс РК № 214-VIII)"
 RATE_SOURCE_URL = "https://adilet.zan.kz/rus/docs/K2500000214"
@@ -19,10 +20,13 @@ RATE_LEGAL_ENTITY = 0.03
 CAP_MRP = 10_000
 NEEDS_CALCULATION_MARKER = "[ТРЕБУЕТ РАСЧЁТА ГОСПОШЛИНЫ]"
 
-_LEGAL_ENTITY_MARKERS = (
-    "бин", "тоо", "товарищество с ограниченной ответственностью", "ао ",
-    "акционерное общество", "юридическое лицо", "юридического лица",
-    "индивидуальный предприниматель", " ип ",
+_LEGAL_ENTITY_ABBREVIATIONS = ("бин", "тоо", "ао", "ип")
+_LEGAL_ENTITY_PHRASES = (
+    "товарищество с ограниченной ответственностью",
+    "акционерное общество",
+    "юридическое лицо",
+    "юридического лица",
+    "индивидуальный предприниматель",
 )
 _AMOUNT_PATTERN = re.compile(
     r"(\d[\d\s ]*(?:[.,]\d{1,2})?)\s*(?:\([^)]*\)\s*)?(?:тенге|теңге|тг\b|₸|kzt)",
@@ -59,16 +63,20 @@ def calc_gosposhlina_claim(amount: int, is_individual: bool) -> int:
 
 
 def parse_all_amounts_kzt(text: str) -> list[int]:
-    """Return every positive currency amount in textual order."""
+    """Return every positive currency amount in textual order.
+
+    Fractional tenge are rounded to whole tenge with ``ROUND_HALF_UP`` so money
+    parsing never silently truncates kopecks before claim-price or duty math.
+    """
     amounts: list[int] = []
     for match in _AMOUNT_PATTERN.finditer(text or ""):
         digits = re.sub(r"[\s ]", "", match.group(1)).replace(",", ".")
         try:
-            value = float(digits)
-        except ValueError:
+            value = Decimal(digits)
+        except (InvalidOperation, ValueError):
             continue
         if value > 0:
-            amounts.append(int(value))
+            amounts.append(int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
     return amounts
 
 
@@ -152,6 +160,16 @@ def _claimant_has_iin_elsewhere(case_context: str, segment: str) -> bool:
     )
 
 
+def _has_legal_entity_marker(segment: str) -> bool:
+    lowered = (segment or "").lower()
+    if any(phrase in lowered for phrase in _LEGAL_ENTITY_PHRASES):
+        return True
+    return any(
+        re.search(rf"(?<!\w){re.escape(marker)}(?!\w)", lowered)
+        for marker in _LEGAL_ENTITY_ABBREVIATIONS
+    )
+
+
 def claimant_is_individual(case_context: str) -> bool | None:
     """Determine claimant type only from role-bound or explicitly labeled IDs.
 
@@ -164,8 +182,7 @@ def claimant_is_individual(case_context: str) -> bool | None:
 
     segment = _claimant_segment(case_context)
     if segment:
-        lowered = f" {segment.lower()} "
-        if any(marker in lowered for marker in _LEGAL_ENTITY_MARKERS):
+        if _has_legal_entity_marker(segment):
             return False
         if _IIN_LABELED_RE.search(segment) or _claimant_has_iin_elsewhere(case_context, segment):
             return True
