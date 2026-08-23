@@ -87,14 +87,28 @@ def _nearest_clause(text: str, position: int) -> str:
 
 
 def _paragraph_for_position(text: str, position: int) -> str:
-    """Return the logical paragraph containing ``position``.
+    """Return the logical contract scope containing ``position``.
 
-    Contract clauses extracted from DOCX/PDF can contain long prose between the
-    daily rate and the cap. A fixed character window can silently drop the cap,
-    so the cap search uses the full paragraph while ambiguity still fails closed.
+    Prefer the numbered clause that owns the rate, so a cap from the next
+    contract clause cannot leak into this calculation even when DOCX/PDF text
+    separates clauses with only one newline. If no nearby numbered clause can
+    be bound safely, fall back to the blank-line paragraph.
     """
     if not text:
         return ""
+
+    clause_matches = list(_CLAUSE_RE.finditer(text))
+    preceding = [match for match in clause_matches if match.start() <= position]
+    if preceding:
+        anchor = preceding[-1]
+        if position - anchor.start() <= 320:
+            end = len(text)
+            for candidate in clause_matches:
+                if candidate.start() > position:
+                    end = candidate.start()
+                    break
+            return text[anchor.start():end]
+
     separators = list(re.finditer(r"\n\s*\n", text))
     start = 0
     end = len(text)
@@ -113,7 +127,7 @@ def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerm
 
     The parser is deliberately fail-closed. It accepts exactly one distinct
     daily rate and requires contractual wording near that rate. If different
-    rates or different caps are present, no terms are selected.
+    rates or different caps are present in the same clause, no terms are selected.
     """
     text = str(case_context or "")
     rate_matches = [*_RATE_RE.finditer(text), *_RATE_RE_REVERSED.finditer(text)]
