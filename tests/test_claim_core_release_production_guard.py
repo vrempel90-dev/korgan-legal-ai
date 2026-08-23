@@ -126,42 +126,37 @@ def test_kazakh_material_basis_and_executable_relief_use_same_verified_core() ->
     assert blockers == []
 
 
-def test_guard_blocks_before_installed_sender_is_called(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_guard_downgrades_incomplete_claim_and_delegates_to_sender() -> None:
     async def scenario() -> None:
         state = _State({"language": "ru"})
         request_id = await start_new_document_request(state, kind="claim", mode="main")
         message = _Message()
         called = False
+        seen_status = VerificationStatus.VERIFIED
 
-        async def downstream(*_args, **_kwargs):
-            nonlocal called
+        async def downstream(*_args, **kwargs):
+            nonlocal called, seen_status
             called = True
+            seen_status = kwargs["draft"].status
 
-        import korgan.claim_core_release_runtime as guard_runtime
-
-        async def language(_state) -> str:
-            return "ru"
-
-        monkeypatch.setattr(guard_runtime, "request_is_current", guard_runtime.request_is_current)
-        from korgan import bot as base_bot
-        monkeypatch.setattr(base_bot, "_language", language)
-
+        draft = _draft(
+            basis="Основание: ст. 272 ГК РК.",
+            request="Прошу рассмотреть дело.",
+        )
         await send_with_core_release_guard(
             downstream,
             message,
             state,
             context="Долг",
             research=_research(_gk272()),
-            draft=_draft(
-                basis="Основание: ст. 272 ГК РК.",
-                request="Прошу рассмотреть дело.",
-            ),
+            draft=draft,
             request_id=request_id,
         )
 
-        assert called is False
-        assert len(message.answers) == 1
-        assert "не выпущен в Word" in message.answers[0]
+        assert called is True
+        assert seen_status is VerificationStatus.NEEDS_VERIFICATION
+        assert draft.status is VerificationStatus.NEEDS_VERIFICATION
+        assert message.answers == []
 
     asyncio.run(scenario())
 
