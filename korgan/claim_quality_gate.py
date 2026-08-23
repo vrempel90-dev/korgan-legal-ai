@@ -59,6 +59,7 @@ _NONCLAIMED_AMOUNT_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 _UNRESOLVED_AMOUNT_RE = re.compile(r"\[ТРЕБУЕТ\s+(?:ПРОВЕРКИ|РАСЧ[ЕЁ]ТА)[^\]]*\]", re.IGNORECASE)
+_CLAUSE_DELIMITER_RE = re.compile(r"[;\n.!?]")
 
 
 @dataclass(slots=True)
@@ -109,26 +110,39 @@ def _nearest_cue_distance(pattern: re.Pattern[str], text: str, start: int, end: 
     return min(distances) if distances else None
 
 
+def _money_clause(text: str, start: int, end: int) -> tuple[str, int, int]:
+    """Bind one amount to its semicolon/sentence clause before cue comparison."""
+    left = 0
+    for match in _CLAUSE_DELIMITER_RE.finditer(text, 0, start):
+        left = match.end()
+    right = len(text)
+    match = _CLAUSE_DELIMITER_RE.search(text, end)
+    if match:
+        right = match.start()
+    return text[left:right], start - left, end - left
+
+
 def _source_amount_is_exempt(text: str, start: int, end: int) -> bool:
     """Whitelist only clearly non-claimed factual amounts around one money token.
 
-    Compare the nearest factual-history/non-property cue with the nearest claim
-    cue per token. This prevents one exempt amount on a mixed line from hiding a
-    different debt/sanction amount that must still reconcile with the prayer.
-    Equal distance fails closed in favor of claim consistency.
+    Cues are compared only inside the amount's factual clause. This prevents a
+    neighboring judicial-cost/payment clause from hiding a contradictory debt
+    amount, while still exempting historical payments, contract price, set-offs
+    and non-property costs from the claim-price reconciliation.
     """
+    clause, local_start, local_end = _money_clause(text, start, end)
     distances = [
         value
         for value in (
-            _nearest_cue_distance(_NONCLAIMED_AMOUNT_CONTEXT_RE, text, start, end),
-            _nearest_cue_distance(_SOURCE_LINE_EXEMPT_RE, text, start, end),
+            _nearest_cue_distance(_NONCLAIMED_AMOUNT_CONTEXT_RE, clause, local_start, local_end),
+            _nearest_cue_distance(_SOURCE_LINE_EXEMPT_RE, clause, local_start, local_end),
         )
         if value is not None
     ]
     if not distances:
         return False
     nonclaimed_distance = min(distances)
-    claim_distance = _nearest_cue_distance(_CLAIM_AMOUNT_CONTEXT_RE, text, start, end)
+    claim_distance = _nearest_cue_distance(_CLAIM_AMOUNT_CONTEXT_RE, clause, local_start, local_end)
     return claim_distance is None or nonclaimed_distance < claim_distance
 
 
