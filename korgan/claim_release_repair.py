@@ -9,8 +9,6 @@ from korgan.fast_v2_production_legal import _deterministic_pre_qa
 from korgan.late_interest_hotfix import _apply_verified_article_353, _today_kz
 from korgan.legal_types import ClaimDraft, LegalResearch
 from korgan.openai_legal import _CLAIM_SCHEMA
-from korgan.professional_claim_finalizer import finalize_professional_claim
-from korgan.universal_word_quality_guard import finalize_claim_for_release
 
 LOGGER = logging.getLogger(__name__)
 _PATCHED = False
@@ -102,14 +100,23 @@ async def repair_claim_release(
         **payload,
     )
 
+    # Import the finalization layers lazily. claim_release_repair is itself part
+    # of the runtime monkeypatch stack, and importing stable/universal services
+    # at module import time would make startup order circular and fragile.
+    from korgan.claim_release_invariants import enforce_claim_release_invariants
+    from korgan.professional_claim_finalizer import finalize_professional_claim
+    from korgan.universal_word_quality_guard import finalize_claim_for_release
+
     # IMPORTANT: the old production path stopped after the LLM repair here.
     # That let the last model pass undo deterministic work already performed by
     # FinalizedProductionClaimService. Re-run the same zero-call finalization
     # chain before the repaired draft is ever eligible for Word delivery.
     finalize_professional_claim(context, research, repaired)
+    enforce_claim_release_invariants(context, repaired, language=language)
     _deterministic_pre_qa(context, research, repaired)
     _apply_verified_article_353(context, research, repaired, filing_date=_today_kz())
     finalize_professional_claim(context, research, repaired)
+    enforce_claim_release_invariants(context, repaired, language=language)
     finalize_claim_for_release(context, repaired, language=language)
     _deterministic_pre_qa(context, research, repaired)
     claim_quality_hotfix.polish_claim_before_quality(context, research, repaired)
