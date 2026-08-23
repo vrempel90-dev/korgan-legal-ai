@@ -82,7 +82,8 @@ _MONEY_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 _PENALTY_AMOUNT_NEAR_RE = re.compile(
-    r"(?:неустойк\w*|пен[яию]\b|штраф\w*)[^.\n]{0,100}?"
+    r"(?:неустойк\w*|пен[яию]\b|штраф\w*)"
+    r"(?:\s+(?:в\s+размере|в\s+сумме|составля\w*)\s+|[\s:—-]{1,12})"
     r"(?P<amount>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))",
     re.IGNORECASE,
 )
@@ -290,7 +291,7 @@ def _sync_calculated_penalty_narrative(
 
 
 def _explicit_penalty_amount_from_context(case_context: str) -> int | None:
-    """Return one source-bound penalty amount only when it follows a penalty label."""
+    """Return one source-bound penalty amount only when directly tied to the penalty label."""
     values: list[int] = []
     for match in _PENALTY_AMOUNT_NEAR_RE.finditer(case_context or ""):
         amount = parse_amount_kzt(match.group("amount") or "")
