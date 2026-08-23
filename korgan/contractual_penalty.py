@@ -28,20 +28,20 @@ class ContractualPenalty:
 
 
 _NUMBER = r"(?P<value>\d+(?:[.,]\d+)?)"
+_PERCENT_TOKEN = r"(?:%|процент(?:а|ов)?\b)"
 _RATE_RE = re.compile(
-    rf"{_NUMBER}\s*(?:%|процент(?:а|ов)?)\s*"
+    rf"{_NUMBER}\s*{_PERCENT_TOKEN}\s*"
     r"(?:от\s+(?:сумм\w*\s+)?(?:задолженн\w*|долг\w*)\s*)?"
     r"(?:за\s+кажд\w*\s+день(?:\s+просроч\w*)?|в\s+день)\b",
     re.IGNORECASE,
 )
 _RATE_RE_REVERSED = re.compile(
     rf"(?:за\s+кажд\w*\s+день(?:\s+просроч\w*)?|в\s+день)\s*"
-    rf"(?:[-—:;,]\s*)?{_NUMBER}\s*(?:%|процент(?:а|ов)?)\b",
+    rf"(?:[-—:;,]\s*)?{_NUMBER}\s*{_PERCENT_TOKEN}",
     re.IGNORECASE,
 )
 _CAP_RE = re.compile(
-    rf"(?:но\s+)?(?:не\s+более|не\s+свыше|не\s+превыша\w*)\s*{_NUMBER}\s*"
-    r"(?:%|процент(?:а|ов)?)\b",
+    rf"(?:но\s+)?(?:не\s+более|не\s+свыше|не\s+превыша\w*)\s*{_NUMBER}\s*{_PERCENT_TOKEN}",
     re.IGNORECASE,
 )
 _CLAUSE_RE = re.compile(
