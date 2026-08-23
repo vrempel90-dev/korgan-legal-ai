@@ -13,13 +13,6 @@ _NEW_FOLLOWUP = (
     "Если всё верно, можно добавить ещё документы или продолжить подготовку "
     "выбранного документа."
 )
-_OLD_FOLLOWUP_KK = (
-    "Қосымша материал жіберуге немесе бірден талап қою арызын дайындауды сұрауға болады."
-)
-_PRETRIAL_RESPONSE_FOLLOWUP_KK = (
-    "Қосымша материал жіберуге немесе сотқа дейінгі талапқа жауапты дайындауды "
-    "жалғастыруға болады."
-)
 _INSTALLED = False
 _ORIGINAL_ANALYZE_UPLOAD: Any = None
 _ORIGINAL_ANALYZE_UPLOAD_KK: Any = None
@@ -54,9 +47,9 @@ def install_upload_followup_guard() -> None:
     """Prevent legacy claim CTAs from leaking into another selected document flow.
 
     The base analyzer predates the document-category router. The Kazakh UI also
-    owns its own upload analyzer. Its replacement preserves the existing Kazakh
-    client text while applying the same request-id isolation as the production
-    base upload path.
+    owns its own upload analyzer. Its replacement preserves Kazakh client text,
+    applies the same request-id isolation as the production base upload path, and
+    uses the same request-kind CTA mapping for every supported document type.
     """
     global _INSTALLED, _ORIGINAL_ANALYZE_UPLOAD, _ORIGINAL_ANALYZE_UPLOAD_KK
     if _INSTALLED:
@@ -65,6 +58,7 @@ def install_upload_followup_guard() -> None:
     from korgan import bot as base_bot
     from korgan import kazakh_ui
     from korgan.i18n import KK, tr
+    from korgan.request_race_guard import _upload_followup
     from korgan.request_scope import document_request_lock
     from korgan.ui import main_menu
 
@@ -155,13 +149,10 @@ def install_upload_followup_guard() -> None:
                     filename,
                 )
                 return
-            if request_kind == "pretrial_response":
-                text = (
-                    f"✅ Материал талданып, іске қосылды ({count}).\n\n{preview[:3200]}\n\n"
-                    + _PRETRIAL_RESPONSE_FOLLOWUP_KK
-                )
-            else:
-                text = tr(KK, "upload_ok", count=count, preview=preview[:3200])
+            text = (
+                f"✅ Материал талданып, іске қосылды ({count}).\n\n{preview[:3200]}\n\n"
+                + _upload_followup(request_kind, KK)
+            )
             await message.answer(text, reply_markup=main_menu(KK))
 
     base_bot._analyze_upload = guarded_analyze_upload
