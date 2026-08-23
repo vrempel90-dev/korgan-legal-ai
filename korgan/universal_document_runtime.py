@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from korgan import bot as base_bot
+from korgan import document_quality
 from korgan.contract_docx import build_contract_docx
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
@@ -177,7 +178,10 @@ async def _send_contract(message: Message, state: FSMContext) -> None:
     if quality.ready:
         caption = f"✅ KORGAN QUALITY {quality.score:.1f}/10\nДоговор сформирован в Word (.docx)."
     else:
-        caption = f"⚠️ PRELIMINARY · KORGAN QUALITY {quality.score:.1f}/10\nПроект договора сформирован, но не достиг порога 8.5/10."
+        caption = (
+            f"⚠️ PRELIMINARY · KORGAN QUALITY {quality.score:.1f}/10\n"
+            f"Проект договора сформирован, но не достиг порога {document_quality.MIN_READY_SCORE:.1f}/10."
+        )
         checks = quality.repair_issues()[:6]
         if checks:
             caption += "\n\nПеред подписанием требуется:\n" + bullets(checks)
@@ -238,7 +242,10 @@ async def _send_response(message: Message, state: FSMContext) -> None:
     if quality.ready:
         caption = f"✅ KORGAN QUALITY {quality.score:.1f}/10\nОтзыв на иск сформирован в Word (.docx)."
     else:
-        caption = f"⚠️ PRELIMINARY · KORGAN QUALITY {quality.score:.1f}/10\nПроект отзыва сформирован, но не достиг порога 8.5/10."
+        caption = (
+            f"⚠️ PRELIMINARY · KORGAN QUALITY {quality.score:.1f}/10\n"
+            f"Проект отзыва сформирован, но не достиг порога {document_quality.MIN_READY_SCORE:.1f}/10."
+        )
         checks = quality.repair_issues()[:6]
         if checks:
             caption += "\n\nПеред подачей требуется:\n" + bullets(checks)
