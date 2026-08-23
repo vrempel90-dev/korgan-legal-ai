@@ -50,6 +50,8 @@ def test_negative_claim_is_rejected() -> None:
         ("2 400 000 (два миллиона четыреста тысяч) тенге", 2_400_000),
         ("2400000 тг", 2_400_000),
         ("Цена иска: 1 500 000 тенге", 1_500_000),
+        ("12 000 000,49 тенге", 12_000_000),
+        ("12 000 000,50 тенге", 12_000_001),
         ("сумма не определена", None),
         ("", None),
     ],
@@ -87,6 +89,15 @@ def test_legal_entity_claimant_uses_three_percent() -> None:
     )
     assert claimant_is_individual(context) is False
     assert gosposhlina_line(context, "2 400 000 тенге").startswith("72 000 тенге")
+
+
+def test_individual_address_word_containing_bin_does_not_trigger_legal_entity_rate() -> None:
+    context = (
+        "Истец: Иванов Иван Иванович, ИИН 900101300123, адрес: г. Астана, кабинет 214\n"
+        "Ответчик: Петров Петр Петрович, ИИН 910101300456\n"
+    )
+    assert claimant_is_individual(context) is True
+    assert gosposhlina_line(context, "2 400 000 тенге").startswith("24 000 тенге")
 
 
 def test_gosposhlina_line_for_delo_2() -> None:
