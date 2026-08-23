@@ -77,6 +77,13 @@ _AWARDED_AMOUNT_RE = re.compile(
     r"(?P<amount>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))",
     re.IGNORECASE,
 )
+_PENALTY_AMOUNT_NEAR_RE = re.compile(
+    r"(?:неустойк\w*|пен[яию]\b|штраф\w*)[^.\n]{0,100}?"
+    r"(?P<after>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))|"
+    r"(?P<before>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))"
+    r"[^.\n]{0,50}?(?:неустойк\w*|пен[яию]\b|штраф\w*)",
+    re.IGNORECASE,
+)
 
 _MONTHS = {
     "января": 1,
@@ -219,25 +226,6 @@ def _drop_article_353_lines(draft: ClaimDraft) -> None:
     draft.legal_basis = [item for item in draft.legal_basis if not _ARTICLE_353_LINE_RE.search(item)]
 
 
-def _mark_penalty_for_verification(draft: ClaimDraft, reason: str) -> None:
-    suffix = f"[ТРЕБУЕТ ПРОВЕРКИ: {reason}]"
-    updated: list[str] = []
-    found = False
-    for item in draft.requests:
-        text = str(item)
-        if _PENALTY_LINE_RE.search(text):
-            found = True
-            if suffix not in text:
-                text = text.rstrip(" .") + ". " + suffix
-        updated.append(text)
-    if not found:
-        updated.append(f"Взыскать заявленную клиентом неустойку. {suffix}")
-    draft.requests = updated
-    if reason not in draft.verification_notes:
-        draft.verification_notes.append(reason)
-    draft.status = VerificationStatus.NEEDS_VERIFICATION
-
-
 def _request_awarded_amount(request: str) -> int | None:
     match = _AWARDED_AMOUNT_RE.search(request or "")
     if match:
@@ -248,6 +236,34 @@ def _request_awarded_amount(request: str) -> int | None:
     if _PENALTY_LINE_RE.search(request or "") and len(amounts) > 1:
         return amounts[-1]
     return amounts[0]
+
+
+def _explicit_penalty_amount_from_context(case_context: str) -> int | None:
+    """Return one source-bound penalty amount, never a model-only amount."""
+    values: list[int] = []
+    for match in _PENALTY_AMOUNT_NEAR_RE.finditer(case_context or ""):
+        raw = match.group("after") or match.group("before") or ""
+        amount = parse_amount_kzt(raw)
+        if amount is not None and amount not in values:
+            values.append(amount)
+    return values[0] if len(values) == 1 else None
+
+
+def _mark_penalty_for_verification(draft: ClaimDraft, reason: str, *, case_context: str) -> None:
+    """Keep the remedy while discarding any model-only monetary figure."""
+    suffix = f"[ТРЕБУЕТ ПРОВЕРКИ: {reason}]"
+    source_amount = _explicit_penalty_amount_from_context(case_context)
+    updated = [str(item) for item in draft.requests if not _PENALTY_LINE_RE.search(str(item))]
+    if source_amount is not None:
+        updated.append(
+            f"Взыскать заявленную клиентом неустойку в размере {format_kzt(source_amount)}. {suffix}"
+        )
+    else:
+        updated.append(f"Взыскать заявленную клиентом неустойку. {suffix}")
+    draft.requests = updated
+    if reason not in draft.verification_notes:
+        draft.verification_notes.append(reason)
+    draft.status = VerificationStatus.NEEDS_VERIFICATION
 
 
 def _component_label(request: str) -> str:
@@ -274,7 +290,7 @@ def _recompute_claim_price_and_duty(draft: ClaimDraft, case_context: str) -> Non
             continue
         if not _PROPERTY_REQUEST_RE.search(text):
             continue
-        if "[ТРЕБУЕТ ПРОВЕРКИ" in text.upper() or "[ТРЕБУЕТ РАСЧ" in text.upper():
+        if "[ТРЕБУЕТ РАСЧ" in text.upper():
             unresolved = True
             continue
         amount = _request_awarded_amount(text)
@@ -301,8 +317,11 @@ def _recompute_claim_price_and_duty(draft: ClaimDraft, case_context: str) -> Non
         components = [("основной долг", principal)]
 
     total = sum(amount for _, amount in components)
-    detail = " + ".join(f"{label} {format_kzt(amount)}" for label, amount in components)
-    draft.price_of_claim = f"{format_kzt(total)} ({detail})"
+    if len(components) == 1:
+        draft.price_of_claim = format_kzt(total)
+    else:
+        detail = " + ".join(f"{label} {format_kzt(amount)}" for label, amount in components)
+        draft.price_of_claim = f"{format_kzt(total)} ({detail})"
     draft.state_duty = gosposhlina_line(case_context, draft.price_of_claim)
     _enforce_single_state_duty_request(draft)
 
@@ -360,7 +379,7 @@ def _apply_contractual_penalty(
     due_date = _extract_due_date(case_context)
     if principal is None or due_date is None:
         _drop_article_353_lines(draft)
-        _mark_penalty_for_verification(draft, CONTRACT_DUE_DATE_MISSING_NOTE)
+        _mark_penalty_for_verification(draft, CONTRACT_DUE_DATE_MISSING_NOTE, case_context=case_context)
         _recompute_claim_price_and_duty(draft, case_context)
         return True
 
@@ -368,7 +387,7 @@ def _apply_contractual_penalty(
     if filing_date < start:
         reason = "На дату подачи иска установленный срок оплаты ещё не истёк; период просрочки отсутствует."
         _drop_article_353_lines(draft)
-        _mark_penalty_for_verification(draft, reason)
+        _mark_penalty_for_verification(draft, reason, case_context=case_context)
         _recompute_claim_price_and_duty(draft, case_context)
         return True
 
@@ -414,21 +433,21 @@ def _apply_verified_penalty(
 
     if not _research_has_article_353(research):
         _drop_article_353_lines(draft)
-        _mark_penalty_for_verification(draft, CONTRACT_TERMS_MISSING_NOTE)
+        _mark_penalty_for_verification(draft, CONTRACT_TERMS_MISSING_NOTE, case_context=case_context)
         _recompute_claim_price_and_duty(draft, case_context)
         return
 
     due_date = _extract_due_date(case_context)
     principal = _principal_amount(draft)
     if due_date is None or principal is None:
-        _mark_penalty_for_verification(draft, DUE_DATE_MISSING_NOTE)
+        _mark_penalty_for_verification(draft, DUE_DATE_MISSING_NOTE, case_context=case_context)
         _recompute_claim_price_and_duty(draft, case_context)
         return
 
     start = due_date + timedelta(days=1)
     if filing_date < start:
         reason = "На дату подачи иска срок исполнения ещё не наступил; неустойка по статье 353 не начисляется."
-        _mark_penalty_for_verification(draft, reason)
+        _mark_penalty_for_verification(draft, reason, case_context=case_context)
         _recompute_claim_price_and_duty(draft, case_context)
         return
 
@@ -440,7 +459,7 @@ def _apply_verified_penalty(
     )
     if penalty is None:
         draft.late_interest = NEEDS_RATE_MARKER
-        _mark_penalty_for_verification(draft, RATE_MISSING_NOTE)
+        _mark_penalty_for_verification(draft, RATE_MISSING_NOTE, case_context=case_context)
         _recompute_claim_price_and_duty(draft, case_context)
         return
 
