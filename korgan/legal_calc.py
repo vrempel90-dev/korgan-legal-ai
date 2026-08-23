@@ -67,6 +67,8 @@ def parse_all_amounts_kzt(text: str) -> list[int]:
 
     Fractional tenge are rounded to whole tenge with ``ROUND_HALF_UP`` so money
     parsing never silently truncates kopecks before claim-price or duty math.
+    ``to_integral_value`` avoids Decimal context-precision failures on unusually
+    long but syntactically valid user-provided amounts.
     """
     amounts: list[int] = []
     for match in _AMOUNT_PATTERN.finditer(text or ""):
@@ -76,7 +78,7 @@ def parse_all_amounts_kzt(text: str) -> list[int]:
         except (InvalidOperation, ValueError):
             continue
         if value > 0:
-            amounts.append(int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
+            amounts.append(int(value.to_integral_value(rounding=ROUND_HALF_UP)))
     return amounts
 
 
