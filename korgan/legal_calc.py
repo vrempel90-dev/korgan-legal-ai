@@ -25,7 +25,7 @@ _LEGAL_ENTITY_MARKERS = (
     "индивидуальный предприниматель", " ип ",
 )
 _AMOUNT_PATTERN = re.compile(
-    r"(\d[\d\s ]*(?:[.,]\d{1,2})?)\s*(?:\([^)]*\)\s*)?(?:тенге|тг\b|kzt)",
+    r"(\d[\d\s ]*(?:[.,]\d{1,2})?)\s*(?:\([^)]*\)\s*)?(?:тенге|теңге|тг\b|₸|kzt)",
     re.IGNORECASE,
 )
 _ROLE_LINE_RE = re.compile(
@@ -36,8 +36,19 @@ _PAREN_CLAIMANT_RE = re.compile(
     r"(?is)(?:^|\n|\bстороны\s*:\s*)[^;\n:]{0,100}\(\s*(?:истец|заявитель)\s*\)\s*:\s*"
     r"(.{1,500}?)(?=;\s*[^;\n:]{0,100}\(\s*(?:ответчик|должник)\s*\)\s*:|\n|$)"
 )
+_PARTY_BEFORE_PAREN_CLAIMANT_RE = re.compile(
+    r"(?is)(?:^|[;\n])\s*(?P<party>[^;\n]{1,240}?)\s*\(\s*(?:истец|заявитель)\s*\)"
+)
+_PARTY_BEFORE_DASH_CLAIMANT_RE = re.compile(
+    r"(?is)(?:^|[;\n])\s*(?P<party>[^;\n]{1,240}?)\s*[—-]\s*(?:истец|заявитель)\b"
+)
 _PERSON_NAME_RE = re.compile(r"[А-ЯЁ][а-яё-]+\s+[А-ЯЁ][а-яё-]+(?:\s+[А-ЯЁ][а-яё-]+)?")
-_IIN_RE = re.compile(r"(?<!\d)\d{12}(?!\d)")
+_IIN_LABELED_RE = re.compile(r"\bИИН\s*[:\-–]?\s*(\d{12})\b", re.IGNORECASE)
+_BIN_LABELED_RE = re.compile(r"\bБИН\s*[:\-–]?\s*(\d{12})\b", re.IGNORECASE)
+_BARE_12_DIGITS_RE = re.compile(r"(?<!\d)\d{12}(?!\d)")
+# Backwards-compatible private alias for any internal imports/tests that still
+# refer to the old name. Party-type decisions no longer rely on this regex.
+_IIN_RE = _BARE_12_DIGITS_RE
 
 
 def calc_gosposhlina_claim(amount: int, is_individual: bool) -> int:
@@ -47,18 +58,23 @@ def calc_gosposhlina_claim(amount: int, is_individual: bool) -> int:
     return min(round(amount * rate), CAP_MRP * MRP_2026)
 
 
+def parse_all_amounts_kzt(text: str) -> list[int]:
+    """Return every positive currency amount in textual order."""
+    amounts: list[int] = []
+    for match in _AMOUNT_PATTERN.finditer(text or ""):
+        digits = re.sub(r"[\s ]", "", match.group(1)).replace(",", ".")
+        try:
+            value = float(digits)
+        except ValueError:
+            continue
+        if value > 0:
+            amounts.append(int(value))
+    return amounts
+
+
 def parse_amount_kzt(text: str) -> int | None:
-    if not text:
-        return None
-    match = _AMOUNT_PATTERN.search(text)
-    if not match:
-        return None
-    digits = re.sub(r"[\s ]", "", match.group(1)).replace(",", ".")
-    try:
-        value = float(digits)
-    except ValueError:
-        return None
-    return int(value) if value > 0 else None
+    amounts = parse_all_amounts_kzt(text)
+    return amounts[0] if amounts else None
 
 
 def format_kzt(value: int) -> str:
@@ -100,14 +116,25 @@ def _claimant_segment(case_context: str) -> str:
     segment = "\n".join(item for item in collected if item).strip()
     if segment:
         return segment
+
     match = re.search(
-        r"(?is)\b(?:истец|заявитель)\s*:\s*(.{1,500}?)(?=\b(?:ответчик|должник|взыскатель|кредитор)\s*:|$)",
+        r"(?is)(?:^|[;\n])\s*(?:истец|заявитель)\s*:\s*(.{1,500}?)"
+        r"(?=(?:[;\n]\s*)(?:ответчик|должник|взыскатель|кредитор)\s*:|$)",
         case_context,
     )
     if match:
         return match.group(1).strip()
+
     parenthetical = _PAREN_CLAIMANT_RE.search(case_context)
-    return parenthetical.group(1).strip() if parenthetical else ""
+    if parenthetical:
+        return parenthetical.group(1).strip()
+
+    party_before_parenthetical = _PARTY_BEFORE_PAREN_CLAIMANT_RE.search(case_context)
+    if party_before_parenthetical:
+        return party_before_parenthetical.group("party").strip()
+
+    party_before_dash = _PARTY_BEFORE_DASH_CLAIMANT_RE.search(case_context)
+    return party_before_dash.group("party").strip() if party_before_dash else ""
 
 
 def _claimant_has_iin_elsewhere(case_context: str, segment: str) -> bool:
@@ -116,31 +143,39 @@ def _claimant_has_iin_elsewhere(case_context: str, segment: str) -> bool:
     if not name_match:
         return False
     name = name_match.group(0)
-    return bool(re.search(re.escape(name) + r".{0,80}\bИИН\s*" + r"\d{12}\b", case_context, re.IGNORECASE | re.DOTALL))
+    return bool(
+        re.search(
+            re.escape(name) + r".{0,80}\bИИН\s*[:\-–]?\s*\d{12}\b",
+            case_context,
+            re.IGNORECASE | re.DOTALL,
+        )
+    )
 
 
 def claimant_is_individual(case_context: str) -> bool | None:
-    """Determine the claimant's party type without leaking respondent markers.
+    """Determine claimant type only from role-bound or explicitly labeled IDs.
 
-    The claimant may be identified in one block and have the IIN listed in a
-    later ``Идентификаторы`` block. A single-IIN fragment is also accepted for
-    deterministic helpers (for example Article 353 unit calculations). Multiple
-    parties without a resolvable claimant remain fail-closed.
+    A bare 12-digit identifier is ambiguous in Kazakhstan because both ИИН and
+    БИН have 12 digits. If the claimant cannot be role-bound, only explicit ИИН
+    and БИН labels are used; mixed or unlabeled cases remain fail-closed.
     """
     if not case_context:
         return None
+
     segment = _claimant_segment(case_context)
     if segment:
         lowered = f" {segment.lower()} "
         if any(marker in lowered for marker in _LEGAL_ENTITY_MARKERS):
             return False
-        if ("иин" in lowered and _IIN_RE.search(segment)) or _claimant_has_iin_elsewhere(case_context, segment):
+        if _IIN_LABELED_RE.search(segment) or _claimant_has_iin_elsewhere(case_context, segment):
             return True
         return None
 
-    iins = _IIN_RE.findall(case_context)
-    lowered_all = f" {case_context.lower()} "
-    if len(iins) == 1 and not any(marker in lowered_all for marker in _LEGAL_ENTITY_MARKERS):
+    labeled_iins = _IIN_LABELED_RE.findall(case_context)
+    labeled_bins = _BIN_LABELED_RE.findall(case_context)
+    if labeled_bins and not labeled_iins:
+        return False
+    if labeled_iins and not labeled_bins:
         return True
     return None
 
