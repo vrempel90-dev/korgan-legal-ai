@@ -99,6 +99,19 @@ def test_negated_cost_request_does_not_restore_ru_or_kk_costs() -> None:
     assert not any("сот шығын" in item.lower() for item in kk.requests)
 
 
+def test_costs_not_subject_to_recovery_are_not_restored() -> None:
+    draft = _draft()
+    draft.requests = ["Взыскать основной долг."]
+
+    enforce_claim_release_invariants(
+        "Судебные расходы не подлежат взысканию.",
+        draft,
+        language="ru",
+    )
+
+    assert not any("судебные расходы" in item.lower() for item in draft.requests)
+
+
 def test_same_day_pretrial_demand_adds_filing_action_and_downgrades() -> None:
     draft = _draft()
     today = datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
