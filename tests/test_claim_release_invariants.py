@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from korgan.claim_filing_accuracy import FILING_ACTION_PREFIX
 from korgan.claim_release_invariants import enforce_claim_release_invariants
 from korgan.legal_types import ClaimDraft, VerificationStatus
 
@@ -47,6 +51,17 @@ def test_removes_article_148_and_circular_self_evidence() -> None:
     assert draft.status is VerificationStatus.NEEDS_VERIFICATION
 
 
+def test_removes_kazakh_article_148_from_material_basis() -> None:
+    draft = _draft()
+    draft.legal_basis.insert(0, "Талап нысаны туралы 148-бап АПК РК талаптары қолданылады.")
+
+    enforce_claim_release_invariants("Шарт бойынша берешекті өндіріп алу", draft, language="kk")
+
+    joined = "\n".join(draft.legal_basis)
+    assert "148-бап" not in joined
+    assert "439" in joined
+
+
 def test_restores_explicit_judicial_cost_request_without_inventing_amount() -> None:
     draft = _draft()
     context = "ПРОШУ: взыскать основной долг, неустойку и судебные расходы с Ответчика."
@@ -56,3 +71,42 @@ def test_restores_explicit_judicial_cost_request_without_inventing_amount() -> N
     requests = "\n".join(draft.requests).lower()
     assert "судебные расходы" in requests
     assert requests.count("судебные расходы") == 1
+
+
+def test_restores_kazakh_judicial_cost_request_without_duplication() -> None:
+    draft = _draft()
+    draft.requests = ["Жауапкерден негізгі берешекті өндіріп алу."]
+    context = "Жауапкерден негізгі берешек пен сот шығындарын өндіріп алуды сұраймын."
+
+    enforce_claim_release_invariants(context, draft, language="kk")
+    enforce_claim_release_invariants(context, draft, language="kk")
+
+    requests = "\n".join(draft.requests).lower()
+    assert "сот шығындарын" in requests
+    assert requests.count("сот шығындарын") == 1
+    assert "взыскать" not in requests
+
+
+def test_same_day_pretrial_demand_adds_filing_action_and_downgrades() -> None:
+    draft = _draft()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
+    context = f"Досудебная претензия от {today} направлена ответчику."
+
+    enforce_claim_release_invariants(context, draft)
+
+    assert draft.status is VerificationStatus.NEEDS_VERIFICATION
+    assert any(
+        note.startswith(FILING_ACTION_PREFIX) and "досудебная претензия датирована днем" in note.lower()
+        for note in draft.verification_notes
+    )
+
+
+def test_past_pretrial_demand_does_not_add_same_day_filing_action() -> None:
+    draft = _draft()
+    draft.facts = []
+    draft.verification_notes = []
+    context = "Досудебная претензия от 01.01.2025 направлена ответчику."
+
+    enforce_claim_release_invariants(context, draft)
+
+    assert not any("досудебная претензия датирована днем" in note.lower() for note in draft.verification_notes)
