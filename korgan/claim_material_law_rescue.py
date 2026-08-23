@@ -14,11 +14,16 @@ from korgan.provision_check import verified_claim_line
 LOGGER = logging.getLogger(__name__)
 
 _CONTRACT_DEBT_RE = re.compile(
-    r"(?i)(?:договор\w*|обязательств\w*).{0,240}(?:задолженн\w*|долг\w*|не\s+оплат\w*|просроч\w*)|"
+    r"(?is)(?:договор\w*|обязательств\w*).{0,240}(?:задолженн\w*|долг\w*|не\s+оплат\w*|просроч\w*)|"
     r"(?:задолженн\w*|долг\w*|не\s+оплат\w*|просроч\w*).{0,240}(?:договор\w*|обязательств\w*)"
 )
 _SUPPLY_RE = re.compile(r"(?i)(?:поставк\w*|поставщик\w*|покупател\w*|товар\w*)")
 _PENALTY_RE = re.compile(r"(?i)(?:договорн\w*\s+неустойк\w*|неустойк\w*|пен[яию]\b|штраф\w*)")
+_CONTRACTUAL_PENALTY_CONTEXT_RE = re.compile(
+    r"(?is)(?:договорн\w*\s+(?:неустойк\w*|пен[яию]\b|штраф\w*)|"
+    r"(?:неустойк\w*|пен[яию]\b|штраф\w*).{0,180}(?:по|согласно|в\s+соответствии\s+с)\s+(?:услови\w*\s+)?договор\w*|"
+    r"договор\w*.{0,180}(?:неустойк\w*|пен[яию]\b|штраф\w*))"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,8 +94,6 @@ def _score(provision: Provision, rule: _Rule) -> int:
     for pattern in rule.preferred:
         if re.search(pattern, value, flags=re.IGNORECASE | re.DOTALL):
             score += 10
-    # A provision split to a concrete paragraph/item is preferable to a huge
-    # whole-article row because its filing citation is narrower and easier to audit.
     if provision.item_no:
         score += 2
     return score
@@ -115,9 +118,6 @@ def _already_present(research: LegalResearch, provision: Provision) -> bool:
 def _append_verified(research: LegalResearch, provision: Provision) -> None:
     if _already_present(research, provision):
         return
-    # The statement is the provision's own text, not a model paraphrase. The
-    # existing filing gate will bind this line back to the same article/item in
-    # corpus.sqlite3 before it can appear in the court document.
     statement = " ".join(str(provision.body or "").split()).strip()
     if not statement:
         return
@@ -130,23 +130,26 @@ def _append_verified(research: LegalResearch, provision: Provision) -> None:
 def enrich_material_law_from_corpus(case_context: str, research: LegalResearch) -> LegalResearch:
     """Rescue missing core material law from the fresh official Adilet snapshot.
 
-    Web research remains useful for strategy and unusual remedies, but it is not
-    allowed to leave an ordinary contract-debt claim with only a procedural/form
-    article. For high-confidence categories, this pass queries the locally
-    refreshed official corpus and adds only provisions whose *actual text*
-    satisfies deterministic semantic predicates. Article numbers are therefore
-    discovered from the current corpus rather than hard-coded from model memory.
+    Contractual-penalty rescue is deliberately gated to a contractual context.
+    A generic statutory ``пеня`` in an employment/tax/administrative case must
+    never pull the Civil Code contractual-penalty provision into the filing.
     """
     if not local_corpus_enabled():
         return research
 
     context = str(case_context or "")
+    contract_debt = bool(_CONTRACT_DEBT_RE.search(context))
+    contractual_penalty = bool(
+        _PENALTY_RE.search(context)
+        and (contract_debt or _CONTRACTUAL_PENALTY_CONTEXT_RE.search(context))
+    )
+
     rules: list[_Rule] = []
-    if _CONTRACT_DEBT_RE.search(context):
+    if contract_debt:
         rules.append(_PROPER_PERFORMANCE)
         if _SUPPLY_RE.search(context):
             rules.append(_SUPPLY_PAYMENT)
-    if _PENALTY_RE.search(context):
+    if contractual_penalty:
         rules.append(_CONTRACTUAL_PENALTY)
     if not rules:
         return research
@@ -182,9 +185,6 @@ def enrich_material_law_from_corpus(case_context: str, research: LegalResearch) 
         corpus.close()
 
     if added:
-        # Do not erase existing UNVERIFIED findings; the rescue only supplies
-        # missing material-law anchors. If no other uncertainty remains, the
-        # research can legitimately become VERIFIED.
         if not research.unverified_claims:
             research.status = VerificationStatus.VERIFIED
         LOGGER.info("CLAIM_MATERIAL_LAW_RESCUE added=%s", added)
