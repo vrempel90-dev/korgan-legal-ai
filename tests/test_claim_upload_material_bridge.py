@@ -67,7 +67,7 @@ def test_claim_aware_extractor_demands_marker_for_pretrial_documents() -> None:
         )
         extracted = await bridge._claim_aware_extract_document(
             fake,
-            b"Требую вернуть 500 000 тенге",
+            "Требую вернуть 500 000 тенге".encode("utf-8"),
             "pretenziya.txt",
             "text/plain",
         )
