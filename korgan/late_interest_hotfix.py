@@ -340,7 +340,8 @@ def _recompute_claim_price_and_duty(draft: ClaimDraft, case_context: str) -> Non
             continue
         if not _PROPERTY_REQUEST_RE.search(text):
             continue
-        if "[ТРЕБУЕТ РАСЧ" in text.upper():
+        upper = text.upper()
+        if "[ТРЕБУЕТ РАСЧ" in upper or "[ТРЕБУЕТ ПРОВЕРКИ" in upper:
             unresolved = True
             continue
         amount = _request_awarded_amount(text)
