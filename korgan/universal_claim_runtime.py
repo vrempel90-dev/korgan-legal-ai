@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, Message
 
 from korgan import bot as base_bot
+from korgan import document_quality
 from korgan.citation_audit import ProvisionReference, extract_references
 from korgan.claim_core_release import core_claim_release_blockers
 from korgan.claim_docx import build_claim_docx, missing_required_fields
@@ -309,7 +310,10 @@ async def _send_claim(
     if quality.ready:
         caption = f"✅ KORGAN QUALITY {quality.score:.1f}/10\nИск сформирован в Word (.docx)."
     else:
-        caption = f"⚠️ PRELIMINARY · KORGAN QUALITY {quality.score:.1f}/10\nПроект иска сформирован, но не достиг порога 8.5/10."
+        caption = (
+            f"⚠️ PRELIMINARY · KORGAN QUALITY {quality.score:.1f}/10\n"
+            f"Проект иска сформирован, но не достиг порога {document_quality.MIN_READY_SCORE:.1f}/10."
+        )
         checks = quality.repair_issues()[:6]
         if checks:
             caption += "\n\nПеред подачей требуется:\n" + bullets(checks)
