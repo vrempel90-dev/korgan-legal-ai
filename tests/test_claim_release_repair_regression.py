@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import pytest
+import asyncio
 
 from korgan import claim_release_repair
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
@@ -71,8 +71,7 @@ def _draft() -> ClaimDraft:
     )
 
 
-@pytest.mark.asyncio
-async def test_final_release_repair_reapplies_penalty_price_and_state_duty(monkeypatch) -> None:
+def test_final_release_repair_reapplies_penalty_price_and_state_duty(monkeypatch) -> None:
     monkeypatch.setattr(claim_release_repair, "_repair_service", lambda: _RepairService())
     context = (
         "Истец: ТОО «Поставщик», БИН 123456789012. Ответчик: ТОО «Покупатель». "
@@ -80,12 +79,14 @@ async def test_final_release_repair_reapplies_penalty_price_and_state_duty(monke
         "ТРЕБОВАНИЕ ИЗ ДОКУМЕНТА: Взыскать договорную неустойку в размере 996 000 тенге."
     )
 
-    repaired = await claim_release_repair.repair_claim_release(
-        context=context,
-        research=_research(),
-        draft=_draft(),
-        language="ru",
-        release=_Release(),
+    repaired = asyncio.run(
+        claim_release_repair.repair_claim_release(
+            context=context,
+            research=_research(),
+            draft=_draft(),
+            language="ru",
+            release=_Release(),
+        )
     )
 
     assert repaired is not None
