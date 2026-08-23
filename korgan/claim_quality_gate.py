@@ -96,17 +96,33 @@ def _awarded_amount(request: str) -> int | None:
     return amounts[0]
 
 
+def _nearest_cue_distance(pattern: re.Pattern[str], text: str, start: int, end: int) -> int | None:
+    """Return distance from one money token to the nearest semantic cue."""
+    left_start = max(0, start - 100)
+    left = text[left_start:start]
+    right = text[end:min(len(text), end + 55)]
+    distances: list[int] = []
+    for match in pattern.finditer(left):
+        distances.append(start - (left_start + match.end()))
+    for match in pattern.finditer(right):
+        distances.append(match.start())
+    return min(distances) if distances else None
+
+
 def _source_amount_is_exempt(text: str, start: int, end: int) -> bool:
-    """Whitelist only clearly non-claimed factual amounts around one money token."""
-    before = text[max(0, start - 55):start]
-    after = text[end:min(len(text), end + 40)]
-    local = before + " " + after
-    # A direct debt/sanction label wins over nearby history such as an earlier
-    # partial payment in the same sentence.
-    immediate = text[max(0, start - 32):min(len(text), end + 24)]
-    if _CLAIM_AMOUNT_CONTEXT_RE.search(immediate):
+    """Whitelist only clearly non-claimed factual amounts around one money token.
+
+    Compare the nearest factual-history cue with the nearest claim cue instead
+    of letting a later debt word contaminate an earlier partial payment in the
+    same sentence. Equal distance fails closed in favor of claim consistency.
+    """
+    nonclaimed_distance = _nearest_cue_distance(
+        _NONCLAIMED_AMOUNT_CONTEXT_RE, text, start, end
+    )
+    if nonclaimed_distance is None:
         return False
-    return bool(_NONCLAIMED_AMOUNT_CONTEXT_RE.search(local))
+    claim_distance = _nearest_cue_distance(_CLAIM_AMOUNT_CONTEXT_RE, text, start, end)
+    return claim_distance is None or nonclaimed_distance < claim_distance
 
 
 def check_amount_consistency(draft: ClaimDraft) -> list[str]:
