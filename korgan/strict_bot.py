@@ -50,6 +50,7 @@ from korgan.review_cta_runtime import router as review_cta_router
 from korgan.stable_legal_release import install_stable_legal_release
 from korgan.token_budget_guard import apply_token_budget_guard
 from korgan.ui import main_menu
+from korgan.universal_word_final_hardening import install_universal_word_final_hardening
 from korgan.universal_word_quality_guard import install_universal_word_quality_guard
 from korgan.upload_followup_guard import install_upload_followup_guard
 
@@ -62,6 +63,10 @@ install_stable_legal_release()
 # filing-ready target to 10/10 while preserving PRELIMINARY Word delivery when
 # a remaining factual/legal gap cannot be repaired without inventing data.
 install_universal_word_quality_guard()
+# Exact Decimal arithmetic and source-safe monetary extraction are layered after
+# the universal guard so its release path cannot select principal debt as a
+# penalty or lose precision on large KZT amounts.
+install_universal_word_final_hardening()
 install_client_safe_runtime()
 install_pretrial_response_transport()
 install_response_voice_guard()
@@ -157,7 +162,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
