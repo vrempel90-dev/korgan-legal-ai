@@ -77,11 +77,13 @@ _AWARDED_AMOUNT_RE = re.compile(
     r"(?P<amount>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))",
     re.IGNORECASE,
 )
+_MONEY_TOKEN_RE = re.compile(
+    r"(?<!\d)\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt)",
+    re.IGNORECASE,
+)
 _PENALTY_AMOUNT_NEAR_RE = re.compile(
     r"(?:неустойк\w*|пен[яию]\b|штраф\w*)[^.\n]{0,100}?"
-    r"(?P<after>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))|"
-    r"(?P<before>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))"
-    r"[^.\n]{0,50}?(?:неустойк\w*|пен[яию]\b|штраф\w*)",
+    r"(?P<amount>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))",
     re.IGNORECASE,
 )
 
@@ -238,12 +240,60 @@ def _request_awarded_amount(request: str) -> int | None:
     return amounts[0]
 
 
+def _existing_penalty_amount(draft: ClaimDraft) -> int | None:
+    for request in draft.requests or []:
+        if _PENALTY_LINE_RE.search(str(request)):
+            amount = _request_awarded_amount(str(request))
+            if amount is not None:
+                return amount
+    return None
+
+
+def _replace_exact_amounts(text: str, replacements: dict[int, int]) -> str:
+    if not replacements:
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        current = parse_amount_kzt(match.group(0))
+        target = replacements.get(current) if current is not None else None
+        return format_kzt(target) if target is not None else match.group(0)
+
+    return _MONEY_TOKEN_RE.sub(replace, text or "")
+
+
+def _sync_calculated_penalty_narrative(
+    draft: ClaimDraft,
+    *,
+    principal: int,
+    new_penalty: int,
+    old_penalty: int | None,
+    old_price: int | None,
+) -> None:
+    """Keep penalty-bearing facts/attachments aligned with deterministic arithmetic."""
+    replacements: dict[int, int] = {}
+    if old_penalty is not None and old_penalty not in {principal, new_penalty}:
+        replacements[old_penalty] = new_penalty
+    new_price = principal + new_penalty
+    if old_price is not None and old_price not in {principal, new_price}:
+        replacements[old_price] = new_price
+    if not replacements:
+        return
+
+    draft.facts = [
+        _replace_exact_amounts(str(item), replacements) if _PENALTY_LINE_RE.search(str(item)) else str(item)
+        for item in draft.facts
+    ]
+    draft.attachments = [
+        _replace_exact_amounts(str(item), replacements) if _PENALTY_LINE_RE.search(str(item)) else str(item)
+        for item in draft.attachments
+    ]
+
+
 def _explicit_penalty_amount_from_context(case_context: str) -> int | None:
-    """Return one source-bound penalty amount, never a model-only amount."""
+    """Return one source-bound penalty amount only when it follows a penalty label."""
     values: list[int] = []
     for match in _PENALTY_AMOUNT_NEAR_RE.finditer(case_context or ""):
-        raw = match.group("after") or match.group("before") or ""
-        amount = parse_amount_kzt(raw)
+        amount = parse_amount_kzt(match.group("amount") or "")
         if amount is not None and amount not in values:
             values.append(amount)
     return values[0] if len(values) == 1 else None
@@ -391,7 +441,16 @@ def _apply_contractual_penalty(
         _recompute_claim_price_and_duty(draft, case_context)
         return True
 
+    old_penalty = _existing_penalty_amount(draft)
+    old_price = parse_amount_kzt(draft.price_of_claim)
     penalty = calc_contractual_penalty(principal, terms, start, filing_date)
+    _sync_calculated_penalty_narrative(
+        draft,
+        principal=principal,
+        new_penalty=penalty.amount,
+        old_penalty=old_penalty,
+        old_price=old_price,
+    )
     draft.requests = [item for item in draft.requests if not _PENALTY_LINE_RE.search(item)]
     _drop_article_353_lines(draft)
     clause = f"Пунктом {terms.clause} договора" if terms.clause else "Условием договора о неустойке"
@@ -451,6 +510,8 @@ def _apply_verified_penalty(
         _recompute_claim_price_and_duty(draft, case_context)
         return
 
+    old_penalty = _existing_penalty_amount(draft)
+    old_price = parse_amount_kzt(draft.price_of_claim)
     penalty = calc_late_payment_penalty(
         principal,
         start,
@@ -463,6 +524,13 @@ def _apply_verified_penalty(
         _recompute_claim_price_and_duty(draft, case_context)
         return
 
+    _sync_calculated_penalty_narrative(
+        draft,
+        principal=principal,
+        new_penalty=penalty.amount,
+        old_penalty=old_penalty,
+        old_price=old_price,
+    )
     draft.requests = [item for item in draft.requests if not _PENALTY_LINE_RE.search(item)]
     draft.legal_basis = [item for item in draft.legal_basis if not _PENALTY_LINE_RE.search(item)]
     draft.legal_basis.append(
