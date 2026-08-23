@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from itertools import count
 from types import SimpleNamespace
 
 import pytest
@@ -17,6 +18,8 @@ from korgan.upload_followup_guard import (
     _PRETRIAL_RESPONSE_FOLLOWUP_KK,
     _UploadMessageProxy,
 )
+
+_STATE_IDS = count(1000)
 
 
 class _Bot:
@@ -45,9 +48,10 @@ class _Service:
 
 async def _state(kind: str, language: str = "ru") -> tuple[MemoryStorage, FSMContext]:
     storage = MemoryStorage()
+    identity = next(_STATE_IDS)
     state = FSMContext(
         storage=storage,
-        key=StorageKey(bot_id=1, chat_id=100, user_id=200),
+        key=StorageKey(bot_id=1, chat_id=identity, user_id=identity),
     )
     await state.set_data(
         {
