@@ -112,15 +112,22 @@ def _nearest_cue_distance(pattern: re.Pattern[str], text: str, start: int, end: 
 def _source_amount_is_exempt(text: str, start: int, end: int) -> bool:
     """Whitelist only clearly non-claimed factual amounts around one money token.
 
-    Compare the nearest factual-history cue with the nearest claim cue instead
-    of letting a later debt word contaminate an earlier partial payment in the
-    same sentence. Equal distance fails closed in favor of claim consistency.
+    Compare the nearest factual-history/non-property cue with the nearest claim
+    cue per token. This prevents one exempt amount on a mixed line from hiding a
+    different debt/sanction amount that must still reconcile with the prayer.
+    Equal distance fails closed in favor of claim consistency.
     """
-    nonclaimed_distance = _nearest_cue_distance(
-        _NONCLAIMED_AMOUNT_CONTEXT_RE, text, start, end
-    )
-    if nonclaimed_distance is None:
+    distances = [
+        value
+        for value in (
+            _nearest_cue_distance(_NONCLAIMED_AMOUNT_CONTEXT_RE, text, start, end),
+            _nearest_cue_distance(_SOURCE_LINE_EXEMPT_RE, text, start, end),
+        )
+        if value is not None
+    ]
+    if not distances:
         return False
+    nonclaimed_distance = min(distances)
     claim_distance = _nearest_cue_distance(_CLAIM_AMOUNT_CONTEXT_RE, text, start, end)
     return claim_distance is None or nonclaimed_distance < claim_distance
 
@@ -144,8 +151,6 @@ def check_amount_consistency(draft: ClaimDraft) -> list[str]:
     for field_name, values in (("facts", draft.facts), ("attachments", draft.attachments)):
         for line in values or []:
             text = str(line)
-            if _SOURCE_LINE_EXEMPT_RE.search(text):
-                continue
             for match in _MONEY_RE.finditer(text):
                 amount = parse_amount_kzt(match.group(0))
                 if amount is None or _source_amount_is_exempt(text, match.start(), match.end()):
