@@ -1,10 +1,7 @@
 """Final legal-release hardening shared by claims and pre-trial demands.
 
-Closes three production defects:
-1) English Adilet translations must never be treated as a second legal norm;
-2) repeated paraphrases of the same article must collapse to one filing-facing paragraph;
-3) in employment claims salary, unused-leave compensation and immediate execution
-   are separate remedies and each must have its own verified legal basis.
+Closes production defects where source-bound research can be formally valid but
+still omit the material-law rule that actually supports the requested relief.
 """
 
 from __future__ import annotations
@@ -13,6 +10,7 @@ import re
 from urllib.parse import urlparse
 
 from korgan.citation_audit import extract_references
+from korgan.claim_material_law_rescue import enrich_material_law_from_corpus
 from korgan.finalized_litigation import FinalizedProductionClaimService
 from korgan.legal.corpus import ACT_LABOR
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
@@ -162,7 +160,12 @@ def normalize_claim_legal_basis(draft: ClaimDraft, research: LegalResearch) -> l
 class StableLegalProductionService(FinalizedProductionClaimService):
     async def research_case(self, case_context: str, language: str = "ru") -> LegalResearch:
         research = await super().research_case(case_context, language=language)
-        return sanitize_research_sources(research)
+        research = sanitize_research_sources(research)
+        # The local corpus is refreshed from official Adilet in production. Use
+        # it as a deterministic rescue for core material law when web research
+        # returns only procedural/form provisions. The article number comes from
+        # the current corpus row, not from a prompt or model memory.
+        return enrich_material_law_from_corpus(case_context, research)
 
     async def draft_claim(self, case_context: str, research: LegalResearch, language: str = "ru") -> ClaimDraft:
         draft = await super().draft_claim(case_context, research, language=language)
@@ -193,7 +196,9 @@ def install_stable_legal_release() -> None:
             "компенсацию за неиспользованный отпуск — ст. 96 ТК РК; при требовании немедленного исполнения заработной платы — ст. 243 ГПК РК. "
             "Принимай эти статьи только после source-bound проверки их действующей русской страницы Adilet.\n"
             "24. Не создавай несколько verified_points с одним и тем же актом и номером статьи ради разных языковых страниц или почти одинаковых пересказов. "
-            "Одна норма — один точный verified_point, если разные пункты статьи не дают действительно разные правила."
+            "Одна норма — один точный verified_point, если разные пункты статьи не дают действительно разные правила.\n"
+            "25. Статья 148 ГПК РК и иные нормы только о форме/содержании иска не являются материально-правовым основанием взыскания долга, неустойки или убытков. "
+            "Не подменяй ими норму, которая создаёт обязанность ответчика исполнить конкретное обязательство."
         )
 
     litigation._professional_research_prompt = stable_prompt
