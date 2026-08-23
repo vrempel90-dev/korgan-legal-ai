@@ -85,13 +85,6 @@ def _verified_text(research: LegalResearch) -> str:
 
 
 def _resolve_court(case_context: str, research: LegalResearch, draft: ClaimDraft) -> None:
-    """Resolve a court only from verified venue law + versioned official court directory.
-
-    Consumer cases prefer the plaintiff's residence when that venue is source-bound
-    verified because it is expressly a plaintiff choice and usually avoids forcing a
-    consumer to litigate at the business location. If that rule is not verified, the
-    ordinary defendant-location path is used only when Article 29 is source-bound.
-    """
     verified = _verified_text(research)
     city = "Алматы" if "алмат" in (case_context or "").lower() else ""
     if not city:
@@ -117,7 +110,6 @@ def _resolve_court(case_context: str, research: LegalResearch, draft: ClaimDraft
     if source and source not in research.source_urls:
         research.source_urls.append(source)
 
-    # Court uncertainty notes are stale once an official directory entry resolved it.
     draft.verification_notes = [
         value for value in draft.verification_notes
         if not ("суд" in str(value).lower() and any(token in str(value).lower() for token in ("уточн", "не подтверж", "наименование")))
@@ -145,9 +137,6 @@ def _verified_legal_basis(research: LegalResearch) -> list[str]:
 def _apply_verified_legal_basis(research: LegalResearch, draft: ClaimDraft) -> None:
     basis = _verified_legal_basis(research)
     if basis:
-        # A filing-facing legal basis is reconstructed from accepted source-bound
-        # propositions. This prevents the drafting model from replacing verified
-        # articles with generic prose or introducing an unverified article.
         draft.legal_basis = basis
 
 
@@ -182,16 +171,11 @@ def _sanitize_relief(case_context: str, research: LegalResearch, draft: ClaimDra
             flags=re.IGNORECASE,
         ).strip(" ,")
 
-    # Do not generate evidentiary/procedural motions merely because they are
-    # procedurally possible. They require an actual litigation need in the facts.
     draft.requests = [
         item for item in draft.requests
         if not (_PROCESS_MOTION_RE.search(item.strip()) and item.lower() not in (case_context or "").lower())
     ]
 
-    # A separate rescission/termination remedy is excluded unless the professional
-    # research explicitly marked it INCLUDE. A prior unilateral refusal in the
-    # materials is not converted into an extra court remedy by drafting creativity.
     if not _termination_is_included(research):
         draft.requests = [item for item in draft.requests if not _TERMINATION_RE.search(item)]
 
@@ -221,6 +205,8 @@ def finalize_professional_claim(
     case_context: str,
     research: LegalResearch,
     draft: ClaimDraft,
+    *,
+    language: str | None = None,
 ) -> None:
     """Apply non-model professional release invariants before scoring/export."""
     _resolve_court(case_context, research, draft)
@@ -228,13 +214,9 @@ def finalize_professional_claim(
     apply_claim_filing_accuracy(case_context, research, draft)
     enforce_claim_corpus_health(research, draft)
     _sanitize_relief(case_context, research, draft)
-    # These rules run after every model draft/repair and before arithmetic. They
-    # cannot change Word rendering; they only keep filing content internally
-    # consistent and downgrade unresolved filing prerequisites to PRELIMINARY.
-    enforce_claim_release_invariants(case_context, draft)
+    enforce_claim_release_invariants(case_context, draft, language=language)
     _recalculate_price(draft)
 
-    # Any remaining internal score note is never part of the filing-facing draft.
     draft.verification_notes = [
         note for note in draft.verification_notes
         if not str(note).startswith(("KORGAN QUALITY", "SENIOR_PREFLIGHT_SCORE:"))
