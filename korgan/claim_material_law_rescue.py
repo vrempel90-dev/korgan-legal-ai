@@ -19,6 +19,10 @@ _CONTRACT_DEBT_RE = re.compile(
     r"(?:задолженн\w*|долг\w*|не\s+оплат\w*|просроч\w*|берешек\w*|қарыз\w*|төлеме\w*|кешіктір\w*)"
     r".{0,240}(?:договор\w*|обязательств\w*|шарт\w*|міндеттем\w*)"
 )
+_EMPLOYMENT_CONTEXT_RE = re.compile(
+    r"(?i)(?:трудов\w*\s+договор\w*|заработн\w*\s+плат\w*|зарплат\w*|"
+    r"еңбек\s+шарт\w*|еңбекақ\w*|жалақы\w*)"
+)
 _SUPPLY_RE = re.compile(
     r"(?i)(?:поставк\w*|поставщик\w*|покупател\w*|товар\w*|жеткіз\w*|тауар\w*|сатып\s+алуш\w*)"
 )
@@ -139,17 +143,19 @@ def _append_verified(research: LegalResearch, provision: Provision) -> None:
 def enrich_material_law_from_corpus(case_context: str, research: LegalResearch) -> LegalResearch:
     """Rescue missing core material law from the fresh official Adilet snapshot.
 
-    Contractual-penalty rescue is deliberately gated to a contractual context.
-    A generic statutory ``пеня`` in an employment/tax/administrative case must
-    never pull the Civil Code contractual-penalty provision into the filing.
+    Contractual-penalty rescue is deliberately gated to a civil contractual
+    context. Generic statutory penalties, including salary-delay penalties,
+    must never pull a Civil Code contractual-penalty provision into the filing.
     """
     if not local_corpus_enabled():
         return research
 
     context = str(case_context or "")
-    contract_debt = bool(_CONTRACT_DEBT_RE.search(context))
+    employment_context = bool(_EMPLOYMENT_CONTEXT_RE.search(context))
+    contract_debt = bool(_CONTRACT_DEBT_RE.search(context)) and not employment_context
     contractual_penalty = bool(
-        _PENALTY_RE.search(context)
+        not employment_context
+        and _PENALTY_RE.search(context)
         and (contract_debt or _CONTRACTUAL_PENALTY_CONTEXT_RE.search(context))
     )
 
