@@ -11,6 +11,12 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _blocked_text(language: str) -> str:
+    """Legacy copy retained for compatibility with callers/tests.
+
+    Core completeness defects no longer stop Word export at this wrapper. The
+    installed production sender is responsible for marking such documents as
+    preliminary while citation/integrity failures remain fail-closed.
+    """
     if language == "kk":
         return (
             "Иск Word ретінде әлі шығарылмады: сотқа берілетін құжатта орындалатын талаптар "
@@ -34,9 +40,14 @@ async def send_with_core_release_guard(
     draft: ClaimDraft,
     request_id: str,
 ) -> Any:
-    """Fail closed before whichever claim sender is actually installed in prod."""
-    from korgan import bot as base_bot
+    """Downgrade core-incomplete claims to preliminary instead of dropping Word.
 
+    The regression fixed here was introduced when this final wrapper turned
+    missing executable relief/source-bound material law into an unconditional
+    transport stop. The sender underneath already has a PRELIMINARY path and
+    still fail-closes on damaged text or unsafe citations. Keep the diagnostic
+    core gate, but let that established sender deliver a clearly non-ready draft.
+    """
     if not await request_is_current(state, request_id, "claim"):
         LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
         return None
@@ -44,18 +55,14 @@ async def send_with_core_release_guard(
     blockers = core_claim_release_blockers(research, draft)
     if blockers:
         draft.status = VerificationStatus.NEEDS_VERIFICATION
-        LOGGER.error(
-            "PRODUCTION_CLAIM_CORE_RELEASE_BLOCK request_id=%s blockers=%s",
+        LOGGER.warning(
+            "PRODUCTION_CLAIM_CORE_PRELIMINARY request_id=%s blockers=%s",
             request_id,
             blockers[:4],
         )
-        language = await base_bot._language(state)
-        # Language lookup is asynchronous; another document can become current
-        # while it is awaited. Never leak the old claim's result into that flow.
-        if not await request_is_current(state, request_id, "claim"):
-            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
-            return None
-        await message.answer(_blocked_text(language), reply_markup=base_bot.MENU)
+
+    if not await request_is_current(state, request_id, "claim"):
+        LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=claim request_id=%s", request_id)
         return None
 
     return await original_send(
@@ -69,7 +76,7 @@ async def send_with_core_release_guard(
 
 
 def install_claim_core_release_guard() -> None:
-    """Wrap the final installed claim sender, not the unpatched module default."""
+    """Wrap the final installed claim sender with a core-completeness downgrade."""
     from korgan import universal_claim_runtime as runtime
 
     current = runtime._send_claim
