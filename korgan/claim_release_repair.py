@@ -9,6 +9,8 @@ from korgan.fast_v2_production_legal import _deterministic_pre_qa
 from korgan.late_interest_hotfix import _apply_verified_article_353, _today_kz
 from korgan.legal_types import ClaimDraft, LegalResearch
 from korgan.openai_legal import _CLAIM_SCHEMA
+from korgan.professional_claim_finalizer import finalize_professional_claim
+from korgan.universal_word_quality_guard import finalize_claim_for_release
 
 LOGGER = logging.getLogger(__name__)
 _PATCHED = False
@@ -67,10 +69,10 @@ async def repair_claim_release(
 ) -> ClaimDraft | None:
     """Run one bounded repair for defects discovered only by the final release gate.
 
-    The normal drafting service already performs its regular quality repair. This
-    function is intentionally a rare second pass: it runs only when the final
-    citation/integrity gate still blocks delivery. It may use the user's facts and
-    current VERIFIED research only; it never weakens or bypasses the release gate.
+    The model is allowed to repair only citation/integrity defects. After that
+    pass every deterministic filing invariant is re-applied in code so a model
+    repair cannot silently drop a penalty, claim price, state duty, material-law
+    basis, source-requested judicial costs or filing-risk note.
     """
     service = _repair_service()
     issues = _release_issues(release)
@@ -99,8 +101,17 @@ async def repair_claim_release(
         source_urls=list(research.source_urls),
         **payload,
     )
+
+    # IMPORTANT: the old production path stopped after the LLM repair here.
+    # That let the last model pass undo deterministic work already performed by
+    # FinalizedProductionClaimService. Re-run the same zero-call finalization
+    # chain before the repaired draft is ever eligible for Word delivery.
+    finalize_professional_claim(context, research, repaired)
     _deterministic_pre_qa(context, research, repaired)
     _apply_verified_article_353(context, research, repaired, filing_date=_today_kz())
+    finalize_professional_claim(context, research, repaired)
+    finalize_claim_for_release(context, repaired, language=language)
+    _deterministic_pre_qa(context, research, repaired)
     claim_quality_hotfix.polish_claim_before_quality(context, research, repaired)
     return repaired
 
