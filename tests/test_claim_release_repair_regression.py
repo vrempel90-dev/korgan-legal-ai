@@ -71,17 +71,20 @@ def _draft() -> ClaimDraft:
     )
 
 
-def test_final_release_repair_reapplies_penalty_price_and_state_duty(monkeypatch) -> None:
-    monkeypatch.setattr(claim_release_repair, "_repair_service", lambda: _RepairService())
-    context = (
+def _context() -> str:
+    return (
         "Истец: ТОО «Поставщик», БИН 123456789012. Ответчик: ТОО «Покупатель». "
         "По договору поставки основной долг составляет 12 000 000 тенге.\n"
         "ТРЕБОВАНИЕ ИЗ ДОКУМЕНТА: Взыскать договорную неустойку в размере 996 000 тенге."
     )
 
+
+def test_final_release_repair_reapplies_penalty_price_and_state_duty(monkeypatch) -> None:
+    monkeypatch.setattr(claim_release_repair, "_repair_service", lambda: _RepairService())
+
     repaired = asyncio.run(
         claim_release_repair.repair_claim_release(
-            context=context,
+            context=_context(),
             research=_research(),
             draft=_draft(),
             language="ru",
@@ -93,6 +96,36 @@ def test_final_release_repair_reapplies_penalty_price_and_state_duty(monkeypatch
     requests = "\n".join(repaired.requests)
     assert "12 000 000" in requests
     assert "996 000" in requests
+    assert "ТРЕБУЕТ ПРОВЕРКИ" in requests
+    # No verified Art. 353 or contractual rate/date exists here: the exact
+    # 996k survives only because it is explicit in source materials, never
+    # because a model or statutory calculator invented it.
+    assert repaired.late_interest == ""
     assert "государственной пошлины" in requests.lower()
     assert "12 996 000" in repaired.price_of_claim
+    assert "389 880" in repaired.state_duty
+
+
+def test_final_release_repair_keeps_kazakh_state_duty_request_single_language(monkeypatch) -> None:
+    monkeypatch.setattr(claim_release_repair, "_repair_service", lambda: _RepairService())
+
+    repaired = asyncio.run(
+        claim_release_repair.repair_claim_release(
+            context=_context(),
+            research=_research(),
+            draft=_draft(),
+            language="kk",
+            release=_Release(),
+        )
+    )
+
+    assert repaired is not None
+    duty_requests = [
+        request
+        for request in repaired.requests
+        if "мемлекеттік баж" in request.lower() or "государственной пошлины" in request.lower()
+    ]
+    assert len(duty_requests) == 1
+    assert "мемлекеттік баж" in duty_requests[0].lower()
+    assert "государственной пошлины" not in duty_requests[0].lower()
     assert "389 880" in repaired.state_duty
