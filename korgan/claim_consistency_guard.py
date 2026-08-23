@@ -4,6 +4,7 @@ import re
 from typing import Pattern
 
 import korgan.senior_claim_preflight as senior_claim_preflight
+from korgan.claim_quality_gate import check_amount_consistency
 from korgan.legal_types import ClaimDraft, LegalResearch
 
 _PENALTY_REQUEST_RE = re.compile(
@@ -215,6 +216,8 @@ def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
             "Для filing-ready проекта требуется VERIFIED-норма именно о нарушении сроков начала/окончания выполнения работы (услуги) и соответствующий расчет."
         )
 
+    amount_errors = check_amount_consistency(draft)
+    errors.extend(f"AMOUNT_MISMATCH: {item}" for item in amount_errors)
     return list(dict.fromkeys(errors))
 
 
