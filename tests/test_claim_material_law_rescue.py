@@ -11,7 +11,7 @@ from korgan.legal.corpus import (
 from korgan.legal_types import LegalResearch, VerificationStatus
 
 
-def _research() -> LegalResearch:
+def _research(*, unverified: list[str] | None = None) -> LegalResearch:
     return LegalResearch(
         status=VerificationStatus.NEEDS_VERIFICATION,
         applicable_law=[],
@@ -19,13 +19,13 @@ def _research() -> LegalResearch:
         verified_claims=[
             "Иск должен соответствовать форме. [основание: ст. 148 ГПК РК; текст нормы: «служебная форма»; источник: https://adilet.zan.kz/rus/docs/K1500000377]"
         ],
-        unverified_claims=[],
+        unverified_claims=list(unverified or []),
         source_urls=["https://adilet.zan.kz/rus/docs/K1500000377"],
         notes=[],
     )
 
 
-def test_supply_debt_gets_material_law_from_current_corpus(monkeypatch) -> None:
+def _fresh_corpus() -> LegalCorpus:
     corpus = LegalCorpus(":memory:")
     corpus.create_schema()
     today = date.today().isoformat()
@@ -87,11 +87,19 @@ def test_supply_debt_gets_material_law_from_current_corpus(monkeypatch) -> None:
         url="https://adilet.zan.kz/rus/docs/K990000409_",
         sort_key=46903,
     )
+    return corpus
 
+
+def _install_corpus(monkeypatch, corpus: LegalCorpus) -> None:
     import korgan.claim_material_law_rescue as rescue
 
     monkeypatch.setattr(rescue, "local_corpus_enabled", lambda: True)
     monkeypatch.setattr(rescue, "open_corpus", lambda: corpus)
+
+
+def test_supply_debt_gets_material_law_from_current_corpus(monkeypatch) -> None:
+    corpus = _fresh_corpus()
+    _install_corpus(monkeypatch, corpus)
 
     research = _research()
     context = (
@@ -107,3 +115,117 @@ def test_supply_debt_gets_material_law_from_current_corpus(monkeypatch) -> None:
     assert "ст. 293" in joined
     assert "https://adilet.zan.kz/rus/docs/K940001000_" in result.source_urls
     assert "https://adilet.zan.kz/rus/docs/K990000409_" in result.source_urls
+
+
+def test_kazakh_supply_debt_and_contractual_penalty_get_rescue(monkeypatch) -> None:
+    corpus = _fresh_corpus()
+    _install_corpus(monkeypatch, corpus)
+    research = _research()
+    context = (
+        "Жеткізу шарты бойынша сатушы тауарды берді. Сатып алушының 12 000 000 теңге берешегі бар. "
+        "Шарттың 6.3-тармағына сәйкес тұрақсыздық айыбын және негізгі қарызды өндіріп алуды сұраймын."
+    )
+
+    result = enrich_material_law_from_corpus(context, research)
+    joined = "\n".join(result.verified_claims)
+
+    assert "ст. 272" in joined
+    assert "ст. 469" in joined
+    assert "ст. 293" in joined
+
+
+def test_employment_statutory_penalty_does_not_inject_civil_contract_penalty(monkeypatch) -> None:
+    import korgan.claim_material_law_rescue as rescue
+
+    monkeypatch.setattr(rescue, "local_corpus_enabled", lambda: True)
+    opened = False
+
+    def should_not_open():
+        nonlocal opened
+        opened = True
+        return _fresh_corpus()
+
+    monkeypatch.setattr(rescue, "open_corpus", should_not_open)
+    research = _research()
+    context = (
+        "Трудовой договор. Работодатель имеет задолженность по заработной плате. "
+        "Прошу взыскать заработную плату и предусмотренную законом пеню за задержку выплаты."
+    )
+
+    result = enrich_material_law_from_corpus(context, research)
+
+    assert result.verified_claims == research.verified_claims
+    assert not any("ст. 293" in line for line in result.verified_claims)
+    assert opened is False
+
+
+def test_disabled_local_corpus_leaves_research_unchanged(monkeypatch) -> None:
+    import korgan.claim_material_law_rescue as rescue
+
+    monkeypatch.setattr(rescue, "local_corpus_enabled", lambda: False)
+    research = _research()
+    before = list(research.verified_claims)
+
+    result = enrich_material_law_from_corpus(
+        "Договор поставки, долг и договорная неустойка.",
+        research,
+    )
+
+    assert result.verified_claims == before
+    assert result.status is VerificationStatus.NEEDS_VERIFICATION
+
+
+def test_stale_snapshot_does_not_add_material_law(monkeypatch) -> None:
+    import korgan.claim_material_law_rescue as rescue
+
+    corpus = _fresh_corpus()
+    _install_corpus(monkeypatch, corpus)
+    monkeypatch.setattr(rescue, "_snapshot_issue", lambda *args, **kwargs: "stale snapshot")
+    research = _research()
+    before = list(research.verified_claims)
+
+    result = enrich_material_law_from_corpus(
+        "Договор поставки: задолженность и договорная неустойка.",
+        research,
+    )
+
+    assert result.verified_claims == before
+    assert result.status is VerificationStatus.NEEDS_VERIFICATION
+
+
+def test_unrelated_context_does_not_activate_claim_material_rescue(monkeypatch) -> None:
+    import korgan.claim_material_law_rescue as rescue
+
+    monkeypatch.setattr(rescue, "local_corpus_enabled", lambda: True)
+    opened = False
+
+    def should_not_open():
+        nonlocal opened
+        opened = True
+        return _fresh_corpus()
+
+    monkeypatch.setattr(rescue, "open_corpus", should_not_open)
+    research = _research()
+    before = list(research.verified_claims)
+
+    result = enrich_material_law_from_corpus(
+        "Подготовить ответ на обращение и проверить реквизиты документа без денежного требования.",
+        research,
+    )
+
+    assert result.verified_claims == before
+    assert opened is False
+
+
+def test_unverified_claims_keep_needs_verification_after_successful_rescue(monkeypatch) -> None:
+    corpus = _fresh_corpus()
+    _install_corpus(monkeypatch, corpus)
+    research = _research(unverified=["Не подтверждено дополнительное требование."])
+
+    result = enrich_material_law_from_corpus(
+        "Договор поставки: покупатель не оплатил задолженность 12 000 000 тенге.",
+        research,
+    )
+
+    assert any("ст. 272" in line for line in result.verified_claims)
+    assert result.status is VerificationStatus.NEEDS_VERIFICATION
