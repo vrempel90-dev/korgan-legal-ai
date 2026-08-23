@@ -1,17 +1,51 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 
 from korgan.legal_basis_fit import enforce_legal_basis_fit
+from korgan.legal_calc import parse_all_amounts_kzt, parse_amount_kzt
 from korgan.legal_types import ClaimDraft, LegalResearch
 
+LOGGER = logging.getLogger(__name__)
 MIN_READY_SCORE = 8.5
 
 _ENTITY_RE = re.compile(r"\b(?:ТОО|АО|РГП|РГУ|КГУ|КГП|ИП|ЖК|КСК|ОО)\b|\bБИН\b", re.IGNORECASE)
 _ARTICLE_RE = re.compile(r"(?i)(?:стать(?:я|и|е|ю|ёй|ей)|ст\.)\s*\d+")
 _PLACEHOLDER_RE = re.compile(r"\[(?:ТРЕБУЕТ УТОЧНЕНИЯ|ТРЕБУЕТ ПРОВЕРКИ|ТРЕБУЕТ РАСЧ[ЕЁ]ТА|ТРЕБУЕТ ДОБАВИТЬ)[^\]]*\]", re.IGNORECASE)
-_MONEY_RE = re.compile(r"(?<!\d)\d[\d\s\u00a0.,]{2,}\s*(?:тенге|тг\b|₸|kzt)", re.IGNORECASE)
+_MONEY_RE = re.compile(r"(?<!\d)\d[\d\s\u00a0.,]{2,}\s*(?:тенге|теңге|тг\b|₸|kzt)", re.IGNORECASE)
+_PENALTY_RE = re.compile(
+    r"(?:неустойк\w*|пен[яиюь]\w*|штраф\w*|процент\w*\s+(?:по\s+денежн\w*|за\s+просроч\w*)|"
+    r"тұрақсыздық\s+айыб\w*|өсімпұл\w*)",
+    re.IGNORECASE,
+)
+_TITLE_PENALTY_RE = re.compile(
+    r"(?:неустойк\w*|пен[яиюь]\w*|процент\w*|тұрақсыздық\s+айыб\w*|өсімпұл\w*)",
+    re.IGNORECASE,
+)
+_NON_PROPERTY_REQUEST_RE = re.compile(
+    r"(?:государственн\w*\s+пошлин\w*|госпошлин\w*|судебн\w*\s+(?:расход\w*|издерж\w*)|"
+    r"расход\w*\s+на\s+(?:оплат\w*\s+)?представител\w*|мемлекеттік\s+баж|сот\s+шығын\w*)",
+    re.IGNORECASE,
+)
+_PROPERTY_REQUEST_RE = re.compile(
+    r"(?:взыск\w*|вернут\w*|возврат\w*|долг\w*|задолженн\w*|неустойк\w*|пен[яиюь]\w*|штраф\w*|"
+    r"убыт\w*|ущерб\w*|компенсац\w*|өндір\w*|қайтар\w*)",
+    re.IGNORECASE,
+)
+_AWARDED_AMOUNT_RE = re.compile(
+    r"(?:в\s+размере|в\s+сумме|сумм\w*|мөлшерінде)\s*"
+    r"(?P<amount>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))",
+    re.IGNORECASE,
+)
+_SOURCE_AMOUNT_EXEMPT_RE = re.compile(
+    r"(?:государственн\w*\s+пошлин\w*|госпошлин\w*|судебн\w*\s+(?:расход\w*|издерж\w*)|"
+    r"расход\w*\s+на\s+(?:оплат\w*\s+)?представител\w*|мемлекеттік\s+баж|сот\s+шығын\w*|"
+    r"стоимост\w*\s+отдельн\w*\s+позиц\w*|цен\w*\s+(?:за\s+)?единиц\w*)",
+    re.IGNORECASE,
+)
+_UNRESOLVED_AMOUNT_RE = re.compile(r"\[ТРЕБУЕТ\s+(?:ПРОВЕРКИ|РАСЧ[ЕЁ]ТА)[^\]]*\]", re.IGNORECASE)
 
 
 @dataclass(slots=True)
@@ -35,6 +69,82 @@ def _text(draft: ClaimDraft) -> str:
 
 def _party_text(lines: list[str]) -> str:
     return "\n".join(str(x) for x in lines or [])
+
+
+def _awarded_amount(request: str) -> int | None:
+    match = _AWARDED_AMOUNT_RE.search(request or "")
+    if match:
+        return parse_amount_kzt(match.group("amount"))
+    amounts = parse_all_amounts_kzt(request or "")
+    if not amounts:
+        return None
+    if _PENALTY_RE.search(request or "") and len(amounts) > 1:
+        return amounts[-1]
+    return amounts[0]
+
+
+def check_amount_consistency(draft: ClaimDraft) -> list[str]:
+    """Return blocking monetary contradictions between reasoning and prayer.
+
+    A deliberately unresolved preliminary demand marked ``ТРЕБУЕТ ПРОВЕРКИ``
+    is not a silent mismatch. In every other case, amounts mentioned as claimed
+    debt/sanctions must survive into the prayer and the claim-price arithmetic.
+    """
+    errors: list[str] = []
+    target_amounts: set[int] = set()
+    for request in draft.requests or []:
+        target_amounts.update(parse_all_amounts_kzt(str(request)))
+    target_amounts.update(parse_all_amounts_kzt(draft.price_of_claim or ""))
+
+    for field_name, values in (("facts", draft.facts), ("attachments", draft.attachments)):
+        for line in values or []:
+            text = str(line)
+            if _SOURCE_AMOUNT_EXEMPT_RE.search(text):
+                continue
+            for amount in parse_all_amounts_kzt(text):
+                if amount not in target_amounts:
+                    errors.append(
+                        f"Сумма {amount:,} тенге из {field_name} отсутствует одновременно в петитуме и цене иска."
+                        .replace(",", " ")
+                    )
+
+    property_total = 0
+    has_property_amount = False
+    unresolved_property = False
+    for request in draft.requests or []:
+        text = str(request)
+        if _NON_PROPERTY_REQUEST_RE.search(text) or not _PROPERTY_REQUEST_RE.search(text):
+            continue
+        if _UNRESOLVED_AMOUNT_RE.search(text):
+            unresolved_property = True
+            continue
+        amount = _awarded_amount(text)
+        if amount is None:
+            errors.append("В петитуме есть имущественное требование без конкретной денежной суммы или проверяемого расчёта.")
+            continue
+        property_total += amount
+        has_property_amount = True
+
+    price = parse_amount_kzt(draft.price_of_claim or "")
+    price_unresolved = bool(_UNRESOLVED_AMOUNT_RE.search(draft.price_of_claim or ""))
+    if has_property_amount and not unresolved_property:
+        if price is None and not price_unresolved:
+            errors.append("Цена иска не содержит конкретной суммы при определённых имущественных требованиях.")
+        elif price is not None and price != property_total:
+            errors.append(
+                f"Цена иска {price:,} тенге не равна сумме имущественных требований петитума {property_total:,} тенге."
+                .replace(",", " ")
+            )
+
+    title_has_penalty = bool(_TITLE_PENALTY_RE.search(draft.title or ""))
+    prayer_has_penalty = any(_PENALTY_RE.search(str(item)) for item in draft.requests or [])
+    if title_has_penalty and not prayer_has_penalty:
+        errors.append("Заголовок иска содержит неустойку/пеню/проценты, но соответствующее требование отсутствует в петитуме.")
+
+    errors = list(dict.fromkeys(errors))
+    if errors:
+        LOGGER.error("CLAIM_FAIL code=AMOUNT_MISMATCH issues=%s", errors)
+    return errors
 
 
 def normalize_party_placeholders(draft: ClaimDraft) -> None:
@@ -78,6 +188,10 @@ def _score_facts_and_amount(case_context: str, draft: ClaimDraft, issues: list[s
         score -= 0.5; issues.append("цена иска не отражает известную денежную сумму")
     if not draft.requests:
         score -= 0.5; issues.append("отсутствует просительная часть")
+    amount_errors = check_amount_consistency(draft)
+    if amount_errors:
+        score = 0.0
+        issues.extend(f"AMOUNT_MISMATCH: {item}" for item in amount_errors)
     return max(0.0, score)
 
 
@@ -106,8 +220,6 @@ def _score_relief_coherence(case_context: str, draft: ClaimDraft, issues: list[s
     works = any(x in text for x in ("подряд", "ремонт", "работ"))
     not_started = any(x in text for x in ("не приступ", "не начал", "не выполнил", "не выполн"))
     return_money = any(x in requests for x in ("взыск", "вернут", "возврат"))
-    # Include all common grammatical forms: отказ, расторжение, прекращение,
-    # and an explicit request «прекратить договорные отношения».
     termination = any(x in text for x in ("отказ от договор", "расторг", "прекрат", "прекращ"))
     if prepayment and works and not_started and return_money and not termination:
         score -= 0.75; issues.append("возврат предоплаты заявлен без ясной конструкции отказа/прекращения договора")
