@@ -68,6 +68,11 @@ def test_parse_all_amounts_kzt_returns_every_currency_amount() -> None:
     ]
 
 
+def test_parse_amount_kzt_handles_29_digit_value_without_decimal_context_failure() -> None:
+    raw = "99999999999999999999999999999 тенге"
+    assert parse_amount_kzt(raw) == 99_999_999_999_999_999_999_999_999_999
+
+
 def test_format_kzt() -> None:
     assert format_kzt(24_000) == "24 000 тенге"
 
