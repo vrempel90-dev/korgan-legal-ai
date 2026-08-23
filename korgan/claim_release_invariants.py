@@ -26,15 +26,18 @@ _SELF_EVIDENCE_TAIL_RE = re.compile(
     r"(?i)[,;.]?\s*(?:данн\w*\s+факт\w*\s+)?(?:подтвержд\w*|отраж[её]н\w*).{0,220}"
     r"(?:претензи\w*\s+истц\w*|претензи\w*\s+талап\s+қоюш\w*).*$"
 )
-_COST_SOURCE_RE = re.compile(
-    r"(?i)(?:взыск\w*|прошу\b|требу\w*|өндір\w*|сұрай\w*).{0,120}"
-    r"(?:судебн\w*\s+расход\w*|расход\w*\s+на\s+(?:оплат\w*\s+)?(?:помощ\w*|представител\w*)|"
-    r"сот\s+шығын\w*|өкіл\w*\s+шығын\w*)"
-)
-_COST_REQUEST_RE = re.compile(
+_COST_TERM_RE = re.compile(
     r"(?i)(?:судебн\w*\s+расход\w*|расход\w*\s+на\s+(?:оплат\w*\s+)?(?:помощ\w*|представител\w*)|"
     r"сот\s+шығын\w*|өкіл\w*\s+шығын\w*)"
 )
+_COST_INTENT_RE = re.compile(
+    r"(?i)(?:взыск\w*|прошу\b|требу\w*|өндір\w*|сұрай\w*|талап\s+ет\w*)"
+)
+_COST_NEGATION_RE = re.compile(
+    r"(?i)(?:не\s+(?:прошу|требу\w*|взыск\w*)|без\s+(?:взыскания\s+)?судебн\w*\s+расход\w*|"
+    r"сұрамаймын|талап\s+етпеймін|өндір\w*маймын)"
+)
+_COST_REQUEST_RE = _COST_TERM_RE
 _PRETRIAL_DATE_RE = re.compile(
     r"(?is)(?:досудебн\w*\s+претензи\w*|претензи\w*|сотқа\s+дейінгі\s+талап\w*|талап\s+хат\w*)"
     r".{0,100}?(\d{2}[./-]\d{2}[./-]\d{4})"
@@ -59,6 +62,18 @@ def _document_language(case_context: str, draft: ClaimDraft, explicit: str | Non
         [case_context or "", draft.title or "", *draft.facts, *draft.requests]
     )
     return "kk" if _KK_DOCUMENT_RE.search(text) else "ru"
+
+
+def _explicit_cost_requested(case_context: str) -> bool:
+    """Detect an affirmative judicial-cost request in either RU or KK word order."""
+    for segment in re.split(r"(?<=[.!?])\s+|\n+", case_context or ""):
+        text = segment.strip()
+        if not text or not _COST_TERM_RE.search(text) or not _COST_INTENT_RE.search(text):
+            continue
+        if _COST_NEGATION_RE.search(text):
+            continue
+        return True
+    return False
 
 
 def remove_form_article_from_material_basis(draft: ClaimDraft) -> None:
@@ -103,7 +118,7 @@ def remove_circular_nonpayment_evidence(draft: ClaimDraft, *, language: str = "r
 
 def restore_explicit_cost_request(case_context: str, draft: ClaimDraft, *, language: str = "ru") -> None:
     """Do not silently lose a source-requested judicial-cost remedy after an LLM repair."""
-    if not _COST_SOURCE_RE.search(case_context or ""):
+    if not _explicit_cost_requested(case_context):
         return
     if _COST_REQUEST_RE.search("\n".join(str(item) for item in draft.requests)):
         return
