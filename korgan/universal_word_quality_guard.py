@@ -44,6 +44,9 @@ _INTERNAL_SCORE_PREFIXES = (
     "KORGAN QUALITY",
     "SENIOR_PREFLIGHT_SCORE:",
 )
+_STATE_DUTY_REQUEST_RE = re.compile(
+    r"(?i)(?:\bгоспошлин\w*\b|\bгосударственн\w*\s+пошлин\w*\b|мемлекеттік\s+баж)"
+)
 _PENALTY_RE = re.compile(
     r"(?i)(?:договорн\w*\s+неустойк\w*|неустойк\w*|пен[яию]\b|штраф\w*|"
     r"тұрақсыздық\s+айыб\w*|өсімпұл\w*|айыппұл\w*)"
@@ -130,7 +133,28 @@ def _claim_context_with_role(case_context: str, draft: ClaimDraft) -> str:
     return f"{case_context}\n\nИстец:\n{claimant}" if claimant else case_context
 
 
-def apply_state_duty_from_draft(case_context: str, draft: ClaimDraft) -> None:
+def _localize_state_duty_request(draft: ClaimDraft, language: str) -> None:
+    if language != "kk":
+        return
+    duty = (draft.state_duty or "").strip()
+    if not duty or duty.startswith("["):
+        return
+    amount = duty.split("(", 1)[0].strip().replace(" тенге", " теңге")
+    draft.requests = [
+        request for request in draft.requests if not _STATE_DUTY_REQUEST_RE.search(str(request))
+    ]
+    if amount:
+        draft.requests.append(
+            "Жауапкерден талап қоюшының пайдасына мемлекеттік бажды төлеуге жұмсалған "
+            f"шығыстарды {amount} мөлшерінде өндіріп алу."
+        )
+
+
+def apply_state_duty_from_draft(
+    case_context: str,
+    draft: ClaimDraft,
+    language: str = "ru",
+) -> None:
     from korgan import production_legal
 
     draft.state_duty = gosposhlina_line(_claim_context_with_role(case_context, draft), draft.price_of_claim)
@@ -144,6 +168,7 @@ def apply_state_duty_from_draft(case_context: str, draft: ClaimDraft) -> None:
         if not production_legal._is_stale_duty_note(str(note))
     ]
     _normalize_state_duty_request(draft)
+    _localize_state_duty_request(draft, language)
 
 
 def _amount_occurrences(text: str) -> list[tuple[int, int, int]]:
@@ -256,7 +281,7 @@ def finalize_claim_for_release(
     sanitize_draft_instructions(draft)
     complete_claim_relief_from_materials(case_context, draft, language=language)
     _recalculate_price(draft)
-    apply_state_duty_from_draft(case_context, draft)
+    apply_state_duty_from_draft(case_context, draft, language=language)
     _strip_internal_score_notes(draft)
 
 
@@ -447,8 +472,9 @@ def install_universal_word_quality_guard() -> None:
     UniversalQualityProductionService._quality_repair = resilient_quality_repair  # type: ignore[assignment]
 
     # The production claim calculator is imported by value into fast_v2, so patch
-    # both globals. No transport behavior changes: a below-target draft remains a
-    # PRELIMINARY Word document under the existing runtime policy.
+    # both globals. Calls from existing deterministic QA remain RU-compatible;
+    # the final release pass receives the actual document language and localizes
+    # the filing-facing duty request for Kazakh documents.
     from korgan import fast_v2_production_legal, production_legal
 
     production_legal._apply_state_duty = apply_state_duty_from_draft
