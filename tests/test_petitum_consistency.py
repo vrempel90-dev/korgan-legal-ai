@@ -68,6 +68,8 @@ def test_exact_reproduction_filing_date_recalculates_through_august_23() -> None
     assert any("1 020 000 тенге" in item for item in draft.requests if "неустой" in item.lower())
     assert "13 020 000 тенге" in draft.price_of_claim
     assert "390 600 тенге" in draft.state_duty
+    assert all("996 000" not in str(item) for item in draft.facts)
+    assert all("996 000" not in str(item) for item in draft.attachments)
     assert check_amount_consistency(draft) == []
 
 
@@ -81,6 +83,19 @@ def test_amount_consistency_detects_penalty_removed_from_petitum() -> None:
     assert any("996 000" in item or "неустой" in item.lower() for item in errors)
 
 
+def test_historical_payment_and_contract_price_do_not_create_amount_mismatch() -> None:
+    draft = _draft()
+    draft.title = "Исковое заявление о взыскании задолженности"
+    draft.price_of_claim = "12 000 000 тенге"
+    draft.requests = ["Взыскать основной долг 12 000 000 тенге."]
+    draft.facts = [
+        "Цена договора составила 15 000 000 тенге; ответчик частично оплатил 3 000 000 тенге; остаток задолженности составляет 12 000 000 тенге."
+    ]
+    draft.attachments = []
+
+    assert check_amount_consistency(draft) == []
+
+
 def test_explicit_penalty_with_unknown_due_date_is_kept_for_verification() -> None:
     context = (
         "Истец: ТОО «A», БИН 230740012345. Ответчик: ТОО «B», БИН 210940067891. "
@@ -92,8 +107,24 @@ def test_explicit_penalty_with_unknown_due_date_is_kept_for_verification() -> No
 
     assert draft.status == VerificationStatus.NEEDS_VERIFICATION
     assert any("ТРЕБУЕТ ПРОВЕРКИ" in item and "неустой" in item.lower() for item in draft.requests)
+    assert all("12 000 000" not in item for item in draft.requests if "неустой" in item.lower())
     assert "ТРЕБУЕТ РАСЧЁТА" in draft.price_of_claim
     assert any("дату начала просрочки" in note for note in draft.verification_notes)
+
+
+def test_source_bound_penalty_amount_stays_unresolved_until_due_date_is_verified() -> None:
+    context = (
+        "Истец: ТОО «A», БИН 230740012345. Ответчик: ТОО «B», БИН 210940067891. "
+        "Пункт 6.3 договора: неустойка 0,1% за каждый день просрочки, но не более 10%. "
+        "Прошу взыскать основной долг 12 000 000 тенге и договорную неустойку 996 000 тенге."
+    )
+    draft = _draft()
+    _apply_verified_penalty(context, _research(), draft, filing_date=date(2026, 8, 21))
+
+    penalty_requests = [item for item in draft.requests if "неустой" in item.lower()]
+    assert any("996 000 тенге" in item and "ТРЕБУЕТ ПРОВЕРКИ" in item for item in penalty_requests)
+    assert "ТРЕБУЕТ РАСЧЁТА" in draft.price_of_claim
+    assert "ТРЕБУЕТ РАСЧ" in draft.state_duty
 
 
 def test_unrequested_model_penalty_is_removed_from_all_fields() -> None:
