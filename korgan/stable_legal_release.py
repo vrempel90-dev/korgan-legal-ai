@@ -23,7 +23,9 @@ _LANGUAGE_LABEL_RE = re.compile(
 _SYSTEM_LINK_RE = re.compile(r"(?i),?\s*в\s+системн\w*\s+связ\w*\s+с\s+(?=(?:англ\.?|английск\w*|русск\w*))")
 _SOURCE_RE = re.compile(r"источник:\s*(https?://[^\]\s]+)", re.IGNORECASE)
 _VERIFIED_RE = re.compile(r"^(?P<statement>.*?)\s*\[основание:\s*(?P<article>.*?);\s*текст\s+нормы:", re.IGNORECASE | re.DOTALL)
-_FORM_ONLY_GPK_148_RE = re.compile(r"(?i)(?:статья|статьи|ст\.)\s*148\b")
+_FORM_ONLY_GPK_148_RE = re.compile(
+    r"(?i)(?:(?:статья|статьи|ст\.)\s*148\b|148\s*[-–]?\s*бап\b)"
+)
 _GPK_SOURCE_TOKEN = "K1500000377"
 
 _SALARY_RE = re.compile(r"(?i)заработн\w*\s+плат|зарплат\w*|еңбекақ\w*")
@@ -55,13 +57,19 @@ def _is_russian_adilet(url: str) -> bool:
 def _is_form_only_gpk_148(line: str, source: str) -> bool:
     """Do not let the claim-form rule re-enter material legal basis via polish.
 
-    The exact source token is checked as well as an explicit GPK label so a
+    The exact source token is checked as well as an explicit GPK/APK label so a
     hypothetical Article 148 in another act is never filtered accidentally.
     """
     value = str(line or "")
     if not _FORM_ONLY_GPK_148_RE.search(value):
         return False
-    return _GPK_SOURCE_TOKEN.lower() in (source or "").lower() or "гпк" in value.lower()
+    lowered = value.lower()
+    return (
+        _GPK_SOURCE_TOKEN.lower() in (source or "").lower()
+        or "гпк" in lowered
+        or "апк" in lowered
+        or "азаматтық процестік" in lowered
+    )
 
 
 def _reference_key(text: str) -> tuple[tuple[str, str, str], ...]:
@@ -180,7 +188,11 @@ class StableLegalProductionService(FinalizedProductionClaimService):
     async def research_case(self, case_context: str, language: str = "ru") -> LegalResearch:
         research = await super().research_case(case_context, language=language)
         research = sanitize_research_sources(research)
-        return enrich_material_law_from_corpus(case_context, research)
+        research = enrich_material_law_from_corpus(case_context, research)
+        # Rescue runs after the first sanitizer dedupe. Collapse the same
+        # provision if web research and local corpus phrase it differently.
+        research.verified_claims = _dedupe_by_article(list(research.verified_claims))
+        return research
 
     async def draft_claim(self, case_context: str, research: LegalResearch, language: str = "ru") -> ClaimDraft:
         draft = await super().draft_claim(case_context, research, language=language)
