@@ -32,6 +32,30 @@ def test_parse_contractual_penalty_spelling_variants() -> None:
         assert terms.clause == "6.3"
 
 
+def test_parse_contractual_penalty_keeps_cap_beyond_fixed_character_window() -> None:
+    text = (
+        "Пунктом 6.3 договора предусмотрена неустойка 0,1% за каждый день просрочки. "
+        + "Дополнительное описание порядка начисления и применения санкции без изменения ставки. " * 6
+        + "При этом размер неустойки не более 10% от суммы задолженности."
+    )
+    assert text.index("не более 10%") - text.index("0,1%") > 260
+
+    terms = parse_contractual_penalty_terms(text)
+
+    assert terms is not None
+    assert terms.rate_percent_per_day == 0.1
+    assert terms.cap_percent == 10.0
+    assert terms.clause == "6.3"
+
+
+def test_parse_contractual_penalty_fails_closed_on_multiple_caps_in_same_paragraph() -> None:
+    text = (
+        "Пункт 6.3 договора: неустойка 0,1% за каждый день просрочки, не более 10%. "
+        "Далее в том же пункте указано не более 15%."
+    )
+    assert parse_contractual_penalty_terms(text) is None
+
+
 def test_parse_contractual_penalty_fails_closed_without_or_with_ambiguous_rate() -> None:
     assert parse_contractual_penalty_terms("Пункт 6.3 договора: неустойка за просрочку.") is None
     assert parse_contractual_penalty_terms(
