@@ -3,12 +3,14 @@ from __future__ import annotations
 import logging
 import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from datetime import date
 
 from korgan.legal_types import ClaimDraft
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 _ONE_TENGE = Decimal("1")
+_ONE_HUNDRED = Decimal("100")
 
 _MONEY_RE = re.compile(
     r"(?<!\d)(\d[\d\s\u00a0]*(?:[.,]\d{1,2})?)\s*(?:тенге|теңге|тг\b|₸)",
@@ -45,6 +47,61 @@ def amount_occurrences_exact(text: str) -> list[tuple[int, int, int]]:
         if amount > 0:
             result.append((amount, match.start(), match.end()))
     return result
+
+
+def parse_amount_kzt_exact(text: str) -> int | None:
+    """Parse the first KZT amount exactly, supporting both RU and KK currency forms."""
+    values = amount_occurrences_exact(text)
+    return values[0][0] if values else None
+
+
+def calc_state_duty_exact(amount: int, is_individual: bool) -> int:
+    """Calculate court state duty using Decimal and the configured statutory cap."""
+    from korgan import legal_calc
+
+    if amount < 0:
+        raise ValueError("Сумма иска не может быть отрицательной")
+    rate = Decimal("0.01") if is_individual else Decimal("0.03")
+    duty = int((Decimal(amount) * rate).quantize(_ONE_TENGE, rounding=ROUND_HALF_UP))
+    return min(duty, legal_calc.CAP_MRP * legal_calc.MRP_2026)
+
+
+def calc_late_payment_penalty_exact(
+    principal: int,
+    start: date,
+    end: date,
+    *,
+    rate_date: date,
+):
+    """Calculate Article 353 amount without float multiplication drift."""
+    from korgan import legal_calc
+
+    if principal <= 0:
+        raise ValueError("Сумма основного долга должна быть положительной")
+    if end < start:
+        raise ValueError("Дата окончания периода просрочки раньше её начала")
+    rate = legal_calc.base_rate_on(rate_date)
+    if rate is None:
+        return None
+    days = (end - start).days + 1
+    amount = int(
+        (
+            Decimal(principal)
+            * Decimal(str(rate))
+            / _ONE_HUNDRED
+            * Decimal(days)
+            / Decimal(legal_calc.DAYS_IN_YEAR)
+        ).quantize(_ONE_TENGE, rounding=ROUND_HALF_UP)
+    )
+    return legal_calc.LatePaymentPenalty(
+        principal,
+        start,
+        end,
+        rate_date,
+        days,
+        rate,
+        amount,
+    )
 
 
 def _already_claimed_amounts(draft: ClaimDraft) -> set[int]:
@@ -158,6 +215,7 @@ def install_universal_word_final_hardening() -> None:
     if _INSTALLED:
         return
 
+    from korgan import legal_calc
     from korgan import professional_claim_finalizer as finalizer
     from korgan import universal_word_quality_guard as guard
 
@@ -173,7 +231,13 @@ def install_universal_word_final_hardening() -> None:
     finalizer._MONEY_RE = _MONEY_RE
     finalizer._parse_amount = parse_money_exact
 
+    # legal_calc.gosposhlina_line resolves these names dynamically inside its
+    # module, so replacing them also hardens the already-imported release helper.
+    legal_calc.parse_amount_kzt = parse_amount_kzt_exact
+    legal_calc.calc_gosposhlina_claim = calc_state_duty_exact
+    legal_calc.calc_late_payment_penalty = calc_late_payment_penalty_exact
+
     _INSTALLED = True
     LOGGER.info(
-        "Installed universal Word final hardening: Decimal KZT arithmetic + source-safe penalty extraction"
+        "Installed universal Word final hardening: Decimal KZT arithmetic + exact state duty/Article 353 + source-safe penalty extraction"
     )
