@@ -7,6 +7,7 @@ from pathlib import Path
 
 from korgan.claim_corpus_health import enforce_claim_corpus_health
 from korgan.claim_filing_accuracy import apply_claim_filing_accuracy
+from korgan.claim_release_invariants import enforce_claim_release_invariants
 from korgan.legal_calc import format_kzt
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 
@@ -227,6 +228,10 @@ def finalize_professional_claim(
     apply_claim_filing_accuracy(case_context, research, draft)
     enforce_claim_corpus_health(research, draft)
     _sanitize_relief(case_context, research, draft)
+    # These rules run after every model draft/repair and before arithmetic. They
+    # cannot change Word rendering; they only keep filing content internally
+    # consistent and downgrade unresolved filing prerequisites to PRELIMINARY.
+    enforce_claim_release_invariants(case_context, draft)
     _recalculate_price(draft)
 
     # Any remaining internal score note is never part of the filing-facing draft.
