@@ -48,6 +48,20 @@ def test_parse_contractual_penalty_keeps_cap_beyond_fixed_character_window() -> 
     assert terms.clause == "6.3"
 
 
+def test_cap_from_next_contract_clause_is_not_applied_to_current_rate() -> None:
+    text = (
+        "Пункт 6.3 договора: неустойка 0,1% за каждый день просрочки.\n"
+        "Пункт 6.4 договора: штраф за иное нарушение, но не более 10% от суммы задолженности."
+    )
+
+    terms = parse_contractual_penalty_terms(text)
+
+    assert terms is not None
+    assert terms.rate_percent_per_day == 0.1
+    assert terms.clause == "6.3"
+    assert terms.cap_percent is None
+
+
 def test_parse_contractual_penalty_fails_closed_on_multiple_caps_in_same_paragraph() -> None:
     text = (
         "Пункт 6.3 договора: неустойка 0,1% за каждый день просрочки, не более 10%. "
