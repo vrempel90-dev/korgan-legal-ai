@@ -8,8 +8,10 @@ from korgan.claim_filing_accuracy import FILING_ACTION_PREFIX
 from korgan.legal_types import ClaimDraft, VerificationStatus
 
 _GPK_148_RE = re.compile(
-    r"(?i)(?:(?:статья|статьи|ст\.)\s*148\b.{0,120}(?:ГПК|гражданск\w*\s+процессуальн\w*)|"
-    r"(?:ГПК|гражданск\w*\s+процессуальн\w*).{0,120}(?:статья|статьи|ст\.)\s*148\b)"
+    r"(?i)(?:(?:(?:статья|статьи|ст\.)\s*148\b|148\s*[-–]?\s*бап\b).{0,120}"
+    r"(?:ГПК|АПК|гражданск\w*\s+процессуальн\w*|азаматтық\s+процестік\w*)|"
+    r"(?:ГПК|АПК|гражданск\w*\s+процессуальн\w*|азаматтық\s+процестік\w*).{0,120}"
+    r"(?:(?:статья|статьи|ст\.)\s*148\b|148\s*[-–]?\s*бап\b))"
 )
 _NONPAYMENT_RE = re.compile(r"(?i)(?:неоплат\w*|не\s+оплат\w*|задолженн\w*|непогаш\w*\s+долг\w*|долг\w*)")
 _SELF_PRETRIAL_EVIDENCE_RE = re.compile(
@@ -60,7 +62,7 @@ def _document_language(case_context: str, draft: ClaimDraft, explicit: str | Non
 
 
 def remove_form_article_from_material_basis(draft: ClaimDraft) -> None:
-    """Article 148 GPK governs claim form; it is not a debt/penalty legal basis."""
+    """Article 148 GPK/APK governs claim form; it is not a debt/penalty legal basis."""
     draft.legal_basis = [
         line for line in draft.legal_basis if not _GPK_148_RE.search(str(line or ""))
     ]
