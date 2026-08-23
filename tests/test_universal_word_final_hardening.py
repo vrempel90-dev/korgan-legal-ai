@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date
 from types import SimpleNamespace
 
 from korgan.document_generator_ownership_guard import (
@@ -50,6 +51,29 @@ def test_professional_claim_price_recalculation_uses_exact_decimal_after_install
     finalizer._recalculate_price(draft)
 
     assert draft.price_of_claim == "9 007 199 254 740 993 тенге"
+
+
+def test_state_duty_and_article_353_use_exact_decimal_math() -> None:
+    from korgan import legal_calc
+
+    install_universal_word_final_hardening()
+
+    assert legal_calc.parse_amount_kzt("12 996 000 теңге") == 12_996_000
+    assert legal_calc.calc_gosposhlina_claim(12_996_000, is_individual=False) == 389_880
+    assert legal_calc.gosposhlina_line(
+        "Истец:\nТОО «KAZTECH SOLUTIONS», БИН 230740012345",
+        "12 996 000 теңге",
+    ).startswith("389 880 тенге")
+
+    penalty = legal_calc.calc_late_payment_penalty(
+        12_000_000,
+        date(2026, 5, 31),
+        date(2026, 8, 21),
+        rate_date=date(2026, 8, 21),
+    )
+    assert penalty is not None
+    assert penalty.days == 83
+    assert penalty.amount == 457_068
 
 
 def test_penalty_extraction_does_not_confuse_principal_and_penalty_in_same_sentence() -> None:
