@@ -124,6 +124,9 @@ def install_request_race_guard() -> None:
             )
             return
 
+        # Save under the same lock used by start_new_document_request(). If a new
+        # document switch was already requested, it will run before the second
+        # lock acquisition below and the old upload notice will be suppressed.
         async with document_request_lock(state):
             after = await state.get_data()
             if not _request_matches(after, request_id, request_kind):
@@ -134,9 +137,19 @@ def install_request_race_guard() -> None:
                     filename,
                 )
                 return
-
             count = await base_bot._save_document(state, extracted)
             preview = extracted.as_context()
+
+        async with document_request_lock(state):
+            latest = await state.get_data()
+            if not _request_matches(latest, request_id, request_kind):
+                LOGGER.info(
+                    "STALE_UPLOAD_SUPPRESSED request_id=%s kind=%s file=%s",
+                    request_id,
+                    request_kind,
+                    filename,
+                )
+                return
             await message.answer(
                 f"✅ Материал разобран и добавлен в дело ({count}).\n\n{preview[:3200]}\n\n"
                 + _upload_followup(request_kind, language),
