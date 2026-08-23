@@ -111,15 +111,23 @@ async def repair_claim_release(
     # That let the last model pass undo deterministic work already performed by
     # FinalizedProductionClaimService. Re-run the same zero-call finalization
     # chain before the repaired draft is ever eligible for Word delivery.
-    finalize_professional_claim(context, research, repaired)
+    finalize_professional_claim(context, research, repaired, language=language)
     enforce_claim_release_invariants(context, repaired, language=language)
     _deterministic_pre_qa(context, research, repaired)
     _apply_verified_article_353(context, research, repaired, filing_date=_today_kz())
-    finalize_professional_claim(context, research, repaired)
+    finalize_professional_claim(context, research, repaired, language=language)
     enforce_claim_release_invariants(context, repaired, language=language)
-    finalize_claim_for_release(context, repaired, language=language)
+
+    # Any deterministic pre-QA pass that may reinsert a state-duty request must
+    # run before the localized final release normalizer. Otherwise a kk repair
+    # could finish with the Russian canonical duty wording.
     _deterministic_pre_qa(context, research, repaired)
+    finalize_claim_for_release(context, repaired, language=language)
+
+    # Quality polish may touch legal-basis text, but the final invariant pass is
+    # intentionally non-monetary: it cannot undo localized price/duty output.
     claim_quality_hotfix.polish_claim_before_quality(context, research, repaired)
+    enforce_claim_release_invariants(context, repaired, language=language)
     return repaired
 
 
