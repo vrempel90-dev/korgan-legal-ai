@@ -23,6 +23,8 @@ _LANGUAGE_LABEL_RE = re.compile(
 _SYSTEM_LINK_RE = re.compile(r"(?i),?\s*в\s+системн\w*\s+связ\w*\s+с\s+(?=(?:англ\.?|английск\w*|русск\w*))")
 _SOURCE_RE = re.compile(r"источник:\s*(https?://[^\]\s]+)", re.IGNORECASE)
 _VERIFIED_RE = re.compile(r"^(?P<statement>.*?)\s*\[основание:\s*(?P<article>.*?);\s*текст\s+нормы:", re.IGNORECASE | re.DOTALL)
+_FORM_ONLY_GPK_148_RE = re.compile(r"(?i)(?:статья|статьи|ст\.)\s*148\b")
+_GPK_SOURCE_TOKEN = "K1500000377"
 
 _SALARY_RE = re.compile(r"(?i)заработн\w*\s+плат|зарплат\w*|еңбекақ\w*")
 _LEAVE_COMP_RE = re.compile(r"(?i)(?:неиспользован\w*\s+отпуск|компенсац\w*.*отпуск|демалыс.*өтемақ|өтемақ.*демалыс)")
@@ -48,6 +50,18 @@ def _is_russian_adilet(url: str) -> bool:
     if host not in {"adilet.zan.kz", "www.adilet.zan.kz"}:
         return True
     return parsed.path.startswith("/rus/")
+
+
+def _is_form_only_gpk_148(line: str, source: str) -> bool:
+    """Do not let the claim-form rule re-enter material legal basis via polish.
+
+    The exact source token is checked as well as an explicit GPK label so a
+    hypothetical Article 148 in another act is never filtered accidentally.
+    """
+    value = str(line or "")
+    if not _FORM_ONLY_GPK_148_RE.search(value):
+        return False
+    return _GPK_SOURCE_TOKEN.lower() in (source or "").lower() or "гпк" in value.lower()
 
 
 def _reference_key(text: str) -> tuple[tuple[str, str, str], ...]:
@@ -80,17 +94,22 @@ def _dedupe_by_article(lines: list[str]) -> list[str]:
 
 
 def sanitize_research_sources(research: LegalResearch) -> LegalResearch:
-    """Reject English Adilet pages and language-version framing before drafting."""
+    """Reject non-filing-safe source lines before any drafting/polishing step."""
     accepted: list[str] = []
     rejected = list(research.unverified_claims)
 
     for line in research.verified_claims:
-        match = _SOURCE_RE.search(str(line))
+        value = str(line)
+        match = _SOURCE_RE.search(value)
         source = match.group(1).rstrip(".,;)") if match else ""
         if source and not _is_russian_adilet(source):
             rejected.append("Правовой вывод не использован: открыта не русская официальная страница Adilet.")
             continue
-        accepted.append(clean_language_labels(str(line)))
+        if _is_form_only_gpk_148(value, source):
+            # Article 148 remains a drafting/form constraint in code, but is not
+            # offered to the model/polisher as a legal ground for the claim.
+            continue
+        accepted.append(clean_language_labels(value))
 
     accepted = _dedupe_by_article(accepted)
     sources = [url for url in research.source_urls if _is_russian_adilet(url)]
@@ -161,10 +180,6 @@ class StableLegalProductionService(FinalizedProductionClaimService):
     async def research_case(self, case_context: str, language: str = "ru") -> LegalResearch:
         research = await super().research_case(case_context, language=language)
         research = sanitize_research_sources(research)
-        # The local corpus is refreshed from official Adilet in production. Use
-        # it as a deterministic rescue for core material law when web research
-        # returns only procedural/form provisions. The article number comes from
-        # the current corpus row, not from a prompt or model memory.
         return enrich_material_law_from_corpus(case_context, research)
 
     async def draft_claim(self, case_context: str, research: LegalResearch, language: str = "ru") -> ClaimDraft:
