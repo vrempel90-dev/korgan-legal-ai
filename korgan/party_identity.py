@@ -24,7 +24,8 @@ _STOPWORDS = {
     "казахстан", "телефон", "email", "банковские", "реквизиты", "поставщик", "заказчик",
     "исполнитель", "подрядчик", "арендодатель", "арендатор", "продавец", "покупатель",
     "кредитор", "займодавец", "заимодавец", "работодатель", "работник", "товарищество",
-    "ограниченной", "ответственностью", "акционерное", "общество",
+    "ограниченной", "ответственностью", "акционерное", "общество", "company", "group",
+    "holding", "services", "service", "solutions", "international", "corporation",
 }
 
 
@@ -49,31 +50,54 @@ def _clear_party_type(values: list[str]) -> str | None:
     return None
 
 
+def _distinctive_tokens(text: str) -> list[str]:
+    return [
+        token
+        for token in _TOKEN_RE.findall(text or "")
+        if token.lower().replace("ё", "е") not in _STOPWORDS and not token.isdigit()
+    ]
+
+
 def _identity_keys(values: list[str]) -> list[str]:
     text = " ".join(str(item or "") for item in values or [])
-    keys: list[str] = []
+    strong: list[str] = []
 
     for quoted in _QUOTED_RE.findall(text):
         key = _normalized(quoted)
-        if len(key) >= 5 and key not in keys:
-            keys.append(key)
+        if len(key) >= 5 and key not in strong:
+            strong.append(key)
 
     for match in _PERSON_RE.finditer(text):
         key = _normalized(match.group(0))
-        if len(key) >= 8 and key not in keys:
-            keys.append(key)
+        if len(key) >= 8 and key not in strong:
+            strong.append(key)
 
-    tokens = [
-        token for token in _TOKEN_RE.findall(text)
-        if token.lower().replace("ё", "е") not in _STOPWORDS and not token.isdigit()
-    ]
+    # Build a phrase key from adjacent distinctive name tokens. This prevents a
+    # claimant such as "ABC GROUP" from accidentally matching the defendant
+    # "CLIENT GROUP" merely because both contain the generic word GROUP.
+    for raw in values or []:
+        tokens = _distinctive_tokens(_ROLE_PREFIX_RE.sub("", str(raw or "")))
+        if len(tokens) >= 2:
+            key = _normalized(" ".join(tokens[:4]))
+            if len(key) >= 8 and key not in strong:
+                strong.append(key)
+        elif len(tokens) == 1:
+            token = tokens[0]
+            if len(token) >= 7:
+                key = _normalized(token)
+                if key not in strong:
+                    strong.append(key)
+
+    if strong:
+        return strong
+
+    tokens = _distinctive_tokens(text)
     tokens.sort(key=len, reverse=True)
-    for token in tokens[:6]:
-        key = _normalized(token)
-        if len(key) >= 5 and key not in keys:
-            keys.append(key)
-
-    return keys
+    return [
+        key
+        for key in (_normalized(token) for token in tokens[:4])
+        if len(key) >= 7
+    ]
 
 
 def _windows(case_context: str) -> list[str]:
