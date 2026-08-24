@@ -38,6 +38,8 @@ export const korganApi = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
+  getCase: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}`),
+  getDocument: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/document`),
   uploadMaterial: (caseId, file) => {
     const body = new FormData();
     body.append('file', file);
