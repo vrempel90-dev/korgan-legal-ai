@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  Scale, MessageCircle, FileText, FolderOpen, ShieldCheck, Home, Bell,
+  Scale, MessageCircle, FileText, FolderOpen, ShieldCheck, Home,
   UserRound, ArrowRight, ArrowLeft, Search, ChevronRight, CheckCircle2,
   ScrollText, Reply, Send, Download, LockKeyhole, Sparkles, Trash2,
   Languages, AlertTriangle, Paperclip, FileSignature, Headphones, CircleHelp
@@ -36,12 +36,12 @@ const TEXT = {
     consultation: 'Консультация', consultationSub: 'KORGAN AI с проверкой правовых источников', prepare: 'Подготовить документ', prepareSub: 'Пять production-документов KORGAN в Word',
     myCases: 'Мои дела', casesSub: 'Дела, материалы, история и документы', privacy: 'Конфиденциальность', privacySub: 'Согласие, язык и удаление данных',
     selectDoc: 'Выбор документа', searchDoc: 'Поиск документа', documents: 'Документы', newCase: 'Новое дело', tell: 'Расскажите, что произошло',
-    tellSub: 'Опишите факты своими словами. После создания дела можно загрузить сразу несколько PDF, DOCX, TXT или фотографий. KORGAN разберёт их и использует как материалы дела.',
+    tellSub: 'Можно описать ситуацию своими словами или сразу загрузить документы. KORGAN разберёт PDF, DOCX, TXT и фотографии и использует их как материалы дела.',
     placeholder: 'Стороны, договор/отношение, даты, суммы, нарушение, доказательства, позиция и чего вы хотите добиться...', create: 'Создать дело', creating: 'Создаю дело…',
     materials: 'Материалы дела', files: 'Файлов в деле', uploaded: 'Загружено', addFile: 'Загрузить документы / фото', processing: 'Обрабатываю материалы…',
     consultCase: 'Консультация по этому делу', generate: 'Подготовить документ по материалам', generating: 'Проверяю право и формирую…', deleteCase: 'Удалить дело',
     docReady: 'Документ готов', caseCreated: 'Дело создано', materialsLoaded: 'Материалы загружены', download: 'Скачать DOCX', downloadExisting: 'Скачать готовый DOCX',
-    liveReview: 'Проверка живым юристом', noCases: 'Дел пока нет', noCasesSub: 'Создайте первое дело и опишите ситуацию своими словами.', createNew: 'Создать новое дело',
+    liveReview: 'Проверка юристом', noCases: 'Дел пока нет', noCasesSub: 'Создайте первое дело и опишите ситуацию своими словами.', createNew: 'Создать новое дело',
     language: 'Язык', deleteAll: 'Удалить все мои данные', dataControl: 'Данные под контролем', dataControlSub: 'Mini App работает через отдельный API и не вмешивается в production-бота.',
     connected: 'AI подключён', connecting: 'Подключение…', backendDown: 'Backend недоступен', checking: 'Проверяю право и источники…', message: 'Напишите сообщение…',
     status: 'Статус', check: 'Проверка', help: 'Помощь', support: 'Техподдержка', restored: 'История дела восстановлена', documentStored: 'Готовый документ сохранён в деле',
@@ -56,7 +56,7 @@ const TEXT = {
     consultation: 'Кеңес', consultationSub: 'Құқықтық дереккөздерді тексеретін KORGAN AI', prepare: 'Құжат дайындау', prepareSub: 'KORGAN-ның бес production Word-құжаты',
     myCases: 'Менің істерім', casesSub: 'Істер, материалдар, тарих және құжаттар', privacy: 'Құпиялылық', privacySub: 'Келісім, тіл және деректерді жою',
     selectDoc: 'Құжатты таңдау', searchDoc: 'Құжатты іздеу', documents: 'Құжаттар', newCase: 'Жаңа іс', tell: 'Не болғанын жазыңыз',
-    tellSub: 'Фактілерді өз сөзіңізбен жазыңыз. Іс құрылғаннан кейін бірнеше PDF, DOCX, TXT немесе фотосуретті бірден жүктей аласыз. KORGAN оларды іс материалдары ретінде талдайды.',
+    tellSub: 'Жағдайды өз сөзіңізбен сипаттауға немесе құжаттарды бірден жүктеуге болады. KORGAN PDF, DOCX, TXT және фотосуреттерді талдап, іс материалдары ретінде пайдаланады.',
     placeholder: 'Тараптар, шарт/қатынас, күндер, сомалар, бұзушылық, дәлелдер, ұстаным және қалаған нәтиже...', create: 'Іс құру', creating: 'Іс құрылуда…',
     materials: 'Іс материалдары', files: 'Істегі файлдар', uploaded: 'Жүктелді', addFile: 'Құжаттар / фото жүктеу', processing: 'Материалдар өңделуде…',
     consultCase: 'Осы іс бойынша кеңес', generate: 'Материалдар бойынша құжат дайындау', generating: 'Құқық тексеріліп, құжат жасалуда…', deleteCase: 'Істі жою',
@@ -93,6 +93,7 @@ function App() {
   const [screen, setScreen] = useState('home');
   const [caseText, setCaseText] = useState(initial.draft?.description || '');
   const [selectedDocument, setSelectedDocument] = useState(initial.draft?.documentType || 'claim');
+  const [pendingFiles, setPendingFiles] = useState([]);
   const [query, setQuery] = useState('');
   const [language, setLanguage] = useState(initial.language || 'ru');
   const [consent, setConsent] = useState(Boolean(initial.consentAccepted));
@@ -150,15 +151,49 @@ function App() {
     finally { setBusy(false); }
   };
 
-  const chooseDocument = id => { setSelectedDocument(id); saveDraft({ documentType: id }); go('new-case'); };
+  const chooseDocument = id => { setSelectedDocument(id); setPendingFiles([]); saveDraft({ documentType: id }); go('new-case'); };
   const saveCaseText = value => { setCaseText(value); saveDraft({ description: value, documentType: selectedDocument }); };
+  const chooseInitialFiles = event => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!files.length) return;
+    setPendingFiles(files);
+    setNotice(language === 'kk' ? `${files.length} файл таңдалды.` : `Выбрано файлов: ${files.length}. Они будут загружены сразу после создания дела.`);
+  };
 
   const createCase = async () => {
-    if (!caseText.trim() || busy) return;
+    if ((!caseText.trim() && !pendingFiles.length) || busy) return;
     setBusy(true); setNotice('');
     try {
-      const result = await korganApi.createCase({ description: caseText.trim(), document_type: selectedDocument, language });
-      setActiveCase(result.case); setDocumentResult(null); resetChat(); await refreshCases(); clearLocalCaseData(); setCaseText(''); setScreen('case');
+      const description = caseText.trim() || (language === 'kk'
+        ? 'Іс жүктелген материалдар негізінде құрылды. Фактілерді тек пайдаланушы жүктеген құжаттардан алу керек.'
+        : 'Дело создано на основании загруженных материалов. Факты следует брать только из документов, загруженных пользователем.');
+      const result = await korganApi.createCase({ description, document_type: selectedDocument, language });
+      let createdCase = result.case;
+      setActiveCase(createdCase);
+
+      if (pendingFiles.length) {
+        try {
+          await korganApi.uploadMaterials(createdCase.id, pendingFiles, ({ current, total, file, result: uploadResult }) => {
+            createdCase = uploadResult.case || createdCase;
+            setActiveCase(createdCase);
+            setNotice(language === 'kk'
+              ? `${current}/${total}: «${file.name}» талданды.`
+              : `${current}/${total}: «${file.name}» разобран и добавлен в дело.`);
+          });
+        } catch (uploadError) {
+          const detail = await korganApi.getCase(createdCase.id).catch(() => null);
+          if (detail?.case) createdCase = detail.case;
+          setActiveCase(createdCase);
+          await refreshCases();
+          setPendingFiles([]); clearLocalCaseData(); setCaseText(''); setScreen('case');
+          setNotice(uploadError.message || 'Дело создано, но один из файлов не удалось разобрать. Уже обработанные материалы сохранены.');
+          return;
+        }
+      }
+
+      setActiveCase(createdCase); setDocumentResult(null); resetChat(); await refreshCases();
+      clearLocalCaseData(); setCaseText(''); setPendingFiles([]); setScreen('case');
     } catch (e) { setNotice(e.message || 'Не удалось создать дело.'); }
     finally { setBusy(false); }
   };
@@ -250,7 +285,7 @@ function App() {
     setBusy(true);
     try {
       if (isBackendConnected()) await korganApi.deleteMyData();
-      clearAllLocalData(); setCases([]); setActiveCase(null); setDocumentResult(null); setConsent(false); setCaseText(''); resetChat(); setScreen('home');
+      clearAllLocalData(); setCases([]); setActiveCase(null); setDocumentResult(null); setConsent(false); setCaseText(''); setPendingFiles([]); resetChat(); setScreen('home');
     } catch (e) { setNotice(e.message || 'Удаление не завершено.'); }
     finally { setBusy(false); }
   };
@@ -286,8 +321,10 @@ function App() {
     <div className="big-title"><span className="eyebrow">{documentTitle}</span><h1>{t.tell}</h1><p>{t.tellSub}</p></div>
     <textarea className="case-input" value={caseText} onChange={e => saveCaseText(e.target.value)} maxLength={8000} placeholder={t.placeholder}/>
     <div className="input-meta"><Sparkles size={17}/><span>{caseText.length}/8000</span></div>
+    <label className="secondary wide" style={{cursor:busy?'default':'pointer'}}><Paperclip size={18}/>{busy ? t.processing : t.addFile}<input style={{display:'none'}} disabled={busy} multiple type="file" accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp" onChange={chooseInitialFiles}/></label>
+    {pendingFiles.length > 0 && <div className="success-note">{language === 'kk' ? `Таңдалды: ${pendingFiles.map(file => file.name).join(', ')}` : `Выбрано: ${pendingFiles.map(file => file.name).join(', ')}`}</div>}
     {notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}
-    <button className="primary wide" disabled={!caseText.trim() || busy || !backendOk} onClick={createCase}>{busy ? t.creating : <>{t.create}<ArrowRight size={18}/></>}</button>
+    <button className="primary wide" disabled={(!caseText.trim() && !pendingFiles.length) || busy || !backendOk} onClick={createCase}>{busy ? t.creating : <>{t.create}<ArrowRight size={18}/></>}</button>
   </main></div>; }
 
   if (screen === 'case') {
