@@ -16,6 +16,7 @@ import { getTelegramUser, initTelegram, haptic } from './telegram';
 
 const TERMS_VERSION = '2026-08-16-v1';
 const WHATSAPP_URL = 'https://wa.me/77005000553';
+const SUPPORT_WHATSAPP_URL = 'https://wa.me/77712841932';
 
 const DOCUMENTS = [
   { id: 'claim', ru: ['Исковое заявление', 'Подготовка иска в суд'], kk: ['Талап қою арызы', 'Сотқа талап қою құжаты'], icon: Scale },
@@ -328,7 +329,7 @@ function App() {
 
   if (screen === 'help') return <div className="app-shell"><Header title={t.help}/><main className="page">
     <section className="analysis-card"><div className="card-head"><div><span className="section-kicker">KORGAN Legal AI</span><h2>{t.help}</h2></div><CircleHelp size={22}/></div><p>{t.helpText}</p></section>
-    <button className="secondary wide" onClick={() => window.open(WHATSAPP_URL, '_blank', 'noopener,noreferrer')}><Headphones size={18}/>{t.support}</button>
+    <button className="secondary wide" onClick={() => window.open(SUPPORT_WHATSAPP_URL, '_blank', 'noopener,noreferrer')}><Headphones size={18}/>{t.support}</button>
     <button className="secondary wide" onClick={() => go('profile')}><LockKeyhole size={18}/>{t.privacy}</button>
   </main><BottomNav/></div>;
 
@@ -336,7 +337,7 @@ function App() {
     <section className="profile-card"><div className="avatar"><UserRound size={30}/></div><div><h2>{telegramUser?.firstName||'KORGAN'}</h2><p>{telegramUser?.username?`@${telegramUser.username}`:'Telegram Mini App'}</p></div></section>
     <section className="settings-card"><div className="settings-row"><Languages size={20}/><div><strong>{t.language}</strong><small>Русский / Қазақша</small></div><div className="language-switch compact"><button className={language==='ru'?'active':''} onClick={()=>switchLanguage('ru')}>RU</button><button className={language==='kk'?'active':''} onClick={()=>switchLanguage('kk')}>KK</button></div></div></section>
     <section className="privacy-card static"><LockKeyhole size={20}/><div><strong>{t.privacy}</strong><p>AES-256-GCM · retention 30 days · v. {TERMS_VERSION}</p></div></section>
-    <button className="secondary wide" onClick={() => window.open(WHATSAPP_URL, '_blank', 'noopener,noreferrer')}><Headphones size={18}/>{t.support}</button>
+    <button className="secondary wide" onClick={() => window.open(SUPPORT_WHATSAPP_URL, '_blank', 'noopener,noreferrer')}><Headphones size={18}/>{t.support}</button>
     <button className="secondary wide" onClick={() => window.open(WHATSAPP_URL, '_blank', 'noopener,noreferrer')}><ShieldCheck size={18}/>{t.liveReview}</button>
     {notice&&<div className="success-note">{notice}</div>}
     <button className="secondary wide danger" disabled={busy} onClick={deleteAllData}><Trash2 size={18}/>{t.deleteAll}</button>
