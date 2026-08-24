@@ -1,20 +1,32 @@
 {
-  "actual_on": "2026-08-16",
-  "note": "Ставки и показатели для расчётов. Меняются законом — обновляйте файл, не код.",
+  "actual_on": "2026-08-24",
+  "note": "Ставки и показатели для расчётов. Меняются законом — обновляйте файл, не код. verified=true означает, что конкретный показатель сверен с указанным официальным источником.",
   "mrp": [
     {
       "from": "2026-01-01",
       "value": 4325,
-      "source": "Закон РК от 08.12.2025 № 239-VIII «О республиканском бюджете на 2026-2028 годы»",
-      "verified": false
+      "source": "Закон РК от 08.12.2025 № 239-VIII «О республиканском бюджете на 2026-2028 годы», ст. 7",
+      "url": "https://adilet.zan.kz/rus/docs/Z2500000239",
+      "verified": true
     }
   ],
   "state_duty": {
     "individual_rate": 0.01,
     "legal_entity_rate": 0.03,
+    "individual_cap_mrp": 10000,
+    "legal_entity_cap_mrp": 20000,
     "cap_mrp": 10000,
-    "source": "ст. 665 Налогового кодекса РК (Кодекс РК № 214-VIII)",
-    "verified": false
+    "non_property_mrp": 0.5,
+    "divorce_mrp": 0.3,
+    "source": "ст. 665 Налогового кодекса РК (Кодекс РК от 18.07.2025 № 214-VIII)",
+    "url": "https://adilet.zan.kz/rus/docs/K2500000214",
+    "verified": true
+  },
+  "consumer_court_duty": {
+    "treatment": "deferred_until_decision",
+    "source": "ч. 3 ст. 106 ГПК РК",
+    "url": "https://adilet.zan.kz/rus/docs/K1500000377",
+    "verified": true
   },
   "nb_base_rate": [
     {
