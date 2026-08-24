@@ -17,7 +17,6 @@ from korgan.claim_money_ledger import ClaimMoneyLedger, build_claim_money_ledger
 from korgan.legal_calc import (
     CAP_MRP_INDIVIDUAL,
     CAP_MRP_LEGAL_ENTITY,
-    MRP_2026,
     NEEDS_CALCULATION_MARKER,
     NONPROPERTY_DUTY_MRP,
     RATE_INDIVIDUAL,
@@ -83,9 +82,6 @@ def _consumer_grounded(case_context: str, research: LegalResearch, draft: ClaimD
     if _claimant_individual(case_context, draft) is not True:
         return False
     verified = "\n".join([*research.verified_claims, *research.source_urls])
-    # Deferral is a legal consequence, so do not infer it from a generic
-    # household purchase alone. Require source-bound consumer qualification or
-    # an explicit consumer-protection formulation in the user's materials.
     return bool(_CONSUMER_SOURCE_RE.search(verified) or _CONSUMER_RE.search(case_context or ""))
 
 
@@ -172,10 +168,7 @@ def decide_state_duty(
     else:
         property_duty, property_line = 0, ""
 
-    if has_nonproperty:
-        nonproperty_duty = calc_nonproperty_state_duty(demands=1)
-    else:
-        nonproperty_duty = 0
+    nonproperty_duty = calc_nonproperty_state_duty(demands=1) if has_nonproperty else 0
 
     if has_property and has_nonproperty:
         amount = property_duty + nonproperty_duty
@@ -209,15 +202,18 @@ def apply_professional_state_duty(
     decision = decide_state_duty(case_context, research, draft)
     draft.state_duty = decision.line
 
+    # The final prayer gets exactly one canonical state-duty treatment. Legacy
+    # pre-QA may have inserted a property-rate reimbursement line before this
+    # router knew the actual category, so remove it first in every mode.
+    draft.requests = [request for request in draft.requests if not _STATE_DUTY_RE.search(str(request))]
+
     if decision.needs_review:
-        draft.requests = [request for request in draft.requests if not _STATE_DUTY_RE.search(str(request))]
         note = "Государственная пошлина требует проверки: " + decision.note
         if note not in draft.verification_notes:
             draft.verification_notes.append(note)
         draft.status = VerificationStatus.NEEDS_VERIFICATION
         return decision
 
-    # Clear stale routing notes once the classification is deterministic.
     draft.verification_notes = [
         note for note in draft.verification_notes
         if not str(note).startswith("Государственная пошлина требует проверки:")
@@ -226,7 +222,6 @@ def apply_professional_state_duty(
     if decision.deferred:
         # A deferred consumer has not paid this cost at filing time, so do not
         # fabricate a reimbursement prayer or demand a payment receipt.
-        draft.requests = [request for request in draft.requests if not _STATE_DUTY_RE.search(str(request))]
         draft.verification_notes = [
             note for note in draft.verification_notes
             if not (
@@ -235,4 +230,9 @@ def apply_professional_state_duty(
                 and any(word in str(note).lower() for word in ("уплат", "квитанц", "платеж", "документ"))
             )
         ]
+    elif decision.amount is not None:
+        draft.requests.append(
+            "Взыскать с ответчика в пользу истца расходы по уплате государственной пошлины "
+            f"в размере {format_kzt(decision.amount)}."
+        )
     return decision
