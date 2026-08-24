@@ -29,7 +29,7 @@ _REQUISITES_SECTION_RE = re.compile(
     r")\s*[.:;-]*\s*$"
 )
 _SIGNATURE_LINE_RE = re.compile(
-    r"(?i)^\s*(?:подпис\w*|signature|м\.?\s*п\.?)\s*[:_\-–—.]*\s*$"
+    r"(?i)^\s*(?:подпис\w*|signature|м\.?\s*п\.?)\s*[:_\-–—.\s]*$"
 )
 _PARTY_LABEL_RE = re.compile(r"(?i)^\s*(?:сторона\s*[12аб]|party\s*[ab12])\s*:?[\s.]*$")
 
