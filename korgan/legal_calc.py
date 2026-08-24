@@ -1,11 +1,9 @@
 """Deterministic legal arithmetic for KORGAN.
 
-Anything computable from a verified legal rate belongs here, not in a model
-prompt. The model may not invent, round or "remember" these numbers.
-
-Court-duty constants below are intentionally year-bound.  The calculator fails
-closed outside 2026 so a new budget law / Tax Code amendment cannot silently
-turn into a wrong amount in a court filing.
+Court-duty arithmetic is sourced from ``korgan/data/rates.json`` through
+``korgan.legal.calc``.  The LLM never chooses a tariff, MRP, cap or amount.
+When claim classification or the rate period is not safe, the calculator fails
+closed and the court document is marked for verification instead of guessing.
 """
 
 from __future__ import annotations
@@ -16,25 +14,28 @@ from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
 
-RATE_SOURCE_ARTICLE = "статья 665 Налогового кодекса РК (Кодекс РК № 214-VIII)"
+from korgan.legal.calc import RateUnavailable, Rates, load_rates, state_duty
+
 RATE_SOURCE_URL = "https://adilet.zan.kz/rus/docs/K2500000214"
 MRP_SOURCE_URL = "https://adilet.zan.kz/rus/docs/Z2500000239"
 GPK_ARTICLE_106_URL = "https://adilet.zan.kz/rus/docs/K1500000377"
-MRP_2026 = 4325
-RATE_INDIVIDUAL = 0.01
-RATE_LEGAL_ENTITY = 0.03
-CAP_MRP = 10_000
-CAP_MRP_LEGAL_ENTITY = 20_000
-NON_PROPERTY_MRP = Decimal("0.5")
-DIVORCE_MRP = Decimal("0.3")
-STATE_DUTY_VALID_FROM = date(2026, 1, 1)
-STATE_DUTY_VALID_THROUGH = date(2026, 12, 31)
 NEEDS_CALCULATION_MARKER = "[ТРЕБУЕТ РАСЧЁТА ГОСПОШЛИНЫ]"
 
-# Ordinary civil property claims distinguish physical and legal persons.  An
-# individual entrepreneur is still a physical person; IP-specific rates exist
-# only for special categories expressly named by article 665 (for example tax
-# audit-notice challenges), which this civil-claim helper does not guess.
+# Compatibility constants for existing callers/tests. Their values are loaded
+# from the same dated configuration used by production, not duplicated here.
+_DEFAULT_RATES = load_rates()
+_DEFAULT_MRP = _DEFAULT_RATES.mrp_on(_DEFAULT_RATES.duty_valid_from)
+RATE_SOURCE_ARTICLE = _DEFAULT_RATES.duty_source
+MRP_2026 = int(_DEFAULT_MRP.value)
+RATE_INDIVIDUAL = _DEFAULT_RATES.duty_individual_rate
+RATE_LEGAL_ENTITY = _DEFAULT_RATES.duty_legal_entity_rate
+CAP_MRP = _DEFAULT_RATES.duty_individual_cap_mrp
+CAP_MRP_LEGAL_ENTITY = _DEFAULT_RATES.duty_legal_entity_cap_mrp
+NON_PROPERTY_MRP = Decimal(str(_DEFAULT_RATES.duty_non_property_mrp))
+DIVORCE_MRP = Decimal(str(_DEFAULT_RATES.duty_divorce_mrp))
+STATE_DUTY_VALID_FROM = _DEFAULT_RATES.duty_valid_from
+STATE_DUTY_VALID_THROUGH = _DEFAULT_RATES.duty_valid_through
+
 _LEGAL_ENTITY_MARKERS = (
     "бин", "тоо", "товарищество с ограниченной ответственностью", "ао ",
     "акционерное общество", "юридическое лицо", "юридического лица",
@@ -60,19 +61,22 @@ _PERSON_NAME_RE = re.compile(r"[А-ЯЁ][а-яё-]+\s+[А-ЯЁ][а-яё-]+(?:\s+
 _IIN_RE = re.compile(r"(?<!\d)\d{12}(?!\d)")
 _STATE_DUTY_RE = re.compile(r"(?:\bгоспошлин\w*\b|\bгосударственн\w*\s+пошлин\w*\b)", re.IGNORECASE)
 
-# Categories that are safe to recognize from the actual claim wording.  More
-# complicated categories deliberately return NEEDS_CALCULATION_MARKER rather
-# than applying a plausible-looking but potentially wrong tariff.
-_NON_PROPERTY_REQUEST_MARKERS = (
+# A strong marker itself is an independent non-property remedy, even when the
+# same request also contains a monetary consequence. Generic "обязать" is only
+# non-property when that request has no priced monetary obligation.
+_STRONG_NON_PROPERTY_MARKERS = (
     "расторгнуть договор",
-    "обязать ответчика",
-    "обязать ",
     "выселить",
     "вселить",
     "освободить имущество от ареста",
     "продлить срок принятия наследства",
     "изменить договор найма",
     "расторгнуть договор найма",
+)
+_GENERIC_NON_PROPERTY_MARKERS = ("обязать ответчика", "обязать ")
+_MONETARY_OBLIGATION_MARKERS = (
+    "долг", "денеж", "тенге", "тг", "вернуть займ", "возвратить займ",
+    "вернуть денеж", "возвратить денеж", "взыскать",
 )
 _AMBIGUOUS_CLASSIFICATION_MARKERS = (
     "признать сделку недействитель",
@@ -85,22 +89,32 @@ def _round_tenge(value: Decimal) -> int:
     return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
-def _mrp(multiplier: Decimal | float | int) -> int:
-    return _round_tenge(Decimal(MRP_2026) * Decimal(str(multiplier)))
+def _config(rates: Rates | None) -> Rates:
+    return rates or load_rates()
 
 
-def calc_gosposhlina_claim(amount: int, is_individual: bool) -> int:
-    """State duty for an ordinary property claim under art. 665(1)(1), 2026.
+def _mrp(multiplier: Decimal | float | int, *, rates: Rates, day: date) -> int:
+    rates.ensure_duty_valid_on(day)
+    value = rates.mrp_on(day).value
+    return _round_tenge(Decimal(str(value)) * Decimal(str(multiplier)))
 
-    Physical persons: 1%, capped at 10,000 MRP.
-    Legal persons: 3%, capped at 20,000 MRP.
-    """
+
+def calc_gosposhlina_claim(
+    amount: int,
+    is_individual: bool,
+    *,
+    rates: Rates | None = None,
+    day: date | None = None,
+) -> int:
+    """State duty for an ordinary property claim under current configured law."""
     if amount < 0:
         raise ValueError("Сумма иска не может быть отрицательной")
-    rate = RATE_INDIVIDUAL if is_individual else RATE_LEGAL_ENTITY
-    cap_mrp = CAP_MRP if is_individual else CAP_MRP_LEGAL_ENTITY
-    raw = _round_tenge(Decimal(amount) * Decimal(str(rate)))
-    return min(raw, cap_mrp * MRP_2026)
+    return state_duty(
+        amount,
+        is_individual=is_individual,
+        rates=_config(rates),
+        day=day or date.today(),
+    ).amount
 
 
 def parse_amount_kzt(text: str) -> int | None:
@@ -196,22 +210,21 @@ def claimant_is_individual(case_context: str) -> bool | None:
     return None
 
 
+def _clean_requests(requests: Iterable[str]) -> list[str]:
+    return [item for item in requests if item and not _STATE_DUTY_RE.search(item)]
+
+
 def _claim_text(title: str, requests: Iterable[str]) -> str:
-    clean_requests = [item for item in requests if not _STATE_DUTY_RE.search(item or "")]
-    return "\n".join([title or "", *clean_requests]).lower()
+    return "\n".join([title or "", *_clean_requests(requests)]).lower()
 
 
-def _is_consumer_claim(case_context: str, claim_text: str) -> bool:
-    text = f"{case_context}\n{claim_text}".lower()
-    return "защит" in text and "прав потребител" in text
+def _is_consumer_claim(claim_text: str) -> bool:
+    return "защит" in claim_text and "прав потребител" in claim_text
 
 
-def _explicit_exemption_reason(case_context: str, claim_text: str) -> str | None:
-    text = f"{case_context}\n{claim_text}".lower()
-    # High-confidence claim-category exemptions from art. 668.  Identity-based
-    # exemptions (disability, veteran status, etc.) are not inferred here unless
-    # a dedicated verified intake field is added; guessing such status is worse
-    # than returning NEEDS_CALCULATION_MARKER.
+def _explicit_exemption_reason(claim_text: str) -> str | None:
+    """Recognize only exemptions asserted by the finalized cause of action."""
+    text = claim_text.lower()
     if "алимент" in text:
         return "иск о взыскании алиментов"
     if "заработн" in text and any(word in text for word in ("взыск", "оплат", "трудов")):
@@ -233,8 +246,23 @@ def _potential_identity_exemption(case_context: str) -> bool:
     ))
 
 
-def _has_non_property_request(claim_text: str) -> bool:
-    return any(marker in claim_text for marker in _NON_PROPERTY_REQUEST_MARKERS)
+def _is_independent_non_property_request(request: str) -> bool:
+    lowered = (request or "").lower()
+    if any(marker in lowered for marker in _STRONG_NON_PROPERTY_MARKERS):
+        return True
+    if not any(marker in lowered for marker in _GENERIC_NON_PROPERTY_MARKERS):
+        return False
+    if parse_amount_kzt(request) is not None:
+        return False
+    return not any(marker in lowered for marker in _MONETARY_OBLIGATION_MARKERS)
+
+
+def _has_independent_non_property_request(title: str, requests: Iterable[str]) -> bool:
+    clean = _clean_requests(requests)
+    if any(_is_independent_non_property_request(item) for item in clean):
+        return True
+    # Title fallback is used only when the draft has no usable prayer item.
+    return not clean and any(marker in (title or "").lower() for marker in _STRONG_NON_PROPERTY_MARKERS)
 
 
 def gosposhlina_line(
@@ -244,66 +272,85 @@ def gosposhlina_line(
     title: str = "",
     requests: Iterable[str] = (),
     day: date | None = None,
+    rates: Rates | None = None,
 ) -> str:
-    """Return a court-facing duty line for common civil claims, fail-closed.
-
-    The function intentionally supports only classifications that can be made
-    safely from the structured claim.  Special administrative/tax, bankruptcy,
-    arbitration and other tariffs from art. 665 require a dedicated document
-    route and therefore are not guessed by this civil-claim helper.
-    """
+    """Return a court-facing duty line for common civil claims, fail-closed."""
     on = day or date.today()
-    if on < STATE_DUTY_VALID_FROM or on > STATE_DUTY_VALID_THROUGH:
+    config = _config(rates)
+    try:
+        config.ensure_duty_valid_on(on)
+    except RateUnavailable:
         return NEEDS_CALCULATION_MARKER
 
     is_individual = claimant_is_individual(case_context)
     if is_individual is None:
         return NEEDS_CALCULATION_MARKER
 
-    text = _claim_text(title, requests)
-    all_text = f"{case_context}\n{text}".lower()
+    request_list = tuple(requests)
+    text = _claim_text(title, request_list)
 
-    if any(marker in all_text for marker in _AMBIGUOUS_CLASSIFICATION_MARKERS):
+    # Classification is driven by the finalized claim, not arbitrary evidence
+    # text, so a salary certificate or old divorce in the background cannot
+    # change the tariff for an unrelated debt claim.
+    if any(marker in text for marker in _AMBIGUOUS_CLASSIFICATION_MARKERS):
         return NEEDS_CALCULATION_MARKER
-    if "моральн" in all_text and not all(word in all_text for word in ("чест", "достоин")):
+    if "моральн" in text and not all(word in text for word in ("чест", "достоин")):
         return NEEDS_CALCULATION_MARKER
     if _potential_identity_exemption(case_context):
         return NEEDS_CALCULATION_MARKER
 
-    exemption = _explicit_exemption_reason(case_context, text)
+    exemption = _explicit_exemption_reason(text)
     if exemption:
-        return f"0 тенге (освобождение от уплаты: {exemption}; статья 668 Налогового кодекса РК)"
+        return f"0 тенге (освобождение от уплаты: {exemption}; {config.duty_source})"
 
     amount = parse_amount_kzt(price_of_claim)
 
-    if "расторжен" in all_text and "брак" in all_text and "раздел" not in all_text:
-        duty = _mrp(DIVORCE_MRP)
-        return f"{format_kzt(duty)} (0,3 МРП; {RATE_SOURCE_ARTICLE})"
+    if "расторж" in text and "брак" in text and "раздел" not in text:
+        try:
+            duty = _mrp(config.duty_divorce_mrp, rates=config, day=on)
+        except RateUnavailable:
+            return NEEDS_CALCULATION_MARKER
+        return f"{format_kzt(duty)} ({config.duty_divorce_mrp:g} МРП; {config.duty_source})"
 
-    non_property = _has_non_property_request(text)
+    non_property = _has_independent_non_property_request(title, request_list)
     if amount is None:
         if not non_property:
             return NEEDS_CALCULATION_MARKER
-        duty = _mrp(NON_PROPERTY_MRP)
-        return f"{format_kzt(duty)} (0,5 МРП за иск неимущественного характера; {RATE_SOURCE_ARTICLE})"
-
-    property_duty = calc_gosposhlina_claim(amount, is_individual)
-    rate_label = "1%" if is_individual else "3%"
-    cap_label = "10 000 МРП" if is_individual else "20 000 МРП"
-    total = property_duty
-    detail = f"{rate_label} от цены иска, предел {cap_label}"
-    if non_property:
-        non_property_duty = _mrp(NON_PROPERTY_MRP)
-        total += non_property_duty
-        detail += f" + 0,5 МРП за самостоятельное неимущественное требование ({format_kzt(non_property_duty)})"
-
-    if _is_consumer_claim(case_context, text) and is_individual:
+        try:
+            duty = _mrp(config.duty_non_property_mrp, rates=config, day=on)
+        except RateUnavailable:
+            return NEEDS_CALCULATION_MARKER
         return (
-            f"Уплата отсрочена до принятия решения судом; расчетная сумма {format_kzt(total)} "
-            f"({detail}; часть 3 статьи 106 ГПК РК; {RATE_SOURCE_ARTICLE})"
+            f"{format_kzt(duty)} ({config.duty_non_property_mrp:g} МРП "
+            f"за иск неимущественного характера; {config.duty_source})"
         )
 
-    return f"{format_kzt(total)} ({detail}; {RATE_SOURCE_ARTICLE})"
+    try:
+        property_result = state_duty(amount, is_individual=is_individual, rates=config, day=on)
+    except RateUnavailable:
+        return NEEDS_CALCULATION_MARKER
+    total = property_result.amount
+    cap_mrp = config.duty_individual_cap_mrp if is_individual else config.duty_legal_entity_cap_mrp
+    detail = f"{property_result.rate:.0%} от цены иска, предел {cap_mrp:,} МРП".replace(",", " ")
+
+    if non_property:
+        try:
+            non_property_duty = _mrp(config.duty_non_property_mrp, rates=config, day=on)
+        except RateUnavailable:
+            return NEEDS_CALCULATION_MARKER
+        total += non_property_duty
+        detail += (
+            f" + {config.duty_non_property_mrp:g} МРП за самостоятельное неимущественное "
+            f"требование ({format_kzt(non_property_duty)})"
+        )
+
+    if _is_consumer_claim(text) and is_individual:
+        return (
+            f"Уплата отсрочена до принятия решения судом; расчетная сумма {format_kzt(total)} "
+            f"({detail}; {config.consumer_deferral_source}; {config.duty_source})"
+        )
+
+    return f"{format_kzt(total)} ({detail}; {config.duty_source})"
 
 
 ARTICLE_353_SOURCE_URL = "https://adilet.zan.kz/rus/docs/K940001000_/compare"
