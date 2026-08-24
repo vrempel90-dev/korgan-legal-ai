@@ -7,7 +7,6 @@ from pathlib import Path
 
 from korgan.claim_corpus_health import enforce_claim_corpus_health
 from korgan.claim_filing_accuracy import apply_claim_filing_accuracy
-from korgan.claim_filing_completeness import enforce_article148_party_completeness
 from korgan.claim_money_ledger import build_claim_money_ledger
 from korgan.claim_release_invariants import enforce_claim_release_invariants
 from korgan.legal_calc import format_kzt
@@ -216,14 +215,13 @@ def finalize_professional_claim(
     *,
     language: str | None = None,
 ) -> None:
-    """Apply non-model professional release invariants before scoring/export."""
+    """Apply non-model professional drafting invariants before final release checks."""
     _resolve_court(case_context, research, draft)
     _apply_verified_legal_basis(research, draft)
     apply_claim_filing_accuracy(case_context, research, draft)
     enforce_claim_corpus_health(research, draft)
     _sanitize_relief(case_context, research, draft)
     enforce_claim_release_invariants(case_context, draft, language=language)
-    enforce_article148_party_completeness(draft)
     _recalculate_price(draft)
 
     draft.verification_notes = [
