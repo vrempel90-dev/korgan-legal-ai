@@ -7,6 +7,7 @@ from pathlib import Path
 
 from korgan.claim_corpus_health import enforce_claim_corpus_health
 from korgan.claim_filing_accuracy import apply_claim_filing_accuracy
+from korgan.claim_filing_completeness import enforce_article148_party_completeness
 from korgan.claim_money_ledger import build_claim_money_ledger
 from korgan.claim_release_invariants import enforce_claim_release_invariants
 from korgan.legal_calc import format_kzt
@@ -181,7 +182,7 @@ def _sanitize_relief(case_context: str, research: LegalResearch, draft: ClaimDra
 def _recalculate_price(draft: ClaimDraft) -> None:
     """Set one authoritative claim price from independent monetary remedies.
 
-    State duty and court costs are excluded by the ledger.  A prayer line that
+    State duty and court costs are excluded by the ledger. A prayer line that
     contains both components and an explicit total contributes only that total.
     If a multi-amount prayer is ambiguous, the existing price is preserved and
     the draft cannot silently become VERIFIED until the calculation is checked.
@@ -222,6 +223,7 @@ def finalize_professional_claim(
     enforce_claim_corpus_health(research, draft)
     _sanitize_relief(case_context, research, draft)
     enforce_claim_release_invariants(case_context, draft, language=language)
+    enforce_article148_party_completeness(draft)
     _recalculate_price(draft)
 
     draft.verification_notes = [
