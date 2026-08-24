@@ -155,15 +155,16 @@ async def start_new_consultation_request(state: FSMContext) -> str:
     """Replace only the consultation generation token, preserving the case.
 
     A second legal question must make the first asynchronous answer stale. The
-    case documents/facts remain available to the new question; only ownership of
-    the client-visible consultation response is replaced.
+    update is deliberately partial: unrelated facts, documents, language and
+    payment state may be changing in other handlers and must never be replaced
+    from an older full-state snapshot.
     """
     async with document_request_lock(state):
-        data = dict(await state.get_data())
         request_id = uuid4().hex
-        data["consultation_request_id"] = request_id
-        data["consultation_request_started_at"] = datetime.now(timezone.utc).isoformat()
-        await state.set_data(data)
+        await state.update_data(
+            consultation_request_id=request_id,
+            consultation_request_started_at=datetime.now(timezone.utc).isoformat(),
+        )
         return request_id
 
 
