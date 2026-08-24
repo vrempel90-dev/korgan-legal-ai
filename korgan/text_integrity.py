@@ -1,14 +1,8 @@
-"""Detect text that was cut or glued together between pipeline steps.
+"""Detect text that was cut, glued or contaminated between pipeline steps.
 
-The reported artefact was «...не предусмотрено иное».евидно» — a closing quote
-with the tail of a word welded to it, the head of that word gone. Whatever
-produced it (a truncated model response, a re-glued fragment), the document must
-not ship carrying it, and the check has to run on every document type rather
-than on the section where it was spotted.
-
-These are shape checks on the finished text. They are deliberately narrow: each
-pattern describes damage that correct legal Russian does not produce, so a
-finding means the text is broken, not merely unusual.
+These are shape checks on finished client-facing legal text. A finding means the
+text is damaged or contains an internal serialization artefact and must not be
+released as a clean legal document.
 """
 
 from __future__ import annotations
@@ -17,14 +11,8 @@ import re
 from dataclasses import dataclass
 
 _LOWER = "а-яёa-z"
-
 _UPPER = "А-ЯЁA-Z"
 
-# The damage is always *missing whitespace*: a closing quote or a sentence end
-# welded straight onto the next word. Legal Russian never does that, while
-# «Астана Логистик», БИН — quote, punctuation, space — is perfectly ordinary and
-# must not be flagged. Every pattern below is therefore anchored on the absence
-# of a space and is case-sensitive on purpose.
 _PATTERNS: tuple[tuple[str, str, str], ...] = (
     (
         "closing_quote_glued",
@@ -42,8 +30,6 @@ _PATTERNS: tuple[tuple[str, str, str], ...] = (
         "открывающая кавычка приклеена к предыдущему слову",
     ),
     (
-        # Not `[.,;:]{2,}`: «Сериков А.Б., ИИН» and «…» are ordinary. Only
-        # sequences that no correct text produces are flagged.
         "repeated_punctuation",
         r",{2,}|;{2,}|:{2,}|,\.",
         "повторяющаяся пунктуация — след склейки фрагментов",
@@ -53,14 +39,28 @@ _PATTERNS: tuple[tuple[str, str, str], ...] = (
         r"\s+[,;:]",
         "пробел перед знаком препинания",
     ),
+    (
+        "internal_serialization_field",
+        r"(?i)\b(?:claim_amount|case_amount|case_context|document_type|text_summary|"
+        r"verification_notes|source_urls|missing_or_unclear|important_facts|extracted_document)\b",
+        "в юридический текст попало внутреннее техническое поле",
+    ),
+    (
+        "glued_currency_index",
+        r"(?i)\b(?:тенге|теңге|тг)\d{1,3}\b",
+        "к обозначению валюты приклеен технический индекс/номер",
+    ),
+    (
+        "unresolved_alt_placeholder",
+        r"(?i)\[(?:НУЖНО\s+ДОПОЛНИТЬ|НУЖНО\s+УТОЧНИТЬ|ДОПОЛНИТЬ|УТОЧНИТЬ)\s*:[^\]]+\]",
+        "в документе осталось незаполненное служебное поле",
+    ),
 )
 
-# Abbreviations and identifiers where a dot legitimately sits inside a token.
 _ALLOWED = re.compile(
     r"|".join(
         (
             r"\b(?:т\.е|т\.к|т\.д|т\.п|и\.о|см\.|стр\.|гл\.|ст\.|п\.п|пп\.|руб\.|тг\.)",
-            # Initials: «Сериков А.Б.» — a dot inside the token is correct here.
             r"\b[А-ЯЁ]\.\s?[А-ЯЁ]\.",
             r"\b(?:kz|ru|com|org|net|gov)\b",
             r"\d+\.\d+",
@@ -83,12 +83,7 @@ class IntegrityFinding:
 
 
 def _mask_allowed(text: str) -> str:
-    """Mask spans where the suspicious shape is legitimate, preserving offsets.
-
-    The filler must not be whitespace: masking «Сериков А.Б., ИИН» with spaces
-    would manufacture a space before the comma and report damage that is not
-    there. `_` matches none of the patterns above.
-    """
+    """Mask legitimate spans while preserving offsets."""
     return _ALLOWED.sub(lambda match: "_" * len(match.group(0)), text)
 
 
@@ -97,7 +92,7 @@ def unbalanced_quotes(text: str) -> bool:
 
 
 def integrity_findings(text: str) -> list[IntegrityFinding]:
-    """Return every structural damage found in ``text``."""
+    """Return every structural damage or internal artefact found in ``text``."""
     if not text:
         return []
 
@@ -105,9 +100,9 @@ def integrity_findings(text: str) -> list[IntegrityFinding]:
     findings: list[IntegrityFinding] = []
 
     for code, pattern, description in _PATTERNS:
-        # Case-sensitive: lower/upper distinction is what separates damage from
-        # ordinary punctuation here.
-        for match in re.finditer(pattern, masked):
+        flags = re.IGNORECASE if pattern.startswith("(?i)") else 0
+        effective_pattern = pattern[4:] if pattern.startswith("(?i)") else pattern
+        for match in re.finditer(effective_pattern, masked, flags=flags):
             start = max(0, match.start() - 40)
             end = min(len(text), match.end() + 40)
             excerpt = " ".join(text[start:end].split())
