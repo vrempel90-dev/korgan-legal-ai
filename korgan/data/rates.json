@@ -11,6 +11,8 @@
     }
   ],
   "state_duty": {
+    "valid_from": "2026-01-01",
+    "valid_through": "2026-12-31",
     "individual_rate": 0.01,
     "legal_entity_rate": 0.03,
     "individual_cap_mrp": 10000,
