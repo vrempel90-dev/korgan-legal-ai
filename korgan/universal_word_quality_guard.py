@@ -4,8 +4,8 @@ import logging
 import re
 from typing import Any, Awaitable, Callable
 
-from korgan import document_quality, universal_quality_service
-from korgan.citation_audit import audit_citations, extract_references, runtime_provisions
+from korgan import citation_audit, document_quality, universal_quality_service
+from korgan.citation_audit import audit_citations, runtime_provisions
 from korgan.fast_v2_production_legal import _normalize_state_duty_request
 from korgan.legal_calc import NEEDS_CALCULATION_MARKER, format_kzt, gosposhlina_line
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch, VerificationStatus
@@ -30,6 +30,7 @@ from korgan.universal_quality_service import UniversalQualityProductionService
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 TARGET_READY_SCORE = 10.0
+_PRETRIAL_PROCEDURAL_ACTS = frozenset({"ГПК РК", "КАС РК"})
 
 _INSTRUCTION_TAIL_RE = re.compile(
     r"(?i)(?:[,;:\s—-]*(?:при\s+наличии\s+(?:указать|заполнить)|"
@@ -287,8 +288,22 @@ def _preliminary_after_repair_failure(draft: Any, issues: list[str]) -> Any:
     return draft
 
 
-def verified_legal_basis_from_research(research: LegalResearch) -> list[str]:
-    """Project only source-bound VERIFIED claims into client-facing legal basis."""
+def _reference_label(reference: Any, language: str) -> str:
+    if language != "kk":
+        return reference.label()
+    from korgan.kazakh_legal_bridge import _article_to_kk
+
+    localized = _article_to_kk(reference.label())
+    return "" if localized == reference.label() else localized
+
+
+def verified_legal_basis_from_research(
+    research: LegalResearch,
+    *,
+    language: str = "ru",
+    allowed_acts: set[str] | None = None,
+) -> list[str]:
+    """Project source-bound VERIFIED claims into a client-facing legal basis."""
     result: list[str] = []
     for raw in research.verified_claims or []:
         claim = str(raw or "").strip()
@@ -297,36 +312,77 @@ def verified_legal_basis_from_research(research: LegalResearch) -> list[str]:
         records = runtime_provisions([claim])
         if len(records) != 1:
             continue
+        reference = records[0].reference
+        if allowed_acts:
+            if reference.act not in allowed_acts:
+                continue
+        elif reference.act in _PRETRIAL_PROCEDURAL_ACTS:
+            continue
         statement = claim.split("[основание:", 1)[0].strip()
         if not statement:
             continue
         statement = statement.replace("«", "").replace("»", "").replace('"', "").strip()
-        reference = records[0].reference
-        existing = extract_references(statement)
+        if language == "kk":
+            from korgan.kazakh_legal_bridge import _article_to_kk
+
+            statement = _article_to_kk(statement)
+        existing = citation_audit.extract_references(statement)
         if existing and not any(reference.matches(item) for item in existing):
             continue
-        line = statement if existing else f"{statement.rstrip(' .;')} ({reference.label()})."
+        if existing:
+            line = statement
+        else:
+            label = _reference_label(reference, language)
+            if not label:
+                continue
+            line = f"{statement.rstrip(' .;')} ({label})."
         if line and line not in result:
             result.append(line)
     return result[:6]
+
+
+def _blocking_legal_basis_acts(draft: Any, research: LegalResearch) -> set[str]:
+    legal_basis = [str(item).strip() for item in getattr(draft, "legal_basis", []) or [] if str(item).strip()]
+    if not legal_basis:
+        return set()
+    text = "\n".join(legal_basis)
+    audit = audit_citations(text, verified_claims=research.verified_claims)
+    acts = {finding.act for finding in audit.blocking if finding.act}
+    runtime = runtime_provisions(research.verified_claims)
+    for reference in citation_audit.extract_references(text):
+        if not any(reference.matches(record.reference) for record in runtime):
+            acts.add(reference.act)
+    return {act for act in acts if act}
 
 
 def _legal_basis_needs_rescue(draft: Any, research: LegalResearch) -> bool:
     legal_basis = [str(item).strip() for item in getattr(draft, "legal_basis", []) or [] if str(item).strip()]
     if research.verified_claims and not legal_basis:
         return True
-    if not legal_basis:
-        return False
-    audit = audit_citations("\n".join(legal_basis), verified_claims=research.verified_claims)
-    return bool(audit.blocking)
+    return bool(_blocking_legal_basis_acts(draft, research))
 
 
-def _rescue_verified_legal_basis(draft: Any, research: LegalResearch) -> bool:
-    basis = verified_legal_basis_from_research(research)
+def _rescue_verified_legal_basis(
+    draft: Any,
+    research: LegalResearch,
+    *,
+    language: str,
+) -> bool:
+    allowed_acts = _blocking_legal_basis_acts(draft, research)
+    basis = verified_legal_basis_from_research(
+        research,
+        language=language,
+        allowed_acts=allowed_acts or None,
+    )
     if not basis:
         return False
     draft.legal_basis = basis
-    LOGGER.info("UNIVERSAL_WORD_QUALITY verified_law_rescue provisions=%d", len(basis))
+    LOGGER.info(
+        "UNIVERSAL_WORD_QUALITY verified_law_rescue provisions=%d acts=%s language=%s",
+        len(basis),
+        sorted(allowed_acts),
+        language,
+    )
     return True
 
 
@@ -363,7 +419,11 @@ async def repair_pretrial_to_target(
         sanitize_draft_instructions(repaired)
         second = pretrial_quality_issues(repaired, research)
         final_issues = second
-        if _legal_basis_needs_rescue(repaired, research) and _rescue_verified_legal_basis(repaired, research):
+        if _legal_basis_needs_rescue(repaired, research) and _rescue_verified_legal_basis(
+            repaired,
+            research,
+            language=language,
+        ):
             normalize_pretrial(repaired)
             final_issues = pretrial_quality_issues(repaired, research)
         repaired.verification_notes = _refresh_issue_notes(
@@ -420,7 +480,11 @@ async def repair_pretrial_response_to_target(
         sanitize_draft_instructions(repaired)
         second = pretrial_response_quality_issues(repaired, research)
         final_issues = second
-        if _legal_basis_needs_rescue(repaired, research) and _rescue_verified_legal_basis(repaired, research):
+        if _legal_basis_needs_rescue(repaired, research) and _rescue_verified_legal_basis(
+            repaired,
+            research,
+            language=language,
+        ):
             normalize_pretrial_response(repaired)
             final_issues = pretrial_response_quality_issues(repaired, research)
         repaired.verification_notes = _refresh_issue_notes(
