@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import http.client
 import logging
 import os
 import re
 import ssl
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime
@@ -45,6 +47,7 @@ _TRUTHY = {"1", "true", "yes", "on"}
 DEFAULT_REFRESH_HOURS = 24.0
 MAX_ZAN_PDF_BYTES = 80 * 1024 * 1024
 MIN_ZAN_PDF_BYTES = 1024
+ADILET_TRANSFER_ATTEMPTS = 3
 
 # GoGetSSL's official intermediate/root page publishes this exact PEM/TXT file.
 # SHA-256 is over the DER certificate and is also present in public CA metadata.
@@ -122,7 +125,7 @@ def _read_https(
     timeout: int = 60,
 ) -> tuple[str, str]:
     allow_url = lambda target: is_allowed_adilet_url(target, act_id=act_id)
-    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.4"})
+    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.5"})
     with _open_allowlisted(
         request,
         context=context,
@@ -136,6 +139,21 @@ def _read_https(
         return response.read().decode(charset, errors="replace"), final_url
 
 
+def _is_retryable_transfer_error(exc: BaseException) -> bool:
+    """Retry only transient transport truncation/reset/timeout failures.
+
+    Certificate verification, redirect validation, source identity and parsing
+    errors are deliberately non-retryable here. They must fail closed instead of
+    being hidden by a retry loop.
+    """
+    if isinstance(exc, (http.client.IncompleteRead, TimeoutError, ConnectionResetError)):
+        return True
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        return isinstance(reason, (TimeoutError, ConnectionResetError))
+    return False
+
+
 def _is_allowed_pinned_ca_url(url: str) -> bool:
     """Pinned CA downloads may use only the exact fingerprint-bound URL."""
     return url in _PINNED_CA_URLS
@@ -145,7 +163,7 @@ def _download_pinned_intermediate(url: str, expected_sha256: str) -> str:
     if not _is_allowed_pinned_ca_url(url):
         raise RuntimeError(f"CA download URL rejected: {url}")
 
-    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.4"})
+    request = urllib.request.Request(url, headers={"User-Agent": "KORGAN-corpus-loader/1.5"})
     with _open_allowlisted(
         request,
         timeout=30,
@@ -184,8 +202,42 @@ def _adilet_context_with_pinned_intermediates() -> ssl.SSLContext:
     return context
 
 
+def _read_adilet_with_retries(
+    candidate: str,
+    *,
+    context: ssl.SSLContext,
+    act_id: str,
+    timeout: int,
+    label: str,
+    errors: list[str],
+) -> tuple[str, str] | None:
+    for attempt in range(1, ADILET_TRANSFER_ATTEMPTS + 1):
+        try:
+            return _read_https(
+                candidate,
+                context=context,
+                act_id=act_id,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            errors.append(
+                f"{candidate}{label} attempt={attempt}: {type(exc).__name__}: {exc}"
+            )
+            if not _is_retryable_transfer_error(exc) or attempt >= ADILET_TRANSFER_ATTEMPTS:
+                return None
+            LOGGER.warning(
+                "KORGAN Adilet transient transfer failure act=%s url=%s attempt=%d/%d error=%s",
+                act_id,
+                candidate,
+                attempt,
+                ADILET_TRANSFER_ATTEMPTS,
+                f"{type(exc).__name__}: {exc}",
+            )
+    return None
+
+
 def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
-    """Fetch one expected Adilet act with verified TLS and bound redirects."""
+    """Fetch one expected Adilet act with verified TLS and bounded transfer retries."""
     act_id = _act_id_for_adilet_url(url)
     if act_id is None:
         raise RuntimeError(f"Adilet URL rejected or not bound to a known act: {url}")
@@ -199,33 +251,39 @@ def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
     standard = ssl.create_default_context()
     errors: list[str] = []
     for candidate in candidates:
-        try:
-            return _read_https(
-                candidate,
-                context=standard,
-                act_id=act_id,
-                timeout=timeout,
-            )
-        except Exception as exc:
-            errors.append(f"{candidate}: {type(exc).__name__}: {exc}")
+        result = _read_adilet_with_retries(
+            candidate,
+            context=standard,
+            act_id=act_id,
+            timeout=timeout,
+            label="",
+            errors=errors,
+        )
+        if result is not None:
+            return result
 
     supplemented = _adilet_context_with_pinned_intermediates()
     for candidate in candidates:
-        try:
-            return _read_https(
-                candidate,
-                context=supplemented,
-                act_id=act_id,
-                timeout=timeout,
-            )
-        except Exception as exc:
-            errors.append(f"{candidate} + pinned CA: {type(exc).__name__}: {exc}")
+        result = _read_adilet_with_retries(
+            candidate,
+            context=supplemented,
+            act_id=act_id,
+            timeout=timeout,
+            label=" + pinned CA",
+            errors=errors,
+        )
+        if result is not None:
+            return result
 
     raise RuntimeError("Adilet fetch failed with verified TLS: " + " | ".join(errors))
 
 
-def _read_zan_pdf(act_id: str, *, timeout: int = 90) -> tuple[bytes, str]:
-    """Download one allowlisted ZAN PDF using the platform trust store."""
+def _read_zan_pdf_with_context(
+    act_id: str,
+    *,
+    context: ssl.SSLContext,
+    timeout: int,
+) -> tuple[bytes, str]:
     url = zan_pdf_url(act_id)
     allow_url = lambda target: is_allowed_zan_pdf_url(target, act_id=act_id)
     if not allow_url(url):
@@ -233,12 +291,12 @@ def _read_zan_pdf(act_id: str, *, timeout: int = 90) -> tuple[bytes, str]:
 
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "KORGAN-corpus-loader/1.4", "Accept": "application/pdf"},
+        headers={"User-Agent": "KORGAN-corpus-loader/1.5", "Accept": "application/pdf"},
     )
     with _open_allowlisted(
         request,
         timeout=timeout,
-        context=ssl.create_default_context(),
+        context=context,
         allow_url=allow_url,
     ) as response:
         final_url = response.geturl()
@@ -263,6 +321,37 @@ def _read_zan_pdf(act_id: str, *, timeout: int = 90) -> tuple[bytes, str]:
     if not payload.startswith(b"%PDF-"):
         raise RuntimeError("ZAN payload does not have PDF magic")
     return payload, final_url
+
+
+def _read_zan_pdf(act_id: str, *, timeout: int = 90) -> tuple[bytes, str]:
+    """Download one allowlisted ZAN PDF with verified TLS only.
+
+    The platform trust store is tried first. If the server omits the same
+    fingerprint-pinned GoGetSSL intermediate already observed on the official
+    legal infrastructure, the supplemented context is attempted as a verified
+    fallback. Certificate verification is never disabled.
+    """
+    errors: list[str] = []
+    try:
+        return _read_zan_pdf_with_context(
+            act_id,
+            context=ssl.create_default_context(),
+            timeout=timeout,
+        )
+    except Exception as exc:
+        errors.append(f"platform trust: {type(exc).__name__}: {exc}")
+
+    try:
+        supplemented = _adilet_context_with_pinned_intermediates()
+        return _read_zan_pdf_with_context(
+            act_id,
+            context=supplemented,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        errors.append(f"pinned CA: {type(exc).__name__}: {exc}")
+
+    raise RuntimeError("ZAN fetch failed with verified TLS: " + " | ".join(errors))
 
 
 def _extract_zan_pdf_text(payload: bytes) -> str:
