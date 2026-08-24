@@ -153,3 +153,36 @@ def test_special_statutory_category_fails_closed_instead_of_using_ordinary_rate(
     assert decision.mode == "special"
     assert decision.line == NEEDS_CALCULATION_MARKER
     assert decision.needs_review is True
+
+
+def test_incidental_special_category_words_in_case_history_do_not_change_final_relief_route():
+    draft = _draft(
+        claimant=["Иванов Иван, ИИН 900101300001, адрес: г. Алматы, ул. Абая, д. 10"],
+        requests=["Взыскать задолженность 1 000 000 тенге."],
+        title="Иск о взыскании задолженности",
+    )
+    context = (
+        "Истец: Иванов Иван, ИИН 900101300001. В переписке ответчик утверждал, что возможны "
+        "банкротство и судебный приказ, однако настоящий иск заявлен только о взыскании долга."
+    )
+
+    decision = decide_state_duty(context, _research(), draft)
+
+    assert decision.mode == "property"
+    assert decision.amount == 10_000
+
+
+def test_multiple_distinct_nonproperty_demands_fail_closed_until_legal_classification():
+    draft = _draft(
+        claimant=["Иванов Иван, ИИН 900101300001, адрес: г. Алматы, ул. Абая, д. 10"],
+        requests=[
+            "Признать договор недействительным.",
+            "Обязать ответчика прекратить использование имущества.",
+        ],
+    )
+
+    decision = decide_state_duty("Истец: Иванов Иван, ИИН 900101300001", _research(), draft)
+
+    assert decision.mode == "multiple_nonproperty"
+    assert decision.line == NEEDS_CALCULATION_MARKER
+    assert decision.needs_review is True
