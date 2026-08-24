@@ -46,6 +46,7 @@ _KIND_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("principal", re.compile(r"(?:основн\w*\s+долг\w*|задолженн\w*|предоплат\w*|аванс\w*|предварительн\w*\s+оплат\w*|берешек\w*|алдын\s+ала\s+төлем\w*)", re.IGNORECASE)),
     ("restitution", re.compile(r"(?:возврат\w*|вернут\w*|қайтар\w*)", re.IGNORECASE)),
 )
+_NONPROPERTY_MONEY_KINDS = frozenset({"moral_damage"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,7 @@ class ClaimMoneyComponent:
     kind: str
     amount: int
     source_request: str
+    included_in_claim_price: bool = True
 
 
 @dataclass(slots=True)
@@ -62,7 +64,11 @@ class ClaimMoneyLedger:
 
     @property
     def total(self) -> int:
-        return sum(item.amount for item in self.components)
+        return sum(item.amount for item in self.components if item.included_in_claim_price)
+
+    @property
+    def nonproperty_money_components(self) -> list[ClaimMoneyComponent]:
+        return [item for item in self.components if not item.included_in_claim_price]
 
     @property
     def resolved(self) -> bool:
@@ -81,13 +87,7 @@ def _amount(value: str) -> int:
 
 
 def _kind(text: str, start: int, end: int) -> str:
-    """Bind an amount to the nearest recognised remedy label.
-
-    Pattern order must never decide legal meaning. In a single sentence such as
-    ``основной долг 12 000 000 ... неустойку 996 000`` both labels may be near
-    the first amount. We therefore use distance and prefer a preceding label on
-    ties, which mirrors ordinary legal drafting.
-    """
+    """Bind an amount to the nearest recognised remedy label."""
     candidates: list[tuple[int, int, int, str]] = []
     for order, (code, pattern) in enumerate(_KIND_PATTERNS):
         for match in pattern.finditer(text or ""):
@@ -104,6 +104,15 @@ def _kind(text: str, start: int, end: int) -> str:
     if not candidates:
         return "other"
     return min(candidates)[3]
+
+
+def _component(kind: str, amount: int, request: str) -> ClaimMoneyComponent:
+    return ClaimMoneyComponent(
+        kind=kind,
+        amount=amount,
+        source_request=request,
+        included_in_claim_price=kind not in _NONPROPERTY_MONEY_KINDS,
+    )
 
 
 def _explicit_total_index(text: str, matches: list[re.Match[str]]) -> int | None:
@@ -137,6 +146,18 @@ def _explicit_total_index(text: str, matches: list[re.Match[str]]) -> int | None
     return None
 
 
+def _component_list(
+    request: str,
+    matches: list[re.Match[str]],
+    values: list[int],
+    indices: list[int],
+) -> list[ClaimMoneyComponent] | None:
+    kinds = [_kind(request, matches[idx].start(), matches[idx].end()) for idx in indices]
+    if "other" in kinds or len(set(kinds)) != len(kinds):
+        return None
+    return [_component(kind, values[idx], request) for kind, idx in zip(kinds, indices, strict=True)]
+
+
 def _resolved_components(request: str) -> list[ClaimMoneyComponent] | None:
     matches = list(_AMOUNT_RE.finditer(request or ""))
     if not matches:
@@ -148,23 +169,31 @@ def _resolved_components(request: str) -> list[ClaimMoneyComponent] | None:
 
     total_index = _explicit_total_index(request, matches)
     if total_index is not None:
-        return [ClaimMoneyComponent("total", values[total_index], request)]
+        component_indices = [idx for idx in range(len(matches)) if idx != total_index]
+        if component_indices:
+            components = _component_list(request, matches, values, component_indices)
+            # A textual "итого" that mixes property money with a non-property
+            # moral-damage amount is not the legal claim price. Keep the
+            # independently labelled components and ignore the prose total.
+            if components is not None and any(not item.included_in_claim_price for item in components):
+                return components
+        return [_component("total", values[total_index], request)]
 
     if len(matches) == 1:
-        return [ClaimMoneyComponent(_kind(request, matches[0].start(), matches[0].end()), values[0], request)]
+        return [_component(_kind(request, matches[0].start(), matches[0].end()), values[0], request)]
 
     if len(values) >= 3 and values[-1] == sum(values[:-1]):
-        return [ClaimMoneyComponent("total", values[-1], request)]
+        components = _component_list(request, matches, values, list(range(len(values) - 1)))
+        if components is not None and any(not item.included_in_claim_price for item in components):
+            return components
+        return [_component("total", values[-1], request)]
     if len(values) >= 3 and values[0] == sum(values[1:]):
-        return [ClaimMoneyComponent("total", values[0], request)]
+        components = _component_list(request, matches, values, list(range(1, len(values))))
+        if components is not None and any(not item.included_in_claim_price for item in components):
+            return components
+        return [_component("total", values[0], request)]
 
-    kinds = [_kind(request, match.start(), match.end()) for match in matches]
-    if "other" not in kinds and len(set(kinds)) == len(kinds):
-        return [
-            ClaimMoneyComponent(kind, value, request)
-            for kind, value in zip(kinds, values, strict=True)
-        ]
-    return None
+    return _component_list(request, matches, values, list(range(len(matches))))
 
 
 def build_claim_money_ledger(requests: list[str]) -> ClaimMoneyLedger:
