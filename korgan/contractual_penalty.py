@@ -26,17 +26,29 @@ class ContractualPenalty:
     cap_amount: int | None
     cap_reached_on: date | None
 
+    @property
+    def rate_percent(self) -> float:
+        return self.terms.rate_percent_per_day
+
+    @property
+    def cap_percent(self) -> float | None:
+        return self.terms.cap_percent
+
 
 _NUMBER = r"(?P<value>\d+(?:[.,]\d+)?)"
 _PERCENT_TOKEN = r"(?:%|процент(?:а|ов)?\b)"
+_RATE_BASE_RU = (
+    r"(?:от\s+(?:сумм\w*\s+)?(?:"
+    r"задолженн\w*|долг\w*|просроченн\w*\s+(?:платеж\w*|обязательств\w*)"
+    r")\s*)?"
+    r"(?:за\s+кажд\w*\s+(?:календарн\w*\s+)?день(?:\s+просроч\w*)?|в\s+день)\b"
+)
 _RATE_RE = re.compile(
-    rf"{_NUMBER}\s*{_PERCENT_TOKEN}\s*"
-    r"(?:от\s+(?:сумм\w*\s+)?(?:задолженн\w*|долг\w*)\s*)?"
-    r"(?:за\s+кажд\w*\s+день(?:\s+просроч\w*)?|в\s+день)\b",
+    rf"{_NUMBER}\s*{_PERCENT_TOKEN}\s*{_RATE_BASE_RU}",
     re.IGNORECASE,
 )
 _RATE_RE_REVERSED = re.compile(
-    rf"(?:за\s+кажд\w*\s+день(?:\s+просроч\w*)?|в\s+день)\s*"
+    rf"(?:за\s+кажд\w*\s+(?:календарн\w*\s+)?день(?:\s+просроч\w*)?|в\s+день)\s*"
     rf"(?:[-—:;,]\s*)?{_NUMBER}\s*{_PERCENT_TOKEN}",
     re.IGNORECASE,
 )
@@ -118,13 +130,7 @@ def _nearest_clause(text: str, position: int) -> str:
 
 
 def _paragraph_for_position(text: str, position: int) -> str:
-    """Return the logical contract scope containing ``position``.
-
-    Prefer the numbered clause that owns the rate, so a cap from the next
-    contract clause cannot leak into this calculation even when DOCX/PDF text
-    separates clauses with only one newline. A long numbered clause remains the
-    owner regardless of character distance to the rate.
-    """
+    """Return the logical contract scope containing ``position``."""
     if not text:
         return ""
 
@@ -153,13 +159,7 @@ def _paragraph_for_position(text: str, position: int) -> str:
 
 
 def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerms | None:
-    """Parse an explicit contractual daily penalty without guessing missing terms.
-
-    The parser is deliberately fail-closed. It accepts exactly one distinct
-    daily rate and requires contractual wording near that rate. If different
-    rates or different caps are present in the same clause, no terms are selected.
-    Russian and Kazakh contractual formulations are supported deterministically.
-    """
+    """Parse one explicit contractual daily penalty without guessing missing terms."""
     text = str(case_context or "")
     rate_matches = [
         *_RATE_RE.finditer(text),
@@ -178,7 +178,7 @@ def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerm
     if rate_position < 0:
         return None
 
-    local = text[max(0, rate_position - 260):min(len(text), rate_position + 260)]
+    local = text[max(0, rate_position - 320):min(len(text), rate_position + 320)]
     paragraph = _paragraph_for_position(text, rate_position)
     if not _CONTRACT_RE.search(local) and not _CONTRACT_RE.search(paragraph):
         return None
@@ -198,40 +198,52 @@ def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerm
 
 def calc_contractual_penalty(
     principal: int,
-    terms: ContractualPenaltyTerms,
+    terms: ContractualPenaltyTerms | date,
     start: date,
-    end: date,
+    end: date | ContractualPenaltyTerms,
 ) -> ContractualPenalty:
+    """Calculate contractual penalty; accept legacy argument order during migration."""
+    if isinstance(terms, date) and isinstance(end, ContractualPenaltyTerms):
+        actual_terms = end
+        actual_start = terms
+        actual_end = start
+    elif isinstance(terms, ContractualPenaltyTerms) and isinstance(end, date):
+        actual_terms = terms
+        actual_start = start
+        actual_end = end
+    else:
+        raise TypeError("Некорректные аргументы расчёта договорной неустойки")
+
     if principal <= 0:
         raise ValueError("Сумма основного долга должна быть положительной")
-    if terms.rate_percent_per_day <= 0:
+    if actual_terms.rate_percent_per_day <= 0:
         raise ValueError("Ставка договорной неустойки должна быть положительной")
-    if terms.cap_percent is not None and terms.cap_percent <= 0:
+    if actual_terms.cap_percent is not None and actual_terms.cap_percent <= 0:
         raise ValueError("Лимит договорной неустойки должен быть положительным")
-    if end < start:
+    if actual_end < actual_start:
         raise ValueError("Дата окончания периода просрочки раньше даты начала")
 
-    days = (end - start).days + 1
-    raw_amount = round(principal * terms.rate_percent_per_day / 100 * days)
+    days = (actual_end - actual_start).days + 1
+    raw_amount = round(principal * actual_terms.rate_percent_per_day / 100 * days)
 
     cap_amount: int | None = None
     cap_reached_on: date | None = None
     capped = False
     amount = raw_amount
 
-    if terms.cap_percent is not None:
-        cap_amount = round(principal * terms.cap_percent / 100)
-        days_to_cap = math.ceil(terms.cap_percent / terms.rate_percent_per_day)
-        cap_reached_on = start + timedelta(days=max(days_to_cap - 1, 0))
+    if actual_terms.cap_percent is not None:
+        cap_amount = round(principal * actual_terms.cap_percent / 100)
+        days_to_cap = math.ceil(actual_terms.cap_percent / actual_terms.rate_percent_per_day)
+        cap_reached_on = actual_start + timedelta(days=max(days_to_cap - 1, 0))
         capped = raw_amount >= cap_amount
         amount = min(raw_amount, cap_amount)
 
     return ContractualPenalty(
         principal=principal,
-        start=start,
-        end=end,
+        start=actual_start,
+        end=actual_end,
         days=days,
-        terms=terms,
+        terms=actual_terms,
         amount=amount,
         capped=capped,
         cap_amount=cap_amount,
