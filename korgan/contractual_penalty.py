@@ -79,7 +79,8 @@ def _nearest_clause(text: str, position: int) -> str:
     for match in _CLAUSE_RE.finditer(text, start, end):
         candidates.append((abs(match.start() - position), match.group("clause")))
     if not candidates:
-        return ""
+        preceding = [match for match in _CLAUSE_RE.finditer(text) if match.start() <= position]
+        return preceding[-1].group("clause") if preceding else ""
     candidates.sort(key=lambda item: item[0])
     best_distance = candidates[0][0]
     best = {clause for distance, clause in candidates if distance == best_distance}
@@ -91,8 +92,8 @@ def _paragraph_for_position(text: str, position: int) -> str:
 
     Prefer the numbered clause that owns the rate, so a cap from the next
     contract clause cannot leak into this calculation even when DOCX/PDF text
-    separates clauses with only one newline. If no nearby numbered clause can
-    be bound safely, fall back to the blank-line paragraph.
+    separates clauses with only one newline. A long numbered clause remains the
+    owner regardless of character distance to the rate.
     """
     if not text:
         return ""
@@ -101,13 +102,12 @@ def _paragraph_for_position(text: str, position: int) -> str:
     preceding = [match for match in clause_matches if match.start() <= position]
     if preceding:
         anchor = preceding[-1]
-        if position - anchor.start() <= 320:
-            end = len(text)
-            for candidate in clause_matches:
-                if candidate.start() > position:
-                    end = candidate.start()
-                    break
-            return text[anchor.start():end]
+        end = len(text)
+        for candidate in clause_matches:
+            if candidate.start() > position:
+                end = candidate.start()
+                break
+        return text[anchor.start():end]
 
     separators = list(re.finditer(r"\n\s*\n", text))
     start = 0
@@ -143,10 +143,10 @@ def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerm
         return None
 
     local = text[max(0, rate_position - 260):min(len(text), rate_position + 260)]
-    if not _CONTRACT_RE.search(local):
+    paragraph = _paragraph_for_position(text, rate_position)
+    if not _CONTRACT_RE.search(local) and not _CONTRACT_RE.search(paragraph):
         return None
 
-    paragraph = _paragraph_for_position(text, rate_position)
     cap_matches = list(_CAP_RE.finditer(paragraph))
     caps = _unique_numeric(cap_matches)
     if len(caps) > 1:
