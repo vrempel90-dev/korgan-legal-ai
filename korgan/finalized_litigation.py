@@ -6,19 +6,35 @@ from korgan import document_quality as _dq
 from korgan import senior_claim_preflight as _sp
 from korgan.claim_filing_completeness import enforce_article148_party_completeness
 from korgan.claim_quality_hotfix import FILING_ACTION_PREFIX, ProductionClaimService
-from korgan.claim_state_duty import apply_professional_state_duty
+from korgan.claim_state_duty import StateDutyDecision, apply_professional_state_duty
 from korgan.fast_v2_production_legal import _deterministic_pre_qa
 from korgan.late_interest_hotfix import _apply_verified_article_353, _today_kz
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
+from korgan.party_identity import hydrate_claimant_identity
 from korgan.professional_claim_finalizer import finalize_professional_claim
 
 LOGGER = logging.getLogger(__name__)
 
 
-def _safe_deterministic_pre_qa(case_context: str, research: LegalResearch, draft: ClaimDraft) -> None:
+def _safe_deterministic_pre_qa(
+    case_context: str,
+    research: LegalResearch,
+    draft: ClaimDraft,
+) -> StateDutyDecision:
     """Preserve legacy cleanup, then let the professional router own final duty."""
     _deterministic_pre_qa(case_context, research, draft)
-    apply_professional_state_duty(case_context, research, draft)
+    decision = apply_professional_state_duty(case_context, research, draft)
+    LOGGER.info(
+        "STATE_DUTY_FINAL mode=%s amount=%s deferred=%s exempt=%s needs_review=%s price=%r claimant=%r",
+        decision.mode,
+        decision.amount,
+        decision.deferred,
+        decision.exempt,
+        decision.needs_review,
+        draft.price_of_claim,
+        draft.claimant[:4],
+    )
+    return decision
 
 
 class FinalizedProductionClaimService(ProductionClaimService):
@@ -31,6 +47,20 @@ class FinalizedProductionClaimService(ProductionClaimService):
         language: str = "ru",
     ) -> ClaimDraft:
         draft = await super().draft_claim(case_context, research, language=language)
+
+        # Contract/source materials often identify a future claimant as Supplier,
+        # Customer, Contractor, Creditor, etc. If the model preserved the party
+        # name but omitted BIN/IIN in the court caption, restore only the exact
+        # identifier that is source-bound to that same party. Never infer party
+        # type from the selected court or from the opposing party's identifier.
+        identity = hydrate_claimant_identity(case_context, draft.claimant)
+        if identity is not None:
+            LOGGER.info(
+                "CLAIMANT_IDENTITY_RESTORED kind=%s identifier=%s%s",
+                identity.kind,
+                identity.identifier_label,
+                identity.identifier,
+            )
 
         finalize_professional_claim(case_context, research, draft, language=language)
         _safe_deterministic_pre_qa(case_context, research, draft)
