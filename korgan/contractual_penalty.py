@@ -46,6 +46,12 @@ _RATE_RE_KK = re.compile(
     r"(?:күніне|әрбір\s+(?:кешіктірілген\s+|мерзімі\s+өткен\s+)?күн\s+үшін)\b",
     re.IGNORECASE,
 )
+_RATE_RE_KK_REVERSED = re.compile(
+    r"(?:тұрақсыздық\s+айыб\w*|өсімпұл\w*)\s*"
+    r"(?:күніне|әрбір\s+(?:кешіктірілген\s+|мерзімі\s+өткен\s+)?күн\s+үшін)\s*"
+    rf"(?:[-—:;,]\s*)?{_NUMBER}\s*(?:%|пайыз\b)",
+    re.IGNORECASE,
+)
 _CAP_RE = re.compile(
     rf"(?:но\s+)?(?:не\s+более|не\s+свыше|не\s+превыша\w*)\s*{_NUMBER}\s*{_PERCENT_TOKEN}",
     re.IGNORECASE,
@@ -155,7 +161,12 @@ def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerm
     Russian and Kazakh contractual formulations are supported deterministically.
     """
     text = str(case_context or "")
-    rate_matches = [*_RATE_RE.finditer(text), *_RATE_RE_REVERSED.finditer(text), *_RATE_RE_KK.finditer(text)]
+    rate_matches = [
+        *_RATE_RE.finditer(text),
+        *_RATE_RE_REVERSED.finditer(text),
+        *_RATE_RE_KK.finditer(text),
+        *_RATE_RE_KK_REVERSED.finditer(text),
+    ]
     rates = _unique_numeric(rate_matches)
     if len(rates) != 1:
         return None
