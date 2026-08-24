@@ -14,9 +14,14 @@ from korgan.universal_word_quality_guard import (
 )
 
 _ADILET = "https://adilet.zan.kz/rus/docs/K940001000_"
+_GPK_ADILET = "https://adilet.zan.kz/rus/docs/K1500000377"
 _PROVISION = (
     "Обязательство должно исполняться надлежащим образом в соответствии с условиями "
     "обязательства и требованиями законодательства."
+)
+_GPK_PROVISION = (
+    "В исковом заявлении должны быть указаны обстоятельства, на которых истец основывает "
+    "свои требования, а также доказательства, подтверждающие эти обстоятельства."
 )
 
 
@@ -36,6 +41,20 @@ def _verified_research() -> LegalResearch:
         source_urls=[_ADILET],
         notes=[],
     )
+
+
+def _verified_research_with_procedural_noise() -> LegalResearch:
+    research = _verified_research()
+    research.verified_claims.append(
+        verified_claim_line(
+            "Исковое заявление должно содержать обстоятельства и подтверждающие их доказательства.",
+            "статья 148 ГПК РК",
+            _GPK_PROVISION,
+            _GPK_ADILET,
+        )
+    )
+    research.source_urls.append(_GPK_ADILET)
+    return research
 
 
 def _draft_with_bad_article() -> PretrialDraft:
@@ -80,9 +99,32 @@ def test_verified_basis_projection_removes_internal_research_metadata() -> None:
     assert "источник:" not in basis[0]
 
 
-def test_pretrial_repairs_bad_article_from_verified_research_without_second_llm_call() -> None:
+def test_verified_basis_projection_localizes_kazakh_article_label() -> None:
+    claim = verified_claim_line(
+        "Міндеттеме тиісті түрде орындалуға тиіс.",
+        "статья 272 ГК РК",
+        _PROVISION,
+        _ADILET,
+    )
+    research = LegalResearch(
+        status=VerificationStatus.VERIFIED,
+        applicable_law=[],
+        procedural_requirements=[],
+        verified_claims=[claim],
+        unverified_claims=[],
+        source_urls=[_ADILET],
+        notes=[],
+    )
+
+    basis = verified_legal_basis_from_research(research, language="kk")
+
+    assert basis == ["Міндеттеме тиісті түрде орындалуға тиіс (ҚР АК 272-бабы)."]
+    assert "статья 272" not in basis[0].lower()
+
+
+def test_pretrial_repairs_bad_article_from_same_verified_act_without_second_llm_call() -> None:
     async def scenario() -> None:
-        research = _verified_research()
+        research = _verified_research_with_procedural_noise()
         initial = _draft_with_bad_article()
         assert pretrial_quality_issues(initial, research)
         calls: list[dict] = []
@@ -120,6 +162,7 @@ def test_pretrial_repairs_bad_article_from_verified_research_without_second_llm_
         rendered_law = "\n".join(result.legal_basis)
         assert "9999" not in rendered_law
         assert "статья 272 ГК РК" in rendered_law
+        assert "ГПК РК" not in rendered_law
         assert pretrial_quality_issues(result, research) == []
         assert result.status is VerificationStatus.VERIFIED
 
