@@ -28,7 +28,11 @@ from korgan.consultation_quota import (
 from korgan.legal_corpus import extract_cited_articles
 from korgan.payment import ReceiptAnalyzer
 from korgan.payment_runtime import _receipt_bytes
-from korgan.request_scope import consultation_request_is_current, start_new_consultation_request
+from korgan.request_scope import (
+    consultation_request_is_current,
+    document_request_lock,
+    start_new_consultation_request,
+)
 
 LOGGER = logging.getLogger(__name__)
 router = Router(name="korgan-consultation-quota-runtime")
@@ -83,18 +87,27 @@ def _parse_callback(data: str, action: str) -> tuple[int, str] | None:
         return None
 
 
-async def _remember_consultation_result(state: FSMContext, answer: str, urls: list[str]) -> None:
-    if not urls:
-        return
-    cited = extract_cited_articles(answer)
-    if not cited:
-        return
-    refreshed = await state.get_data()
-    previous = list(refreshed.get("consulted_articles", []) or [])
-    for item in cited:
-        if item not in previous:
-            previous.append(item)
-    await state.update_data(consulted_articles=previous[-20:])
+async def _remember_consultation_result(
+    state: FSMContext,
+    answer: str,
+    urls: list[str],
+    consultation_request_id: str,
+) -> bool:
+    """Atomically persist citation hints only for the still-active consultation."""
+    cited = extract_cited_articles(answer) if urls else []
+    async with document_request_lock(state):
+        refreshed = dict(await state.get_data())
+        if str(refreshed.get("consultation_request_id") or "") != consultation_request_id:
+            return False
+        if not cited:
+            return True
+        previous = list(refreshed.get("consulted_articles", []) or [])
+        for item in cited:
+            if item not in previous:
+                previous.append(item)
+        refreshed["consulted_articles"] = previous[-20:]
+        await state.set_data(refreshed)
+        return True
 
 
 async def _send_consultation_answer(
@@ -109,7 +122,7 @@ async def _send_consultation_answer(
 
     Telegram updates run concurrently. A newer consultation or any new document
     request invalidates this token. We cannot cancel an OpenAI call already in
-    flight, but we can fail closed before its result mutates state or reaches the
+    flight, but we fail closed before its result mutates state or reaches the
     client.
     """
     service = base_bot.service
@@ -133,10 +146,9 @@ async def _send_consultation_answer(
         )
         return _STALE
 
-    await _remember_consultation_result(state, answer, urls)
-    if not await consultation_request_is_current(state, consultation_request_id):
+    if not await _remember_consultation_result(state, answer, urls, consultation_request_id):
         LOGGER.info(
-            "STALE_CONSULTATION_SUPPRESSED request_id=%s user=%s stage=after_state_write",
+            "STALE_CONSULTATION_SUPPRESSED request_id=%s user=%s stage=state_write",
             consultation_request_id,
             message.from_user.id if message.from_user else None,
         )
@@ -147,14 +159,20 @@ async def _send_consultation_answer(
         source_title = "Ресми дереккөздер:" if language == "kk" else "Официальные источники:"
         sources = "\n\n" + source_title + "\n" + "\n".join(f"• {url}" for url in urls[:5])
     for part in base_bot._split(answer + sources):
-        if not await consultation_request_is_current(state, consultation_request_id):
-            LOGGER.info(
-                "STALE_CONSULTATION_SUPPRESSED request_id=%s user=%s stage=delivery",
-                consultation_request_id,
-                message.from_user.id if message.from_user else None,
-            )
-            return _STALE
-        await message.answer(part, disable_web_page_preview=True, reply_markup=base_bot.MENU)
+        # Hold the same per-session lock across the final ownership check and
+        # each client send. A new document request either commits first and
+        # suppresses this message, or waits until this already-current message
+        # is sent and then becomes the new owner.
+        async with document_request_lock(state):
+            refreshed = await state.get_data()
+            if str(refreshed.get("consultation_request_id") or "") != consultation_request_id:
+                LOGGER.info(
+                    "STALE_CONSULTATION_SUPPRESSED request_id=%s user=%s stage=delivery",
+                    consultation_request_id,
+                    message.from_user.id if message.from_user else None,
+                )
+                return _STALE
+            await message.answer(part, disable_web_page_preview=True, reply_markup=base_bot.MENU)
     return _DELIVERED
 
 
