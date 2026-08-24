@@ -1,35 +1,52 @@
 {
-  "actual_on": "2026-08-16",
+  "actual_on": "2026-08-24",
   "note": "Ставки и показатели для расчётов. Меняются законом — обновляйте файл, не код.",
   "mrp": [
     {
       "from": "2026-01-01",
       "value": 4325,
       "source": "Закон РК от 08.12.2025 № 239-VIII «О республиканском бюджете на 2026-2028 годы»",
-      "verified": false
+      "source_url": "https://adilet.zan.kz/rus/docs/Z2500000239",
+      "verified": true,
+      "verified_on": "2026-08-24"
     }
   ],
   "state_duty": {
     "individual_rate": 0.01,
     "legal_entity_rate": 0.03,
-    "cap_mrp": 10000,
-    "source": "ст. 665 Налогового кодекса РК (Кодекс РК № 214-VIII)",
-    "verified": false
+    "individual_cap_mrp": 10000,
+    "legal_entity_cap_mrp": 20000,
+    "nonproperty_mrp": 0.5,
+    "source": "статья 665 Налогового кодекса РК (Кодекс РК № 214-VIII)",
+    "source_url": "https://adilet.zan.kz/rus/docs/K2500000214",
+    "verified": true,
+    "verified_on": "2026-08-24",
+    "note": "Для исков имущественного характера: физические лица — 1% (не более 10 000 МРП), юридические лица — 3% (не более 20 000 МРП). Требования имущественного и неимущественного характера оплачиваются одновременно по соответствующим ставкам."
   },
   "nb_base_rate": [
     {
-      "from": "2025-10-10",
+      "from": "2025-10-13",
       "value": 18.0,
       "source": "решение Национального Банка РК от 10.10.2025",
+      "source_url": "https://nationalbank.kz/ru/news/grafik-prinyatiya-resheniy-po-bazovoy-stavke/rubrics/2365",
       "verified": false
     },
     {
-      "from": "2026-06-05",
+      "from": "2026-06-08",
       "value": 17.0,
       "source": "решение Национального Банка РК от 05.06.2026",
+      "source_url": "https://nationalbank.kz/ru/news/grafik-prinyatiya-resheniy-po-bazovoy-stavke/rubrics/2365",
+      "verified": false
+    },
+    {
+      "from": "2026-07-27",
+      "value": 16.75,
+      "source": "решение Национального Банка РК от июля 2026 года",
+      "source_url": "https://nationalbank.kz/ru/news/grafik-prinyatiya-resheniy-po-bazovoy-stavke/rubrics/2365",
       "verified": false
     }
   ],
+  "nb_base_rate_valid_through": "2026-09-03",
   "consumer_penalty": {
     "rate_per_day": 0.03,
     "cap": "order_price",
