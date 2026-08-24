@@ -3,8 +3,8 @@ import { createRoot } from 'react-dom/client';
 import {
   Scale, MessageCircle, FileText, FolderOpen, ShieldCheck, Home, Bell,
   UserRound, ArrowRight, ArrowLeft, Search, ChevronRight, CheckCircle2,
-  BriefcaseBusiness, ShoppingCart, Building2, Landmark, HandCoins, Send,
-  Download, LockKeyhole, Sparkles, Trash2, Languages, AlertTriangle, Paperclip
+  ScrollText, Reply, Send, Download, LockKeyhole, Sparkles, Trash2,
+  Languages, AlertTriangle, Paperclip, FileSignature
 } from 'lucide-react';
 import './styles.css';
 import { isBackendConnected, korganApi } from './korganApi';
@@ -16,35 +16,68 @@ import { getTelegramUser, initTelegram, haptic } from './telegram';
 
 const TERMS_VERSION = '2026-08-16-v1';
 
-const documents = [
+const DOCUMENTS = [
   { id: 'claim', title: 'Исковое заявление', subtitle: 'Подготовка иска в суд', icon: Scale },
-  { id: 'debt', title: 'Взыскание долга', subtitle: 'Договор, расписка, поставка', icon: HandCoins },
-  { id: 'consumer', title: 'Защита прав потребителей', subtitle: 'Возврат товара, услуги, компенсация', icon: ShoppingCart },
-  { id: 'housing', title: 'Жилищные споры', subtitle: 'Выселение, вселение, жильё', icon: Building2 },
-  { id: 'labor', title: 'Трудовые споры', subtitle: 'Увольнение, зарплата, восстановление', icon: BriefcaseBusiness },
-  { id: 'admin', title: 'Административная жалоба', subtitle: 'Действия госорганов и должностных лиц', icon: Landmark },
+  { id: 'contract', title: 'Договор', subtitle: 'Профессиональный проект договора', icon: FileSignature },
+  { id: 'response', title: 'Отзыв на иск', subtitle: 'Позиция и возражения ответчика', icon: Reply },
+  { id: 'pretrial', title: 'Досудебная претензия', subtitle: 'Требование до обращения в суд', icon: ScrollText },
+  { id: 'pretrial_response', title: 'Ответ на претензию', subtitle: 'Позиция получателя претензии', icon: FileText },
 ];
 
-const copy = {
+const TEXT = {
   ru: {
     consentTitle: 'Условия использования KORGAN Legal AI',
-    consentText: 'KORGAN — система искусственного интеллекта. Ответы и документы формируются автоматически по данным пользователя и проверенным источникам. Перед подачей документа необходимо проверить персональные данные, суммы, доказательства, подсудность и госпошлину.',
-    privacyText: 'Переданные данные используются для консультации, анализа материалов и формирования документов. Данные можно удалить в профиле.',
+    consentText: 'KORGAN — система искусственного интеллекта. Ответы и документы формируются автоматически по данным пользователя и проверенным источникам. Перед подачей документа проверьте персональные данные, суммы, доказательства, подсудность и госпошлину.',
+    privacyText: 'Переданные данные используются для консультации, анализа материалов и формирования документов. Данные Mini App можно удалить в профиле.',
     accept: 'Принимаю условия', decline: 'Не принимаю',
+    home: 'Главная', cases: 'Дела', lawyer: 'AI-юрист', profile: 'Профиль',
+    yourLawyer: 'Ваш AI-юрист', hero: 'Юридическая помощь, документы и сопровождение дела в одном приложении.',
+    startConsult: 'Начать консультацию', consultation: 'Консультация', consultationSub: 'KORGAN AI с проверкой правовых источников',
+    prepare: 'Подготовить документ', prepareSub: 'Пять production-документов KORGAN в Word', myCases: 'Мои дела',
+    casesSub: 'Дела, материалы, статусы и документы', privacy: 'Конфиденциальность', privacySub: 'Согласие, язык и удаление данных',
+    selectDoc: 'Выбор документа', searchDoc: 'Поиск документа', documents: 'Документы', newCase: 'Новое дело',
+    tell: 'Расскажите, что произошло', tellSub: 'Опишите факты своими словами. KORGAN использует их как материалы дела и не должен придумывать отсутствующие сведения.',
+    placeholder: 'Стороны, договор/отношение, даты, суммы, нарушение, доказательства, позиция и чего вы хотите добиться...',
+    create: 'Создать дело', creating: 'Создаю дело…', materials: 'Материалы дела', files: 'Файлов в деле', uploaded: 'Загружено',
+    addFile: 'Добавить PDF / DOCX / фото', processing: 'Обрабатываю…', consultCase: 'Консультация по этому делу', generate: 'Сформировать документ', generating: 'Проверяю право и формирую…',
+    deleteCase: 'Удалить дело', docReady: 'Документ готов', caseCreated: 'Дело создано', materialsLoaded: 'Материалы загружены',
+    download: 'Скачать DOCX', liveReview: 'Проверка живым юристом — скоро', noCases: 'Дел пока нет', noCasesSub: 'Создайте первое дело и опишите ситуацию своими словами.',
+    createNew: 'Создать новое дело', language: 'Язык', deleteAll: 'Удалить все мои данные', dataControl: 'Данные под контролем',
+    dataControlSub: 'Mini App работает через отдельный API и не вмешивается в production-бота.', connected: 'AI подключён', connecting: 'Подключение…',
+    backendDown: 'Backend недоступен', checking: 'Проверяю право и источники…', message: 'Напишите сообщение…', status: 'Статус', check: 'Проверка'
   },
   kk: {
     consentTitle: 'KORGAN Legal AI пайдалану шарттары',
-    consentText: 'KORGAN — жасанды интеллект жүйесі. Жауаптар мен құжаттар пайдаланушы берген деректер және тексерілген дереккөздер негізінде жасалады. Құжатты берер алдында дербес деректерді, сомаларды, дәлелдемелерді, соттылықты және мемлекеттік бажды тексеру қажет.',
-    privacyText: 'Берілген деректер кеңес беру, материалдарды талдау және құжаттарды қалыптастыру үшін пайдаланылады. Деректерді профильде жоюға болады.',
+    consentText: 'KORGAN — жасанды интеллект жүйесі. Жауаптар мен құжаттар пайдаланушы деректері және тексерілген дереккөздер негізінде жасалады. Құжатты берер алдында дербес деректерді, сомаларды, дәлелдемелерді, соттылықты және мемлекеттік бажды тексеріңіз.',
+    privacyText: 'Берілген деректер кеңес беру, материалдарды талдау және құжаттарды қалыптастыру үшін пайдаланылады. Mini App деректерін профильден жоюға болады.',
     accept: 'Шарттарды қабылдаймын', decline: 'Қабылдамаймын',
+    home: 'Басты', cases: 'Істер', lawyer: 'AI-заңгер', profile: 'Профиль',
+    yourLawyer: 'Сіздің AI-заңгеріңіз', hero: 'Заңдық көмек, құжаттар және істі сүйемелдеу бір қолданбада.',
+    startConsult: 'Кеңесті бастау', consultation: 'Кеңес', consultationSub: 'Құқықтық дереккөздерді тексеретін KORGAN AI',
+    prepare: 'Құжат дайындау', prepareSub: 'KORGAN-ның бес production Word-құжаты', myCases: 'Менің істерім',
+    casesSub: 'Істер, материалдар, мәртебелер және құжаттар', privacy: 'Құпиялылық', privacySub: 'Келісім, тіл және деректерді жою',
+    selectDoc: 'Құжатты таңдау', searchDoc: 'Құжатты іздеу', documents: 'Құжаттар', newCase: 'Жаңа іс',
+    tell: 'Не болғанын жазыңыз', tellSub: 'Фактілерді өз сөзіңізбен жазыңыз. KORGAN оларды іс материалдары ретінде пайдаланады және жоқ мәліметтерді ойдан қоспайды.',
+    placeholder: 'Тараптар, шарт/қатынас, күндер, сомалар, бұзушылық, дәлелдер, ұстаным және қалаған нәтиже...',
+    create: 'Іс құру', creating: 'Іс құрылуда…', materials: 'Іс материалдары', files: 'Істегі файлдар', uploaded: 'Жүктелді',
+    addFile: 'PDF / DOCX / фото қосу', processing: 'Өңделуде…', consultCase: 'Осы іс бойынша кеңес', generate: 'Құжатты қалыптастыру', generating: 'Құқық тексеріліп, құжат жасалуда…',
+    deleteCase: 'Істі жою', docReady: 'Құжат дайын', caseCreated: 'Іс құрылды', materialsLoaded: 'Материалдар жүктелді',
+    download: 'DOCX жүктеу', liveReview: 'Заңгердің тексеруі — жақында', noCases: 'Әзірге іс жоқ', noCasesSub: 'Бірінші істі құрып, жағдайды өз сөзіңізбен жазыңыз.',
+    createNew: 'Жаңа іс құру', language: 'Тіл', deleteAll: 'Барлық деректерімді жою', dataControl: 'Деректер бақылауда',
+    dataControlSub: 'Mini App бөлек API арқылы жұмыс істейді және production-ботқа араласпайды.', connected: 'AI қосылды', connecting: 'Қосылуда…',
+    backendDown: 'Backend қолжетімсіз', checking: 'Құқық пен дереккөздер тексерілуде…', message: 'Хабарлама жазыңыз…', status: 'Мәртебе', check: 'Тексеру'
   }
 };
 
-function downloadBase64(base64, filename, mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+function docTitle(id) {
+  return DOCUMENTS.find(x => x.id === id)?.title || 'KORGAN Legal AI';
+}
+
+function downloadBase64(base64, filename) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
   const a = document.createElement('a');
   a.href = url;
   a.download = filename || 'KORGAN_document.docx';
@@ -64,19 +97,19 @@ function App() {
   const [consent, setConsent] = useState(Boolean(initial.consentAccepted));
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
-  const [chat, setChat] = useState([{ from: 'ai', text: 'Опишите юридический вопрос. Я проверю право Республики Казахстан и учту материалы выбранного дела.' }]);
+  const [chat, setChat] = useState([]);
   const [message, setMessage] = useState('');
   const [telegramUser, setTelegramUser] = useState(null);
   const [backendOk, setBackendOk] = useState(false);
   const [cases, setCases] = useState([]);
   const [activeCase, setActiveCase] = useState(null);
   const [documentResult, setDocumentResult] = useState(null);
+  const t = TEXT[language];
 
+  useEffect(() => { initTelegram(); setTelegramUser(getTelegramUser()); }, []);
   useEffect(() => {
-    initTelegram();
-    setTelegramUser(getTelegramUser());
-  }, []);
-
+    setChat([{ from: 'ai', text: language === 'kk' ? 'Заңдық сұрағыңызды жазыңыз. Мен Қазақстан Республикасының құқығын және дереккөздерді тексеремін.' : 'Опишите юридический вопрос. Я проверю право Республики Казахстан и источники.' }]);
+  }, [language]);
   useEffect(() => {
     if (!consent || !isBackendConnected()) return;
     let cancelled = false;
@@ -85,254 +118,181 @@ function App() {
         await korganApi.health();
         await korganApi.acceptConsent(TERMS_VERSION);
         const result = await korganApi.listCases();
-        if (!cancelled) {
-          setBackendOk(true);
-          setCases(result.cases || []);
-        }
-      } catch {
-        if (!cancelled) setBackendOk(false);
-      }
+        if (!cancelled) { setBackendOk(true); setCases(result.cases || []); }
+      } catch { if (!cancelled) setBackendOk(false); }
     })();
     return () => { cancelled = true; };
   }, [consent]);
 
   const filteredDocuments = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q ? documents.filter(d => `${d.title} ${d.subtitle}`.toLowerCase().includes(q)) : documents;
+    return q ? DOCUMENTS.filter(d => `${d.title} ${d.subtitle}`.toLowerCase().includes(q)) : DOCUMENTS;
   }, [query]);
-
-  const go = (next) => { haptic(); setNotice(''); setScreen(next); };
-
+  const go = next => { haptic(); setNotice(''); setScreen(next); };
   const refreshCases = async () => {
-    if (!isBackendConnected()) return [];
     const result = await korganApi.listCases();
     const next = result.cases || [];
     setCases(next);
     return next;
   };
-
-  const chooseDocument = (id) => {
-    setSelectedDocument(id);
-    saveDraft({ documentType: id });
-    go('new-case');
-  };
-
-  const saveCaseText = (value) => {
-    setCaseText(value);
-    saveDraft({ description: value, documentType: selectedDocument });
-  };
+  const switchLanguage = next => { setLanguage(next); persistLanguage(next); };
 
   const acceptTerms = async () => {
-    setBusy(true);
+    setBusy(true); setNotice('');
     try {
       if (isBackendConnected()) await korganApi.acceptConsent(TERMS_VERSION);
-      acceptConsent(TERMS_VERSION);
-      setConsent(true);
-      setBackendOk(isBackendConnected());
-    } catch {
-      setNotice('Не удалось сохранить согласие на сервере. Попробуйте ещё раз.');
-    } finally { setBusy(false); }
+      acceptConsent(TERMS_VERSION); setConsent(true); setBackendOk(isBackendConnected());
+    } catch { setNotice(language === 'kk' ? 'Келісімді сақтау мүмкін болмады.' : 'Не удалось сохранить согласие.'); }
+    finally { setBusy(false); }
   };
 
-  const switchLanguage = (next) => {
-    setLanguage(next);
-    persistLanguage(next);
-  };
+  const chooseDocument = id => { setSelectedDocument(id); saveDraft({ documentType: id }); go('new-case'); };
+  const saveCaseText = value => { setCaseText(value); saveDraft({ description: value, documentType: selectedDocument }); };
 
   const createCase = async () => {
     if (!caseText.trim() || busy) return;
-    setBusy(true);
-    setNotice('');
+    setBusy(true); setNotice('');
     try {
-      const result = await korganApi.createCase({
-        description: caseText.trim(),
-        document_type: selectedDocument || 'claim',
-        language,
-      });
-      setActiveCase(result.case);
-      setDocumentResult(null);
-      await refreshCases();
-      clearLocalCaseData();
-      go('case');
-    } catch (error) {
-      setNotice(error.message || 'Не удалось создать дело.');
-    } finally { setBusy(false); }
+      const result = await korganApi.createCase({ description: caseText.trim(), document_type: selectedDocument, language });
+      setActiveCase(result.case); setDocumentResult(null); await refreshCases(); clearLocalCaseData(); setCaseText(''); setScreen('case');
+    } catch (e) { setNotice(e.message || 'Не удалось создать дело.'); }
+    finally { setBusy(false); }
   };
 
-  const openCase = (item) => {
-    setActiveCase(item);
-    setDocumentResult(null);
-    go('case');
-  };
-
-  const uploadMaterial = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  const uploadMaterial = async event => {
+    const file = event.target.files?.[0]; event.target.value = '';
     if (!file || !activeCase || busy) return;
-    setBusy(true);
-    setNotice('');
+    setBusy(true); setNotice('');
     try {
       const result = await korganApi.uploadMaterial(activeCase.id, file);
-      setActiveCase(result.case);
-      await refreshCases();
-      setNotice(`Материал «${file.name}» разобран и добавлен в дело.`);
-    } catch (error) {
-      setNotice(error.message || 'Не удалось разобрать материал.');
-    } finally { setBusy(false); }
+      setActiveCase(result.case); await refreshCases();
+      setNotice(language === 'kk' ? `«${file.name}» іс материалына қосылды.` : `Материал «${file.name}» разобран и добавлен в дело.`);
+    } catch (e) { setNotice(e.message || 'Не удалось разобрать материал.'); }
+    finally { setBusy(false); }
   };
 
   const sendMessage = async () => {
-    const text = message.trim();
-    if (!text || busy) return;
-    setMessage('');
-    setChat(prev => [...prev, { from: 'user', text }]);
-    setBusy(true);
+    const value = message.trim(); if (!value || busy || !backendOk) return;
+    setMessage(''); setChat(prev => [...prev, { from: 'user', text: value }]); setBusy(true);
     try {
-      const result = await korganApi.consultation(text, activeCase?.id || null, language);
-      const sources = result.sources?.length ? `\n\nИсточники: ${result.sources.join(' · ')}` : '';
-      setChat(prev => [...prev, { from: 'ai', text: `${result.answer || 'Ответ получен.'}${sources}` }]);
-    } catch (error) {
-      setChat(prev => [...prev, { from: 'ai', text: `Не удалось выполнить юридический запрос: ${error.message || 'повторите попытку'}.` }]);
-    } finally { setBusy(false); }
+      const result = await korganApi.consultation(value, activeCase?.id || null, language);
+      const sources = result.sources?.length ? `\n\n${language === 'kk' ? 'Дереккөздер' : 'Источники'}: ${result.sources.join(' · ')}` : '';
+      setChat(prev => [...prev, { from: 'ai', text: `${result.answer || ''}${sources}` }]);
+    } catch (e) { setChat(prev => [...prev, { from: 'ai', text: e.message || t.backendDown }]); }
+    finally { setBusy(false); }
   };
 
   const generateDocument = async () => {
     if (!activeCase || busy) return;
-    setBusy(true);
-    setNotice('');
+    setBusy(true); setNotice('');
     try {
-      const result = await korganApi.generateDocument(activeCase.id, activeCase.document_type || selectedDocument, language);
-      setDocumentResult(result);
-      setActiveCase(prev => prev ? { ...prev, status: result.status, title: result.title, verification_status: result.verification_status } : prev);
-      await refreshCases();
-      go('ready');
-    } catch (error) {
-      setNotice(error.message || 'Не удалось сформировать документ.');
-    } finally { setBusy(false); }
+      const result = await korganApi.generateDocument(activeCase.id, activeCase.document_type, activeCase.language || language);
+      setDocumentResult(result); setActiveCase(prev => ({ ...prev, status: result.status, title: result.title, verification_status: result.verification_status }));
+      await refreshCases(); setScreen('ready');
+    } catch (e) { setNotice(e.message || 'Не удалось сформировать документ.'); }
+    finally { setBusy(false); }
   };
 
   const deleteCurrentCase = async () => {
-    if (!activeCase || !window.confirm('Удалить это дело и все его данные?')) return;
+    if (!activeCase || !window.confirm(language === 'kk' ? 'Бұл істі және барлық деректерін жою керек пе?' : 'Удалить это дело и все его данные?')) return;
     setBusy(true);
-    try {
-      await korganApi.deleteCase(activeCase.id);
-      setActiveCase(null);
-      setDocumentResult(null);
-      await refreshCases();
-      setNotice('Дело удалено.');
-      setScreen('cases');
-    } catch (error) {
-      setNotice(error.message || 'Не удалось удалить дело.');
-    } finally { setBusy(false); }
+    try { await korganApi.deleteCase(activeCase.id); setActiveCase(null); setDocumentResult(null); await refreshCases(); setScreen('cases'); }
+    catch (e) { setNotice(e.message || 'Не удалось удалить дело.'); }
+    finally { setBusy(false); }
   };
 
   const deleteAllData = async () => {
-    if (!window.confirm('Удалить все данные Mini App и все дела?')) return;
+    if (!window.confirm(language === 'kk' ? 'Mini App-тағы барлық деректерді жою керек пе?' : 'Удалить все данные Mini App и все дела?')) return;
     setBusy(true);
     try {
       if (isBackendConnected()) await korganApi.deleteMyData();
-      clearAllLocalData();
-      setCases([]);
-      setActiveCase(null);
-      setDocumentResult(null);
-      setConsent(false);
-      setCaseText('');
-      setScreen('home');
-    } catch (error) {
-      setNotice(error.message || 'Удаление не завершено.');
-    } finally { setBusy(false); }
+      clearAllLocalData(); setCases([]); setActiveCase(null); setDocumentResult(null); setConsent(false); setCaseText(''); setScreen('home');
+    } catch (e) { setNotice(e.message || 'Удаление не завершено.'); }
+    finally { setBusy(false); }
   };
 
-  const Header = ({ title, back = 'home' }) => (
-    <header className="subbar"><button className="icon-btn" onClick={() => go(back)}><ArrowLeft size={20}/></button><strong>{title}</strong><span className="header-spacer" /></header>
-  );
+  const Header = ({ title, back = 'home' }) => <header className="subbar"><button className="icon-btn" onClick={() => go(back)}><ArrowLeft size={20}/></button><strong>{title}</strong><span className="header-spacer" /></header>;
+  const BottomNav = () => <nav className="bottom-nav">
+    <button className={screen === 'home' ? 'active' : ''} onClick={() => go('home')}><Home size={20}/><span>{t.home}</span></button>
+    <button className={screen === 'cases' ? 'active' : ''} onClick={async () => { try { await refreshCases(); } catch {} go('cases'); }}><FolderOpen size={20}/><span>{t.cases}</span></button>
+    <button className={screen === 'chat' ? 'active' : ''} onClick={() => go('chat')}><MessageCircle size={20}/><span>{t.lawyer}</span></button>
+    <button><Bell size={20}/><span>—</span></button>
+    <button className={screen === 'profile' ? 'active' : ''} onClick={() => go('profile')}><UserRound size={20}/><span>{t.profile}</span></button>
+  </nav>;
 
-  const BottomNav = () => (
-    <nav className="bottom-nav">
-      <button className={screen === 'home' ? 'active' : ''} onClick={() => go('home')}><Home size={20}/><span>Главная</span></button>
-      <button className={screen === 'cases' ? 'active' : ''} onClick={async () => { try { await refreshCases(); } catch {} go('cases'); }}><FolderOpen size={20}/><span>Дела</span></button>
-      <button className={screen === 'chat' ? 'active' : ''} onClick={() => go('chat')}><MessageCircle size={20}/><span>AI-юрист</span></button>
-      <button><Bell size={20}/><span>Уведомления</span></button>
-      <button className={screen === 'profile' ? 'active' : ''} onClick={() => go('profile')}><UserRound size={20}/><span>Профиль</span></button>
-    </nav>
-  );
-
-  if (!consent) {
-    const t = copy[language];
-    return <div className="app-shell consent-shell"><main className="page consent-page">
-      <div className="brand-mark large"><Scale size={28}/></div>
-      <div className="language-switch"><button className={language === 'ru' ? 'active' : ''} onClick={() => switchLanguage('ru')}>RU</button><button className={language === 'kk' ? 'active' : ''} onClick={() => switchLanguage('kk')}>KK</button></div>
-      <h1>{t.consentTitle}</h1>
-      <section className="privacy-card static"><ShieldCheck size={22}/><div><strong>KORGAN Legal AI</strong><p>{t.consentText}</p></div></section>
-      <section className="privacy-card static"><LockKeyhole size={22}/><div><strong>Конфиденциальность</strong><p>{t.privacyText}</p></div></section>
-      {notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}
-      <button className="primary wide" disabled={busy} onClick={acceptTerms}>{busy ? '...' : t.accept}</button>
-      <button className="secondary wide" onClick={() => window.Telegram?.WebApp?.close?.()}>{t.decline}</button>
-      <small>Версия условий: {TERMS_VERSION}</small>
-    </main></div>;
-  }
-
-  if (screen === 'documents') return <div className="app-shell"><Header title="Выбор документа" /><main className="page">
-    <div className="search"><Search size={18}/><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Поиск документа"/></div>
-    <div className="section-kicker">Документы</div><div className="list-card">{filteredDocuments.map(({ id, title, subtitle, icon: Icon }) => <button className="list-row" key={id} onClick={() => chooseDocument(id)}><span className="row-icon"><Icon size={20}/></span><span><strong>{title}</strong><small>{subtitle}</small></span><ChevronRight size={18}/></button>)}</div>
-  </main><BottomNav /></div>;
-
-  if (screen === 'new-case') return <div className="app-shell"><Header title="Новое дело" back="documents" /><main className="page creation-page">
-    <div className="progress"><span className="done">1</span><i/><span>2</span><i/><span>3</span><i/><span>4</span></div>
-    <div className="big-title"><span className="eyebrow">Шаг 1 из 4</span><h1>Расскажите, что произошло</h1><p>Опишите факты своими словами. KORGAN использует их как материалы дела и не должен придумывать отсутствующие сведения.</p></div>
-    <textarea className="case-input" value={caseText} onChange={e => saveCaseText(e.target.value)} maxLength={8000} placeholder="Договор, стороны, даты, суммы, нарушение, претензии и чего вы хотите добиться..." />
-    <div className="input-meta"><Sparkles size={17}/> Чем подробнее описание, тем точнее работа AI <span>{caseText.length}/8000</span></div>
+  if (!consent) return <div className="app-shell consent-shell"><main className="page consent-page">
+    <div className="brand-mark large"><Scale size={28}/></div>
+    <div className="language-switch"><button className={language === 'ru' ? 'active' : ''} onClick={() => switchLanguage('ru')}>RU</button><button className={language === 'kk' ? 'active' : ''} onClick={() => switchLanguage('kk')}>KK</button></div>
+    <h1>{t.consentTitle}</h1>
+    <section className="privacy-card static"><ShieldCheck size={22}/><div><strong>KORGAN Legal AI</strong><p>{t.consentText}</p></div></section>
+    <section className="privacy-card static"><LockKeyhole size={22}/><div><strong>{t.privacy}</strong><p>{t.privacyText}</p></div></section>
     {notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}
-    <button className="primary wide" disabled={!caseText.trim() || busy || !backendOk} onClick={createCase}>{busy ? 'Создаю дело…' : <>Создать дело <ArrowRight size={18}/></>}</button>
+    <button className="primary wide" disabled={busy} onClick={acceptTerms}>{busy ? '...' : t.accept}</button>
+    <button className="secondary wide" onClick={() => window.Telegram?.WebApp?.close?.()}>{t.decline}</button>
+    <small>v. {TERMS_VERSION}</small>
+  </main></div>;
+
+  if (screen === 'documents') return <div className="app-shell"><Header title={t.selectDoc}/><main className="page">
+    <div className="search"><Search size={18}/><input value={query} onChange={e => setQuery(e.target.value)} placeholder={t.searchDoc}/></div>
+    <div className="section-kicker">{t.documents}</div><div className="list-card">{filteredDocuments.map(({ id, title, subtitle, icon: Icon }) => <button className="list-row" key={id} onClick={() => chooseDocument(id)}><span className="row-icon"><Icon size={20}/></span><span><strong>{title}</strong><small>{subtitle}</small></span><ChevronRight size={18}/></button>)}</div>
+  </main><BottomNav/></div>;
+
+  if (screen === 'new-case') return <div className="app-shell"><Header title={t.newCase} back="documents"/><main className="page creation-page">
+    <div className="progress"><span className="done">1</span><i/><span>2</span><i/><span>3</span><i/><span>4</span></div>
+    <div className="big-title"><span className="eyebrow">{docTitle(selectedDocument)}</span><h1>{t.tell}</h1><p>{t.tellSub}</p></div>
+    <textarea className="case-input" value={caseText} onChange={e => saveCaseText(e.target.value)} maxLength={8000} placeholder={t.placeholder}/>
+    <div className="input-meta"><Sparkles size={17}/><span>{caseText.length}/8000</span></div>
+    {notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}
+    <button className="primary wide" disabled={!caseText.trim() || busy || !backendOk} onClick={createCase}>{busy ? t.creating : <>{t.create}<ArrowRight size={18}/></>}</button>
   </main></div>;
 
   if (screen === 'case') {
-    const item = activeCase;
-    if (!item) return <div className="app-shell"><Header title="Дело" back="cases" /><main className="page"><p>Выберите дело в разделе «Мои дела».</p></main><BottomNav /></div>;
-    return <div className="app-shell"><Header title={`Дело ${item.id}`} back="cases" /><main className="page">
-      <section className="status-card"><div><span className="section-kicker">Статус</span><h2>{item.status === 'document_ready' ? 'Документ готов' : item.status === 'materials_ready' ? 'Материалы загружены' : 'Дело создано'}</h2></div><span className="pill success">{item.language?.toUpperCase() || language.toUpperCase()}</span></section>
-      <section className="analysis-card"><div className="card-head"><div><span className="section-kicker">Материалы дела</span><h2>{item.title || documents.find(d => d.id === item.document_type)?.title || 'Юридическое дело'}</h2></div><Sparkles size={22}/></div><p>{item.description}</p><div className="fact"><span>Файлов в деле</span><strong>{item.materials_count || 0}</strong></div>{item.material_names?.length > 0 && <div className="fact"><span>Загружено</span><strong>{item.material_names.join(', ')}</strong></div>}{item.verification_status && <div className="fact"><span>Проверка</span><strong>{item.verification_status}</strong></div>}</section>
+    if (!activeCase) return <div className="app-shell"><Header title={t.cases} back="cases"/><main className="page"><p>{t.noCases}</p></main><BottomNav/></div>;
+    const statusText = activeCase.status === 'document_ready' ? t.docReady : activeCase.status === 'materials_ready' ? t.materialsLoaded : t.caseCreated;
+    return <div className="app-shell"><Header title={activeCase.id} back="cases"/><main className="page">
+      <section className="status-card"><div><span className="section-kicker">{t.status}</span><h2>{statusText}</h2></div><span className="pill success">{(activeCase.language || language).toUpperCase()}</span></section>
+      <section className="analysis-card"><div className="card-head"><div><span className="section-kicker">{t.materials}</span><h2>{activeCase.title || docTitle(activeCase.document_type)}</h2></div><Sparkles size={22}/></div><p>{activeCase.description}</p><div className="fact"><span>{t.files}</span><strong>{activeCase.materials_count || 0}</strong></div>{activeCase.material_names?.length > 0 && <div className="fact"><span>{t.uploaded}</span><strong>{activeCase.material_names.join(', ')}</strong></div>}{activeCase.verification_status && <div className="fact"><span>{t.check}</span><strong>{activeCase.verification_status}</strong></div>}</section>
       {notice && <div className="success-note">{notice}</div>}
-      <label className="secondary wide" style={{ cursor: busy ? 'default' : 'pointer' }}><Paperclip size={18}/> {busy ? 'Обрабатываю…' : 'Добавить PDF / DOCX / фото'}<input style={{ display: 'none' }} disabled={busy} type="file" accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp" onChange={uploadMaterial}/></label>
-      <button className="secondary wide" onClick={() => go('chat')}><MessageCircle size={18}/> Консультация по этому делу</button>
-      <button className="primary wide" disabled={busy} onClick={generateDocument}>{busy ? 'Проверяю право и формирую…' : <><FileText size={18}/> Сформировать документ</>}</button>
-      <button className="secondary wide danger" disabled={busy} onClick={deleteCurrentCase}><Trash2 size={18}/> Удалить дело</button>
-    </main><BottomNav /></div>;
+      <label className="secondary wide" style={{cursor:busy?'default':'pointer'}}><Paperclip size={18}/>{busy ? t.processing : t.addFile}<input style={{display:'none'}} disabled={busy} type="file" accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp" onChange={uploadMaterial}/></label>
+      <button className="secondary wide" onClick={() => go('chat')}><MessageCircle size={18}/>{t.consultCase}</button>
+      <button className="primary wide" disabled={busy || !backendOk} onClick={generateDocument}>{busy ? t.generating : <><FileText size={18}/>{t.generate}</>}</button>
+      <button className="secondary wide danger" disabled={busy} onClick={deleteCurrentCase}><Trash2 size={18}/>{t.deleteCase}</button>
+    </main><BottomNav/></div>;
   }
 
-  if (screen === 'chat') return <div className="app-shell chat-shell"><Header title={activeCase ? `AI-юрист · ${activeCase.id}` : 'Чат с AI-юристом'} /><main className="chat-page">
-    <div className="connection-note"><span className={backendOk ? 'dot on' : 'dot'} /> {backendOk ? 'KORGAN AI подключён' : 'Backend недоступен'}</div>
-    <div className="messages">{chat.map((m, i) => <div key={i} className={`bubble ${m.from}`}>{m.text}</div>)}{busy && <div className="bubble ai">Проверяю право и источники…</div>}</div>
-    <div className="composer"><input value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMessage()} placeholder="Напишите сообщение…"/><button disabled={busy || !backendOk} onClick={sendMessage}><Send size={19}/></button></div>
-  </main><BottomNav /></div>;
+  if (screen === 'chat') return <div className="app-shell chat-shell"><Header title={activeCase ? `${t.lawyer} · ${activeCase.id}` : t.lawyer}/><main className="chat-page">
+    <div className="connection-note"><span className={backendOk ? 'dot on' : 'dot'}/>{backendOk ? t.connected : t.backendDown}</div>
+    <div className="messages">{chat.map((m,i)=><div key={i} className={`bubble ${m.from}`}>{m.text}</div>)}{busy&&<div className="bubble ai">{t.checking}</div>}</div>
+    <div className="composer"><input value={message} onChange={e=>setMessage(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendMessage()} placeholder={t.message}/><button disabled={busy||!backendOk} onClick={sendMessage}><Send size={19}/></button></div>
+  </main><BottomNav/></div>;
 
-  if (screen === 'ready') return <div className="app-shell"><Header title="Документ готов" back="case" /><main className="page ready-page">
-    <div className="success-ring"><CheckCircle2 size={48}/></div><h1>{documentResult?.title || 'Документ сформирован'}</h1><p>{documentResult?.verification_status || 'Перед подачей проверьте реквизиты, факты, суммы и приложения.'}</p>
+  if (screen === 'ready') return <div className="app-shell"><Header title={t.docReady} back="case"/><main className="page ready-page">
+    <div className="success-ring"><CheckCircle2 size={48}/></div><h1>{documentResult?.title || t.docReady}</h1><p>{documentResult?.verification_status || ''}</p>
     {documentResult?.verification_notes?.length > 0 && <div className="warning-note"><AlertTriangle size={17}/><span>{documentResult.verification_notes.join(' · ')}</span></div>}
     <div className="document-preview"><div className="paper-lines"><b>{documentResult?.title || 'KORGAN LEGAL AI'}</b><span/><span/><span/><span/><span/></div></div>
-    <button className="primary wide" disabled={!documentResult?.document_base64} onClick={() => downloadBase64(documentResult.document_base64, documentResult.filename)}><Download size={18}/> Скачать DOCX</button>
-    <button className="lawyer-btn"><ShieldCheck size={18}/> Проверка живым юристом — скоро</button>
+    <button className="primary wide" disabled={!documentResult?.document_base64} onClick={()=>downloadBase64(documentResult.document_base64,documentResult.filename)}><Download size={18}/>{t.download}</button>
+    <button className="lawyer-btn"><ShieldCheck size={18}/>{t.liveReview}</button>
   </main></div>;
 
-  if (screen === 'cases') return <div className="app-shell"><Header title="Мои дела" /><main className="page">
-    {cases.length === 0 && <section className="analysis-card"><h2>Дел пока нет</h2><p>Создайте первое дело и опишите ситуацию своими словами.</p></section>}
-    {cases.map(item => <section className="case-list-item" key={item.id} onClick={() => openCase(item)}><div className="case-badge"><Scale size={20}/></div><div><strong>{item.title || documents.find(d => d.id === item.document_type)?.title || 'Юридическое дело'}</strong><small>{item.id} · {item.materials_count || 0} файл(ов) · {item.status === 'document_ready' ? 'документ готов' : 'в работе'}</small></div><ChevronRight size={18}/></section>)}
-    <button className="primary wide" onClick={() => go('documents')}>Создать новое дело</button>
-  </main><BottomNav /></div>;
+  if (screen === 'cases') return <div className="app-shell"><Header title={t.myCases}/><main className="page">
+    {cases.length===0&&<section className="analysis-card"><h2>{t.noCases}</h2><p>{t.noCasesSub}</p></section>}
+    {cases.map(item=><section className="case-list-item" key={item.id} onClick={()=>{setActiveCase(item);setDocumentResult(null);go('case')}}><div className="case-badge"><Scale size={20}/></div><div><strong>{item.title||docTitle(item.document_type)}</strong><small>{item.id} · {item.materials_count||0} файл(ов)</small></div><ChevronRight size={18}/></section>)}
+    <button className="primary wide" onClick={()=>go('documents')}>{t.createNew}</button>
+  </main><BottomNav/></div>;
 
-  if (screen === 'profile') return <div className="app-shell"><Header title="Профиль" /><main className="page">
-    <section className="profile-card"><div className="avatar"><UserRound size={30}/></div><div><h2>{telegramUser?.firstName || 'Пользователь KORGAN'}</h2><p>{telegramUser?.username ? `@${telegramUser.username}` : 'Telegram Mini App'}</p></div></section>
-    <section className="settings-card"><div className="settings-row"><Languages size={20}/><div><strong>Язык</strong><small>Русский / Қазақша</small></div><div className="language-switch compact"><button className={language === 'ru' ? 'active' : ''} onClick={() => switchLanguage('ru')}>RU</button><button className={language === 'kk' ? 'active' : ''} onClick={() => switchLanguage('kk')}>KK</button></div></div></section>
-    <section className="privacy-card static"><LockKeyhole size={20}/><div><strong>Конфиденциальность</strong><p>Версия условий: {TERMS_VERSION}. Дела Mini App изолированы от production-сессии Telegram-бота.</p></div></section>
-    {notice && <div className="success-note">{notice}</div>}
-    <button className="secondary wide danger" disabled={busy} onClick={deleteAllData}><Trash2 size={18}/> Удалить все мои данные</button>
-  </main><BottomNav /></div>;
+  if (screen === 'profile') return <div className="app-shell"><Header title={t.profile}/><main className="page">
+    <section className="profile-card"><div className="avatar"><UserRound size={30}/></div><div><h2>{telegramUser?.firstName||'KORGAN'}</h2><p>{telegramUser?.username?`@${telegramUser.username}`:'Telegram Mini App'}</p></div></section>
+    <section className="settings-card"><div className="settings-row"><Languages size={20}/><div><strong>{t.language}</strong><small>Русский / Қазақша</small></div><div className="language-switch compact"><button className={language==='ru'?'active':''} onClick={()=>switchLanguage('ru')}>RU</button><button className={language==='kk'?'active':''} onClick={()=>switchLanguage('kk')}>KK</button></div></div></section>
+    <section className="privacy-card static"><LockKeyhole size={20}/><div><strong>{t.privacy}</strong><p>AES-256-GCM · retention 30 days · v. {TERMS_VERSION}</p></div></section>
+    {notice&&<div className="success-note">{notice}</div>}
+    <button className="secondary wide danger" disabled={busy} onClick={deleteAllData}><Trash2 size={18}/>{t.deleteAll}</button>
+  </main><BottomNav/></div>;
 
   return <div className="app-shell"><header className="topbar"><div className="brand-mark"><Scale size={18}/></div><div className="brand"><strong>KORGAN</strong><span>Legal AI</span></div></header><main className="home-page">
-    <section className="hero"><div className="hero-copy"><div className="online"><span/> {backendOk ? 'AI подключён' : 'Подключение…'}</div><h1>Ваш AI-юрист</h1><p>Юридическая помощь, документы и сопровождение дела в одном приложении.</p><button onClick={() => go('chat')}>Начать консультацию <ArrowRight size={17}/></button></div><div className="hero-orb"><Scale size={52}/></div></section>
-    <section className="action-grid"><button className="action-card" onClick={() => go('chat')}><div className="action-icon consult"><MessageCircle/></div><h2>Консультация</h2><p>Реальный KORGAN AI и проверка источников</p></button><button className="action-card" onClick={() => go('documents')}><div className="action-icon document"><FileText/></div><h2>Подготовить документ</h2><p>Создайте дело, загрузите материалы и получите DOCX</p></button><button className="action-card" onClick={async () => { try { await refreshCases(); } catch {} go('cases'); }}><div className="action-icon case"><FolderOpen/></div><h2>Мои дела</h2><p>Дела, материалы, статусы и документы</p></button><button className="action-card" onClick={() => go('profile')}><div className="action-icon review"><ShieldCheck/></div><h2>Конфиденциальность</h2><p>Согласие, язык и удаление данных</p></button></section>
-    <section className="privacy-card" onClick={() => go('profile')}><div className="privacy-icon"><ShieldCheck size={19}/></div><div><strong>Данные под контролем</strong><p>Mini App работает через отдельный API и не вмешивается в production-бота.</p></div><ChevronRight size={18}/></section>
-  </main><BottomNav /></div>;
+    <section className="hero"><div className="hero-copy"><div className="online"><span/>{backendOk?t.connected:t.connecting}</div><h1>{t.yourLawyer}</h1><p>{t.hero}</p><button onClick={()=>go('chat')}>{t.startConsult}<ArrowRight size={17}/></button></div><div className="hero-orb"><Scale size={52}/></div></section>
+    <section className="action-grid"><button className="action-card" onClick={()=>go('chat')}><div className="action-icon consult"><MessageCircle/></div><h2>{t.consultation}</h2><p>{t.consultationSub}</p></button><button className="action-card" onClick={()=>go('documents')}><div className="action-icon document"><FileText/></div><h2>{t.prepare}</h2><p>{t.prepareSub}</p></button><button className="action-card" onClick={async()=>{try{await refreshCases()}catch{}go('cases')}}><div className="action-icon case"><FolderOpen/></div><h2>{t.myCases}</h2><p>{t.casesSub}</p></button><button className="action-card" onClick={()=>go('profile')}><div className="action-icon review"><ShieldCheck/></div><h2>{t.privacy}</h2><p>{t.privacySub}</p></button></section>
+    <section className="privacy-card" onClick={()=>go('profile')}><div className="privacy-icon"><ShieldCheck size={19}/></div><div><strong>{t.dataControl}</strong><p>{t.dataControlSub}</p></div><ChevronRight size={18}/></section>
+  </main><BottomNav/></div>;
 }
 
 createRoot(document.getElementById('root')).render(<App/>);
