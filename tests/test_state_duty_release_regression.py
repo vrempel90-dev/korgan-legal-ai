@@ -68,6 +68,15 @@ def test_matching_does_not_take_defendant_bin_for_claimant() -> None:
     assert claimant == ["KAZTECH SOLUTIONS"]
 
 
+def test_generic_shared_word_cannot_bind_defendant_bin() -> None:
+    context = (
+        "Поставщик: ABC GROUP.\n"
+        "Заказчик: ТОО «CLIENT GROUP», БИН 210540009999."
+    )
+
+    assert match_claimant_identity(context, ["ABC GROUP"]) is None
+
+
 def test_individual_iin_can_be_restored_from_contract_role() -> None:
     context = (
         "Исполнитель: Иванов Иван Иванович, ИИН 900101300001.\n"
