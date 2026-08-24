@@ -96,7 +96,7 @@ async def _remember_consultation_result(
     """Atomically persist citation hints only for the still-active consultation."""
     cited = extract_cited_articles(answer) if urls else []
     async with document_request_lock(state):
-        refreshed = dict(await state.get_data())
+        refreshed = await state.get_data()
         if str(refreshed.get("consultation_request_id") or "") != consultation_request_id:
             return False
         if not cited:
@@ -105,8 +105,9 @@ async def _remember_consultation_result(
         for item in cited:
             if item not in previous:
                 previous.append(item)
-        refreshed["consulted_articles"] = previous[-20:]
-        await state.set_data(refreshed)
+        # Partial update: never replace unrelated FSM fields from an older
+        # snapshot while another Telegram handler may be updating them.
+        await state.update_data(consulted_articles=previous[-20:])
         return True
 
 
@@ -117,6 +118,7 @@ async def _send_consultation_answer(
     question: str,
     case_context: str,
     language: str,
+    consultation_request_id: str | None = None,
 ) -> str:
     """Generate and deliver only while this consultation still owns the session.
 
@@ -130,11 +132,22 @@ async def _send_consultation_answer(
         await message.answer("Юридический AI-сервис временно недоступен.")
         return _FAILED
 
-    consultation_request_id = await start_new_consultation_request(state)
+    if not consultation_request_id:
+        consultation_request_id = await start_new_consultation_request(state)
+
     await message.bot.send_chat_action(message.chat.id, "typing")
     try:
         answer, urls = await service.consult(question, case_context=case_context, language=language)
     except Exception:
+        # A failure from an already-superseded call is stale too. Emitting its
+        # error/retry notice would contaminate the newer consultation/document.
+        if not await consultation_request_is_current(state, consultation_request_id):
+            LOGGER.info(
+                "STALE_CONSULTATION_SUPPRESSED request_id=%s user=%s stage=exception",
+                consultation_request_id,
+                message.from_user.id if message.from_user else None,
+            )
+            return _STALE
         LOGGER.exception("CONSULTATION_LIMIT consultation failed user=%s", message.from_user.id if message.from_user else None)
         return _FAILED
 
@@ -160,9 +173,8 @@ async def _send_consultation_answer(
         sources = "\n\n" + source_title + "\n" + "\n".join(f"• {url}" for url in urls[:5])
     for part in base_bot._split(answer + sources):
         # Hold the same per-session lock across the final ownership check and
-        # each client send. A new document request either commits first and
-        # suppresses this message, or waits until this already-current message
-        # is sent and then becomes the new owner.
+        # client send. A new request either commits first and suppresses this
+        # message, or becomes current only after this already-current send.
         async with document_request_lock(state):
             refreshed = await state.get_data()
             if str(refreshed.get("consultation_request_id") or "") != consultation_request_id:
@@ -203,6 +215,11 @@ async def _deliver_paid_order(message: Message, state: FSMContext, order: Consul
         await message.answer(text, reply_markup=retry_markup(get_settings(), order.user_id, order.id, order.language))
         return
     if delivery == _STALE:
+        # A concurrent retry may already have delivered and consumed this paid
+        # order. Never advertise a retry button for an order that is no longer paid.
+        latest = await get_consultation_order(order.id, order.user_id)
+        if latest is None or latest.status != "paid":
+            return
         text = (
             "ℹ️ Пока готовился ответ, вы начали новый запрос. Старый ответ не отправлен. Оплата сохранена — эту консультацию можно повторить без новой оплаты."
             if order.language != "kk"
@@ -338,6 +355,10 @@ async def limited_consultation(message: Message, state: FSMContext) -> None:
     if user_id is None or not message.text:
         return
 
+    # Ownership changes as soon as the new legal question is accepted, before
+    # quota/payment routing. Even a question that lands on the paid branch must
+    # invalidate an older in-flight free consultation.
+    consultation_request_id = await start_new_consultation_request(state)
     language = await base_bot._language(state)
     case_context_before_question = await base_bot._case_context(state)
     used = await reserve_free_consultation(user_id, settings.free_consultations_per_day)
@@ -370,6 +391,7 @@ async def limited_consultation(message: Message, state: FSMContext) -> None:
         question=message.text,
         case_context=case_context,
         language=language,
+        consultation_request_id=consultation_request_id,
     )
     if delivery == _FAILED:
         await release_free_consultation(user_id)
