@@ -18,9 +18,10 @@ from korgan import strict_bot as _production_runtime  # noqa: F401
 from korgan.claim_docx import build_claim_docx
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
 from korgan.config import get_settings
+from korgan.miniapp_store import MiniAppStore
 from korgan.pretrial_response import PretrialResponseProductionService
 
-app = FastAPI(title="KORGAN Mini App API", version="0.3.0")
+app = FastAPI(title="KORGAN Mini App API", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -34,11 +35,11 @@ app.add_middleware(
 
 settings = get_settings()
 service = ClaimPipelineV2Adapter(PretrialResponseProductionService(settings))
-
-# Isolated staging state. It deliberately does not write into the production
-# Telegram session store. A dedicated persistent Mini App store will replace
-# this only after its migrations and deletion semantics are regression-tested.
-_sessions: dict[str, dict[str, Any]] = {}
+store = MiniAppStore(
+    settings.database_url,
+    secret=settings.telegram_bot_token,
+    retention_days=int(os.getenv("MINIAPP_RETENTION_DAYS", "30")),
+)
 
 _CLAIM_CATEGORIES = {"claim", "debt", "consumer", "housing", "labor"}
 _ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".docx", ".txt", ".jpg", ".jpeg", ".png", ".webp"}
@@ -66,6 +67,16 @@ class GenerateRequest(BaseModel):
 class ConsentRequest(BaseModel):
     accepted: bool
     terms_version: str = "2026-08-16-v1"
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    await store.open()
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    await store.close()
 
 
 def _validate_init_data(raw: str) -> dict[str, str]:
@@ -96,12 +107,15 @@ def _identity(init_data: str) -> str:
         raise HTTPException(status_code=401, detail="Telegram user missing")
 
 
-def _state(user_id: str) -> dict[str, Any]:
-    return _sessions.setdefault(user_id, {"consent": None, "cases": {}})
+async def _state(user_id: str) -> dict[str, Any]:
+    state = await store.load(user_id)
+    state.setdefault("consent", None)
+    state.setdefault("cases", {})
+    return state
 
 
-def _require_consent(user_id: str) -> dict[str, Any]:
-    state = _state(user_id)
+async def _require_consent(user_id: str) -> dict[str, Any]:
+    state = await _state(user_id)
     consent = state.get("consent") or {}
     if not consent.get("accepted"):
         raise HTTPException(status_code=403, detail="Terms acceptance required")
@@ -135,23 +149,29 @@ def _extension(filename: str) -> str:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "korgan-miniapp-api", "version": "0.3.0"}
+    return {
+        "status": "ok",
+        "service": "korgan-miniapp-api",
+        "version": "0.4.0",
+        "storage": "postgres" if store.pool is not None else "memory",
+    }
 
 
 @app.post("/miniapp/consent")
 async def set_consent(payload: ConsentRequest, x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
     user_id = _identity(x_telegram_init_data)
-    state = _state(user_id)
+    state = await _state(user_id)
     state["consent"] = payload.model_dump()
     if not payload.accepted:
         state["cases"] = {}
+    await store.save(user_id, state)
     return {"ok": True, "accepted": payload.accepted, "terms_version": payload.terms_version}
 
 
 @app.get("/miniapp/cases")
 async def list_cases(x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
     user_id = _identity(x_telegram_init_data)
-    state = _require_consent(user_id)
+    state = await _require_consent(user_id)
     cases = list(state["cases"].values())
     return {"cases": [_public_case(item) for item in reversed(cases)]}
 
@@ -159,7 +179,7 @@ async def list_cases(x_telegram_init_data: str = Header(default="")) -> dict[str
 @app.post("/miniapp/cases")
 async def create_case(payload: CaseRequest, x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
     user_id = _identity(x_telegram_init_data)
-    state = _require_consent(user_id)
+    state = await _require_consent(user_id)
     digest = hashlib.sha256(f"{user_id}:{payload.description}:{len(state['cases'])}".encode()).hexdigest()[:12]
     case_id = f"KOR-{digest.upper()}"
     item = {
@@ -171,6 +191,7 @@ async def create_case(payload: CaseRequest, x_telegram_init_data: str = Header(d
         "materials": [],
     }
     state["cases"][case_id] = item
+    await store.save(user_id, state)
     return {"case": _public_case(item)}
 
 
@@ -181,7 +202,7 @@ async def upload_material(
     x_telegram_init_data: str = Header(default=""),
 ) -> dict[str, Any]:
     user_id = _identity(x_telegram_init_data)
-    state = _require_consent(user_id)
+    state = await _require_consent(user_id)
     case = state["cases"].get(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
@@ -211,6 +232,7 @@ async def upload_material(
     })
     case["materials"] = materials[-settings.max_case_documents :]
     case["status"] = "materials_ready"
+    await store.save(user_id, state)
     return {
         "ok": True,
         "case": _public_case(case),
@@ -221,7 +243,7 @@ async def upload_material(
 @app.post("/miniapp/consultation")
 async def consultation(payload: ConsultationRequest, x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
     user_id = _identity(x_telegram_init_data)
-    state = _require_consent(user_id)
+    state = await _require_consent(user_id)
     case_context = ""
     if payload.case_id:
         case = state["cases"].get(payload.case_id)
@@ -239,7 +261,7 @@ async def consultation(payload: ConsultationRequest, x_telegram_init_data: str =
 @app.post("/miniapp/documents/generate")
 async def generate_document(payload: GenerateRequest, x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
     user_id = _identity(x_telegram_init_data)
-    state = _require_consent(user_id)
+    state = await _require_consent(user_id)
     case = state["cases"].get(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
@@ -263,6 +285,7 @@ async def generate_document(payload: GenerateRequest, x_telegram_init_data: str 
             "filename": "KORGAN_iskovoe_zayavlenie.docx",
         }
     )
+    await store.save(user_id, state)
     return {
         "case_id": payload.case_id,
         "status": case["status"],
@@ -277,13 +300,14 @@ async def generate_document(payload: GenerateRequest, x_telegram_init_data: str 
 @app.delete("/miniapp/cases/{case_id}")
 async def delete_case(case_id: str, x_telegram_init_data: str = Header(default="")) -> dict[str, bool]:
     user_id = _identity(x_telegram_init_data)
-    state = _state(user_id)
+    state = await _state(user_id)
     state["cases"].pop(case_id, None)
+    await store.save(user_id, state)
     return {"ok": True}
 
 
 @app.delete("/miniapp/me")
 async def delete_me(x_telegram_init_data: str = Header(default="")) -> dict[str, bool]:
     user_id = _identity(x_telegram_init_data)
-    _sessions.pop(user_id, None)
+    await store.delete(user_id)
     return {"ok": True}
