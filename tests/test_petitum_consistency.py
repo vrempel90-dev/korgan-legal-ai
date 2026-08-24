@@ -208,3 +208,24 @@ def test_assess_claim_quality_marks_amount_mismatch_not_ready() -> None:
 
     assert any(item.startswith("AMOUNT_MISMATCH:") for item in report.issues)
     assert report.ready is False
+
+
+def test_kazakh_contractual_penalty_with_unknown_due_date_is_not_removed() -> None:
+    context = (
+        "Талапкер: «A» ЖШС, БСН 230740012345. Жауапкер: «B» ЖШС, БСН 210940067891. "
+        "Шарттың 6.3-тармағында тұрақсыздық айыбы 0,1% әрбір кешіктірілген күн үшін, "
+        "бірақ жалпы мөлшері 10%-дан аспайды. Негізгі қарыз 12 000 000 теңге. "
+        "Тұрақсыздық айыбын өндіріп алуды сұраймын."
+    )
+    draft = _draft()
+    draft.requests = ["Негізгі қарызды 12 000 000 теңге мөлшерінде өндіріп алу."]
+    draft.price_of_claim = "12 000 000 теңге"
+    draft.facts = ["Негізгі қарыз 12 000 000 теңге."]
+    draft.attachments = []
+
+    _apply_verified_penalty(context, _research(), draft, filing_date=date(2026, 8, 21))
+
+    assert draft.status == VerificationStatus.NEEDS_VERIFICATION
+    assert any("ТРЕБУЕТ ПРОВЕРКИ" in item for item in draft.requests)
+    assert any("дату начала просрочки" in note for note in draft.verification_notes)
+    assert "ТРЕБУЕТ РАСЧЁТА" in draft.price_of_claim
