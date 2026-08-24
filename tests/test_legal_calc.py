@@ -114,7 +114,7 @@ def test_mixed_property_and_non_property_claim_adds_half_mrp() -> None:
         ],
     )
     assert line.startswith("26 163 тенге")
-    assert "0.5 МРП" in line
+    assert "0,5 МРП" in line
 
 
 def test_monetary_obligation_worded_as_oblige_does_not_add_half_mrp() -> None:
@@ -125,7 +125,7 @@ def test_monetary_obligation_worded_as_oblige_does_not_add_half_mrp() -> None:
         requests=["Обязать ответчика вернуть долг 1 000 000 тенге."],
     )
     assert line.startswith("10 000 тенге")
-    assert "0.5 МРП" not in line
+    assert "0,5 МРП" not in line
 
 
 def test_pure_non_property_claim_is_half_mrp() -> None:
@@ -136,7 +136,7 @@ def test_pure_non_property_claim_is_half_mrp() -> None:
         requests=["Обязать ответчика устранить нарушение."],
     )
     assert line.startswith("2 163 тенге")
-    assert "0.5 МРП" in line
+    assert "0,5 МРП" in line
 
 
 def test_consumer_claim_is_deferred_not_exempt() -> None:
@@ -164,7 +164,7 @@ def test_wage_claim_is_exempt_under_article_668() -> None:
         requests=["Взыскать задолженность по заработной плате 500 000 тенге."],
     )
     assert line.startswith("0 тенге")
-    assert "665" in line
+    assert "668" in line
 
 
 def test_salary_certificate_in_evidence_does_not_create_wage_exemption() -> None:
@@ -187,7 +187,7 @@ def test_divorce_in_background_does_not_change_debt_tariff() -> None:
         requests=["Взыскать долг 1 000 000 тенге."],
     )
     assert line.startswith("10 000 тенге")
-    assert "0.3 МРП" not in line
+    assert "0,3 МРП" not in line
 
 
 def test_ambiguous_transaction_invalidity_fails_closed() -> None:
