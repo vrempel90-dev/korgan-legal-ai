@@ -72,9 +72,6 @@ def _identity_keys(values: list[str]) -> list[str]:
         if len(key) >= 8 and key not in strong:
             strong.append(key)
 
-    # Build a phrase key from adjacent distinctive name tokens. This prevents a
-    # claimant such as "ABC GROUP" from accidentally matching the defendant
-    # "CLIENT GROUP" merely because both contain the generic word GROUP.
     for raw in values or []:
         tokens = _distinctive_tokens(_ROLE_PREFIX_RE.sub("", str(raw or "")))
         if len(tokens) >= 2:
@@ -101,22 +98,20 @@ def _identity_keys(values: list[str]) -> list[str]:
 
 
 def _windows(case_context: str) -> list[str]:
+    """Keep adjacent-line matching inside one party block only."""
     lines = [line.strip() for line in str(case_context or "").splitlines() if line.strip()]
     result: list[str] = list(lines)
     for index in range(len(lines) - 1):
-        result.append(lines[index] + " " + lines[index + 1])
+        current = lines[index]
+        next_line = lines[index + 1]
+        if _ROLE_PREFIX_RE.match(next_line):
+            continue
+        result.append(current + " " + next_line)
     return result
 
 
 def match_claimant_identity(case_context: str, claimant: list[str]) -> PartyIdentityMatch | None:
-    """Bind an explicit BIN/IIN to the already-selected claimant, never by court type.
-
-    The claimant name comes from the draft. A source fragment is accepted only
-    when it contains a distinctive claimant key and an explicit identifier. This
-    lets contract roles such as Supplier/Customer be reused safely after the same
-    party becomes Plaintiff, while preventing a defendant BIN/IIN from selecting
-    the tariff.
-    """
+    """Bind an explicit BIN/IIN to the already-selected claimant, never by court type."""
     if _clear_party_type(claimant) is not None:
         return None
 
