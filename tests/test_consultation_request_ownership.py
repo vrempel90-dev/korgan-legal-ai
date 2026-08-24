@@ -46,95 +46,101 @@ class FakeMessage:
         self.answers.append(text)
 
 
-@pytest.mark.asyncio
-async def test_new_document_request_invalidates_inflight_consultation_token() -> None:
-    state = FakeState({"language": "ru", "facts": ["case"]})
-    consultation_id = await start_new_consultation_request(state)
-    assert await consultation_request_is_current(state, consultation_id)
+def test_new_document_request_invalidates_inflight_consultation_token() -> None:
+    async def scenario() -> None:
+        state = FakeState({"language": "ru", "facts": ["case"]})
+        consultation_id = await start_new_consultation_request(state)
+        assert await consultation_request_is_current(state, consultation_id)
 
-    await start_new_document_request(state, kind="contract", mode="document_contract")
+        await start_new_document_request(state, kind="contract", mode="document_contract")
 
-    assert not await consultation_request_is_current(state, consultation_id)
-    assert state.data["request_kind"] == "contract"
-    assert "consultation_request_id" not in state.data
+        assert not await consultation_request_is_current(state, consultation_id)
+        assert state.data["request_kind"] == "contract"
+        assert "consultation_request_id" not in state.data
+
+    asyncio.run(scenario())
 
 
-@pytest.mark.asyncio
-async def test_slow_consultation_is_suppressed_after_document_switch(monkeypatch: pytest.MonkeyPatch) -> None:
-    started = asyncio.Event()
-    release = asyncio.Event()
+def test_slow_consultation_is_suppressed_after_document_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
 
-    class Service:
-        async def consult(self, question: str, *, case_context: str, language: str):
-            started.set()
-            await release.wait()
-            return "Старый ответ", ["https://adilet.zan.kz/rus/docs/K940001000_"]
+        class Service:
+            async def consult(self, question: str, *, case_context: str, language: str):
+                started.set()
+                await release.wait()
+                return "Старый ответ", ["https://adilet.zan.kz/rus/docs/K940001000_"]
 
-    monkeypatch.setattr(base_bot, "service", Service())
-    state = FakeState({"language": "ru", "facts": ["old case"], "consulted_articles": []})
-    message = FakeMessage()
+        monkeypatch.setattr(base_bot, "service", Service())
+        state = FakeState({"language": "ru", "facts": ["old case"], "consulted_articles": []})
+        message = FakeMessage()
 
-    task = asyncio.create_task(
-        _send_consultation_answer(
-            message,
-            state,
-            question="старый вопрос",
-            case_context="old case",
-            language="ru",
+        task = asyncio.create_task(
+            _send_consultation_answer(
+                message,
+                state,
+                question="старый вопрос",
+                case_context="old case",
+                language="ru",
+            )
         )
-    )
-    await started.wait()
-    await start_new_document_request(state, kind="claim", mode="claim_details")
-    release.set()
+        await started.wait()
+        await start_new_document_request(state, kind="claim", mode="claim_details")
+        release.set()
 
-    result = await task
+        result = await task
 
-    assert result == _STALE
-    assert message.answers == []
-    assert state.data.get("consulted_articles", []) == []
-    assert state.data["request_kind"] == "claim"
+        assert result == _STALE
+        assert message.answers == []
+        assert state.data.get("consulted_articles", []) == []
+        assert state.data["request_kind"] == "claim"
+
+    asyncio.run(scenario())
 
 
-@pytest.mark.asyncio
-async def test_newer_consultation_owns_delivery_and_old_answer_is_suppressed(monkeypatch: pytest.MonkeyPatch) -> None:
-    old_started = asyncio.Event()
-    release_old = asyncio.Event()
+def test_newer_consultation_owns_delivery_and_old_answer_is_suppressed(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        old_started = asyncio.Event()
+        release_old = asyncio.Event()
 
-    class Service:
-        async def consult(self, question: str, *, case_context: str, language: str):
-            if question == "old":
-                old_started.set()
-                await release_old.wait()
-                return "OLD ANSWER", []
-            return "NEW ANSWER", []
+        class Service:
+            async def consult(self, question: str, *, case_context: str, language: str):
+                if question == "old":
+                    old_started.set()
+                    await release_old.wait()
+                    return "OLD ANSWER", []
+                return "NEW ANSWER", []
 
-    monkeypatch.setattr(base_bot, "service", Service())
-    state = FakeState({"language": "ru", "facts": [], "consulted_articles": []})
-    old_message = FakeMessage()
-    new_message = FakeMessage()
+        monkeypatch.setattr(base_bot, "service", Service())
+        state = FakeState({"language": "ru", "facts": [], "consulted_articles": []})
+        old_message = FakeMessage()
+        new_message = FakeMessage()
 
-    old_task = asyncio.create_task(
-        _send_consultation_answer(
-            old_message,
+        old_task = asyncio.create_task(
+            _send_consultation_answer(
+                old_message,
+                state,
+                question="old",
+                case_context="",
+                language="ru",
+            )
+        )
+        await old_started.wait()
+
+        new_result = await _send_consultation_answer(
+            new_message,
             state,
-            question="old",
+            question="new",
             case_context="",
             language="ru",
         )
-    )
-    await old_started.wait()
+        release_old.set()
+        old_result = await old_task
 
-    new_result = await _send_consultation_answer(
-        new_message,
-        state,
-        question="new",
-        case_context="",
-        language="ru",
-    )
-    release_old.set()
-    old_result = await old_task
+        assert new_result == _DELIVERED
+        assert old_result == _STALE
+        assert new_message.answers == ["NEW ANSWER"]
+        assert old_message.answers == []
 
-    assert new_result == _DELIVERED
-    assert old_result == _STALE
-    assert new_message.answers == ["NEW ANSWER"]
-    assert old_message.answers == []
+    asyncio.run(scenario())
