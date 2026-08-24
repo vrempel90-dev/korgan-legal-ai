@@ -43,6 +43,7 @@ from korgan.prepayment_runtime import router as prepayment_router
 from korgan.pretrial_response import PretrialResponseProductionService
 from korgan.pretrial_response_runtime import install_pretrial_response_transport, router as pretrial_response_router
 from korgan.pretrial_runtime import router as pretrial_router
+from korgan.professional_consultation_guard import install_professional_consultation_guard
 from korgan.professional_rag_bridge import install_professional_rag_bridge
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.request_race_guard import install_request_race_guard
@@ -60,6 +61,10 @@ install_kazakh_legal_bridge()
 install_kazakh_article_forms()
 install_professional_rag_bridge()
 install_stable_legal_release()
+# Ordinary consultations use the same source-bound standard as documents: an
+# exact article/rate/deadline cannot reach Telegram unless the current response
+# actually opened an allowed official source and the rule passed verification.
+install_professional_consultation_guard()
 # One bounded repair policy for all five Word document types. It raises the
 # filing-ready target to 10/10 while preserving PRELIMINARY Word delivery when
 # a remaining factual/legal gap cannot be repaired without inventing data.
@@ -163,7 +168,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
