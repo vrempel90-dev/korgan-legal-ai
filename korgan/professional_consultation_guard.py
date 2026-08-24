@@ -50,21 +50,32 @@ _CONSULT_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
-# Precise law belongs only to the source-bound verified block below. These
-# patterns deliberately catch article numbers, legal rates/MRP and exact legal
-# periods that a free-form action/unverified note could otherwise smuggle into
-# the answer without a verified source binding.
+_NUMBER_WORD = (
+    r"(?:одн\w*|два|две|двух|три|трех|трёх|четыр\w*|пят\w*|шест\w*|сем\w*|"
+    r"восем\w*|девят\w*|десят\w*|одиннадцат\w*|двенадцат\w*|тринадцат\w*|"
+    r"четырнадцат\w*|пятнадцат\w*|шестнадцат\w*|семнадцат\w*|восемнадцат\w*|"
+    r"девятнадцат\w*|двадцат\w*|тридцат\w*|сорок\w*|пятьдесят\w*|сто|полтор\w*|"
+    r"бір|екі|үш|төрт|бес|алты|жеті|сегіз|тоғыз|он|жиырма|отыз|қырық|елу|жүз)"
+)
+
+# Precise law belongs only to the source-bound verified block. Catch numeric and
+# word-form rates/deadlines plus specific court-name phrases in all other fields.
 _PRECISE_LAW_RE = re.compile(
-    r"(?i)(?:"
-    r"(?:стать[ьяеию]\w*|ст\.)\s*\d+"
-    r"|\b\d+(?:-\d+)?\s*[-–]?\s*бап\b"
-    r"|\b\d+(?:[.,]\d+)?\s*%"
-    r"|\b\d+(?:[.,]\d+)?\s*(?:мрп|аек)\b"
-    r"|(?:срок\w*|мерзім\w*|госпошлин\w*|мемлекеттік\s+баж\w*|подсудност\w*|соттыл\w*)[^\n]{0,40}\b\d+\b"
-    r")"
+    rf"(?i)(?:"
+    rf"(?:стать[ьяеию]\w*|ст\.)\s*\d+"
+    rf"|\b\d+(?:-\d+)?\s*[-\u2013]?\s*бап\b"
+    rf"|\b\d+(?:[.,]\d+)?\s*%"
+    rf"|\b\d+(?:[.,]\d+)?\s*(?:мрп|аек)\b"
+    rf"|(?:срок\w*|мерзім\w*|госпошлин\w*|мемлекеттік\s+баж\w*|подсудност\w*|соттыл\w*)[^\n]{{0,40}}\b\d+\b"
+    rf"|\b{_NUMBER_WORD}\s+(?:календарн\w+\s+|рабоч\w+\s+)?(?:дн\w*|сут\w*|месяц\w*|год\w*|күн\w*|ай\w*|жыл\w*)\b"
+    rf"|\b{_NUMBER_WORD}\s+(?:процент\w*|пайыз\w*|мрп|аек)\b"
+    rf"|\b(?:специализированн\w+\s+межрайонн\w+(?:\s+экономическ\w+)?|межрайонн\w+|районн\w+|городск\w+)\s+суд\w*(?:\s+№?\s*\d+)?\b"
+    rf"|\bсмэс\b"
+    rf"|\b(?:мамандандырылған\s+ауданаралық(?:\s+экономикалық)?|ауданаралық|аудандық|қалалық)\s+сот\w*\b"
+    rf")"
 )
 _ARTICLE_NO_RE = re.compile(
-    r"(?i)(?:(?:стать[ьяеию]\w*|ст\.)\s*(?P<ru>\d+(?:-\d+)?)|(?P<kk>\d+(?:-\d+)?)\s*[-–]?\s*бап\b)"
+    r"(?i)(?:(?:стать[ьяеию]\w*|ст\.)\s*(?P<ru>\d+(?:-\d+)?)|(?P<kk>\d+(?:-\d+)?)\s*[-\u2013]?\s*бап\b)"
 )
 
 
@@ -121,14 +132,7 @@ def _normalize_quote(text: str) -> str:
 
 
 def _corpus_article_check(article: str, source_url: str, provision_text: str) -> bool | None:
-    """Check exact article identity when the refreshed local act is available.
-
-    ``True`` means the article exists in the current local act and the model's
-    quoted provision text is a literal normalized excerpt of that article/item.
-    ``False`` means the local corpus contradicts the model's article identity or
-    quote. ``None`` means the act/database is not available for this secondary
-    check; the live source-bound check remains authoritative in that case.
-    """
+    """Check exact article identity when the refreshed local act is available."""
     act_id = _act_id_from_adilet_url(source_url)
     if not act_id:
         return None
@@ -147,7 +151,7 @@ def _corpus_article_check(article: str, source_url: str, provision_text: str) ->
             (act_id, number),
         ).fetchall()
     except Exception:
-        LOGGER.exception("Consultation corpus article check failed closed to live source only")
+        LOGGER.exception("Consultation corpus article check unavailable; retaining live source-bound check")
         return None
     finally:
         corpus.close()
@@ -194,22 +198,23 @@ def _accept_verified_points(
                 rejected.append("Правовой вывод отброшен: нет связи с реально открытым официальным источником.")
             continue
 
+        # A court URL alone does not prove the exact court name or structure.
+        # Until a dedicated court-entity verifier exists, fail closed here.
         if _is_court_source(actual_url):
-            if article.lower() != "официальный перечень судов":
-                rejected.append("Правовой вывод отброшен: страница суда не подтверждает норму права.")
-                continue
-        else:
-            if not _is_adilet_source(actual_url) or not _is_russian_adilet(actual_url):
-                rejected.append("Правовой вывод отброшен: для нормы права нужна русская официальная страница Adilet.")
-                continue
-            drift = paraphrase_defects(statement, provision_text)
-            if drift:
-                rejected.append("Правовой вывод отброшен: пересказ не прошёл сверку с текстом нормы.")
-                continue
-            corpus_check = _corpus_article_check(article, actual_url, provision_text)
-            if corpus_check is False:
-                rejected.append("Правовой вывод отброшен: номер статьи или текст нормы не совпал с текущим локальным корпусом KORGAN.")
-                continue
+            rejected.append("Точное наименование или структура суда требует отдельной официальной проверки.")
+            continue
+
+        if not _is_adilet_source(actual_url) or not _is_russian_adilet(actual_url):
+            rejected.append("Правовой вывод отброшен: для нормы права нужна русская официальная страница Adilet.")
+            continue
+        drift = paraphrase_defects(statement, provision_text)
+        if drift:
+            rejected.append("Правовой вывод отброшен: пересказ не прошёл сверку с текстом нормы.")
+            continue
+        corpus_check = _corpus_article_check(article, actual_url, provision_text)
+        if corpus_check is False:
+            rejected.append("Правовой вывод отброшен: номер статьи или текст нормы не совпал с текущим локальным корпусом KORGAN.")
+            continue
 
         item = (statement, article, actual_url)
         if item not in accepted:
@@ -284,9 +289,9 @@ async def _guarded_consult(
         "КРИТИЧЕСКИЙ ФОРМАТ:\n"
         "1. Любой юридический вывод, точная норма, срок, ставка, подсудность или право/обязанность помещается ТОЛЬКО в verified_points.\n"
         "2. Каждый verified_point: один конкретный правовой вывод + точная статья/пункт + существенная ДОСЛОВНАЯ выдержка provision_text без многоточий + URL официальной страницы, которую ты реально открыл.\n"
-        "3. Материальное и процессуальное право подтверждай только по русской странице Adilet /rus/docs/. gov.kz/sud.gov.kz допускаются только для официального наименования/структуры суда; тогда article='официальный перечень судов'.\n"
-        "4. recommended_actions — только операционные действия с доказательствами/документами и следующие шаги; без новых правовых выводов, номеров статей, законных сроков, ставок, МРП/АЕК или гарантий исхода.\n"
-        "5. Если официальный источник не подтверждает вывод, помещай его в unverified_claims без выдуманного номера статьи или ставки.\n"
+        "3. Материальное и процессуальное право подтверждай только по русской странице Adilet /rus/docs/. Не выдавай точное наименование конкретного суда: для него нужен отдельный верификатор; необходимость определить суд укажи нейтрально в unverified_claims.\n"
+        "4. recommended_actions — только операционные действия с доказательствами/документами и следующие шаги; без новых правовых выводов, номеров статей, законных сроков, ставок, МРП/АЕК, точных наименований судов или гарантий исхода.\n"
+        "5. Если официальный источник не подтверждает вывод, помещай его в unverified_claims без выдуманного номера статьи, ставки, срока или названия суда.\n"
         "6. Не обещай исход дела. Отделяй факты пользователя от правовых выводов.\n\n"
         f"ВОПРОС:\n{question}\n\n"
         f"КОНТЕКСТ ДЕЛА:\n{case_context[:self.settings.max_case_text_chars] if case_context else 'нет'}"
