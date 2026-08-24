@@ -70,6 +70,8 @@ class ClaimQualityReport:
 
     @property
     def ready(self) -> bool:
+        if any(str(issue).startswith("AMOUNT_MISMATCH:") for issue in self.issues):
+            return False
         return self.score >= MIN_READY_SCORE
 
 
@@ -161,6 +163,15 @@ def check_amount_consistency(draft: ClaimDraft) -> list[str]:
     for request in draft.requests or []:
         target_amounts.update(parse_all_amounts_kzt(str(request)))
     target_amounts.update(parse_all_amounts_kzt(draft.price_of_claim or ""))
+
+    title = str(draft.title or "")
+    if (_PROPERTY_REQUEST_RE.search(title) or _TITLE_PENALTY_RE.search(title)) and not _UNRESOLVED_AMOUNT_RE.search(title):
+        for amount in parse_all_amounts_kzt(title):
+            if amount not in target_amounts:
+                errors.append(
+                    f"Сумма {amount:,} тенге из title отсутствует одновременно в петитуме и цене иска."
+                    .replace(",", " ")
+                )
 
     for field_name, values in (("facts", draft.facts), ("attachments", draft.attachments)):
         for line in values or []:
