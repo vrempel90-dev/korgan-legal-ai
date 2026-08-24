@@ -16,13 +16,11 @@ from korgan import bot as bot_module
 from korgan.state_duty_final_hotfix import ProductionOpenAILegalService
 
 
-# bot.main() instantiates the symbol named OpenAILegalService in korgan.bot.
-# Replace that symbol before main() runs; all handlers and extraction/consult
-# methods remain inherited from the same OpenAI service family.
-bot_module.OpenAILegalService = ProductionOpenAILegalService
-
-
 async def main() -> None:
+    # bot.main() instantiates the symbol named OpenAILegalService in korgan.bot.
+    # Patch it only at process startup, not at module import, so importing this
+    # entrypoint in tests cannot mutate unrelated runtime modules.
+    bot_module.OpenAILegalService = ProductionOpenAILegalService
     await bot_module.main()
 
 
