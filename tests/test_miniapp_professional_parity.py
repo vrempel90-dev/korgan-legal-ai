@@ -36,6 +36,7 @@ def test_professional_runtime_reports_same_strict_legal_core() -> None:
     with TestClient(miniapp_api_v2.app) as client:
         payload = client.get("/health").json()
     assert payload["status"] == "ok"
+    assert payload["version"] == "0.7.0"
     assert payload["legal_runtime"] == "strict_bot"
     assert payload["word_quality_target"] == "10/10"
     assert payload["preliminary_fallback"] is True
