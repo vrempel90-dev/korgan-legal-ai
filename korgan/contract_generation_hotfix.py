@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -12,7 +13,8 @@ from korgan.contract_repair_state import (
     reset_contract_repair_attempted,
 )
 from korgan.late_interest_hotfix import ProductionOpenAILegalService as _BaseProductionOpenAILegalService
-from korgan.legal_types import ContractDraft, LegalResearch
+from korgan.legal_routing import detect_contract_profile
+from korgan.legal_types import ContractClause, ContractDraft, ContractSection, LegalResearch, VerificationStatus
 from korgan.verified_openai import _actual_response_urls
 
 LOGGER = logging.getLogger(__name__)
@@ -23,21 +25,104 @@ _CONTRACT_OUTPUT_LIMITS: dict[str, tuple[int, int]] = {
     "korgan_contract_validation": (2400, 4000),
     "korgan_contract_repair": (14000, 24000),
 }
+_VERIFIED_LINE_RE = re.compile(
+    r"^(?P<statement>.*?)\s*\[основание:\s*(?P<article>.*?);\s*текст\s+нормы:.*?;\s*источник:\s*(?P<url>https?://[^\]]+)\]$",
+    re.IGNORECASE | re.DOTALL,
+)
+_SPECIAL_PART_SOURCE_TOKEN = "K990000409"
+_SPECIAL_PART_PROFILES = frozenset({"services", "supply", "work_contract", "lease", "sale", "loan"})
+_SPECIAL_PART_NOTE = "Не подтверждены профильные нормы Особенной части ГК РК для этого вида договора."
+_LEGAL_SECTION_RE = re.compile(r"(?i)(?:применим\w*\s+прав|правов\w*\s+регулирован|законодательств|құқықтық\s+реттеу|қолданылатын\s+құқық)")
 
 
 def _contract_output_instruction(schema_name: str) -> str:
     if schema_name == "korgan_contract_research":
         return (
             "\n\nТЕХНИЧЕСКОЕ ТРЕБОВАНИЕ: ответ должен быть компактным и полностью завершённым JSON. "
-            "Не повторяй один и тот же правовой вывод разными словами. Для каждого реально важного вопроса достаточно одного точного verified_point."
+            "Не повторяй один и тот же правовой вывод разными словами. Для каждого реально важного вопроса достаточно одного точного verified_point. "
+            "Если договор гражданско-правовой и его вид урегулирован профильной главой Особенной части ГК РК, обязательно открой на Adilet именно эту главу и подтверди профильные статьи; общие нормы об обязательствах не заменяют специальное регулирование."
         )
     if schema_name in {"korgan_contract_draft", "korgan_contract_repair"}:
         return (
             "\n\nТЕХНИЧЕСКОЕ ТРЕБОВАНИЕ: сформируй ПОЛНЫЙ договор, но без повторов и юридической воды. "
             "Обычно достаточно 8–12 содержательных разделов; объединяй близкие условия, не дублируй одну обязанность в разных разделах. "
-            "Каждый пункт формулируй законченным и практичным предложением. Обязательно заверши весь JSON, включая реквизиты и verification_notes."
+            "Каждый пункт формулируй законченным и практичным предложением. Обязательно заверши весь JSON, включая реквизиты и verification_notes. "
+            "Специальные нормы ГК используй только из VERIFIED; не придумывай номер статьи и не копируй сноски/историю изменений Adilet."
         )
     return "\n\nТЕХНИЧЕСКОЕ ТРЕБОВАНИЕ: верни краткий и полностью завершённый JSON без повторов."
+
+
+def _special_part_points(research: LegalResearch, language: str) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in research.verified_claims or []:
+        line = str(raw or "").strip()
+        match = _VERIFIED_LINE_RE.match(line)
+        if not match:
+            continue
+        url = match.group("url").strip()
+        if _SPECIAL_PART_SOURCE_TOKEN.casefold() not in url.casefold():
+            continue
+        statement = " ".join(match.group("statement").split()).strip(" .")
+        article = " ".join(match.group("article").split()).strip(" .")
+        if not statement or not article:
+            continue
+        key = re.sub(r"\W+", "", article.casefold())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if language == "kk":
+            rendered = f"{statement}. Құқықтық негіз: {article}."
+        else:
+            rendered = f"{statement}. Правовое основание: {article}."
+        result.append(rendered)
+    return result[:6]
+
+
+def _inject_verified_special_part(
+    case_context: str,
+    research: LegalResearch,
+    draft: ContractDraft,
+    *,
+    language: str,
+) -> None:
+    """Expose verified special-part law in the client contract without LLM memory."""
+    profile = detect_contract_profile(case_context)
+    if profile.code not in _SPECIAL_PART_PROFILES:
+        return
+
+    points = _special_part_points(research, language)
+    if not points:
+        if _SPECIAL_PART_NOTE not in draft.verification_notes:
+            draft.verification_notes.append(_SPECIAL_PART_NOTE)
+        draft.status = VerificationStatus.NEEDS_VERIFICATION
+        LOGGER.warning("CONTRACT_SPECIAL_PART missing profile=%s", profile.code)
+        return
+
+    draft.verification_notes = [note for note in draft.verification_notes if note != _SPECIAL_PART_NOTE]
+    existing_text = "\n".join(draft.body_lines()).casefold()
+    missing = [point for point in points if re.sub(r"\W+", "", point.casefold()) not in re.sub(r"\W+", "", existing_text)]
+    if not missing:
+        return
+
+    target = next((section for section in draft.sections if _LEGAL_SECTION_RE.search(section.heading)), None)
+    if target is None:
+        target = ContractSection(
+            heading="Қолданылатын құқық" if language == "kk" else "Применимое законодательство",
+            clauses=[],
+        )
+        draft.sections.append(target)
+
+    target_text = "\n".join(target.text_lines()).casefold()
+    for point in missing:
+        article_match = re.search(r"(?i)(?:стать\w*|ст\.|бап)\s*\d+(?:-\d+)?|\d+(?:-\d+)?-бап", point)
+        marker = article_match.group(0).casefold() if article_match else point.casefold()
+        if marker in target_text:
+            continue
+        target.clauses.append(ContractClause(text=point))
+        target_text += "\n" + point.casefold()
+
+    LOGGER.info("CONTRACT_SPECIAL_PART injected profile=%s provisions=%d", profile.code, len(missing))
 
 
 class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
@@ -52,6 +137,7 @@ class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
         """Mark a lower repair completed only after reconstruction and revalidation return."""
         reset_contract_repair_attempted()
         draft = await super().draft_contract(case_context, research, language=language)
+        _inject_verified_special_part(case_context, research, draft, language=language)
         if contract_repair_attempted():
             mark_contract_repair_completed()
         return draft
@@ -124,9 +210,6 @@ class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
                 raise
 
             if schema_name == "korgan_contract_repair":
-                # Parsed JSON only means a repair was attempted. The completed
-                # marker is intentionally deferred until draft_contract returns
-                # after ContractDraft reconstruction and the lower revalidation.
                 mark_contract_repair_attempted()
 
             LOGGER.info(
