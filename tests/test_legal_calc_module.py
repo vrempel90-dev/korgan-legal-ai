@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from korgan.legal.calc import (  # noqa: E402
     EXEMPTION_CONSUMER,
     EXEMPTION_DISABILITY,
+    EXEMPTION_PENSIONER,
     RATES_PATH,
     ClaimComponent,
     RateUnavailable,
@@ -19,6 +20,7 @@ from korgan.legal.calc import (  # noqa: E402
     daily_penalty,
     load_rates,
     money_use_interest,
+    nonproperty_state_duty,
     state_duty,
 )
 
@@ -37,6 +39,8 @@ def test_rates_live_in_a_dated_config_file() -> None:
     assert "actual_on" in payload
     assert payload["state_duty"]["individual_rate"] == 0.01
     assert payload["state_duty"]["legal_entity_rate"] == 0.03
+    assert payload["state_duty"]["individual_cap_mrp"] == 10_000
+    assert payload["state_duty"]["legal_entity_cap_mrp"] == 20_000
 
 
 def test_every_rate_carries_a_source(rates) -> None:
@@ -45,13 +49,17 @@ def test_every_rate_carries_a_source(rates) -> None:
     assert all(entry.source for entry in rates.nb_base_rate)
 
 
+def test_current_state_duty_and_mrp_are_source_verified(rates) -> None:
+    assert rates.duty_verified
+    assert rates.mrp_on(date(2026, 8, 24)).verified
+
+
 def test_rate_before_the_table_is_not_approximated(rates) -> None:
     with pytest.raises(RateUnavailable, match="базовая ставка"):
         rates.base_rate_on(date(2020, 1, 1))
 
 
 def test_custom_config_overrides_defaults(tmp_path: Path) -> None:
-    """Смена ставки — правка данных, а не кода."""
     payload = json.loads(RATES_PATH.read_text(encoding="utf-8"))
     payload["state_duty"]["individual_rate"] = 0.02
     config_path = tmp_path / "rates.json"
@@ -70,12 +78,12 @@ def test_claim_price_excludes_non_pecuniary_demands() -> None:
         [
             ClaimComponent("Основной долг", 800_000),
             ClaimComponent("Неустойка", 120_000),
-            ClaimComponent("Моральный вред", 500_000, pecuniary=False),
+            ClaimComponent("Неимущественное требование", 0, pecuniary=False),
         ]
     )
 
     assert price.total == 920_000
-    assert [item.title for item in price.excluded] == ["Моральный вред"]
+    assert [item.title for item in price.excluded] == ["Неимущественное требование"]
 
 
 def test_claim_price_breakdown_lists_components() -> None:
@@ -101,17 +109,30 @@ def test_legal_entity_pays_three_percent() -> None:
     assert state_duty(2_400_000, is_individual=False).amount == 72_000
 
 
-def test_consumer_is_exempt_from_the_duty() -> None:
-    """Освобождение потребителя: пошлина не начисляется вовсе."""
+def test_consumer_gets_deferral_not_false_exemption() -> None:
     duty = state_duty(920_000, exemptions=[EXEMPTION_CONSUMER])
 
+    assert not duty.exempt
+    assert duty.deferred
+    assert duty.amount == 9_200
+    assert duty.payable_now == 0
+    assert "отсрочена" in duty.explain()
+    assert "106" in duty.explain()
+
+
+def test_disability_exemption_zeroes_the_duty() -> None:
+    duty = state_duty(5_000_000, exemptions=[EXEMPTION_DISABILITY])
     assert duty.exempt
     assert duty.amount == 0
-    assert "защите прав потребителей" in duty.explain()
+    assert duty.payable_now == 0
 
 
-def test_disability_exemption_also_zeroes_the_duty() -> None:
-    assert state_duty(5_000_000, exemptions=[EXEMPTION_DISABILITY]).amount == 0
+def test_pensioner_status_alone_does_not_zero_the_duty() -> None:
+    duty = state_duty(1_000_000, exemptions=[EXEMPTION_PENSIONER])
+
+    assert not duty.exempt
+    assert not duty.deferred
+    assert duty.amount == 10_000
 
 
 def test_unknown_exemption_does_not_zero_the_duty() -> None:
@@ -121,11 +142,22 @@ def test_unknown_exemption_does_not_zero_the_duty() -> None:
     assert duty.amount == 10_000
 
 
-def test_duty_is_capped_at_10000_mrp(rates) -> None:
-    duty = state_duty(10_000_000_000, day=date(2026, 8, 16))
+def test_individual_duty_is_capped_at_10000_mrp(rates) -> None:
+    duty = state_duty(10_000_000_000, day=date(2026, 8, 24))
 
     assert duty.amount == duty.cap
     assert duty.cap == 10_000 * 4325
+
+
+def test_legal_entity_duty_is_capped_at_20000_mrp(rates) -> None:
+    duty = state_duty(10_000_000_000, is_individual=False, day=date(2026, 8, 24))
+
+    assert duty.amount == duty.cap
+    assert duty.cap == 20_000 * 4325
+
+
+def test_nonproperty_duty_is_half_mrp() -> None:
+    assert nonproperty_state_duty(day=date(2026, 8, 24)) == 2_163
 
 
 def test_duty_explanation_states_rate_and_source() -> None:
@@ -146,7 +178,6 @@ def test_daily_penalty_accrues_per_day() -> None:
 
 
 def test_penalty_is_limited_by_the_order_price() -> None:
-    """Ограничение неустойки ценой заказа: 50 дней по 3% дали бы 150%."""
     penalty = daily_penalty(400_000, 50, rate_per_day=0.03, cap=400_000)
 
     assert penalty.uncapped == 600_000
@@ -175,7 +206,7 @@ def test_zero_days_gives_no_penalty() -> None:
 
 def test_negative_days_are_rejected() -> None:
     with pytest.raises(ValueError, match="дней просрочки"):
-        daily_penalty(100_000, -1)
+        daily_penalty(100_000, -1, rate_per_day=0.03)
 
 
 # --- проценты за пользование чужими деньгами ---------------------------------
