@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from korgan.legal.calc import (  # noqa: E402
     EXEMPTION_CONSUMER,
     EXEMPTION_DISABILITY,
+    EXEMPTION_PENSIONER,
     RATES_PATH,
     ClaimComponent,
     RateUnavailable,
@@ -37,6 +38,15 @@ def test_rates_live_in_a_dated_config_file() -> None:
     assert "actual_on" in payload
     assert payload["state_duty"]["individual_rate"] == 0.01
     assert payload["state_duty"]["legal_entity_rate"] == 0.03
+    assert payload["state_duty"]["individual_cap_mrp"] == 10_000
+    assert payload["state_duty"]["legal_entity_cap_mrp"] == 20_000
+
+
+def test_verified_2026_mrp_and_duty_are_source_bound(rates) -> None:
+    assert rates.mrp_on(date(2026, 8, 24)).verified
+    assert rates.duty_verified
+    assert rates.duty_individual_cap_mrp == 10_000
+    assert rates.duty_legal_entity_cap_mrp == 20_000
 
 
 def test_every_rate_carries_a_source(rates) -> None:
@@ -101,17 +111,28 @@ def test_legal_entity_pays_three_percent() -> None:
     assert state_duty(2_400_000, is_individual=False).amount == 72_000
 
 
-def test_consumer_is_exempt_from_the_duty() -> None:
-    """Освобождение потребителя: пошлина не начисляется вовсе."""
+def test_consumer_is_deferred_not_exempt() -> None:
     duty = state_duty(920_000, exemptions=[EXEMPTION_CONSUMER])
 
+    assert not duty.exempt
+    assert duty.deferred
+    assert duty.amount == 9_200
+    assert "отсрочена" in duty.explain().lower()
+    assert "106" in duty.explain()
+
+
+def test_disability_exemption_zeroes_the_duty() -> None:
+    duty = state_duty(5_000_000, exemptions=[EXEMPTION_DISABILITY])
     assert duty.exempt
+    assert not duty.deferred
     assert duty.amount == 0
-    assert "защите прав потребителей" in duty.explain()
 
 
-def test_disability_exemption_also_zeroes_the_duty() -> None:
-    assert state_duty(5_000_000, exemptions=[EXEMPTION_DISABILITY]).amount == 0
+def test_old_age_pensioner_is_not_blanket_exemption() -> None:
+    duty = state_duty(1_000_000, exemptions=[EXEMPTION_PENSIONER])
+
+    assert not duty.exempt
+    assert duty.amount == 10_000
 
 
 def test_unknown_exemption_does_not_zero_the_duty() -> None:
@@ -121,11 +142,18 @@ def test_unknown_exemption_does_not_zero_the_duty() -> None:
     assert duty.amount == 10_000
 
 
-def test_duty_is_capped_at_10000_mrp(rates) -> None:
+def test_individual_duty_is_capped_at_10000_mrp(rates) -> None:
     duty = state_duty(10_000_000_000, day=date(2026, 8, 16))
 
     assert duty.amount == duty.cap
     assert duty.cap == 10_000 * 4325
+
+
+def test_legal_entity_duty_is_capped_at_20000_mrp(rates) -> None:
+    duty = state_duty(10_000_000_000, is_individual=False, day=date(2026, 8, 16))
+
+    assert duty.amount == duty.cap
+    assert duty.cap == 20_000 * 4325
 
 
 def test_duty_explanation_states_rate_and_source() -> None:
