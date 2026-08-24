@@ -5,7 +5,7 @@ import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date
 
-from korgan.legal_types import ClaimDraft
+from korgan.legal_types import ClaimDraft, LegalResearch
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
@@ -225,7 +225,7 @@ def complete_claim_relief_from_materials_exact(
 
 
 def install_universal_word_final_hardening() -> None:
-    """Make filing arithmetic exact and penalty restoration source-safe."""
+    """Make filing arithmetic exact and make professional state duty the final owner."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -233,6 +233,8 @@ def install_universal_word_final_hardening() -> None:
     from korgan import legal_calc
     from korgan import professional_claim_finalizer as finalizer
     from korgan import universal_word_quality_guard as guard
+    from korgan.claim_state_duty import apply_professional_state_duty
+    from korgan.stable_legal_release import StableLegalProductionService
 
     # These functions are resolved through module globals at runtime, so the
     # replacement protects every existing claim finalization path without adding
@@ -247,12 +249,54 @@ def install_universal_word_final_hardening() -> None:
     finalizer._parse_amount = parse_money_exact
 
     # legal_calc.gosposhlina_line resolves these names dynamically inside its
-    # module, so replacing them also hardens the already-imported release helper.
+    # module. Keep the compatibility path exact, with distinct statutory caps.
     legal_calc.parse_amount_kzt = parse_amount_kzt_exact
     legal_calc.calc_gosposhlina_claim = calc_state_duty_exact
     legal_calc.calc_late_payment_penalty = calc_late_payment_penalty_exact
 
+    # The universal Word guard can restore a source-grounded monetary remedy and
+    # recalculate claim price after the professional litigation service has run.
+    # Its older helper must not overwrite a valid professional duty decision. A
+    # final source-aware pass below becomes the single release owner.
+    legacy_guard_duty = guard.apply_state_duty_from_draft
+
+    def defer_guard_state_duty(
+        case_context: str,
+        draft: ClaimDraft,
+        language: str = "ru",
+    ) -> None:
+        current = str(draft.state_duty or "").strip()
+        if current and not current.startswith("["):
+            guard._localize_state_duty_request(draft, language)
+            return
+        legacy_guard_duty(case_context, draft, language=language)
+
+    guard.apply_state_duty_from_draft = defer_guard_state_duty
+
+    current_claim = StableLegalProductionService.draft_claim
+
+    async def claim_with_final_state_duty(
+        self: StableLegalProductionService,
+        case_context: str,
+        research: LegalResearch,
+        language: str = "ru",
+    ) -> ClaimDraft:
+        draft = await current_claim(self, case_context, research, language=language)
+        decision = apply_professional_state_duty(case_context, research, draft)
+        LOGGER.info(
+            "STATE_DUTY_RELEASE_FINAL mode=%s amount=%s deferred=%s exempt=%s needs_review=%s price=%r",
+            decision.mode,
+            decision.amount,
+            decision.deferred,
+            decision.exempt,
+            decision.needs_review,
+            draft.price_of_claim,
+        )
+        return draft
+
+    StableLegalProductionService.draft_claim = claim_with_final_state_duty  # type: ignore[assignment]
+
     _INSTALLED = True
     LOGGER.info(
-        "Installed universal Word final hardening: Decimal KZT arithmetic + exact state duty/Article 353 + source-safe penalty extraction"
+        "Installed universal Word final hardening: Decimal KZT arithmetic + separate state-duty caps + canonical final duty owner + exact Article 353 + source-safe penalty extraction"
     )
