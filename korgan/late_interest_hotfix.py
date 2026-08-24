@@ -33,25 +33,22 @@ from korgan.verified_openai import (
 
 _ARTICLE_353_RE = re.compile(r"(?<!\d)353(?!\d)")
 _GK_GENERAL_MARKER = "K940001000_"
+_PENALTY_TERM = (
+    r"(?:неустойк\w*|пен[яию]\b|штраф\w*|өсімпұл\w*|тұрақсыздық\s+айыб\w*|"
+    r"ст\.?\s*353|стать\w*\s*353|пользован\w*\s+чужими\s+деньг\w*|"
+    r"процент\w*\s+за\s+просроч\w*)"
+)
+_REQUEST_VERB = r"(?:прошу|требую|взыскать|взыщите|начислить|заявляю|добавьте|добавь|сұраймын|өндір\w*|талап\s+ет\w*)"
 
 _EXPLICIT_PENALTY_PATTERNS = (
-    re.compile(
-        r"(?:прошу|требую|взыскать|взыщите|начислить|заявляю|добавьте|добавь)"
-        r"[^.\n]{0,180}(?:неустойк\w*|пен[яию]\b|штраф\w*|ст\.?\s*353|стать\w*\s*353|"
-        r"пользован\w*\s+чужими\s+деньг\w*|процент\w*\s+за\s+просроч\w*)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:неустойк\w*|пен[яию]\b|штраф\w*|ст\.?\s*353|стать\w*\s*353|"
-        r"пользован\w*\s+чужими\s+деньг\w*|процент\w*\s+за\s+просроч\w*)"
-        r"[^.\n]{0,180}(?:взыскать|требую|прошу|начислить)",
-        re.IGNORECASE,
-    ),
+    re.compile(rf"{_REQUEST_VERB}[^.\n]{{0,180}}{_PENALTY_TERM}", re.IGNORECASE),
+    re.compile(rf"{_PENALTY_TERM}[^.\n]{{0,180}}{_REQUEST_VERB}", re.IGNORECASE),
 )
 
 _PENALTY_LINE_RE = re.compile(
-    r"(?:ст\.?\s*353|стать\w*\s*353|неустойк\w*|пен[яию]\b|штраф\w*|"
-    r"пользован\w*\s+чужими\s+деньг\w*|процент\w*\s+(?:по\s+денежн\w*|за\s+просроч\w*))",
+    r"(?:ст\.?\s*353|стать\w*\s*353|неустойк\w*|пен[яию]\b|штраф\w*|өсімпұл\w*|"
+    r"тұрақсыздық\s+айыб\w*|пользован\w*\s+чужими\s+деньг\w*|"
+    r"процент\w*\s+(?:по\s+денежн\w*|за\s+просроч\w*))",
     re.IGNORECASE,
 )
 _ARTICLE_353_LINE_RE = re.compile(
@@ -59,7 +56,7 @@ _ARTICLE_353_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _TITLE_PENALTY_RE = re.compile(
-    r"\s+и\s+(?:[а-яё]+\s+){0,3}(?:процент\w*|неустойк\w*|пен[иь]\w*)[^\n]*$",
+    r"\s+(?:и|және)\s+(?:[а-яёәіңғүұқөһ]+\s+){0,3}(?:процент\w*|неустойк\w*|пен[иь]\w*|өсімпұл\w*|тұрақсыздық\s+айыб\w*)[^\n]*$",
     re.IGNORECASE,
 )
 _STATE_DUTY_OR_COST_RE = re.compile(
@@ -69,11 +66,11 @@ _STATE_DUTY_OR_COST_RE = re.compile(
 )
 _PROPERTY_REQUEST_RE = re.compile(
     r"(?:взыск\w*|вернут\w*|возврат\w*|долг\w*|задолженн\w*|неустойк\w*|пен[яию]\b|штраф\w*|"
-    r"убыт\w*|ущерб\w*|компенсац\w*)",
+    r"убыт\w*|ущерб\w*|компенсац\w*|өндір\w*|берешек\w*|қарыз\w*|өсімпұл\w*|тұрақсыздық\s+айыб\w*)",
     re.IGNORECASE,
 )
 _AWARDED_AMOUNT_RE = re.compile(
-    r"(?:в\s+размере|в\s+сумме|сумм\w*)\s*"
+    r"(?:в\s+размере|в\s+сумме|сумм\w*|мөлшерінде|сомасында)\s*"
     r"(?P<amount>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))",
     re.IGNORECASE,
 )
@@ -82,8 +79,8 @@ _MONEY_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 _PENALTY_AMOUNT_NEAR_RE = re.compile(
-    r"(?:неустойк\w*|пен[яию]\b|штраф\w*)"
-    r"(?:\s+(?:в\s+размере|в\s+сумме|составля\w*)\s+|[\s:—-]{1,12})"
+    r"(?:неустойк\w*|пен[яию]\b|штраф\w*|өсімпұл\w*|тұрақсыздық\s+айыб\w*)"
+    r"(?:\s+(?:в\s+размере|в\s+сумме|составля\w*|мөлшерінде|сомасында)\s+|[\s:—-]{1,12})"
     r"(?P<amount>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))",
     re.IGNORECASE,
 )
@@ -208,7 +205,7 @@ def _principal_amount(draft: ClaimDraft) -> int | None:
         if _PENALTY_LINE_RE.search(request) or _STATE_DUTY_OR_COST_RE.search(request):
             continue
         lowered = request.lower()
-        if any(marker in lowered for marker in ("основн", "долг", "задолж")):
+        if any(marker in lowered for marker in ("основн", "долг", "задолж", "негізгі", "берешек", "қарыз")):
             amount = parse_amount_kzt(request)
             if amount:
                 return amount
@@ -325,7 +322,7 @@ def _component_label(request: str) -> str:
         return "неустойка по статье 353 ГК РК"
     if _PENALTY_LINE_RE.search(lowered):
         return "неустойка"
-    if any(marker in lowered for marker in ("основн", "долг", "задолж")):
+    if any(marker in lowered for marker in ("основн", "долг", "задолж", "негізгі", "берешек", "қарыз")):
         return "основной долг"
     return "имущественное требование"
 
