@@ -59,16 +59,23 @@ MRP_SOURCE_URL = str(_MRP_ROWS[-1]["source_url"])
 MRP_2026 = int(_MRP_ROWS[-1]["value"])
 RATE_INDIVIDUAL = float(_STATE_DUTY_DATA["individual_rate"])
 RATE_LEGAL_ENTITY = float(_STATE_DUTY_DATA["legal_entity_rate"])
-CAP_MRP = int(_STATE_DUTY_DATA["cap_mrp"])
+CAP_MRP_INDIVIDUAL = int(_STATE_DUTY_DATA["individual_cap_mrp"])
+CAP_MRP_LEGAL_ENTITY = int(_STATE_DUTY_DATA["legal_entity_cap_mrp"])
+NONPROPERTY_DUTY_MRP = float(_STATE_DUTY_DATA["nonproperty_mrp"])
+# Backwards-compatible alias. Historically KORGAN had one cap for both party
+# types; callers that still import CAP_MRP now receive the individual cap.
+CAP_MRP = CAP_MRP_INDIVIDUAL
 NEEDS_CALCULATION_MARKER = "[ТРЕБУЕТ РАСЧЁТА ГОСПОШЛИНЫ]"
 
-_LEGAL_ENTITY_ABBREVIATIONS = ("бин", "тоо", "ао", "ип")
+_LEGAL_ENTITY_ABBREVIATIONS = ("бин", "тоо", "ао")
 _LEGAL_ENTITY_PHRASES = (
     "товарищество с ограниченной ответственностью",
     "акционерное общество",
     "юридическое лицо",
     "юридического лица",
-    "индивидуальный предприниматель",
+)
+_INDIVIDUAL_ENTREPRENEUR_RE = re.compile(
+    r"(?i)(?:\bиндивидуальн\w*\s+предпринимател\w*\b|(?<!\w)ип(?!\w))"
 )
 _AMOUNT_PATTERN = re.compile(
     r"(\d[\d\s ]*(?:[.,]\d{1,2})?)\s*(?:\([^)]*\)\s*)?(?:тенге|теңге|тг\b|₸|kzt)",
@@ -92,16 +99,46 @@ _PERSON_NAME_RE = re.compile(r"[А-ЯЁ][а-яё-]+\s+[А-ЯЁ][а-яё-]+(?:\s+
 _IIN_LABELED_RE = re.compile(r"\bИИН\s*[:\-–]?\s*(\d{12})\b", re.IGNORECASE)
 _BIN_LABELED_RE = re.compile(r"\bБИН\s*[:\-–]?\s*(\d{12})\b", re.IGNORECASE)
 _BARE_12_DIGITS_RE = re.compile(r"(?<!\d)\d{12}(?!\d)")
-# Backwards-compatible private alias for any internal imports/tests that still
-# refer to the old name. Party-type decisions no longer rely on this regex.
 _IIN_RE = _BARE_12_DIGITS_RE
 
 
+def _round_tenge(value: Decimal) -> int:
+    return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
 def calc_gosposhlina_claim(amount: int, is_individual: bool) -> int:
+    """State duty for an ordinary property claim under Article 665(1)(1).
+
+    Physical persons (including an individual entrepreneur in an ordinary civil
+    property claim) pay 1% capped at 10,000 MRP. Legal entities pay 3% capped at
+    20,000 MRP. Special administrative/tax categories must use their own rule and
+    are intentionally not folded into this helper.
+    """
     if amount < 0:
         raise ValueError("Сумма иска не может быть отрицательной")
     rate = RATE_INDIVIDUAL if is_individual else RATE_LEGAL_ENTITY
-    return min(round(amount * rate), CAP_MRP * MRP_2026)
+    cap_mrp = CAP_MRP_INDIVIDUAL if is_individual else CAP_MRP_LEGAL_ENTITY
+    cap = Decimal(cap_mrp) * Decimal(MRP_2026)
+    calculated = Decimal(amount) * Decimal(str(rate))
+    return min(_round_tenge(calculated), int(cap))
+
+
+def calc_nonproperty_state_duty(*, demands: int = 1) -> int:
+    """Duty for independently chargeable non-property claims.
+
+    Article 665 sets 0.5 MRP for a non-property claim. A mixed filing may need
+    both its property duty and the non-property component; callers must provide
+    the count only when the demands are legally independent and separately
+    chargeable. Ambiguous classification should remain fail-closed upstream.
+    """
+    if demands < 0:
+        raise ValueError("Количество неимущественных требований не может быть отрицательным")
+    return _round_tenge(Decimal(MRP_2026) * Decimal(str(NONPROPERTY_DUTY_MRP)) * Decimal(demands))
+
+
+def calc_mixed_state_duty(amount: int, is_individual: bool, *, nonproperty_demands: int = 1) -> int:
+    """Property duty plus separately chargeable non-property component."""
+    return calc_gosposhlina_claim(amount, is_individual) + calc_nonproperty_state_duty(demands=nonproperty_demands)
 
 
 def parse_all_amounts_kzt(text: str) -> list[int]:
@@ -217,9 +254,9 @@ def _has_legal_entity_marker(segment: str) -> bool:
 def claimant_is_individual(case_context: str) -> bool | None:
     """Determine claimant type only from role-bound or explicitly labeled IDs.
 
-    A bare 12-digit identifier is ambiguous in Kazakhstan because both ИИН and
-    БИН have 12 digits. If the claimant cannot be role-bound, only explicit ИИН
-    and БИН labels are used; mixed or unlabeled cases remain fail-closed.
+    An individual entrepreneur remains a physical person for the ordinary civil
+    property-claim rate. Special Article 665 administrative/tax-notice claims
+    have their own IP rate and must not use this ordinary helper.
     """
     if not case_context:
         return None
@@ -228,6 +265,8 @@ def claimant_is_individual(case_context: str) -> bool | None:
     if segment:
         if _has_legal_entity_marker(segment):
             return False
+        if _INDIVIDUAL_ENTREPRENEUR_RE.search(segment):
+            return True
         if _IIN_LABELED_RE.search(segment) or _claimant_has_iin_elsewhere(case_context, segment):
             return True
         return None
@@ -242,6 +281,7 @@ def claimant_is_individual(case_context: str) -> bool | None:
 
 
 def gosposhlina_line(case_context: str, price_of_claim: str) -> str:
+    """Render the deterministic duty line for an ordinary property claim."""
     amount = parse_amount_kzt(price_of_claim)
     if amount is None:
         return NEEDS_CALCULATION_MARKER
@@ -250,7 +290,11 @@ def gosposhlina_line(case_context: str, price_of_claim: str) -> str:
         return NEEDS_CALCULATION_MARKER
     duty = calc_gosposhlina_claim(amount, is_individual)
     percent = f"{RATE_INDIVIDUAL * 100:g}%" if is_individual else f"{RATE_LEGAL_ENTITY * 100:g}%"
-    return f"{format_kzt(duty)} ({percent} от цены иска, {RATE_SOURCE_ARTICLE})"
+    cap_mrp = CAP_MRP_INDIVIDUAL if is_individual else CAP_MRP_LEGAL_ENTITY
+    return (
+        f"{format_kzt(duty)} ({percent} от цены иска; максимум {cap_mrp:,} МРП; "
+        f"{RATE_SOURCE_ARTICLE})"
+    ).replace(",", " ")
 
 
 ARTICLE_353_SOURCE_URL = "https://adilet.zan.kz/rus/docs/K940001000_/compare"

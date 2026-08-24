@@ -4,7 +4,9 @@ import logging
 
 from korgan import document_quality as _dq
 from korgan import senior_claim_preflight as _sp
+from korgan.claim_filing_completeness import enforce_article148_party_completeness
 from korgan.claim_quality_hotfix import FILING_ACTION_PREFIX, ProductionClaimService
+from korgan.claim_state_duty import apply_professional_state_duty
 from korgan.fast_v2_production_legal import _deterministic_pre_qa
 from korgan.late_interest_hotfix import _apply_verified_article_353, _today_kz
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
@@ -13,8 +15,14 @@ from korgan.professional_claim_finalizer import finalize_professional_claim
 LOGGER = logging.getLogger(__name__)
 
 
+def _safe_deterministic_pre_qa(case_context: str, research: LegalResearch, draft: ClaimDraft) -> None:
+    """Preserve legacy cleanup, then let the professional router own final duty."""
+    _deterministic_pre_qa(case_context, research, draft)
+    apply_professional_state_duty(case_context, research, draft)
+
+
 class FinalizedProductionClaimService(ProductionClaimService):
-    """Current production quality core plus a zero-call claim finalizer."""
+    """Current production quality core plus deterministic professional release gates."""
 
     async def draft_claim(
         self,
@@ -25,11 +33,18 @@ class FinalizedProductionClaimService(ProductionClaimService):
         draft = await super().draft_claim(case_context, research, language=language)
 
         finalize_professional_claim(case_context, research, draft, language=language)
-        _deterministic_pre_qa(case_context, research, draft)
+        _safe_deterministic_pre_qa(case_context, research, draft)
         _apply_verified_article_353(case_context, research, draft, filing_date=_today_kz())
 
+        # Article 353 may add a verified monetary component. Re-finalize price,
+        # then re-run the deterministic duty router from the actual final prayer.
         finalize_professional_claim(case_context, research, draft, language=language)
-        _deterministic_pre_qa(case_context, research, draft)
+        _safe_deterministic_pre_qa(case_context, research, draft)
+
+        # Article 148 is a final filing-readiness gate, not an intake form and
+        # not a reusable legal-grounding invariant. It is deliberately applied
+        # only here, immediately before senior preflight/export readiness.
+        enforce_article148_party_completeness(draft)
 
         deterministic = _sp.deterministic_claim_preflight(case_context, research, draft)
         quality = _dq.assess_document_quality("claim", case_context, research, draft)
