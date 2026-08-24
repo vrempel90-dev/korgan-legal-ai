@@ -8,7 +8,7 @@ import os
 from typing import Any
 from urllib.parse import parse_qsl
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -20,7 +20,7 @@ from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
 from korgan.config import get_settings
 from korgan.pretrial_response import PretrialResponseProductionService
 
-app = FastAPI(title="KORGAN Mini App API", version="0.2.0")
+app = FastAPI(title="KORGAN Mini App API", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -41,6 +41,8 @@ service = ClaimPipelineV2Adapter(PretrialResponseProductionService(settings))
 _sessions: dict[str, dict[str, Any]] = {}
 
 _CLAIM_CATEGORIES = {"claim", "debt", "consumer", "housing", "labor"}
+_ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".docx", ".txt", ".jpg", ".jpeg", ".png", ".webp"}
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
 class ConsultationRequest(BaseModel):
@@ -107,12 +109,33 @@ def _require_consent(user_id: str) -> dict[str, Any]:
 
 
 def _public_case(item: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in item.items() if k != "document_base64"}
+    public = {k: v for k, v in item.items() if k not in {"document_base64", "materials"}}
+    public["materials_count"] = len(item.get("materials") or [])
+    public["material_names"] = [str(x.get("filename") or "") for x in item.get("materials") or []]
+    return public
+
+
+def _case_context(case: dict[str, Any]) -> str:
+    chunks = [str(case.get("description") or "").strip()]
+    materials = case.get("materials") or []
+    if materials:
+        chunks.append(
+            "Материалы дела:\n" + "\n\n---\n\n".join(str(item.get("context") or "") for item in materials)
+        )
+    return "\n\n---\n\n".join(chunk for chunk in chunks if chunk)
+
+
+def _extension(filename: str) -> str:
+    lowered = filename.lower().strip()
+    for ext in sorted(_ALLOWED_UPLOAD_EXTENSIONS, key=len, reverse=True):
+        if lowered.endswith(ext):
+            return ext
+    return ""
 
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "korgan-miniapp-api", "version": "0.2.0"}
+    return {"status": "ok", "service": "korgan-miniapp-api", "version": "0.3.0"}
 
 
 @app.post("/miniapp/consent")
@@ -145,9 +168,54 @@ async def create_case(payload: CaseRequest, x_telegram_init_data: str = Header(d
         "document_type": payload.document_type,
         "language": "kk" if payload.language == "kk" else "ru",
         "status": "created",
+        "materials": [],
     }
     state["cases"][case_id] = item
     return {"case": _public_case(item)}
+
+
+@app.post("/miniapp/cases/{case_id}/materials")
+async def upload_material(
+    case_id: str,
+    file: UploadFile = File(...),
+    x_telegram_init_data: str = Header(default=""),
+) -> dict[str, Any]:
+    user_id = _identity(x_telegram_init_data)
+    state = _require_consent(user_id)
+    case = state["cases"].get(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    filename = (file.filename or "material").strip()
+    if _extension(filename) not in _ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="Поддерживаются PDF, DOCX, TXT, JPG, JPEG, PNG и WEBP")
+
+    data = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Файл больше 20 МБ")
+    if not data:
+        raise HTTPException(status_code=400, detail="Пустой файл")
+
+    try:
+        extracted = await service.extract_document(data, filename, file.content_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Не удалось разобрать материал") from exc
+
+    materials = list(case.get("materials") or [])
+    materials.append({
+        "filename": filename,
+        "content_type": file.content_type or "",
+        "context": extracted.as_context(),
+    })
+    case["materials"] = materials[-settings.max_case_documents :]
+    case["status"] = "materials_ready"
+    return {
+        "ok": True,
+        "case": _public_case(case),
+        "preview": extracted.as_context()[:1800],
+    }
 
 
 @app.post("/miniapp/consultation")
@@ -159,7 +227,7 @@ async def consultation(payload: ConsultationRequest, x_telegram_init_data: str =
         case = state["cases"].get(payload.case_id)
         if not case:
             raise HTTPException(status_code=404, detail="Case not found")
-        case_context = str(case.get("description", ""))
+        case_context = _case_context(case)
     answer, urls = await service.consult(
         payload.message,
         case_context=case_context,
@@ -181,7 +249,7 @@ async def generate_document(payload: GenerateRequest, x_telegram_init_data: str 
         raise HTTPException(status_code=501, detail="Этот тип документа подключается на следующем этапе")
 
     language = "kk" if payload.language == "kk" else "ru"
-    context = str(case.get("description", ""))
+    context = _case_context(case)
     research = await service.research_case(context, language=language)
     draft = await service.draft_claim(context, research, language=language)
     file_bytes = build_claim_docx(draft)
