@@ -95,3 +95,10 @@ def test_wrong_arithmetic_after_equals_fails_closed():
     request = "Взыскать 1 000 000 тенге + 200 000 тенге = 1 500 000 тенге."
     ledger = build_claim_money_ledger([request])
     assert ledger.unresolved_requests == [request]
+
+
+def test_monetary_alternative_relief_fails_closed_instead_of_being_silently_dropped():
+    request = "В качестве альтернативного требования взыскать стоимость имущества 800 000 тенге."
+    ledger = build_claim_money_ledger([request])
+    assert ledger.total == 0
+    assert ledger.unresolved_requests == [request]
