@@ -4,8 +4,9 @@ A consultation is not allowed to cite law from model memory. One structured
 Responses API call performs official-source research and returns candidate legal
 points. A point becomes client-visible only when its claimed URL was actually
 opened by the web-search tool and its paraphrase is mechanically compatible with
-the provision text. Precise legal assertions outside that verified block are
-removed from the client-facing answer.
+the provision text. When the act is covered by KORGAN's refreshed local corpus,
+the exact act/article identity and quoted provision text are checked again
+against that corpus before release.
 """
 
 from __future__ import annotations
@@ -13,9 +14,12 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
+from korgan.legal.corpus import DEFAULT_DB_PATH, KNOWN_ACTS, LegalCorpus
 from korgan.provision_check import paraphrase_defects
 from korgan.robust_production_legal import _is_adilet_source, _is_court_source
 from korgan.verified_openai import _actual_response_urls, _canonical_url
@@ -25,8 +29,6 @@ LOGGER = logging.getLogger(__name__)
 _CONSULT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "summary": {"type": "string"},
-        "analysis": {"type": "array", "items": {"type": "string"}},
         "recommended_actions": {"type": "array", "items": {"type": "string"}},
         "verified_points": {
             "type": "array",
@@ -44,14 +46,14 @@ _CONSULT_SCHEMA: dict[str, Any] = {
         },
         "unverified_claims": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["summary", "analysis", "recommended_actions", "verified_points", "unverified_claims"],
+    "required": ["recommended_actions", "verified_points", "unverified_claims"],
     "additionalProperties": False,
 }
 
 # Precise law belongs only to the source-bound verified block below. These
 # patterns deliberately catch article numbers, legal rates/MRP and exact legal
-# periods that a free-form model sentence could otherwise smuggle into the
-# answer without a verified source binding.
+# periods that a free-form action/unverified note could otherwise smuggle into
+# the answer without a verified source binding.
 _PRECISE_LAW_RE = re.compile(
     r"(?i)(?:"
     r"(?:стать[ьяеию]\w*|ст\.)\s*\d+"
@@ -61,6 +63,9 @@ _PRECISE_LAW_RE = re.compile(
     r"|(?:срок\w*|мерзім\w*|госпошлин\w*|мемлекеттік\s+баж\w*|подсудност\w*|соттыл\w*)[^\n]{0,40}\b\d+\b"
     r")"
 )
+_ARTICLE_NO_RE = re.compile(
+    r"(?i)(?:(?:стать[ьяеию]\w*|ст\.)\s*(?P<ru>\d+(?:-\d+)?)|(?P<kk>\d+(?:-\d+)?)\s*[-–]?\s*бап\b)"
+)
 
 
 def _today_kz() -> str:
@@ -68,7 +73,7 @@ def _today_kz() -> str:
 
 
 def _safe_free_text(value: str) -> str:
-    """Keep practical prose only when it contains no precise unbound law."""
+    """Keep operational prose only when it contains no precise unbound law."""
     text = " ".join(str(value or "").split()).strip()
     if not text or _PRECISE_LAW_RE.search(text):
         return ""
@@ -82,6 +87,78 @@ def _safe_free_lines(values: list[Any] | None) -> list[str]:
         if line and line not in result:
             result.append(line)
     return result
+
+
+def _is_russian_adilet(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    return (host == "adilet.zan.kz" or host.endswith(".adilet.zan.kz")) and parsed.path.startswith("/rus/docs/")
+
+
+def _article_no(label: str) -> str:
+    match = _ARTICLE_NO_RE.search(label or "")
+    if not match:
+        return ""
+    return str(match.group("ru") or match.group("kk") or "")
+
+
+def _act_id_from_adilet_url(url: str) -> str:
+    """Map a current Adilet code page to one of the acts in the refreshed corpus."""
+    path = urlparse(url).path
+    for act_id, (adilet_id, _title) in KNOWN_ACTS.items():
+        if f"/{adilet_id}" in path:
+            return act_id
+    return ""
+
+
+def _normalize_quote(text: str) -> str:
+    value = str(text or "").replace("ё", "е").replace("Ё", "Е").lower()
+    value = re.sub(r"\s+", " ", value)
+    return value.strip(" \t\r\n.;,«»\"")
+
+
+def _corpus_article_check(article: str, source_url: str, provision_text: str) -> bool | None:
+    """Check exact article identity when the refreshed local act is available.
+
+    ``True`` means the article exists in the current local act and the model's
+    quoted provision text is a literal normalized excerpt of that article/item.
+    ``False`` means the local corpus contradicts the model's article identity or
+    quote. ``None`` means the act/database is not available for this secondary
+    check; the live source-bound check remains authoritative in that case.
+    """
+    act_id = _act_id_from_adilet_url(source_url)
+    if not act_id:
+        return None
+    number = _article_no(article)
+    if not number:
+        return False
+
+    db_path = Path(DEFAULT_DB_PATH)
+    if not db_path.exists():
+        return None
+
+    corpus = LegalCorpus(db_path)
+    try:
+        rows = corpus.connection.execute(
+            "SELECT body FROM provisions WHERE act_id = ? AND article_no = ? ORDER BY sort_key, item_no",
+            (act_id, number),
+        ).fetchall()
+    except Exception:
+        LOGGER.exception("Consultation corpus article check failed closed to live source only")
+        return None
+    finally:
+        corpus.close()
+
+    if not rows:
+        return False
+    quote = _normalize_quote(provision_text)
+    if len(quote) < 40:
+        return False
+    bodies = [_normalize_quote(str(row["body"])) for row in rows]
+    return any(quote in body or body in quote for body in bodies if body)
 
 
 def _accept_verified_points(
@@ -114,20 +191,24 @@ def _accept_verified_points(
 
         if not statement or not article or not actual_url:
             if statement:
-                rejected.append(f"{statement} — нет связи с реально открытым официальным источником.")
+                rejected.append("Правовой вывод отброшен: нет связи с реально открытым официальным источником.")
             continue
 
         if _is_court_source(actual_url):
             if article.lower() != "официальный перечень судов":
-                rejected.append(f"{statement} — страница суда не подтверждает норму права.")
+                rejected.append("Правовой вывод отброшен: страница суда не подтверждает норму права.")
                 continue
         else:
-            if not _is_adilet_source(actual_url):
-                rejected.append(f"{statement} — источник нормы не является Adilet.")
+            if not _is_adilet_source(actual_url) or not _is_russian_adilet(actual_url):
+                rejected.append("Правовой вывод отброшен: для нормы права нужна русская официальная страница Adilet.")
                 continue
             drift = paraphrase_defects(statement, provision_text)
             if drift:
-                rejected.append(f"{statement} — {'; '.join(drift[:3])}")
+                rejected.append("Правовой вывод отброшен: пересказ не прошёл сверку с текстом нормы.")
+                continue
+            corpus_check = _corpus_article_check(article, actual_url, provision_text)
+            if corpus_check is False:
+                rejected.append("Правовой вывод отброшен: номер статьи или текст нормы не совпал с текущим локальным корпусом KORGAN.")
                 continue
 
         item = (statement, article, actual_url)
@@ -147,15 +228,12 @@ def _render_consultation(
     language: str,
 ) -> str:
     kk = language == "kk"
-    summary = _safe_free_text(str(payload.get("summary", "")))
-    analysis = _safe_free_lines(payload.get("analysis", []))
     actions = _safe_free_lines(payload.get("recommended_actions", []))
-    unverified = [
-        " ".join(str(x).split()).strip()
-        for x in payload.get("unverified_claims", []) or []
-        if " ".join(str(x).split()).strip()
-    ]
-    unverified.extend(x for x in rejected if x not in unverified)
+    unverified = _safe_free_lines(payload.get("unverified_claims", []))
+    for item in rejected:
+        safe = _safe_free_text(item)
+        if safe and safe not in unverified:
+            unverified.append(safe)
 
     if not accepted:
         if kk:
@@ -174,18 +252,13 @@ def _render_consultation(
             base += "\n\nТребует дополнительной проверки:\n" + "\n".join(f"• {x}" for x in unverified[:5])
         return base
 
-    parts: list[str] = []
-    if summary:
-        parts.append(("Қысқаша қорытынды:\n" if kk else "Краткий вывод:\n") + summary)
-    if analysis:
-        parts.append(("Іс бойынша бағалау:\n" if kk else "Оценка ситуации:\n") + "\n".join(f"• {x}" for x in analysis[:6]))
-
     law_title = "Расталған құқықтық негіз:" if kk else "Подтверждено по действующему праву РК:"
-    law_lines = [f"• {statement} Основание: {article}." for statement, article, _ in accepted[:8]]
-    parts.append(law_title + "\n" + "\n".join(law_lines))
+    basis_word = "Негіз" if kk else "Основание"
+    law_lines = [f"• {statement} {basis_word}: {article}." for statement, article, _ in accepted[:8]]
+    parts: list[str] = [law_title + "\n" + "\n".join(law_lines)]
 
     if actions:
-        parts.append(("Не істеу керек:\n" if kk else "Что делать:\n") + "\n".join(f"• {x}" for x in actions[:6]))
+        parts.append(("Практикалық қадамдар:\n" if kk else "Практические шаги:\n") + "\n".join(f"• {x}" for x in actions[:6]))
     if unverified:
         parts.append(("Қосымша тексеру қажет:\n" if kk else "Требует дополнительной проверки:\n") + "\n".join(f"• {x}" for x in unverified[:5]))
 
@@ -209,11 +282,11 @@ async def _guarded_consult(
     prompt = (
         f"Дата проверки: {_today_kz()}. Ответь на юридический вопрос только по действующему праву Республики Казахстан.\n\n"
         "КРИТИЧЕСКИЙ ФОРМАТ:\n"
-        "1. summary, analysis и recommended_actions — практическая работа с фактами, БЕЗ номеров статей, точных законных сроков, ставок, МРП/АЕК и точного наименования суда.\n"
-        "2. Любая точная норма, срок, ставка, подсудность или иной юридически точный вывод помещается ТОЛЬКО в verified_points.\n"
-        "3. Каждый verified_point: конкретный вывод + точная статья/пункт + существенная дословная выдержка provision_text + URL официальной страницы, которую ты реально открыл.\n"
-        "4. Материальное и процессуальное право подтверждай по Adilet. gov.kz/sud.gov.kz допускаются только для официального наименования/структуры суда; тогда article='официальный перечень судов'.\n"
-        "5. Если официальный источник не подтверждает вывод, помещай его в unverified_claims. Не угадывай.\n"
+        "1. Любой юридический вывод, точная норма, срок, ставка, подсудность или право/обязанность помещается ТОЛЬКО в verified_points.\n"
+        "2. Каждый verified_point: один конкретный правовой вывод + точная статья/пункт + существенная ДОСЛОВНАЯ выдержка provision_text без многоточий + URL официальной страницы, которую ты реально открыл.\n"
+        "3. Материальное и процессуальное право подтверждай только по русской странице Adilet /rus/docs/. gov.kz/sud.gov.kz допускаются только для официального наименования/структуры суда; тогда article='официальный перечень судов'.\n"
+        "4. recommended_actions — только операционные действия с доказательствами/документами и следующие шаги; без новых правовых выводов, номеров статей, законных сроков, ставок, МРП/АЕК или гарантий исхода.\n"
+        "5. Если официальный источник не подтверждает вывод, помещай его в unverified_claims без выдуманного номера статьи или ставки.\n"
         "6. Не обещай исход дела. Отделяй факты пользователя от правовых выводов.\n\n"
         f"ВОПРОС:\n{question}\n\n"
         f"КОНТЕКСТ ДЕЛА:\n{case_context[:self.settings.max_case_text_chars] if case_context else 'нет'}"
@@ -222,7 +295,7 @@ async def _guarded_consult(
         model=self.settings.openai_model,
         instructions=(
             "Ты ведущий юрист KORGAN по праву Республики Казахстан. Работай source-bound и fail-closed. "
-            "Ни одна точная норма не должна попасть клиенту из памяти модели. "
+            "Клиент увидит юридические выводы только из verified_points, поэтому не прячь право в других полях. "
             f"Язык: {'казахский' if language == 'kk' else 'русский'}."
         ),
         content=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
