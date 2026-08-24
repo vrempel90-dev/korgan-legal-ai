@@ -5,16 +5,21 @@ async function request(path, options = {}) {
 
   const tg = window.Telegram?.WebApp;
   const headers = {
-    'Content-Type': 'application/json',
+    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers || {}),
   };
 
   if (tg?.initData) headers['X-Telegram-Init-Data'] = tg.initData;
 
   const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  const payload = await response.json().catch(() => ({}));
+  const contentType = response.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json')
+    ? await response.json().catch(() => ({}))
+    : await response.text().catch(() => '');
+
   if (!response.ok) {
-    const error = new Error(payload?.message || `KORGAN_API_${response.status}`);
+    const detail = typeof payload === 'object' ? (payload?.detail || payload?.message) : payload;
+    const error = new Error(detail || `KORGAN_API_${response.status}`);
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -23,8 +28,7 @@ async function request(path, options = {}) {
 }
 
 export const korganApi = {
-  health: () => request('/miniapp/health'),
-  bootstrap: () => request('/miniapp/bootstrap'),
+  health: () => request('/health'),
   consultation: (message, caseId, language = 'ru') => request('/miniapp/consultation', {
     method: 'POST',
     body: JSON.stringify({ message, case_id: caseId || null, language }),
@@ -33,16 +37,20 @@ export const korganApi = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
-  generateDocument: (payload) => request('/miniapp/documents/generate', {
+  generateDocument: (caseId, documentType = 'claim', language = 'ru') => request('/miniapp/documents/generate', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
   }),
   listCases: () => request('/miniapp/cases'),
   deleteCase: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}`, { method: 'DELETE' }),
-  deleteMyData: () => request('/miniapp/me/data', { method: 'DELETE' }),
-  acceptConsent: (version, language) => request('/miniapp/consent', {
+  deleteMyData: () => request('/miniapp/me', { method: 'DELETE' }),
+  acceptConsent: (termsVersion) => request('/miniapp/consent', {
     method: 'POST',
-    body: JSON.stringify({ version, language }),
+    body: JSON.stringify({ accepted: true, terms_version: termsVersion }),
+  }),
+  declineConsent: (termsVersion) => request('/miniapp/consent', {
+    method: 'POST',
+    body: JSON.stringify({ accepted: false, terms_version: termsVersion }),
   }),
 };
 
