@@ -1,6 +1,6 @@
 from datetime import date
 
-from korgan.claim_quality_gate import check_amount_consistency
+from korgan.claim_quality_gate import ClaimQualityReport, assess_claim_quality, check_amount_consistency
 from korgan.late_interest_hotfix import _apply_verified_penalty
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 
@@ -173,3 +173,38 @@ def test_unrequested_model_penalty_is_removed_from_all_fields() -> None:
     assert not any("неустой" in item.lower() for item in draft.attachments)
     assert "неустой" not in draft.title.lower()
     assert draft.late_interest == ""
+
+
+def test_title_amount_cannot_disappear_from_petitum_and_price() -> None:
+    draft = _draft()
+    draft.title = "Исковое заявление о взыскании договорной неустойки 996 000 тенге"
+    draft.price_of_claim = "13 000 000 тенге"
+    draft.requests = [
+        "Взыскать основной долг 12 000 000 тенге.",
+        "Взыскать договорную неустойку 1 000 000 тенге.",
+    ]
+    draft.facts = []
+    draft.attachments = []
+
+    errors = check_amount_consistency(draft)
+
+    assert any("996 000" in item and "title" in item for item in errors)
+
+
+def test_amount_mismatch_is_unconditionally_blocking_for_ready() -> None:
+    report = ClaimQualityReport(
+        score=10.0,
+        issues=["AMOUNT_MISMATCH: сумма санкции отсутствует в петитуме"],
+        category_scores={},
+    )
+    assert report.ready is False
+
+
+def test_assess_claim_quality_marks_amount_mismatch_not_ready() -> None:
+    draft = _draft()
+    draft.requests = [item for item in draft.requests if "неустой" not in item.lower()]
+
+    report = assess_claim_quality(CASE_CONTEXT, _research(), draft)
+
+    assert any(item.startswith("AMOUNT_MISMATCH:") for item in report.issues)
+    assert report.ready is False
