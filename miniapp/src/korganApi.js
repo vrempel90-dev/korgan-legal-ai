@@ -28,6 +28,12 @@ async function request(path, options = {}) {
   return payload;
 }
 
+async function uploadMaterial(caseId, file) {
+  const body = new FormData();
+  body.append('file', file);
+  return request(`/miniapp/cases/${encodeURIComponent(caseId)}/materials`, { method: 'POST', body });
+}
+
 export const korganApi = {
   health: () => request('/health'),
   consultation: (message, caseId, language = 'ru') => request('/miniapp/consultation', {
@@ -40,10 +46,17 @@ export const korganApi = {
   }),
   getCase: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}`),
   getDocument: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/document`),
-  uploadMaterial: (caseId, file) => {
-    const body = new FormData();
-    body.append('file', file);
-    return request(`/miniapp/cases/${encodeURIComponent(caseId)}/materials`, { method: 'POST', body });
+  uploadMaterial,
+  uploadMaterials: async (caseId, files, onProgress) => {
+    const list = Array.from(files || []);
+    const results = [];
+    for (let index = 0; index < list.length; index += 1) {
+      const file = list[index];
+      const result = await uploadMaterial(caseId, file);
+      results.push({ file, result });
+      onProgress?.({ current: index + 1, total: list.length, file, result });
+    }
+    return results;
   },
   generateDocument: (caseId, documentType = 'claim', language = 'ru') => request('/miniapp/documents/generate', {
     method: 'POST',
