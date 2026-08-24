@@ -217,9 +217,16 @@ def build_claim_money_ledger(requests: list[str]) -> ClaimMoneyLedger:
             continue
         seen_requests.add(marker)
 
-        if _STATE_DUTY_RE.search(request) or _COST_RE.search(request) or _ALTERNATIVE_RE.search(request):
+        if _STATE_DUTY_RE.search(request) or _COST_RE.search(request):
             continue
         if not _AMOUNT_RE.search(request):
+            continue
+        if _ALTERNATIVE_RE.search(request):
+            # Alternative monetary relief can affect the price depending on the
+            # legal relationship between primary and fallback remedies. Silently
+            # dropping it can understate both price and duty, so classification
+            # must remain explicit before filing-ready status.
+            ledger.unresolved_requests.append(request)
             continue
 
         resolved = _resolved_components(request)
