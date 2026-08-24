@@ -41,6 +41,11 @@ _REQUEST_SCOPED_KEYS = {
     "client_checklist_kind",
     "generation_progress_request_id",
     "generation_progress_kind",
+    # Any new document request invalidates an in-flight consultation response.
+    # The OpenAI call may already be running, but its stale result must never be
+    # written into a newer document/request state or sent to the client.
+    "consultation_request_id",
+    "consultation_request_started_at",
     # Payment is bound to one immutable request_id. A new document request must
     # never inherit either an old receipt session or an already-confirmed payment.
     "payment_admin_doc_message_id",
@@ -144,6 +149,31 @@ async def request_is_current(state: FSMContext, request_id: str, kind: str) -> b
         str(data.get("request_id") or "") == request_id
         and data.get("request_kind") == kind
     )
+
+
+async def start_new_consultation_request(state: FSMContext) -> str:
+    """Replace only the consultation generation token, preserving the case.
+
+    A second legal question must make the first asynchronous answer stale. The
+    update is deliberately partial: unrelated facts, documents, language and
+    payment state may be changing in other handlers and must never be replaced
+    from an older full-state snapshot.
+    """
+    async with document_request_lock(state):
+        request_id = uuid4().hex
+        await state.update_data(
+            consultation_request_id=request_id,
+            consultation_request_started_at=datetime.now(timezone.utc).isoformat(),
+        )
+        return request_id
+
+
+async def consultation_request_is_current(state: FSMContext, request_id: str) -> bool:
+    """Return whether a consultation result still owns the client response."""
+    if not request_id:
+        return False
+    data = await state.get_data()
+    return str(data.get("consultation_request_id") or "") == request_id
 
 
 async def start_new_document_request(
