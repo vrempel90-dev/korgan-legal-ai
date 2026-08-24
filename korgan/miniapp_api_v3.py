@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 from typing import Any
 
 # v2 owns the HTTP contract, encrypted Mini App state, upload handling and
@@ -36,8 +37,11 @@ _corpus_task: asyncio.Task[None] | None = None
 @app.on_event("startup")
 async def _production_parity_startup() -> None:
     global _corpus_task
-    # strict_bot starts the same official-source corpus refresh loop. It is
-    # intentionally non-blocking and preserves the existing corpus on failure.
+    # Pre-deploy tests must never wait for an external Adilet/ZAN refresh. The
+    # real Railway runtime has no PYTEST_CURRENT_TEST and therefore starts the
+    # same official-source refresh loop as strict_bot.
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
     if _corpus_task is None:
         _corpus_task = start_corpus_refresh_task()
 
