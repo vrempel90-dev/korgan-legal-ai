@@ -4,9 +4,8 @@ A consultation is not allowed to cite law from model memory. One structured
 Responses API call performs official-source research and returns candidate legal
 points. A point becomes client-visible only when its claimed URL was actually
 opened by the web-search tool and its paraphrase is mechanically compatible with
-the provision text. When the act is covered by KORGAN's refreshed local corpus,
-the exact act/article identity and quoted provision text are checked again
-against that corpus before release.
+the provision text. Exact act/article identity is then checked against KORGAN's
+refreshed local corpus before release.
 """
 
 from __future__ import annotations
@@ -57,6 +56,7 @@ _NUMBER_WORD = (
     r"девятнадцат\w*|двадцат\w*|тридцат\w*|сорок\w*|пятьдесят\w*|сто|полтор\w*|"
     r"бір|екі|үш|төрт|бес|алты|жеті|сегіз|тоғыз|он|жиырма|отыз|қырық|елу|жүз)"
 )
+_DURATION_UNIT = r"(?:дн\w*|сут\w*|месяц\w*|год\w*|күн\w*|ай\w*|жыл\w*)"
 
 # Precise law belongs only to the source-bound verified block. Catch numeric and
 # word-form rates/deadlines plus specific court-name phrases in all other fields.
@@ -67,7 +67,8 @@ _PRECISE_LAW_RE = re.compile(
     rf"|\b\d+(?:[.,]\d+)?\s*%"
     rf"|\b\d+(?:[.,]\d+)?\s*(?:мрп|аек)\b"
     rf"|(?:срок\w*|мерзім\w*|госпошлин\w*|мемлекеттік\s+баж\w*|подсудност\w*|соттыл\w*)[^\n]{{0,40}}\b\d+\b"
-    rf"|\b{_NUMBER_WORD}\s+(?:календарн\w+\s+|рабоч\w+\s+)?(?:дн\w*|сут\w*|месяц\w*|год\w*|күн\w*|ай\w*|жыл\w*)\b"
+    rf"|\b\d+\s+(?:календарн\w+\s+|рабоч\w+\s+)?{_DURATION_UNIT}\b"
+    rf"|\b{_NUMBER_WORD}\s+(?:календарн\w+\s+|рабоч\w+\s+)?{_DURATION_UNIT}\b"
     rf"|\b{_NUMBER_WORD}\s+(?:процент\w*|пайыз\w*|мрп|аек)\b"
     rf"|\b(?:специализированн\w+\s+межрайонн\w+(?:\s+экономическ\w+)?|межрайонн\w+|районн\w+|городск\w+)\s+суд\w*(?:\s+№?\s*\d+)?\b"
     rf"|\bсмэс\b"
@@ -117,7 +118,6 @@ def _article_no(label: str) -> str:
 
 
 def _act_id_from_adilet_url(url: str) -> str:
-    """Map a current Adilet code page to one of the acts in the refreshed corpus."""
     path = urlparse(url).path
     for act_id, (adilet_id, _title) in KNOWN_ACTS.items():
         if f"/{adilet_id}" in path:
@@ -131,18 +131,18 @@ def _normalize_quote(text: str) -> str:
     return value.strip(" \t\r\n.;,«»\"")
 
 
-def _corpus_article_check(article: str, source_url: str, provision_text: str) -> bool | None:
-    """Check exact article identity when the refreshed local act is available."""
+def _corpus_article_check(article: str, source_url: str, provision_text: str) -> bool:
+    """Fail closed unless exact article identity and quote exist in current corpus."""
     act_id = _act_id_from_adilet_url(source_url)
     if not act_id:
-        return None
+        return False
     number = _article_no(article)
     if not number:
         return False
 
     db_path = Path(DEFAULT_DB_PATH)
     if not db_path.exists():
-        return None
+        return False
 
     corpus = LegalCorpus(db_path)
     try:
@@ -151,8 +151,8 @@ def _corpus_article_check(article: str, source_url: str, provision_text: str) ->
             (act_id, number),
         ).fetchall()
     except Exception:
-        LOGGER.exception("Consultation corpus article check unavailable; retaining live source-bound check")
-        return None
+        LOGGER.exception("Consultation corpus article check failed closed")
+        return False
     finally:
         corpus.close()
 
@@ -161,8 +161,12 @@ def _corpus_article_check(article: str, source_url: str, provision_text: str) ->
     quote = _normalize_quote(provision_text)
     if len(quote) < 40:
         return False
-    bodies = [_normalize_quote(str(row["body"])) for row in rows]
-    return any(quote in body or body in quote for body in bodies if body)
+    article_text = " ".join(
+        _normalize_quote(str(row["body"]))
+        for row in rows
+        if str(row["body"]).strip()
+    )
+    return bool(article_text) and quote in article_text
 
 
 def _accept_verified_points(
@@ -198,8 +202,6 @@ def _accept_verified_points(
                 rejected.append("Правовой вывод отброшен: нет связи с реально открытым официальным источником.")
             continue
 
-        # A court URL alone does not prove the exact court name or structure.
-        # Until a dedicated court-entity verifier exists, fail closed here.
         if _is_court_source(actual_url):
             rejected.append("Точное наименование или структура суда требует отдельной официальной проверки.")
             continue
@@ -211,9 +213,8 @@ def _accept_verified_points(
         if drift:
             rejected.append("Правовой вывод отброшен: пересказ не прошёл сверку с текстом нормы.")
             continue
-        corpus_check = _corpus_article_check(article, actual_url, provision_text)
-        if corpus_check is False:
-            rejected.append("Правовой вывод отброшен: номер статьи или текст нормы не совпал с текущим локальным корпусом KORGAN.")
+        if not _corpus_article_check(article, actual_url, provision_text):
+            rejected.append("Правовой вывод отброшен: статья и текст нормы не подтверждены текущим локальным корпусом KORGAN.")
             continue
 
         item = (statement, article, actual_url)
@@ -289,9 +290,9 @@ async def _guarded_consult(
         "КРИТИЧЕСКИЙ ФОРМАТ:\n"
         "1. Любой юридический вывод, точная норма, срок, ставка, подсудность или право/обязанность помещается ТОЛЬКО в verified_points.\n"
         "2. Каждый verified_point: один конкретный правовой вывод + точная статья/пункт + существенная ДОСЛОВНАЯ выдержка provision_text без многоточий + URL официальной страницы, которую ты реально открыл.\n"
-        "3. Материальное и процессуальное право подтверждай только по русской странице Adilet /rus/docs/. Не выдавай точное наименование конкретного суда: для него нужен отдельный верификатор; необходимость определить суд укажи нейтрально в unverified_claims.\n"
-        "4. recommended_actions — только операционные действия с доказательствами/документами и следующие шаги; без новых правовых выводов, номеров статей, законных сроков, ставок, МРП/АЕК, точных наименований судов или гарантий исхода.\n"
-        "5. Если официальный источник не подтверждает вывод, помещай его в unverified_claims без выдуманного номера статьи, ставки, срока или названия суда.\n"
+        "3. Материальное и процессуальное право подтверждай только по русской странице Adilet /rus/docs/. Не выдавай точное наименование конкретного суда: для него нужен отдельный верификатор.\n"
+        "4. recommended_actions — только операционные действия с доказательствами/документами; без новых правовых выводов, номеров статей, законных сроков, ставок, МРП/АЕК, точных наименований судов или гарантий исхода.\n"
+        "5. Если источник не подтверждает вывод, помещай его в unverified_claims без выдуманного номера статьи, ставки, срока или названия суда.\n"
         "6. Не обещай исход дела. Отделяй факты пользователя от правовых выводов.\n\n"
         f"ВОПРОС:\n{question}\n\n"
         f"КОНТЕКСТ ДЕЛА:\n{case_context[:self.settings.max_case_text_chars] if case_context else 'нет'}"
@@ -300,7 +301,7 @@ async def _guarded_consult(
         model=self.settings.openai_model,
         instructions=(
             "Ты ведущий юрист KORGAN по праву Республики Казахстан. Работай source-bound и fail-closed. "
-            "Клиент увидит юридические выводы только из verified_points, поэтому не прячь право в других полях. "
+            "Клиент увидит юридические выводы только из verified_points. "
             f"Язык: {'казахский' if language == 'kk' else 'русский'}."
         ),
         content=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
@@ -321,11 +322,13 @@ async def _guarded_consult(
 
 
 def install_professional_consultation_guard() -> None:
-    """Bind guarded consultations to the stable service used by strict_bot."""
+    """Bind guarded consultations to every production service factory in use."""
+    from korgan.finalized_litigation import FinalizedProductionClaimService
     from korgan.stable_legal_release import StableLegalProductionService
 
-    if getattr(StableLegalProductionService, "_korgan_professional_consultation_guard", False):
-        return
-    StableLegalProductionService.consult = _guarded_consult  # type: ignore[method-assign]
-    StableLegalProductionService._korgan_professional_consultation_guard = True
+    for target in (StableLegalProductionService, FinalizedProductionClaimService):
+        if target.__dict__.get("_korgan_professional_consultation_guard", False):
+            continue
+        target.consult = _guarded_consult  # type: ignore[method-assign]
+        target._korgan_professional_consultation_guard = True
     LOGGER.info("Installed KORGAN professional consultation citation gate")
