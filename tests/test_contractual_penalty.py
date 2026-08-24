@@ -94,6 +94,20 @@ def test_parse_kazakh_contractual_penalty_terms() -> None:
     assert terms.clause == "6.3"
 
 
+def test_parse_kazakh_contractual_penalty_reversed_daily_rate() -> None:
+    text = (
+        "Шарттың 6.3-тармағында тұрақсыздық айыбы әрбір кешіктірілген күн үшін 0,1%, "
+        "бірақ жалпы мөлшері 10%-дан аспайды деп белгіленген."
+    )
+
+    terms = parse_contractual_penalty_terms(text)
+
+    assert terms is not None
+    assert terms.rate_percent_per_day == 0.1
+    assert terms.cap_percent == 10.0
+    assert terms.clause == "6.3"
+
+
 def test_parse_contractual_penalty_fails_closed_on_multiple_caps_in_same_paragraph() -> None:
     text = (
         "Пункт 6.3 договора: неустойка 0,1% за каждый день просрочки, не более 10%. "
