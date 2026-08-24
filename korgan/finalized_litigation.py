@@ -5,41 +5,19 @@ import logging
 from korgan import document_quality as _dq
 from korgan import senior_claim_preflight as _sp
 from korgan.claim_quality_hotfix import FILING_ACTION_PREFIX, ProductionClaimService
-from korgan.fast_v2_production_legal import _deterministic_pre_qa, _is_state_duty_request
+from korgan.claim_state_duty import apply_professional_state_duty
+from korgan.fast_v2_production_legal import _deterministic_pre_qa
 from korgan.late_interest_hotfix import _apply_verified_article_353, _today_kz
-from korgan.legal_calc import NEEDS_CALCULATION_MARKER
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
-from korgan.production_legal import STATE_DUTY_NOTE
 from korgan.professional_claim_finalizer import finalize_professional_claim
 
 LOGGER = logging.getLogger(__name__)
-_CLAIM_PRICE_NOTE_PREFIX = "Цена иска требует проверки: "
 
 
 def _safe_deterministic_pre_qa(case_context: str, research: LegalResearch, draft: ClaimDraft) -> None:
-    """Run the existing cleanup but fail closed on an unresolved claim price.
-
-    The legacy pre-QA recalculates state duty from ``draft.price_of_claim``. If
-    the canonical money ledger has already marked the prayer as ambiguous, an
-    older/model-provided price must not be allowed to produce a filing-looking
-    duty amount. All other deterministic cleanup still runs unchanged.
-    """
+    """Preserve legacy cleanup, then overwrite duty with source-safe routing."""
     _deterministic_pre_qa(case_context, research, draft)
-    unresolved = any(
-        str(note).startswith(_CLAIM_PRICE_NOTE_PREFIX)
-        for note in draft.verification_notes
-    )
-    if not unresolved:
-        return
-
-    draft.state_duty = NEEDS_CALCULATION_MARKER
-    draft.requests = [
-        request for request in draft.requests
-        if not _is_state_duty_request(str(request))
-    ]
-    if STATE_DUTY_NOTE not in draft.verification_notes:
-        draft.verification_notes.append(STATE_DUTY_NOTE)
-    draft.status = VerificationStatus.NEEDS_VERIFICATION
+    apply_professional_state_duty(case_context, research, draft)
 
 
 class FinalizedProductionClaimService(ProductionClaimService):
