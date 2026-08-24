@@ -1,5 +1,10 @@
 from korgan.legal_types import ClaimDraft, VerificationStatus
-from korgan.state_duty_final_hotfix import _enforce_single_state_duty_request
+from korgan.production_legal import STATE_DUTY_NOTE
+from korgan.repaired_production_legal import _STATE_DUTY_ATTACHMENT, _STATE_DUTY_ATTACHMENT_NOTE
+from korgan.state_duty_final_hotfix import (
+    _enforce_single_state_duty_request,
+    _refresh_duty_notes,
+)
 
 
 def _draft(requests: list[str]) -> ClaimDraft:
@@ -57,3 +62,27 @@ def test_exempt_duty_is_not_claimed_as_paid_expense() -> None:
     _enforce_single_state_duty_request(draft)
 
     assert all("пошлин" not in item.lower() for item in draft.requests)
+
+
+def test_deferred_duty_removes_legacy_receipt_placeholder_and_note() -> None:
+    draft = _draft(["Взыскать 800 000 тенге."])
+    draft.state_duty = "Уплата отсрочена до принятия решения судом; расчетная сумма 8 000 тенге"
+    draft.attachments.append(_STATE_DUTY_ATTACHMENT)
+    draft.verification_notes.extend([_STATE_DUTY_ATTACHMENT_NOTE, STATE_DUTY_NOTE])
+
+    _refresh_duty_notes("Истец: Иванов Иван, ИИН 000000000101", draft)
+
+    assert _STATE_DUTY_ATTACHMENT not in draft.attachments
+    assert _STATE_DUTY_ATTACHMENT_NOTE not in draft.verification_notes
+    assert STATE_DUTY_NOTE not in draft.verification_notes
+
+
+def test_resolved_nonproperty_duty_replaces_legacy_not_calculated_note() -> None:
+    draft = _draft(["Обязать ответчика устранить нарушение."])
+    draft.state_duty = "2 163 тенге (0,5 МРП за иск неимущественного характера)"
+    draft.verification_notes.append(STATE_DUTY_NOTE)
+
+    _refresh_duty_notes("Истец: Иванов Иван, ИИН 000000000101", draft)
+
+    assert STATE_DUTY_NOTE not in draft.verification_notes
+    assert any("уплату государственной пошлины" in item for item in draft.attachments)
