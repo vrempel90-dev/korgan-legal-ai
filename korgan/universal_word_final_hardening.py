@@ -5,6 +5,7 @@ import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+from korgan.document_sanitization import sanitize_document_draft
 from korgan.legal_types import ClaimDraft, LegalResearch
 
 LOGGER = logging.getLogger(__name__)
@@ -275,9 +276,7 @@ def _append_contractual_penalty_calculation(draft: ClaimDraft, result, language:
         cap = format_kzt(result.cap_amount)
         if language == "kk":
             cap = cap.replace(" тенге", " теңге")
-            line += f" Договорный предел {result.cap_percent:g}% составляет {cap}; к взысканию — {amount}."
-        else:
-            line += f" Договорный предел {result.cap_percent:g}% составляет {cap}; к взысканию — {amount}."
+        line += f" Договорный предел {result.cap_percent:g}% составляет {cap}; к взысканию — {amount}."
     if not any("неустойк" in str(item).casefold() and str(result.amount) in re.sub(r"\D", "", str(item)) for item in draft.facts):
         draft.facts.append(line)
 
@@ -331,6 +330,16 @@ def install_universal_word_final_hardening() -> None:
     guard._penalty_amount = penalty_amount_from_source
     guard.complete_claim_relief_from_materials = complete_claim_relief_from_materials_exact
 
+    # Keep all existing quality flows, but make their final client-facing cleanup
+    # remove renderer-owned labels and official-site editorial metadata.
+    current_sanitizer = guard.sanitize_draft_instructions
+
+    def professional_document_sanitizer(draft) -> None:
+        current_sanitizer(draft)
+        sanitize_document_draft(draft)
+
+    guard.sanitize_draft_instructions = professional_document_sanitizer
+
     finalizer._MONEY_RE = _MONEY_RE
     finalizer._parse_amount = parse_money_exact
 
@@ -362,6 +371,7 @@ def install_universal_word_final_hardening() -> None:
         language: str = "ru",
     ) -> ClaimDraft:
         draft = await current_claim(self, case_context, research, language=language)
+        sanitize_document_draft(draft)
 
         restored = complete_claim_relief_from_materials_exact(
             case_context,
@@ -388,5 +398,5 @@ def install_universal_word_final_hardening() -> None:
 
     _INSTALLED = True
     LOGGER.info(
-        "Installed universal Word final hardening: Decimal KZT arithmetic + separate state-duty caps + deterministic contractual penalty + canonical final duty owner + exact Article 353"
+        "Installed universal Word final hardening: client document sanitation + Decimal KZT arithmetic + separate state-duty caps + deterministic contractual penalty + canonical final duty owner + exact Article 353"
     )
