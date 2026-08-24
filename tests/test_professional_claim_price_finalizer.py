@@ -48,10 +48,25 @@ def test_finalizer_keeps_moral_damage_out_of_property_price():
     assert draft.price_of_claim == "1 000 000 тенге"
 
 
+def test_pure_moral_damage_does_not_render_zero_property_claim_price():
+    draft = _draft(["Взыскать компенсацию морального вреда 200 000 тенге."])
+    _recalculate_price(draft)
+    assert draft.price_of_claim == "не определяется (требование неимущественного характера)"
+    assert draft.status == VerificationStatus.VERIFIED
+
+
 def test_finalizer_fails_closed_on_wrong_explicit_total():
     draft = _draft([
         "Взыскать основной долг 1 000 000 тенге и неустойку 200 000 тенге, итого 1 500 000 тенге."
     ])
+    _recalculate_price(draft)
+    assert draft.price_of_claim == "99 999 999 тенге"
+    assert draft.status == VerificationStatus.NEEDS_VERIFICATION
+    assert any(note.startswith("Цена иска требует проверки:") for note in draft.verification_notes)
+
+
+def test_finalizer_fails_closed_on_monetary_alternative_relief():
+    draft = _draft(["В качестве альтернативного требования взыскать стоимость имущества 800 000 тенге."])
     _recalculate_price(draft)
     assert draft.price_of_claim == "99 999 999 тенге"
     assert draft.status == VerificationStatus.NEEDS_VERIFICATION
