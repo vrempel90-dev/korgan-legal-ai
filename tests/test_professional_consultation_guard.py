@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 import korgan.professional_consultation_guard as guard
+from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
+from korgan.claim_service_mux import ClaimServiceMux
+from korgan.config import Settings
 from korgan.legal.corpus import ACT_GK_GENERAL, LegalCorpus
+from korgan.pretrial_response import PretrialResponseProductionService
 from korgan.professional_consultation_guard import (
     _accept_verified_points,
     _corpus_article_check,
@@ -17,6 +22,8 @@ from korgan.professional_consultation_guard import (
 
 ADILET = "https://adilet.zan.kz/rus/docs/K940001000_"
 ADILET_ENG = "https://adilet.zan.kz/eng/docs/K940001000_"
+TAX_ADILET = "https://adilet.zan.kz/rus/docs/K2500000214"
+COURT_URL = "https://sud.gov.kz/rus/content/sudy-respubliki-kazahstan"
 PROVISION = (
     "Защита гражданских прав осуществляется судом, арбитражем путем признания прав, "
     "восстановления положения, существовавшего до нарушения права, и иными способами, предусмотренными законом."
@@ -52,6 +59,18 @@ def _point(*, source_url: str = ADILET) -> dict[str, str]:
     }
 
 
+def _tax_point() -> dict[str, str]:
+    return {
+        "statement": "Для имущественного требования физического лица ставка государственной пошлины составляет 1% от цены иска.",
+        "article": "статья 665 НК РК",
+        "provision_text": (
+            "С исковых заявлений имущественного характера, подаваемых в суд физическими лицами, "
+            "государственная пошлина взимается в размере одного процента от суммы иска."
+        ),
+        "source_url": TAX_ADILET,
+    }
+
+
 def test_claimed_url_is_not_verified_unless_response_actually_opened_it() -> None:
     payload = {"verified_points": [_point()]}
 
@@ -70,8 +89,6 @@ def test_claimed_url_is_not_verified_unless_response_actually_opened_it() -> Non
 def test_opened_adilet_point_passes_source_and_paraphrase_checks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Exact corpus identity has its own tests below. Keep this test scoped to the
-    # live source binding + paraphrase contract.
     monkeypatch.setattr(guard, "_corpus_article_check", lambda *args: True)
     payload = {"verified_points": [_point()]}
 
@@ -102,6 +119,27 @@ def test_non_russian_adilet_page_cannot_release_a_legal_rule(
     assert accepted == []
     assert used == []
     assert any("русская официальная страница Adilet" in item for item in rejected)
+
+
+def test_court_url_alone_never_releases_exact_jurisdiction() -> None:
+    payload = {
+        "verified_points": [{
+            "statement": "Дело подсудно Специализированному межрайонному экономическому суду города Алматы.",
+            "article": "официальный перечень судов",
+            "provision_text": "Официальная страница содержит сведения о судебной системе Республики Казахстан.",
+            "source_url": COURT_URL,
+        }]
+    }
+
+    accepted, rejected, used = _accept_verified_points(
+        FakeService(),
+        payload,
+        _response_with_sources(COURT_URL),
+    )
+
+    assert accepted == []
+    assert used == []
+    assert any("отдельной официальной проверки" in item for item in rejected)
 
 
 def test_current_local_corpus_confirms_exact_article_and_quote(
@@ -144,13 +182,17 @@ def test_precise_unbound_law_is_removed_from_operational_text() -> None:
     assert _safe_free_text("По статье 9 ГК РК вы вправе обратиться в суд.") == ""
     assert _safe_free_text("Госпошлина составляет 1% от цены иска.") == ""
     assert _safe_free_text("Срок составляет 10 дней.") == ""
+    assert _safe_free_text("Срок для ответа составляет десять рабочих дней.") == ""
+    assert _safe_free_text("Ставка составляет один процент.") == ""
+    assert _safe_free_text("Дело рассматривает специализированный межрайонный экономический суд.") == ""
+    assert _safe_free_text("Істі мамандандырылған ауданаралық экономикалық сот қарайды.") == ""
     assert _safe_free_text("Соберите договор, переписку и подтверждение оплаты.")
 
 
 def test_renderer_fails_closed_and_does_not_echo_hallucinated_law() -> None:
     payload = {
         "recommended_actions": [
-            "Подайте документы в течение 10 дней.",
+            "Подайте документы в течение десяти дней.",
             "Соберите договор, переписку и подтверждение оплаты.",
         ],
         "verified_points": [],
@@ -160,11 +202,18 @@ def test_renderer_fails_closed_and_does_not_echo_hallucinated_law() -> None:
         ],
     }
 
-    answer = _render_consultation(payload, [], [], language="ru")
+    answer = _render_consultation(
+        payload,
+        [],
+        ["По статье 888 ГК РК срок составляет десять дней."],
+        language="ru",
+    )
 
     assert "не буду выдавать непроверенную статью" in answer.lower()
     assert "999" not in answer
+    assert "888" not in answer
     assert "10 дней" not in answer
+    assert "десяти дней" not in answer.lower()
     assert "Не хватает официального подтверждения" in answer
 
 
@@ -205,3 +254,48 @@ def test_guard_binds_to_stable_service_used_by_strict_bot() -> None:
 
     assert getattr(StableLegalProductionService, "_korgan_professional_consultation_guard", False) is True
     assert StableLegalProductionService.consult.__module__ == "korgan.professional_consultation_guard"
+
+
+def test_guard_runs_through_actual_production_service_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_professional_consultation_guard()
+    monkeypatch.setattr(guard, "_corpus_article_check", lambda *args: True)
+
+    settings = Settings(
+        telegram_bot_token="test-token",
+        openai_api_key="test-key",
+        official_legal_domains="adilet.zan.kz,gov.kz,sud.gov.kz",
+    )
+    stable = PretrialResponseProductionService(settings)
+    mux = ClaimServiceMux(stable, settings)
+    production = ClaimPipelineV2Adapter(mux)
+
+    sources = [ADILET, TAX_ADILET]
+    payload = {
+        "recommended_actions": ["Соберите договор и подтверждение оплаты."],
+        "verified_points": [_point(), _tax_point()],
+        "unverified_claims": [],
+    }
+
+    async def fake_structured_response(**kwargs):
+        assert kwargs["schema_name"] == "korgan_consult_research"
+        return payload, _response_with_sources(*sources)
+
+    monkeypatch.setattr(stable, "_structured_response", fake_structured_response)
+
+    answer, urls = asyncio.run(production.consult("Как защитить право?", language="ru"))
+    assert "статья 9 ГК РК" in answer
+    assert "статья 665 НК РК" in answer
+    assert "1%" in answer
+    assert urls == [ADILET, TAX_ADILET]
+
+    # The same model payload cannot release its exact law once the current
+    # response did not actually open the official sources.
+    sources.clear()
+    blocked, blocked_urls = asyncio.run(production.consult("Как защитить право?", language="ru"))
+    assert blocked_urls == []
+    assert "статья 9" not in blocked
+    assert "статья 665" not in blocked
+    assert "1%" not in blocked
+    assert "не буду выдавать непроверенную статью" in blocked.lower()
