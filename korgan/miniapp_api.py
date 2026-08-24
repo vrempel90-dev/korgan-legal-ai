@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
 import os
-from typing import Any
+import time
+from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qsl
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
@@ -18,10 +20,15 @@ from korgan import strict_bot as _production_runtime  # noqa: F401
 from korgan.claim_docx import build_claim_docx
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
 from korgan.config import get_settings
+from korgan.contract_docx import build_contract_docx
+from korgan.document_quality import assess_document_quality, rendered_docx_blockers
+from korgan.legal_types import VerificationStatus
 from korgan.miniapp_store import MiniAppStore
-from korgan.pretrial_response import PretrialResponseProductionService
+from korgan.pretrial import build_pretrial_docx
+from korgan.pretrial_response import PretrialResponseProductionService, build_pretrial_response_docx
+from korgan.response_docx import build_response_to_claim_docx
 
-app = FastAPI(title="KORGAN Mini App API", version="0.4.0")
+app = FastAPI(title="KORGAN Mini App API", version="0.5.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -41,9 +48,11 @@ store = MiniAppStore(
     retention_days=int(os.getenv("MINIAPP_RETENTION_DAYS", "30")),
 )
 
-_CLAIM_CATEGORIES = {"claim", "debt", "consumer", "housing", "labor"}
+_DOCUMENT_TYPES = {"claim", "contract", "response", "pretrial", "pretrial_response"}
 _ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".docx", ".txt", ".jpg", ".jpeg", ".png", ".webp"}
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+_INIT_DATA_MAX_AGE_SECONDS = int(os.getenv("MINIAPP_INIT_DATA_MAX_AGE_SECONDS", "86400"))
+_generation_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
 
 class ConsultationRequest(BaseModel):
@@ -95,6 +104,15 @@ def _validate_init_data(raw: str) -> dict[str, str]:
     expected_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected_hash, received_hash):
         raise HTTPException(status_code=401, detail="Invalid Telegram signature")
+
+    auth_date = pairs.get("auth_date")
+    if auth_date:
+        try:
+            age = int(time.time()) - int(auth_date)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail="Invalid Telegram auth_date") from exc
+        if age < -60 or age > _INIT_DATA_MAX_AGE_SECONDS:
+            raise HTTPException(status_code=401, detail="Telegram authentication expired")
     return pairs
 
 
@@ -147,13 +165,60 @@ def _extension(filename: str) -> str:
     return ""
 
 
+def _method(name: str) -> Callable[..., Awaitable[Any]]:
+    candidate = getattr(service, name, None)
+    if candidate is None:
+        raise HTTPException(status_code=503, detail=f"KORGAN generator unavailable: {name}")
+    return candidate
+
+
+async def _generate(document_type: str, context: str, language: str) -> tuple[Any, bytes, str]:
+    if document_type == "claim":
+        research = await service.research_case(context, language=language)
+        draft = await service.draft_claim(context, research, language=language)
+        return draft, build_claim_docx(draft), "KORGAN_iskovoe_zayavlenie.docx"
+
+    if document_type == "contract":
+        research = await _method("research_contract")(context, language=language)
+        draft = await _method("draft_contract")(context, research, language=language)
+        quality = assess_document_quality("contract", context, research, draft)
+        draft.status = VerificationStatus.VERIFIED if quality.ready else VerificationStatus.NEEDS_VERIFICATION
+        file_bytes = build_contract_docx(draft)
+        if quality.ready and rendered_docx_blockers(file_bytes, ready_expected=True):
+            raise HTTPException(status_code=422, detail="Договор не прошёл финальную проверку Word")
+        return draft, file_bytes, "KORGAN_dogovor.docx"
+
+    if document_type == "response":
+        research = await _method("research_response_to_claim")(context, language=language)
+        draft = await _method("draft_response_to_claim")(context, research, language=language)
+        quality = assess_document_quality("response_to_claim", context, research, draft)
+        draft.status = VerificationStatus.VERIFIED if quality.ready else VerificationStatus.NEEDS_VERIFICATION
+        file_bytes = build_response_to_claim_docx(draft)
+        if quality.ready and rendered_docx_blockers(file_bytes, ready_expected=True):
+            raise HTTPException(status_code=422, detail="Отзыв не прошёл финальную проверку Word")
+        return draft, file_bytes, "KORGAN_otzyv_na_isk.docx"
+
+    if document_type == "pretrial":
+        research = await _method("research_pretrial")(context, language=language)
+        draft = await _method("draft_pretrial")(context, research, language=language)
+        return draft, build_pretrial_docx(draft, language=language), "KORGAN_dosudebnaya_pretenziya.docx"
+
+    if document_type == "pretrial_response":
+        research = await _method("research_pretrial_response")(context, language=language)
+        draft = await _method("draft_pretrial_response")(context, research, language=language)
+        return draft, build_pretrial_response_docx(draft, language=language), "KORGAN_otvet_na_pretenziyu.docx"
+
+    raise HTTPException(status_code=400, detail="Unsupported document type")
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "service": "korgan-miniapp-api",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "storage": "postgres" if store.pool is not None else "memory",
+        "state_encryption": "AES-256-GCM",
     }
 
 
@@ -180,12 +245,15 @@ async def list_cases(x_telegram_init_data: str = Header(default="")) -> dict[str
 async def create_case(payload: CaseRequest, x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
     user_id = _identity(x_telegram_init_data)
     state = await _require_consent(user_id)
-    digest = hashlib.sha256(f"{user_id}:{payload.description}:{len(state['cases'])}".encode()).hexdigest()[:12]
+    document_type = payload.document_type.strip().lower()
+    if document_type not in _DOCUMENT_TYPES:
+        raise HTTPException(status_code=400, detail="Выберите поддерживаемый тип документа")
+    digest = hashlib.sha256(f"{user_id}:{payload.description}:{time.time_ns()}".encode()).hexdigest()[:12]
     case_id = f"KOR-{digest.upper()}"
     item = {
         "id": case_id,
         "description": payload.description,
-        "document_type": payload.document_type,
+        "document_type": document_type,
         "language": "kk" if payload.language == "kk" else "ru",
         "status": "created",
         "materials": [],
@@ -266,30 +334,35 @@ async def generate_document(payload: GenerateRequest, x_telegram_init_data: str 
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    document_type = payload.document_type or str(case.get("document_type") or "claim")
-    if document_type not in _CLAIM_CATEGORIES:
-        raise HTTPException(status_code=501, detail="Этот тип документа подключается на следующем этапе")
+    document_type = str(case.get("document_type") or payload.document_type or "claim")
+    if document_type not in _DOCUMENT_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported document type")
 
-    language = "kk" if payload.language == "kk" else "ru"
-    context = _case_context(case)
-    research = await service.research_case(context, language=language)
-    draft = await service.draft_claim(context, research, language=language)
-    file_bytes = build_claim_docx(draft)
-    case.update(
-        {
-            "status": "document_ready",
-            "title": draft.title,
-            "verification_status": getattr(draft.status, "value", str(draft.status)),
-            "verification_notes": list(draft.verification_notes),
-            "document_base64": base64.b64encode(file_bytes).decode("ascii"),
-            "filename": "KORGAN_iskovoe_zayavlenie.docx",
-        }
-    )
-    await store.save(user_id, state)
+    lock_key = (user_id, payload.case_id)
+    lock = _generation_locks.setdefault(lock_key, asyncio.Lock())
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="Документ уже формируется")
+
+    async with lock:
+        language = "kk" if str(case.get("language") or payload.language) == "kk" else "ru"
+        context = _case_context(case)
+        draft, file_bytes, filename = await _generate(document_type, context, language)
+        case.update(
+            {
+                "status": "document_ready",
+                "title": getattr(draft, "title", "") or filename,
+                "verification_status": getattr(getattr(draft, "status", None), "value", str(getattr(draft, "status", ""))),
+                "verification_notes": list(getattr(draft, "verification_notes", []) or []),
+                "document_base64": base64.b64encode(file_bytes).decode("ascii"),
+                "filename": filename,
+            }
+        )
+        await store.save(user_id, state)
+
     return {
         "case_id": payload.case_id,
         "status": case["status"],
-        "title": draft.title,
+        "title": case["title"],
         "verification_status": case["verification_status"],
         "verification_notes": case["verification_notes"],
         "filename": case["filename"],
@@ -303,6 +376,7 @@ async def delete_case(case_id: str, x_telegram_init_data: str = Header(default="
     state = await _state(user_id)
     state["cases"].pop(case_id, None)
     await store.save(user_id, state)
+    _generation_locks.pop((user_id, case_id), None)
     return {"ok": True}
 
 
@@ -310,4 +384,6 @@ async def delete_case(case_id: str, x_telegram_init_data: str = Header(default="
 async def delete_me(x_telegram_init_data: str = Header(default="")) -> dict[str, bool]:
     user_id = _identity(x_telegram_init_data)
     await store.delete(user_id)
+    for key in [key for key in _generation_locks if key[0] == user_id]:
+        _generation_locks.pop(key, None)
     return {"ok": True}
