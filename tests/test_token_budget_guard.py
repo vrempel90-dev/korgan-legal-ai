@@ -10,10 +10,11 @@ def _settings(**overrides):
     data = {
         "telegram_bot_token": "test",
         "openai_api_key": "test",
-        "openai_model": "gpt-5.1",
-        "openai_vision_model": "gpt-5.1",
-        "openai_validation_model": "gpt-5.1",
-        "monthly_ai_budget_usd": 10.0,
+        "openai_model": "gpt-5.6-sol",
+        "openai_vision_model": "gpt-5.6-luna",
+        "openai_validation_model": "gpt-5.6-terra",
+        "monthly_ai_budget_usd": 15.50,
+        "daily_ai_budget_usd": 0.50,
         "token_budget_guard_enabled": True,
         "allow_extra_ai_pipeline_calls": False,
     }
@@ -29,9 +30,9 @@ def test_budget_guard_keeps_legal_models_unchanged(monkeypatch):
 
     assert result == "off"
     assert os.environ["KORGAN_CLAIM_PIPELINE_V2_MODE"] == "off"
-    assert settings.openai_model == "gpt-5.1"
-    assert settings.openai_vision_model == "gpt-5.1"
-    assert settings.openai_validation_model == "gpt-5.1"
+    assert settings.openai_model == "gpt-5.6-sol"
+    assert settings.openai_vision_model == "gpt-5.6-luna"
+    assert settings.openai_validation_model == "gpt-5.6-terra"
 
 
 def test_explicit_extra_pipeline_opt_in_is_preserved(monkeypatch):
