@@ -10,6 +10,10 @@ from korgan.legal.corpus import ACT_GK_SPECIAL, ACT_GPK
 from scripts.load_corpus import act_url
 
 
+def test_adilet_retry_budget_is_bounded() -> None:
+    assert refresh.ADILET_TRANSFER_ATTEMPTS == 3
+
+
 def test_adilet_retries_transient_incomplete_transfer(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
     expected_url = act_url(ACT_GPK)
