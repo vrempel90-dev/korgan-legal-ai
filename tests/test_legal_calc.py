@@ -8,6 +8,7 @@ from korgan.legal_calc import (
     claimant_is_individual,
     format_kzt,
     gosposhlina_line,
+    parse_all_amounts_kzt,
     parse_amount_kzt,
 )
 
@@ -49,12 +50,27 @@ def test_negative_claim_is_rejected() -> None:
         ("2 400 000 (два миллиона четыреста тысяч) тенге", 2_400_000),
         ("2400000 тг", 2_400_000),
         ("Цена иска: 1 500 000 тенге", 1_500_000),
+        ("12 000 000,49 тенге", 12_000_000),
+        ("12 000 000,50 тенге", 12_000_001),
         ("сумма не определена", None),
         ("", None),
     ],
 )
 def test_parse_amount_kzt(text: str, expected: int | None) -> None:
     assert parse_amount_kzt(text) == expected
+
+
+def test_parse_all_amounts_kzt_returns_every_currency_amount() -> None:
+    assert parse_all_amounts_kzt("Долг 12 000 000 тенге, неустойка 996 000 ₸, всего 12 996 000 теңге") == [
+        12_000_000,
+        996_000,
+        12_996_000,
+    ]
+
+
+def test_parse_amount_kzt_handles_29_digit_value_without_decimal_context_failure() -> None:
+    raw = "99999999999999999999999999999 тенге"
+    assert parse_amount_kzt(raw) == 99_999_999_999_999_999_999_999_999_999
 
 
 def test_format_kzt() -> None:
@@ -80,6 +96,15 @@ def test_legal_entity_claimant_uses_three_percent() -> None:
     assert gosposhlina_line(context, "2 400 000 тенге").startswith("72 000 тенге")
 
 
+def test_individual_address_word_containing_bin_does_not_trigger_legal_entity_rate() -> None:
+    context = (
+        "Истец: Иванов Иван Иванович, ИИН 900101300123, адрес: г. Астана, кабинет 214\n"
+        "Ответчик: Петров Петр Петрович, ИИН 910101300456\n"
+    )
+    assert claimant_is_individual(context) is True
+    assert gosposhlina_line(context, "2 400 000 тенге").startswith("24 000 тенге")
+
+
 def test_gosposhlina_line_for_delo_2() -> None:
     line = gosposhlina_line(DELO_2_CONTEXT, "2 400 000 (два миллиона четыреста тысяч) тенге")
     assert line.startswith("24 000 тенге")
@@ -93,3 +118,34 @@ def test_gosposhlina_line_without_price_needs_calculation() -> None:
 
 def test_gosposhlina_line_without_party_type_needs_calculation() -> None:
     assert gosposhlina_line("Стороны: не установлено", "2 400 000 тенге") == NEEDS_CALCULATION_MARKER
+
+
+def test_claimant_is_legal_entity_from_labeled_bins_without_role_lines() -> None:
+    context = "Стороны спора: ТОО «A» (БИН 230740012345) и ТОО «B» (БИН 210940067891)"
+    assert claimant_is_individual(context) is False
+
+
+def test_claimant_is_individual_from_single_labeled_iin_without_role_lines() -> None:
+    context = "Материалы заявителя: ИИН 900101300123, адрес г. Астана."
+    assert claimant_is_individual(context) is True
+
+
+def test_mixed_labeled_iin_and_bin_without_resolvable_claimant_is_fail_closed() -> None:
+    context = "Участники: ИИН 900101300123; БИН 230740012345."
+    assert claimant_is_individual(context) is None
+
+
+def test_bare_twelve_digits_without_label_are_not_treated_as_iin() -> None:
+    assert claimant_is_individual("Идентификатор 900101300123") is None
+
+
+def test_parenthetical_and_dash_claimant_roles_are_recognized() -> None:
+    assert claimant_is_individual("ТОО «A» (Истец); ТОО «B» (Ответчик)") is False
+    assert claimant_is_individual("Стороны: ТОО «A» — истец; ТОО «B» — ответчик") is False
+
+
+def test_gosposhlina_line_for_legal_entity_from_12_996_000() -> None:
+    context = "Стороны спора: ТОО «A» (БИН 230740012345) и ТОО «B» (БИН 210940067891)"
+    line = gosposhlina_line(context, "12 996 000 тенге")
+    assert line.startswith("389 880 тенге")
+    assert "3%" in line

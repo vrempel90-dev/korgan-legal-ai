@@ -4,15 +4,22 @@ from datetime import date, datetime, timedelta
 import re
 from zoneinfo import ZoneInfo
 
+from korgan.contractual_penalty import (
+    ContractualPenalty,
+    ContractualPenaltyTerms,
+    calc_contractual_penalty,
+    parse_contractual_penalty_terms,
+)
 from korgan.legal_calc import (
     NEEDS_RATE_MARKER,
     calc_late_payment_penalty,
     format_kzt,
     gosposhlina_line,
     late_penalty_line,
+    parse_all_amounts_kzt,
     parse_amount_kzt,
 )
-from korgan.legal_types import ClaimDraft, LegalResearch
+from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.state_duty_final_hotfix import (
     ProductionOpenAILegalService as _BaseProductionOpenAILegalService,
     _enforce_single_state_duty_request,
@@ -26,25 +33,55 @@ from korgan.verified_openai import (
 
 _ARTICLE_353_RE = re.compile(r"(?<!\d)353(?!\d)")
 _GK_GENERAL_MARKER = "K940001000_"
+_PENALTY_TERM = (
+    r"(?:неустойк\w*|пен[яию]\b|штраф\w*|өсімпұл\w*|тұрақсыздық\s+айыб\w*|"
+    r"ст\.?\s*353|стать\w*\s*353|пользован\w*\s+чужими\s+деньг\w*|"
+    r"процент\w*\s+за\s+просроч\w*)"
+)
+_REQUEST_VERB = r"(?:прошу|требую|взыскать|взыщите|начислить|заявляю|добавьте|добавь|сұраймын|өндір\w*|талап\s+ет\w*)"
 
 _EXPLICIT_PENALTY_PATTERNS = (
-    re.compile(
-        r"(?:прошу|требую|взыскать|взыщите|начислить|заявляю|добавьте|добавь)"
-        r"[^.\n]{0,120}(?:неустойк\w*|ст\.?\s*353|стать\w*\s*353|"
-        r"пользован\w*\s+чужими\s+деньг\w*|процент\w*\s+за\s+просроч\w*)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:неустойк\w*|ст\.?\s*353|стать\w*\s*353|"
-        r"пользован\w*\s+чужими\s+деньг\w*|процент\w*\s+за\s+просроч\w*)"
-        r"[^.\n]{0,120}(?:взыскать|требую|прошу|начислить)",
-        re.IGNORECASE,
-    ),
+    re.compile(rf"{_REQUEST_VERB}[^.\n]{{0,180}}{_PENALTY_TERM}", re.IGNORECASE),
+    re.compile(rf"{_PENALTY_TERM}[^.\n]{{0,180}}{_REQUEST_VERB}", re.IGNORECASE),
 )
 
 _PENALTY_LINE_RE = re.compile(
-    r"(?:ст\.?\s*353|стать\w*\s*353|неустойк\w*|"
-    r"пользован\w*\s+чужими\s+деньг\w*|процент\w*\s+(?:по\s+денежн\w*|за\s+просроч\w*))",
+    r"(?:ст\.?\s*353|стать\w*\s*353|неустойк\w*|пен[яию]\b|штраф\w*|өсімпұл\w*|"
+    r"тұрақсыздық\s+айыб\w*|пользован\w*\s+чужими\s+деньг\w*|"
+    r"процент\w*\s+(?:по\s+денежн\w*|за\s+просроч\w*))",
+    re.IGNORECASE,
+)
+_ARTICLE_353_LINE_RE = re.compile(
+    r"(?:ст\.?\s*353|стать\w*\s*353|базов\w*\s+ставк\w*\s+(?:НБ|Национальн\w*\s+Банк))",
+    re.IGNORECASE,
+)
+_TITLE_PENALTY_RE = re.compile(
+    r"\s+(?:и|және)\s+(?:[а-яёәіңғүұқөһ]+\s+){0,3}(?:процент\w*|неустойк\w*|пен[иь]\w*|өсімпұл\w*|тұрақсыздық\s+айыб\w*)[^\n]*$",
+    re.IGNORECASE,
+)
+_STATE_DUTY_OR_COST_RE = re.compile(
+    r"(?:государственн\w*\s+пошлин\w*|госпошлин\w*|судебн\w*\s+(?:расход\w*|издерж\w*)|"
+    r"расход\w*\s+на\s+(?:оплат\w*\s+)?представител\w*)",
+    re.IGNORECASE,
+)
+_PROPERTY_REQUEST_RE = re.compile(
+    r"(?:взыск\w*|вернут\w*|возврат\w*|долг\w*|задолженн\w*|неустойк\w*|пен[яию]\b|штраф\w*|"
+    r"убыт\w*|ущерб\w*|компенсац\w*|өндір\w*|берешек\w*|қарыз\w*|өсімпұл\w*|тұрақсыздық\s+айыб\w*)",
+    re.IGNORECASE,
+)
+_AWARDED_AMOUNT_RE = re.compile(
+    r"(?:в\s+размере|в\s+сумме|сумм\w*|мөлшерінде|сомасында)\s*"
+    r"(?P<amount>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))",
+    re.IGNORECASE,
+)
+_MONEY_TOKEN_RE = re.compile(
+    r"(?<!\d)\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt)",
+    re.IGNORECASE,
+)
+_PENALTY_AMOUNT_NEAR_RE = re.compile(
+    r"(?:неустойк\w*|пен[яию]\b|штраф\w*|өсімпұл\w*|тұрақсыздық\s+айыб\w*)"
+    r"(?:\s+(?:в\s+размере|в\s+сумме|составля\w*|мөлшерінде|сомасында)\s+|[\s:—-]{1,12})"
+    r"(?P<amount>\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt))",
     re.IGNORECASE,
 )
 
@@ -72,14 +109,31 @@ _DUE_RE = re.compile(
     rf"[^.\n]{{0,160}}?(?:не\s+позднее|до)\s+(?P<date>{_DATE_TOKEN})",
     re.IGNORECASE,
 )
+_PAYMENT_DUE_EXPIRED_RE = re.compile(
+    rf"(?:срок\s+оплат\w*|срок\s+платеж\w*)\s+(?:ист[её]к|наступил|был)[^\d]{{0,40}}(?P<date>{_DATE_TOKEN})",
+    re.IGNORECASE,
+)
+_PAYMENT_WITHIN_FROM_RE = re.compile(
+    rf"оплат\w*\s+в\s+течени[еи]\s+(?P<days>\d{{1,4}})\s+(?:календарн\w*\s+)?дн\w*"
+    rf"[^.\n]{{0,80}}?(?:с|от)\s+(?P<date>{_DATE_TOKEN})",
+    re.IGNORECASE,
+)
 
 ARTICLE_353_MISSING_NOTE = (
     "Клиент заявил требование о неустойке за просрочку, но статья 353 ГК РК "
-    "не прошла source-bound проверку в текущем legal research; денежное требование не добавлено."
+    "не прошла source-bound проверку в текущем legal research; требование сохранено как требующее проверки."
 )
 DUE_DATE_MISSING_NOTE = (
     "Для расчёта неустойки по статье 353 не удалось однозначно установить срок исполнения; "
     "требуется проверить дату начала просрочки."
+)
+CONTRACT_DUE_DATE_MISSING_NOTE = (
+    "Договорная неустойка заявлена и её ставка распознана, но дату начала просрочки нельзя "
+    "однозначно установить из материалов дела."
+)
+CONTRACT_TERMS_MISSING_NOTE = (
+    "Клиент заявил неустойку, но договорную ставку нельзя однозначно извлечь из материалов, "
+    "а статья 353 ГК РК не подтверждена source-bound исследованием."
 )
 RATE_MISSING_NOTE = (
     "Базовая ставка НБ РК для даты предъявления иска не подтверждена актуальным внутренним справочником; "
@@ -125,47 +179,294 @@ def _parse_date_token(raw: str) -> date | None:
 
 def _extract_due_date(case_context: str) -> date | None:
     candidates: list[date] = []
-    for match in _DUE_RE.finditer(case_context or ""):
-        parsed = _parse_date_token(match.group("date"))
+
+    def add(raw: str) -> None:
+        parsed = _parse_date_token(raw)
         if parsed and parsed not in candidates:
             candidates.append(parsed)
+
+    for match in _DUE_RE.finditer(case_context or ""):
+        add(match.group("date"))
+    for match in _PAYMENT_DUE_EXPIRED_RE.finditer(case_context or ""):
+        add(match.group("date"))
+    for match in _PAYMENT_WITHIN_FROM_RE.finditer(case_context or ""):
+        base = _parse_date_token(match.group("date"))
+        if base:
+            calculated = base + timedelta(days=int(match.group("days")))
+            if calculated not in candidates:
+                candidates.append(calculated)
+
     return candidates[0] if len(candidates) == 1 else None
 
 
 def _principal_amount(draft: ClaimDraft) -> int | None:
     """Prefer the standalone principal request over a model-written total claim price."""
     for request in draft.requests:
-        if _PENALTY_LINE_RE.search(request):
+        if _PENALTY_LINE_RE.search(request) or _STATE_DUTY_OR_COST_RE.search(request):
             continue
         lowered = request.lower()
-        if any(marker in lowered for marker in ("основн", "долг", "задолж")):
+        if any(marker in lowered for marker in ("основн", "долг", "задолж", "негізгі", "берешек", "қарыз")):
             amount = parse_amount_kzt(request)
             if amount:
                 return amount
     return parse_amount_kzt(draft.price_of_claim)
 
 
-def _remove_model_penalty(draft: ClaimDraft, case_context: str) -> None:
-    """Do not let the model add an unrequested or unverified monetary claim."""
-    principal = _principal_amount(draft)
+def _strip_penalty_everywhere(draft: ClaimDraft) -> None:
+    """Remove a model-invented penalty coherently from every claim field."""
     draft.requests = [item for item in draft.requests if not _PENALTY_LINE_RE.search(item)]
     draft.legal_basis = [item for item in draft.legal_basis if not _PENALTY_LINE_RE.search(item)]
+    draft.facts = [item for item in draft.facts if not _PENALTY_LINE_RE.search(item)]
+    draft.attachments = [item for item in draft.attachments if not _PENALTY_LINE_RE.search(item)]
     draft.late_interest = ""
+    draft.title = _TITLE_PENALTY_RE.sub("", draft.title or "").strip()
 
-    if principal:
-        draft.price_of_claim = format_kzt(principal)
+
+def _drop_article_353_lines(draft: ClaimDraft) -> None:
+    draft.legal_basis = [item for item in draft.legal_basis if not _ARTICLE_353_LINE_RE.search(item)]
+
+
+def _request_awarded_amount(request: str) -> int | None:
+    match = _AWARDED_AMOUNT_RE.search(request or "")
+    if match:
+        return parse_amount_kzt(match.group("amount"))
+    amounts = parse_all_amounts_kzt(request or "")
+    if not amounts:
+        return None
+    if _PENALTY_LINE_RE.search(request or "") and len(amounts) > 1:
+        return amounts[-1]
+    return amounts[0]
+
+
+def _existing_penalty_amount(draft: ClaimDraft) -> int | None:
+    for request in draft.requests or []:
+        if _PENALTY_LINE_RE.search(str(request)):
+            amount = _request_awarded_amount(str(request))
+            if amount is not None:
+                return amount
+    return None
+
+
+def _replace_exact_amounts(text: str, replacements: dict[int, int]) -> str:
+    if not replacements:
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        current = parse_amount_kzt(match.group(0))
+        target = replacements.get(current) if current is not None else None
+        return format_kzt(target) if target is not None else match.group(0)
+
+    return _MONEY_TOKEN_RE.sub(replace, text or "")
+
+
+def _sync_calculated_penalty_narrative(
+    draft: ClaimDraft,
+    *,
+    principal: int,
+    new_penalty: int,
+    old_penalty: int | None,
+    old_price: int | None,
+) -> None:
+    """Keep penalty-bearing facts/attachments aligned with deterministic arithmetic."""
+    replacements: dict[int, int] = {}
+    if old_penalty is not None and old_penalty not in {principal, new_penalty}:
+        replacements[old_penalty] = new_penalty
+    new_price = principal + new_penalty
+    if old_price is not None and old_price not in {principal, new_price}:
+        replacements[old_price] = new_price
+    if not replacements:
+        return
+
+    draft.facts = [
+        _replace_exact_amounts(str(item), replacements) if _PENALTY_LINE_RE.search(str(item)) else str(item)
+        for item in draft.facts
+    ]
+    draft.attachments = [
+        _replace_exact_amounts(str(item), replacements) if _PENALTY_LINE_RE.search(str(item)) else str(item)
+        for item in draft.attachments
+    ]
+
+
+def _explicit_penalty_amount_from_context(case_context: str) -> int | None:
+    """Return one source-bound penalty amount only when directly tied to the penalty label."""
+    values: list[int] = []
+    for match in _PENALTY_AMOUNT_NEAR_RE.finditer(case_context or ""):
+        amount = parse_amount_kzt(match.group("amount") or "")
+        if amount is not None and amount not in values:
+            values.append(amount)
+    return values[0] if len(values) == 1 else None
+
+
+def _mark_penalty_for_verification(draft: ClaimDraft, reason: str, *, case_context: str) -> None:
+    """Keep the remedy while discarding any model-only monetary figure."""
+    suffix = f"[ТРЕБУЕТ ПРОВЕРКИ: {reason}]"
+    source_amount = _explicit_penalty_amount_from_context(case_context)
+    updated = [str(item) for item in draft.requests if not _PENALTY_LINE_RE.search(str(item))]
+    if source_amount is not None:
+        updated.append(
+            f"Взыскать заявленную клиентом неустойку в размере {format_kzt(source_amount)}. {suffix}"
+        )
+    else:
+        updated.append(f"Взыскать заявленную клиентом неустойку. {suffix}")
+    draft.requests = updated
+    if reason not in draft.verification_notes:
+        draft.verification_notes.append(reason)
+    draft.status = VerificationStatus.NEEDS_VERIFICATION
+
+
+def _component_label(request: str) -> str:
+    lowered = (request or "").lower()
+    if "договорн" in lowered and _PENALTY_LINE_RE.search(lowered):
+        return "договорная неустойка"
+    if _ARTICLE_353_RE.search(lowered):
+        return "неустойка по статье 353 ГК РК"
+    if _PENALTY_LINE_RE.search(lowered):
+        return "неустойка"
+    if any(marker in lowered for marker in ("основн", "долг", "задолж", "негізгі", "берешек", "қарыз")):
+        return "основной долг"
+    return "имущественное требование"
+
+
+def _recompute_claim_price_and_duty(draft: ClaimDraft, case_context: str) -> None:
+    """Цена иска = сумма всех определённых имущественных требований, без судебных расходов."""
+    components: list[tuple[str, int]] = []
+    unresolved = False
+
+    for request in list(draft.requests or []):
+        text = str(request)
+        if _STATE_DUTY_OR_COST_RE.search(text):
+            continue
+        if not _PROPERTY_REQUEST_RE.search(text):
+            continue
+        upper = text.upper()
+        if "[ТРЕБУЕТ РАСЧ" in upper or "[ТРЕБУЕТ ПРОВЕРКИ" in upper:
+            unresolved = True
+            continue
+        amount = _request_awarded_amount(text)
+        if amount is None:
+            unresolved = True
+            continue
+        components.append((_component_label(text), amount))
+
+    if unresolved:
+        draft.price_of_claim = "[ТРЕБУЕТ РАСЧЁТА]"
         draft.state_duty = gosposhlina_line(case_context, draft.price_of_claim)
         _enforce_single_state_duty_request(draft)
+        draft.status = VerificationStatus.NEEDS_VERIFICATION
+        return
 
-    draft.title = re.sub(
-        r"\s+и\s+(?:процент\w*|неустойк\w*)[^\n]*$",
-        "",
-        draft.title,
-        flags=re.IGNORECASE,
-    ).strip()
+    if not components:
+        principal = _principal_amount(draft)
+        if principal is None:
+            draft.price_of_claim = "[ТРЕБУЕТ РАСЧЁТА]"
+            draft.state_duty = gosposhlina_line(case_context, draft.price_of_claim)
+            _enforce_single_state_duty_request(draft)
+            draft.status = VerificationStatus.NEEDS_VERIFICATION
+            return
+        components = [("основной долг", principal)]
+
+    total = sum(amount for _, amount in components)
+    if len(components) == 1:
+        draft.price_of_claim = format_kzt(total)
+    else:
+        detail = " + ".join(f"{label} {format_kzt(amount)}" for label, amount in components)
+        draft.price_of_claim = f"{format_kzt(total)} ({detail})"
+    draft.state_duty = gosposhlina_line(case_context, draft.price_of_claim)
+    _enforce_single_state_duty_request(draft)
 
 
-def _apply_verified_article_353(
+def _contractual_penalty_line(penalty: ContractualPenalty) -> str:
+    terms = penalty.terms
+    clause = f"; пункт {terms.clause} договора" if terms.clause else "; условие договора о неустойке"
+    cap = ""
+    if terms.cap_percent is not None and penalty.cap_reached_on is not None:
+        cap = (
+            f"; лимит {terms.cap_percent:g}% = {format_kzt(penalty.cap_amount or 0)}, "
+            f"достигается {penalty.cap_reached_on.strftime('%d.%m.%Y')}"
+        )
+    return (
+        f"{format_kzt(penalty.amount)} за период с {penalty.start.strftime('%d.%m.%Y')} "
+        f"по {penalty.end.strftime('%d.%m.%Y')} ({penalty.days} дн.; договорная ставка "
+        f"{terms.rate_percent_per_day:g}% от суммы задолженности за каждый день просрочки{clause}{cap}): "
+        f"{format_kzt(penalty.principal)} × {terms.rate_percent_per_day:g}% × {penalty.days} дн."
+    )
+
+
+def _contractual_penalty_request(penalty: ContractualPenalty) -> str:
+    terms = penalty.terms
+    clause = f"по пункту {terms.clause} договора" if terms.clause else "по условию договора о неустойке"
+    text = (
+        f"Взыскать с ответчика в пользу истца договорную неустойку {clause} "
+        f"в размере {format_kzt(penalty.amount)} за период с {penalty.start.strftime('%d.%m.%Y')} "
+        f"по {penalty.end.strftime('%d.%m.%Y')} ({penalty.days} дн.) исходя из ставки "
+        f"{terms.rate_percent_per_day:g}% от суммы задолженности за каждый день просрочки"
+    )
+    if terms.cap_percent is None:
+        return text + "; за последующий период — по день фактической уплаты суммы долга."
+    if penalty.capped:
+        reached = penalty.cap_reached_on.strftime("%d.%m.%Y") if penalty.cap_reached_on else "установленную дату"
+        return (
+            text
+            + f"; предельный размер {terms.cap_percent:g}% от суммы задолженности достигнут {reached}, "
+            "дальнейшее начисление сверх договорного лимита не заявляется."
+        )
+    return (
+        text
+        + "; за последующий период — по день фактической уплаты суммы долга, "
+        f"но не более {terms.cap_percent:g}% от суммы задолженности."
+    )
+
+
+def _apply_contractual_penalty(
+    case_context: str,
+    draft: ClaimDraft,
+    *,
+    terms: ContractualPenaltyTerms,
+    filing_date: date,
+) -> bool:
+    principal = _principal_amount(draft)
+    due_date = _extract_due_date(case_context)
+    if principal is None or due_date is None:
+        _drop_article_353_lines(draft)
+        _mark_penalty_for_verification(draft, CONTRACT_DUE_DATE_MISSING_NOTE, case_context=case_context)
+        _recompute_claim_price_and_duty(draft, case_context)
+        return True
+
+    start = due_date + timedelta(days=1)
+    if filing_date < start:
+        reason = "На дату подачи иска установленный срок оплаты ещё не истёк; период просрочки отсутствует."
+        _drop_article_353_lines(draft)
+        _mark_penalty_for_verification(draft, reason, case_context=case_context)
+        _recompute_claim_price_and_duty(draft, case_context)
+        return True
+
+    old_penalty = _existing_penalty_amount(draft)
+    old_price = parse_amount_kzt(draft.price_of_claim)
+    penalty = calc_contractual_penalty(principal, terms, start, filing_date)
+    _sync_calculated_penalty_narrative(
+        draft,
+        principal=principal,
+        new_penalty=penalty.amount,
+        old_penalty=old_penalty,
+        old_price=old_price,
+    )
+    draft.requests = [item for item in draft.requests if not _PENALTY_LINE_RE.search(item)]
+    _drop_article_353_lines(draft)
+    clause = f"Пунктом {terms.clause} договора" if terms.clause else "Условием договора о неустойке"
+    basis = (
+        f"{clause} предусмотрена договорная неустойка в размере {terms.rate_percent_per_day:g}% "
+        "от суммы задолженности за каждый день просрочки"
+        + (f", но не более {terms.cap_percent:g}% от суммы задолженности." if terms.cap_percent is not None else ".")
+    )
+    if basis not in draft.legal_basis:
+        draft.legal_basis.append(basis)
+    draft.late_interest = _contractual_penalty_line(penalty)
+    draft.requests.append(_contractual_penalty_request(penalty))
+    _recompute_claim_price_and_duty(draft, case_context)
+    return True
+
+
+def _apply_verified_penalty(
     case_context: str,
     research: LegalResearch,
     draft: ClaimDraft,
@@ -174,28 +475,42 @@ def _apply_verified_article_353(
 ) -> None:
     requested = _explicit_penalty_requested(case_context)
     if not requested:
-        _remove_model_penalty(draft, case_context)
+        _strip_penalty_everywhere(draft)
+        _recompute_claim_price_and_duty(draft, case_context)
+        return
+
+    contractual_terms = parse_contractual_penalty_terms(case_context)
+    if contractual_terms is not None:
+        _apply_contractual_penalty(
+            case_context,
+            draft,
+            terms=contractual_terms,
+            filing_date=filing_date,
+        )
         return
 
     if not _research_has_article_353(research):
-        _remove_model_penalty(draft, case_context)
-        if ARTICLE_353_MISSING_NOTE not in draft.verification_notes:
-            draft.verification_notes.append(ARTICLE_353_MISSING_NOTE)
+        _drop_article_353_lines(draft)
+        _mark_penalty_for_verification(draft, CONTRACT_TERMS_MISSING_NOTE, case_context=case_context)
+        _recompute_claim_price_and_duty(draft, case_context)
         return
 
     due_date = _extract_due_date(case_context)
     principal = _principal_amount(draft)
     if due_date is None or principal is None:
-        _remove_model_penalty(draft, case_context)
-        if DUE_DATE_MISSING_NOTE not in draft.verification_notes:
-            draft.verification_notes.append(DUE_DATE_MISSING_NOTE)
+        _mark_penalty_for_verification(draft, DUE_DATE_MISSING_NOTE, case_context=case_context)
+        _recompute_claim_price_and_duty(draft, case_context)
         return
 
     start = due_date + timedelta(days=1)
     if filing_date < start:
-        _remove_model_penalty(draft, case_context)
+        reason = "На дату подачи иска срок исполнения ещё не наступил; неустойка по статье 353 не начисляется."
+        _mark_penalty_for_verification(draft, reason, case_context=case_context)
+        _recompute_claim_price_and_duty(draft, case_context)
         return
 
+    old_penalty = _existing_penalty_amount(draft)
+    old_price = parse_amount_kzt(draft.price_of_claim)
     penalty = calc_late_payment_penalty(
         principal,
         start,
@@ -203,12 +518,18 @@ def _apply_verified_article_353(
         rate_date=filing_date,
     )
     if penalty is None:
-        _remove_model_penalty(draft, case_context)
         draft.late_interest = NEEDS_RATE_MARKER
-        if RATE_MISSING_NOTE not in draft.verification_notes:
-            draft.verification_notes.append(RATE_MISSING_NOTE)
+        _mark_penalty_for_verification(draft, RATE_MISSING_NOTE, case_context=case_context)
+        _recompute_claim_price_and_duty(draft, case_context)
         return
 
+    _sync_calculated_penalty_narrative(
+        draft,
+        principal=principal,
+        new_penalty=penalty.amount,
+        old_penalty=old_penalty,
+        old_price=old_price,
+    )
     draft.requests = [item for item in draft.requests if not _PENALTY_LINE_RE.search(item)]
     draft.legal_basis = [item for item in draft.legal_basis if not _PENALTY_LINE_RE.search(item)]
     draft.legal_basis.append(
@@ -225,14 +546,12 @@ def _apply_verified_article_353(
         f"исходя из базовой ставки НБ РК {penalty.rate_percent:g}% на дату предъявления иска; "
         "за последующий период — по день фактической уплаты суммы долга в порядке статьи 353 ГК РК."
     )
+    _recompute_claim_price_and_duty(draft, case_context)
 
-    total = principal + penalty.amount
-    draft.price_of_claim = (
-        f"{format_kzt(total)} (основной долг {format_kzt(principal)} + "
-        f"неустойка по статье 353 ГК РК {format_kzt(penalty.amount)} на дату подачи иска)"
-    )
-    draft.state_duty = gosposhlina_line(case_context, draft.price_of_claim)
-    _enforce_single_state_duty_request(draft)
+
+# Backwards compatibility: five production call sites and existing tests import
+# the old function name. They now receive the generic penalty dispatcher.
+_apply_verified_article_353 = _apply_verified_penalty
 
 
 class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
@@ -294,7 +613,11 @@ class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
 
     async def research_case(self, case_context: str, language: str = "ru") -> LegalResearch:
         research = await super().research_case(case_context, language=language)
-        if not _explicit_penalty_requested(case_context) or _research_has_article_353(research):
+        if (
+            not _explicit_penalty_requested(case_context)
+            or parse_contractual_penalty_terms(case_context) is not None
+            or _research_has_article_353(research)
+        ):
             return research
 
         claims, urls = await self._targeted_article_353_research(case_context, language)
@@ -313,7 +636,7 @@ class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
         language: str = "ru",
     ) -> ClaimDraft:
         draft = await super().draft_claim(case_context, research, language=language)
-        _apply_verified_article_353(
+        _apply_verified_penalty(
             case_context,
             research,
             draft,

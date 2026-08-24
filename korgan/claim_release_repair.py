@@ -67,10 +67,10 @@ async def repair_claim_release(
 ) -> ClaimDraft | None:
     """Run one bounded repair for defects discovered only by the final release gate.
 
-    The normal drafting service already performs its regular quality repair. This
-    function is intentionally a rare second pass: it runs only when the final
-    citation/integrity gate still blocks delivery. It may use the user's facts and
-    current VERIFIED research only; it never weakens or bypasses the release gate.
+    The model is allowed to repair only citation/integrity defects. After that
+    pass every deterministic filing invariant is re-applied in code so a model
+    repair cannot silently drop a penalty, claim price, state duty, material-law
+    basis, source-requested judicial costs or filing-risk note.
     """
     service = _repair_service()
     issues = _release_issues(release)
@@ -99,9 +99,35 @@ async def repair_claim_release(
         source_urls=list(research.source_urls),
         **payload,
     )
+
+    # Import the finalization layers lazily. claim_release_repair is itself part
+    # of the runtime monkeypatch stack, and importing stable/universal services
+    # at module import time would make startup order circular and fragile.
+    from korgan.claim_release_invariants import enforce_claim_release_invariants
+    from korgan.professional_claim_finalizer import finalize_professional_claim
+    from korgan.universal_word_quality_guard import finalize_claim_for_release
+
+    # IMPORTANT: the old production path stopped after the LLM repair here.
+    # That let the last model pass undo deterministic work already performed by
+    # FinalizedProductionClaimService. Re-run the same zero-call finalization
+    # chain before the repaired draft is ever eligible for Word delivery.
+    finalize_professional_claim(context, research, repaired, language=language)
+    enforce_claim_release_invariants(context, repaired, language=language)
     _deterministic_pre_qa(context, research, repaired)
     _apply_verified_article_353(context, research, repaired, filing_date=_today_kz())
+    finalize_professional_claim(context, research, repaired, language=language)
+    enforce_claim_release_invariants(context, repaired, language=language)
+
+    # Any deterministic pre-QA pass that may reinsert a state-duty request must
+    # run before the localized final release normalizer. Otherwise a kk repair
+    # could finish with the Russian canonical duty wording.
+    _deterministic_pre_qa(context, research, repaired)
+    finalize_claim_for_release(context, repaired, language=language)
+
+    # Quality polish may touch legal-basis text, but the final invariant pass is
+    # intentionally non-monetary: it cannot undo localized price/duty output.
     claim_quality_hotfix.polish_claim_before_quality(context, research, repaired)
+    enforce_claim_release_invariants(context, repaired, language=language)
     return repaired
 
 
