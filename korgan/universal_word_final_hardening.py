@@ -56,14 +56,29 @@ def parse_amount_kzt_exact(text: str) -> int | None:
 
 
 def calc_state_duty_exact(amount: int, is_individual: bool) -> int:
-    """Calculate court state duty using Decimal and the configured statutory cap."""
+    """Calculate ordinary civil property-claim state duty exactly.
+
+    The statutory rate and the statutory cap are selected together from the
+    verified rates contract. Physical persons, including an individual
+    entrepreneur in an ordinary civil property claim, use the individual rate
+    and cap. Legal entities use the legal-entity rate and cap. This function must
+    never fall back to the legacy single-cap alias.
+    """
     from korgan import legal_calc
 
     if amount < 0:
         raise ValueError("Сумма иска не может быть отрицательной")
-    rate = Decimal("0.01") if is_individual else Decimal("0.03")
+
+    if is_individual:
+        rate = Decimal(str(legal_calc.RATE_INDIVIDUAL))
+        cap_mrp = legal_calc.CAP_MRP_INDIVIDUAL
+    else:
+        rate = Decimal(str(legal_calc.RATE_LEGAL_ENTITY))
+        cap_mrp = legal_calc.CAP_MRP_LEGAL_ENTITY
+
     duty = int((Decimal(amount) * rate).quantize(_ONE_TENGE, rounding=ROUND_HALF_UP))
-    return min(duty, legal_calc.CAP_MRP * legal_calc.MRP_2026)
+    statutory_cap = int(Decimal(cap_mrp) * Decimal(legal_calc.MRP_2026))
+    return min(duty, statutory_cap)
 
 
 def calc_late_payment_penalty_exact(
