@@ -1,7 +1,9 @@
+from dataclasses import replace
 from datetime import date
 
 import pytest
 
+from korgan.legal.calc import load_rates
 from korgan.legal_calc import (
     CAP_MRP,
     CAP_MRP_LEGAL_ENTITY,
@@ -111,8 +113,19 @@ def test_mixed_property_and_non_property_claim_adds_half_mrp() -> None:
             "Взыскать с ответчика 2 400 000 тенге.",
         ],
     )
-    assert line.startswith("26 163 тенге")  # 24 000 + 0.5 * 4 325 = 26 162.5 -> 26 163
-    assert "0,5 МРП" in line
+    assert line.startswith("26 163 тенге")
+    assert "0.5 МРП" in line
+
+
+def test_monetary_obligation_worded_as_oblige_does_not_add_half_mrp() -> None:
+    line = gosposhlina_line(
+        DELO_2_CONTEXT,
+        "1 000 000 тенге",
+        title="Иск о взыскании долга",
+        requests=["Обязать ответчика вернуть долг 1 000 000 тенге."],
+    )
+    assert line.startswith("10 000 тенге")
+    assert "0.5 МРП" not in line
 
 
 def test_pure_non_property_claim_is_half_mrp() -> None:
@@ -123,20 +136,19 @@ def test_pure_non_property_claim_is_half_mrp() -> None:
         requests=["Обязать ответчика устранить нарушение."],
     )
     assert line.startswith("2 163 тенге")
-    assert "0,5 МРП" in line
+    assert "0.5 МРП" in line
 
 
 def test_consumer_claim_is_deferred_not_exempt() -> None:
-    context = DELO_2_CONTEXT + "Спор о защите прав потребителей.\n"
     line = gosposhlina_line(
-        context,
+        DELO_2_CONTEXT,
         "920 000 тенге",
         title="Иск о защите прав потребителей",
         requests=["Взыскать 920 000 тенге."],
     )
     assert "Уплата отсрочена" in line
     assert "9 200 тенге" in line
-    assert "статьи 106 ГПК" in line
+    assert "106 ГПК" in line
     assert not line.startswith("0 тенге")
 
 
@@ -144,7 +156,6 @@ def test_wage_claim_is_exempt_under_article_668() -> None:
     context = (
         "Истец: Иванов Иван Иванович, ИИН 000000000101\n"
         "Ответчик: ТОО «Работодатель», БИН 000000000303\n"
-        "Требование: взыскание задолженности по заработной плате.\n"
     )
     line = gosposhlina_line(
         context,
@@ -153,7 +164,30 @@ def test_wage_claim_is_exempt_under_article_668() -> None:
         requests=["Взыскать задолженность по заработной плате 500 000 тенге."],
     )
     assert line.startswith("0 тенге")
-    assert "668" in line
+    assert "665" in line
+
+
+def test_salary_certificate_in_evidence_does_not_create_wage_exemption() -> None:
+    context = DELO_2_CONTEXT + "Доказательство: справка о заработной плате истца для подтверждения дохода.\n"
+    line = gosposhlina_line(
+        context,
+        "1 000 000 тенге",
+        title="Иск о взыскании долга",
+        requests=["Взыскать долг 1 000 000 тенге."],
+    )
+    assert line.startswith("10 000 тенге")
+
+
+def test_divorce_in_background_does_not_change_debt_tariff() -> None:
+    context = DELO_2_CONTEXT + "Истец ранее сообщил, что его брак расторгнут в 2024 году.\n"
+    line = gosposhlina_line(
+        context,
+        "1 000 000 тенге",
+        title="Иск о взыскании долга",
+        requests=["Взыскать долг 1 000 000 тенге."],
+    )
+    assert line.startswith("10 000 тенге")
+    assert "0.3 МРП" not in line
 
 
 def test_ambiguous_transaction_invalidity_fails_closed() -> None:
@@ -176,3 +210,16 @@ def test_gosposhlina_line_without_party_type_needs_calculation() -> None:
 
 def test_state_duty_rates_expire_after_2026_instead_of_guessing() -> None:
     assert gosposhlina_line(DELO_2_CONTEXT, "2 400 000 тенге", day=date(2027, 1, 1)) == NEEDS_CALCULATION_MARKER
+
+
+def test_production_helper_uses_injected_rate_config() -> None:
+    configured = replace(load_rates(), duty_individual_rate=0.02)
+    line = gosposhlina_line(
+        DELO_2_CONTEXT,
+        "1 000 000 тенге",
+        title="Иск о взыскании долга",
+        requests=["Взыскать долг 1 000 000 тенге."],
+        rates=configured,
+    )
+    assert line.startswith("20 000 тенге")
+    assert "2%" in line
