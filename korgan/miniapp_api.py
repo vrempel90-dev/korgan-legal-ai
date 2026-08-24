@@ -5,7 +5,6 @@ import hashlib
 import hmac
 import json
 import os
-from dataclasses import asdict
 from typing import Any
 from urllib.parse import parse_qsl
 
@@ -21,7 +20,7 @@ from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
 from korgan.config import get_settings
 from korgan.pretrial_response import PretrialResponseProductionService
 
-app = FastAPI(title="KORGAN Mini App API", version="0.1.0")
+app = FastAPI(title="KORGAN Mini App API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -40,6 +39,8 @@ service = ClaimPipelineV2Adapter(PretrialResponseProductionService(settings))
 # Telegram session store. A dedicated persistent Mini App store will replace
 # this only after its migrations and deletion semantics are regression-tested.
 _sessions: dict[str, dict[str, Any]] = {}
+
+_CLAIM_CATEGORIES = {"claim", "debt", "consumer", "housing", "labor"}
 
 
 class ConsultationRequest(BaseModel):
@@ -105,9 +106,13 @@ def _require_consent(user_id: str) -> dict[str, Any]:
     return state
 
 
+def _public_case(item: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in item.items() if k != "document_base64"}
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "korgan-miniapp-api"}
+    return {"status": "ok", "service": "korgan-miniapp-api", "version": "0.2.0"}
 
 
 @app.post("/miniapp/consent")
@@ -125,7 +130,7 @@ async def list_cases(x_telegram_init_data: str = Header(default="")) -> dict[str
     user_id = _identity(x_telegram_init_data)
     state = _require_consent(user_id)
     cases = list(state["cases"].values())
-    return {"cases": [{k: v for k, v in item.items() if k != "document_base64"} for item in cases]}
+    return {"cases": [_public_case(item) for item in reversed(cases)]}
 
 
 @app.post("/miniapp/cases")
@@ -142,7 +147,7 @@ async def create_case(payload: CaseRequest, x_telegram_init_data: str = Header(d
         "status": "created",
     }
     state["cases"][case_id] = item
-    return {"case": item}
+    return {"case": _public_case(item)}
 
 
 @app.post("/miniapp/consultation")
@@ -170,8 +175,10 @@ async def generate_document(payload: GenerateRequest, x_telegram_init_data: str 
     case = state["cases"].get(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
-    if payload.document_type != "claim":
-        raise HTTPException(status_code=501, detail="This document type is not wired yet")
+
+    document_type = payload.document_type or str(case.get("document_type") or "claim")
+    if document_type not in _CLAIM_CATEGORIES:
+        raise HTTPException(status_code=501, detail="Этот тип документа подключается на следующем этапе")
 
     language = "kk" if payload.language == "kk" else "ru"
     context = str(case.get("description", ""))
@@ -185,6 +192,7 @@ async def generate_document(payload: GenerateRequest, x_telegram_init_data: str 
             "verification_status": getattr(draft.status, "value", str(draft.status)),
             "verification_notes": list(draft.verification_notes),
             "document_base64": base64.b64encode(file_bytes).decode("ascii"),
+            "filename": "KORGAN_iskovoe_zayavlenie.docx",
         }
     )
     return {
@@ -193,7 +201,7 @@ async def generate_document(payload: GenerateRequest, x_telegram_init_data: str 
         "title": draft.title,
         "verification_status": case["verification_status"],
         "verification_notes": case["verification_notes"],
-        "filename": "KORGAN_iskovoe_zayavlenie.docx",
+        "filename": case["filename"],
         "document_base64": case["document_base64"],
     }
 
