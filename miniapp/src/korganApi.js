@@ -4,8 +4,9 @@ async function request(path, options = {}) {
   if (!API_BASE) throw new Error('KORGAN_API_NOT_CONNECTED');
 
   const tg = window.Telegram?.WebApp;
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers = {
-    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(!isFormData && options.body ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers || {}),
   };
 
@@ -37,6 +38,11 @@ export const korganApi = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
+  uploadMaterial: (caseId, file) => {
+    const body = new FormData();
+    body.append('file', file);
+    return request(`/miniapp/cases/${encodeURIComponent(caseId)}/materials`, { method: 'POST', body });
+  },
   generateDocument: (caseId, documentType = 'claim', language = 'ru') => request('/miniapp/documents/generate', {
     method: 'POST',
     body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
