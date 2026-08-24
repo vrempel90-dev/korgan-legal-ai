@@ -38,6 +38,7 @@ def test_authenticated_case_lifecycle_without_ai_calls() -> None:
         assert health.status_code == 200
         assert health.json()["status"] == "ok"
         assert health.json()["state_encryption"] == "AES-256-GCM"
+        assert health.json()["storage"] == "postgres"
 
         accepted = client.post(
             "/miniapp/consent",
