@@ -5,7 +5,7 @@ import re
 from typing import Any, Awaitable, Callable
 
 from korgan import document_quality, universal_quality_service
-from korgan.citation_audit import extract_references, runtime_provisions
+from korgan.citation_audit import audit_citations, extract_references, runtime_provisions
 from korgan.fast_v2_production_legal import _normalize_state_duty_request
 from korgan.legal_calc import NEEDS_CALCULATION_MARKER, format_kzt, gosposhlina_line
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch, VerificationStatus
@@ -114,22 +114,11 @@ def _strip_internal_score_notes(draft: Any) -> None:
     setattr(
         draft,
         "verification_notes",
-        [
-            str(note)
-            for note in notes
-            if not str(note).startswith(_INTERNAL_SCORE_PREFIXES)
-        ],
+        [str(note) for note in notes if not str(note).startswith(_INTERNAL_SCORE_PREFIXES)],
     )
 
 
 def _claim_context_with_role(case_context: str, draft: ClaimDraft) -> str:
-    """Give deterministic calculators the already-extracted claimant role.
-
-    Uploaded contracts/pre-trial demands often label the same company as Supplier,
-    Contractor or Creditor rather than literally «Истец». The draft has already
-    resolved the litigation role, so using that role here prevents a false
-    [ТРЕБУЕТ РАСЧЁТА ГОСПОШЛИНЫ] without changing any factual party data.
-    """
     claimant = "\n".join(str(item) for item in draft.claimant if str(item).strip())
     return f"{case_context}\n\nИстец:\n{claimant}" if claimant else case_context
 
@@ -141,9 +130,7 @@ def _localize_state_duty_request(draft: ClaimDraft, language: str) -> None:
     if not duty or duty.startswith("["):
         return
     amount = duty.split("(", 1)[0].strip().replace(" тенге", " теңге")
-    draft.requests = [
-        request for request in draft.requests if not _STATE_DUTY_REQUEST_RE.search(str(request))
-    ]
+    draft.requests = [request for request in draft.requests if not _STATE_DUTY_REQUEST_RE.search(str(request))]
     if amount:
         draft.requests.append(
             "Жауапкерден талап қоюшының пайдасына мемлекеттік бажды төлеуге жұмсалған "
@@ -151,11 +138,7 @@ def _localize_state_duty_request(draft: ClaimDraft, language: str) -> None:
         )
 
 
-def apply_state_duty_from_draft(
-    case_context: str,
-    draft: ClaimDraft,
-    language: str = "ru",
-) -> None:
+def apply_state_duty_from_draft(case_context: str, draft: ClaimDraft, language: str = "ru") -> None:
     from korgan import production_legal
 
     draft.state_duty = gosposhlina_line(_claim_context_with_role(case_context, draft), draft.price_of_claim)
@@ -163,10 +146,8 @@ def apply_state_duty_from_draft(
         if production_legal.STATE_DUTY_NOTE not in draft.verification_notes:
             draft.verification_notes.append(production_legal.STATE_DUTY_NOTE)
         return
-
     draft.verification_notes = [
-        note for note in draft.verification_notes
-        if not production_legal._is_stale_duty_note(str(note))
+        note for note in draft.verification_notes if not production_legal._is_stale_duty_note(str(note))
     ]
     _normalize_state_duty_request(draft)
     _localize_state_duty_request(draft, language)
@@ -182,12 +163,6 @@ def _amount_occurrences(text: str) -> list[tuple[int, int, int]]:
 
 
 def _source_penalty_demand_segments(case_context: str) -> list[str]:
-    """Return only user/upload source segments that explicitly demand a penalty.
-
-    Mentioning a contractual penalty clause or a model-generated claim title is not
-    enough. This protects the client from KORGAN silently adding a remedy the source
-    materials never asked to pursue.
-    """
     result: list[str] = []
     for segment in re.split(r"(?<=[.!?])\s+|\n+", case_context or ""):
         value = segment.strip()
@@ -199,17 +174,10 @@ def _source_penalty_demand_segments(case_context: str) -> list[str]:
 
 
 def _penalty_amount(case_context: str) -> int | None:
-    """Find the penalty amount from source context, never from generated draft text.
-
-    Candidate selection is deterministic and proximity-based. Sentences describing
-    «не более 10% / лимит» are heavily penalized so a contractual cap is not
-    mistaken for the amount actually demanded by the client.
-    """
     candidates: list[tuple[int, int]] = []
     explicit_segments = _source_penalty_demand_segments(case_context)
     if not explicit_segments:
         return None
-
     segments = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+|\n+", case_context or "") if segment.strip()]
     for segment in segments:
         terms = list(_PENALTY_RE.finditer(segment))
@@ -227,7 +195,6 @@ def _penalty_amount(case_context: str) -> int | None:
             if _PENALTY_CAP_RE.search(segment):
                 score -= 12
             candidates.append((score, amount))
-
     if not candidates:
         return None
     candidates.sort(key=lambda item: (item[0], -item[1]), reverse=True)
@@ -245,20 +212,11 @@ def _render_penalty_request(amount: int, language: str) -> str:
     amount_text = format_kzt(amount)
     if language == "kk":
         amount_text = amount_text.replace(" тенге", " теңге")
-        return (
-            "Жауапкерден талап қоюшының пайдасына шарттық тұрақсыздық айыбын "
-            f"{amount_text} мөлшерінде өндіріп алу."
-        )
+        return f"Жауапкерден талап қоюшының пайдасына шарттық тұрақсыздық айыбын {amount_text} мөлшерінде өндіріп алу."
     return f"Взыскать с ответчика в пользу истца договорную неустойку в размере {amount_text}."
 
 
-def complete_claim_relief_from_materials(
-    case_context: str,
-    draft: ClaimDraft,
-    *,
-    language: str = "ru",
-) -> bool:
-    """Restore a secondary penalty only when source materials explicitly claim it."""
+def complete_claim_relief_from_materials(case_context: str, draft: ClaimDraft, *, language: str = "ru") -> bool:
     if not _penalty_should_be_in_prayer(case_context, draft):
         return False
     amount = _penalty_amount(case_context)
@@ -269,12 +227,7 @@ def complete_claim_relief_from_materials(
     return True
 
 
-def finalize_claim_for_release(
-    case_context: str,
-    draft: ClaimDraft,
-    *,
-    language: str = "ru",
-) -> None:
+def finalize_claim_for_release(case_context: str, draft: ClaimDraft, *, language: str = "ru") -> None:
     from korgan.professional_claim_finalizer import _recalculate_price
 
     sanitize_draft_instructions(draft)
@@ -335,14 +288,7 @@ def _preliminary_after_repair_failure(draft: Any, issues: list[str]) -> Any:
 
 
 def verified_legal_basis_from_research(research: LegalResearch) -> list[str]:
-    """Project only source-bound VERIFIED claims into client-facing legal basis.
-
-    The model never gets to choose a replacement article here. A claim is eligible
-    only when citation_audit can build exactly one official Adilet runtime provision
-    from it. Internal research metadata and quote markers are removed before the
-    business document is rendered; the canonical article reference remains so the
-    finished paragraph is audited again against that same runtime provision.
-    """
+    """Project only source-bound VERIFIED claims into client-facing legal basis."""
     result: list[str] = []
     for raw in research.verified_claims or []:
         claim = str(raw or "").strip()
@@ -359,13 +305,20 @@ def verified_legal_basis_from_research(research: LegalResearch) -> list[str]:
         existing = extract_references(statement)
         if existing and not any(reference.matches(item) for item in existing):
             continue
-        if existing:
-            line = statement
-        else:
-            line = f"{statement.rstrip(' .;')} ({reference.label()})."
+        line = statement if existing else f"{statement.rstrip(' .;')} ({reference.label()})."
         if line and line not in result:
             result.append(line)
     return result[:6]
+
+
+def _legal_basis_needs_rescue(draft: Any, research: LegalResearch) -> bool:
+    legal_basis = [str(item).strip() for item in getattr(draft, "legal_basis", []) or [] if str(item).strip()]
+    if research.verified_claims and not legal_basis:
+        return True
+    if not legal_basis:
+        return False
+    audit = audit_citations("\n".join(legal_basis), verified_claims=research.verified_claims)
+    return bool(audit.blocking)
 
 
 def _rescue_verified_legal_basis(draft: Any, research: LegalResearch) -> bool:
@@ -389,7 +342,6 @@ async def repair_pretrial_to_target(
     first = pretrial_quality_issues(draft, research)
     if not first:
         return draft
-
     try:
         repaired_payload = await self._quality_repair(
             schema_name="korgan_10_of_10_pretrial",
@@ -411,7 +363,7 @@ async def repair_pretrial_to_target(
         sanitize_draft_instructions(repaired)
         second = pretrial_quality_issues(repaired, research)
         final_issues = second
-        if second and _rescue_verified_legal_basis(repaired, research):
+        if _legal_basis_needs_rescue(repaired, research) and _rescue_verified_legal_basis(repaired, research):
             normalize_pretrial(repaired)
             final_issues = pretrial_quality_issues(repaired, research)
         repaired.verification_notes = _refresh_issue_notes(
@@ -431,9 +383,7 @@ async def repair_pretrial_to_target(
         )
         return repaired
     except Exception:
-        LOGGER.exception(
-            "UNIVERSAL_WORD_QUALITY repair_failed kind=pretrial; preserving original PRELIMINARY Word"
-        )
+        LOGGER.exception("UNIVERSAL_WORD_QUALITY repair_failed kind=pretrial; preserving original PRELIMINARY Word")
         return _preliminary_after_repair_failure(draft, first)
 
 
@@ -449,7 +399,6 @@ async def repair_pretrial_response_to_target(
     first = pretrial_response_quality_issues(draft, research)
     if not first:
         return draft
-
     try:
         repaired_payload = await self._quality_repair(
             schema_name="korgan_10_of_10_pretrial_response",
@@ -471,7 +420,7 @@ async def repair_pretrial_response_to_target(
         sanitize_draft_instructions(repaired)
         second = pretrial_response_quality_issues(repaired, research)
         final_issues = second
-        if second and _rescue_verified_legal_basis(repaired, research):
+        if _legal_basis_needs_rescue(repaired, research) and _rescue_verified_legal_basis(repaired, research):
             normalize_pretrial_response(repaired)
             final_issues = pretrial_response_quality_issues(repaired, research)
         repaired.verification_notes = _refresh_issue_notes(
@@ -491,21 +440,16 @@ async def repair_pretrial_response_to_target(
         )
         return repaired
     except Exception:
-        LOGGER.exception(
-            "UNIVERSAL_WORD_QUALITY repair_failed kind=pretrial_response; preserving original PRELIMINARY Word"
-        )
+        LOGGER.exception("UNIVERSAL_WORD_QUALITY repair_failed kind=pretrial_response; preserving original PRELIMINARY Word")
         return _preliminary_after_repair_failure(draft, first)
 
 
 def install_universal_word_quality_guard() -> None:
-    """Install one 10/10 target without turning QA into a Word-delivery kill switch."""
     global _INSTALLED
     if _INSTALLED:
         return
-
     document_quality.MIN_READY_SCORE = TARGET_READY_SCORE
     universal_quality_service.MIN_READY_SCORE = TARGET_READY_SCORE
-
     original_quality_repair = UniversalQualityProductionService._quality_repair
 
     async def resilient_quality_repair(self: UniversalQualityProductionService, **kwargs: Any) -> dict[str, Any]:
@@ -522,12 +466,10 @@ def install_universal_word_quality_guard() -> None:
             return dict(current)
 
     UniversalQualityProductionService._quality_repair = resilient_quality_repair  # type: ignore[assignment]
-
     from korgan import fast_v2_production_legal, production_legal
 
     production_legal._apply_state_duty = apply_state_duty_from_draft
     fast_v2_production_legal._apply_state_duty = apply_state_duty_from_draft
-
     original_claim = StableLegalProductionService.draft_claim
 
     async def guarded_claim(
@@ -541,7 +483,6 @@ def install_universal_word_quality_guard() -> None:
         return draft
 
     StableLegalProductionService.draft_claim = guarded_claim  # type: ignore[assignment]
-
     original_contract = UniversalQualityProductionService.draft_contract
 
     async def guarded_contract(
@@ -555,7 +496,6 @@ def install_universal_word_quality_guard() -> None:
         return draft
 
     UniversalQualityProductionService.draft_contract = guarded_contract  # type: ignore[assignment]
-
     original_response = UniversalQualityProductionService.draft_response_to_claim
 
     async def guarded_response(
@@ -569,7 +509,6 @@ def install_universal_word_quality_guard() -> None:
         return draft
 
     UniversalQualityProductionService.draft_response_to_claim = guarded_response  # type: ignore[assignment]
-
     original_pretrial = PretrialProductionService.draft_pretrial
 
     async def guarded_pretrial(
@@ -581,7 +520,6 @@ def install_universal_word_quality_guard() -> None:
         return await repair_pretrial_to_target(self, original_pretrial, case_context, research, language)
 
     PretrialProductionService.draft_pretrial = guarded_pretrial  # type: ignore[assignment]
-
     original_pretrial_response = PretrialResponseProductionService.draft_pretrial_response
 
     async def guarded_pretrial_response(
@@ -599,7 +537,6 @@ def install_universal_word_quality_guard() -> None:
         )
 
     PretrialResponseProductionService.draft_pretrial_response = guarded_pretrial_response  # type: ignore[assignment]
-
     _INSTALLED = True
     LOGGER.info(
         "Installed universal Word quality guard: target=10/10 for claim/contract/response/pretrial/pretrial_response; preliminary delivery preserved"
