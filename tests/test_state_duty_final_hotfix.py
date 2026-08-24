@@ -33,3 +33,27 @@ def test_state_duty_variants_collapse_to_one_request() -> None:
     assert len(duty_requests) == 1
     assert duty_requests[0].endswith("8 000 тенге.")
     assert draft.requests[0] == "Взыскать долг 800 000 тенге."
+
+
+def test_deferred_consumer_duty_is_not_claimed_as_already_paid_expense() -> None:
+    draft = _draft([
+        "Взыскать долг 800 000 тенге.",
+        "Взыскать госпошлину 8 000 тенге.",
+    ])
+    draft.state_duty = (
+        "Уплата отсрочена до принятия решения судом; расчетная сумма 8 000 тенге "
+        "(часть 3 статьи 106 ГПК РК)"
+    )
+
+    _enforce_single_state_duty_request(draft)
+
+    assert all("пошлин" not in item.lower() for item in draft.requests)
+
+
+def test_exempt_duty_is_not_claimed_as_paid_expense() -> None:
+    draft = _draft(["Взыскать задолженность по заработной плате 800 000 тенге."])
+    draft.state_duty = "0 тенге (освобождение от уплаты: трудовое требование; статья 668 НК РК)"
+
+    _enforce_single_state_duty_request(draft)
+
+    assert all("пошлин" not in item.lower() for item in draft.requests)
