@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,19 @@ DRAFT_NOTICE = (
     "Перед подписанием необходимо проверить реквизиты сторон, коммерческие условия и отмеченные системой вопросы."
 )
 
+_REQUISITES_SECTION_RE = re.compile(
+    r"(?i)^\s*(?:"
+    r"реквизит\w*(?:\s+и\s+подпис\w*)?(?:\s+сторон)?|"
+    r"адрес\w*\s+и\s+реквизит\w*(?:\s+сторон)?|"
+    r"подпис\w*\s+сторон|"
+    r"местонахождени\w*\s+и\s+(?:банковск\w*\s+)?реквизит\w*"
+    r")\s*[.:;-]*\s*$"
+)
+_SIGNATURE_LINE_RE = re.compile(
+    r"(?i)^\s*(?:подпис\w*|signature|м\.?\s*п\.?)\s*[:_\-–—.]*\s*$"
+)
+_PARTY_LABEL_RE = re.compile(r"(?i)^\s*(?:сторона\s*[12аб]|party\s*[ab12])\s*:?[\s.]*$")
+
 
 def _status(draft: ContractDraft, preamble: list[str]) -> str:
     body = "\n".join([*draft.body_lines(), *preamble]).upper()
@@ -33,11 +47,35 @@ def _today_kz() -> str:
     return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
 
 
+def _renderer_owned_requisites_section(heading: str) -> bool:
+    """The DOCX renderer owns the single final requisites/signature block."""
+    return bool(_REQUISITES_SECTION_RE.fullmatch(" ".join(str(heading or "").split())))
+
+
+def _clean_requisites(values: list[str], fallback: list[str]) -> list[str]:
+    result: list[str] = []
+    for raw in values or fallback:
+        value = " ".join(str(raw or "").split()).strip()
+        if not value or _SIGNATURE_LINE_RE.fullmatch(value) or _PARTY_LABEL_RE.fullmatch(value):
+            continue
+        key = re.sub(r"\W+", "", value.casefold())
+        if key and not any(re.sub(r"\W+", "", item.casefold()) == key for item in result):
+            result.append(value)
+    return result
+
+
 def _body_blocks(draft: ContractDraft, preamble: list[str]) -> list[Block]:
     """Describe the contract body; numbering is left entirely to the renderer."""
     blocks: list[Block] = [Prose(item) for item in preamble]
 
     for section in draft.sections:
+        # The model occasionally emits a normal numbered section called
+        # «Реквизиты и подписи сторон». Rendering it and then appending the
+        # canonical two-column signature table produces duplicate signatures.
+        # Skip only dedicated requisites sections; combined substantive sections
+        # such as «Заключительные положения и реквизиты» remain untouched.
+        if _renderer_owned_requisites_section(section.heading):
+            continue
         blocks.append(NumberedItem(section.heading, level=0, bold=True))
         for clause in section.clauses:
             blocks.append(NumberedItem(clause.text, level=1))
@@ -114,15 +152,24 @@ def build_contract_docx(draft: ContractDraft) -> bytes:
     left.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
     right.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
 
+    left_values = _clean_requisites(
+        draft.requisites_a,
+        draft.party_a or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 1]"],
+    ) or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 1]"]
+    right_values = _clean_requisites(
+        draft.requisites_b,
+        draft.party_b or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 2]"],
+    ) or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 2]"]
+
     left_p = left.paragraphs[0]
     left_p.add_run("Сторона 1\n").bold = True
-    for item in (draft.requisites_a or draft.party_a or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 1]"]):
+    for item in left_values:
         left_p.add_run(f"{item}\n")
     left_p.add_run("\nПодпись: ____________________")
 
     right_p = right.paragraphs[0]
     right_p.add_run("Сторона 2\n").bold = True
-    for item in (draft.requisites_b or draft.party_b or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 2]"]):
+    for item in right_values:
         right_p.add_run(f"{item}\n")
     right_p.add_run("\nПодпись: ____________________")
 
