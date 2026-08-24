@@ -137,7 +137,7 @@ def test_consumer_claim_is_deferred_not_exempt() -> None:
     assert "Уплата отсрочена" in line
     assert "9 200 тенге" in line
     assert "статьи 106 ГПК" in line
-    assert "0 тенге" not in line
+    assert not line.startswith("0 тенге")
 
 
 def test_wage_claim_is_exempt_under_article_668() -> None:
