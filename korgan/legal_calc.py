@@ -6,18 +6,60 @@ prompt. The model may not invent, round or "remember" these numbers.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from pathlib import Path
+from typing import Any
 
-RATE_SOURCE_ARTICLE = "статья 665 Налогового кодекса РК (Кодекс РК № 214-VIII)"
-RATE_SOURCE_URL = "https://adilet.zan.kz/rus/docs/K2500000214"
-MRP_SOURCE_URL = "https://adilet.zan.kz/rus/docs/Z2500000239"
-MRP_2026 = 4325
-RATE_INDIVIDUAL = 0.01
-RATE_LEGAL_ENTITY = 0.03
-CAP_MRP = 10_000
+_RATES_PATH = Path(__file__).resolve().parent / "data" / "rates.json"
+
+
+def _load_rates_data() -> dict[str, Any]:
+    """Load legal arithmetic inputs from the repository data contract.
+
+    Numeric legal rates intentionally live in ``data/rates.json`` so changing a
+    statutory indicator or National Bank rate does not require a code edit.
+    Import fails closed when the data contract is malformed instead of silently
+    falling back to remembered constants.
+    """
+    try:
+        payload = json.loads(_RATES_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Не удалось загрузить справочник ставок: {_RATES_PATH}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Справочник ставок должен быть JSON-объектом")
+    return payload
+
+
+def _required_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    if not isinstance(value, dict):
+        raise RuntimeError(f"В справочнике ставок отсутствует объект {key}")
+    return value
+
+
+def _required_rows(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    value = payload.get(key)
+    if not isinstance(value, list) or not value or not all(isinstance(item, dict) for item in value):
+        raise RuntimeError(f"В справочнике ставок отсутствует список {key}")
+    return value
+
+
+_RATES_DATA = _load_rates_data()
+_STATE_DUTY_DATA = _required_mapping(_RATES_DATA, "state_duty")
+_MRP_ROWS = _required_rows(_RATES_DATA, "mrp")
+_NB_RATE_ROWS = _required_rows(_RATES_DATA, "nb_base_rate")
+
+RATE_SOURCE_ARTICLE = str(_STATE_DUTY_DATA["source"])
+RATE_SOURCE_URL = str(_STATE_DUTY_DATA["source_url"])
+MRP_SOURCE_URL = str(_MRP_ROWS[-1]["source_url"])
+MRP_2026 = int(_MRP_ROWS[-1]["value"])
+RATE_INDIVIDUAL = float(_STATE_DUTY_DATA["individual_rate"])
+RATE_LEGAL_ENTITY = float(_STATE_DUTY_DATA["legal_entity_rate"])
+CAP_MRP = int(_STATE_DUTY_DATA["cap_mrp"])
 NEEDS_CALCULATION_MARKER = "[ТРЕБУЕТ РАСЧЁТА ГОСПОШЛИНЫ]"
 
 _LEGAL_ENTITY_ABBREVIATIONS = ("бин", "тоо", "ао", "ип")
@@ -207,19 +249,20 @@ def gosposhlina_line(case_context: str, price_of_claim: str) -> str:
     if is_individual is None:
         return NEEDS_CALCULATION_MARKER
     duty = calc_gosposhlina_claim(amount, is_individual)
-    percent = "1%" if is_individual else "3%"
+    percent = f"{RATE_INDIVIDUAL * 100:g}%" if is_individual else f"{RATE_LEGAL_ENTITY * 100:g}%"
     return f"{format_kzt(duty)} ({percent} от цены иска, {RATE_SOURCE_ARTICLE})"
 
 
 ARTICLE_353_SOURCE_URL = "https://adilet.zan.kz/rus/docs/K940001000_/compare"
-NB_RATE_SOURCE_URL = "https://nationalbank.kz/ru/news/grafik-prinyatiya-resheniy-po-bazovoy-stavke/rubrics/2365"
+NB_RATE_SOURCE_URL = str(_NB_RATE_ROWS[-1].get("source_url", ""))
 ARTICLE_353_LABEL = "статья 353 Гражданского кодекса РК (Общая часть)"
 NEEDS_RATE_MARKER = "[ТРЕБУЕТ ПРОВЕРКИ: базовая ставка Национального Банка РК]"
-NB_BASE_RATES: tuple[tuple[date, float], ...] = (
-    (date(2025, 10, 13), 18.0), (date(2026, 6, 8), 17.0), (date(2026, 7, 27), 16.75),
+NB_BASE_RATES: tuple[tuple[date, float], ...] = tuple(
+    (date.fromisoformat(str(item["from"])), float(item["value"]))
+    for item in _NB_RATE_ROWS
 )
-NB_RATE_TABLE_VALID_THROUGH = date(2026, 9, 3)
-DAYS_IN_YEAR = 365
+NB_RATE_TABLE_VALID_THROUGH = date.fromisoformat(str(_RATES_DATA["nb_base_rate_valid_through"]))
+DAYS_IN_YEAR = int(_RATES_DATA["days_in_year"])
 
 
 @dataclass(frozen=True, slots=True)
