@@ -77,6 +77,22 @@ def test_authenticated_case_lifecycle_without_ai_calls() -> None:
         assert wiped.json()["ok"] is True
 
 
+def test_ai_history_is_not_used_as_drafting_fact_context() -> None:
+    case = {
+        "description": "Пользователь сообщил основной факт.",
+        "materials": [{"context": "Договор №1 от пользователя."}],
+        "conversation": [
+            {"role": "user", "text": "Пользователь уточнил сумму 100 000 ₸."},
+            {"role": "ai", "text": "AI придумал неподтверждённый штраф 999 999 ₸."},
+        ],
+    }
+    context = miniapp_api._case_context(case)
+    assert "Пользователь сообщил основной факт" in context
+    assert "Договор №1" in context
+    assert "Пользователь уточнил сумму 100 000 ₸" in context
+    assert "AI придумал неподтверждённый штраф" not in context
+
+
 def test_invalid_telegram_signature_is_rejected() -> None:
     headers = {"X-Telegram-Init-Data": "auth_date=1&user=%7B%22id%22%3A1%7D&hash=bad"}
     with TestClient(miniapp_api.app) as client:
