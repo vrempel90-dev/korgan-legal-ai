@@ -87,9 +87,10 @@ def test_slow_consultation_is_suppressed_after_document_switch(monkeypatch: pyte
             async def consult(self, question: str, *, case_context: str, language: str):
                 started.set()
                 await release.wait()
-                return "Старый ответ", ["https://adilet.zan.kz/rus/docs/K940001000_"]
+                return "Старый ответ со ссылкой на статью 9 ГК РК", ["https://adilet.zan.kz/rus/docs/K940001000_"]
 
         monkeypatch.setattr(base_bot, "service", Service())
+        monkeypatch.setattr(quota_runtime, "extract_cited_articles", lambda answer: ["статья 9 ГК РК"])
         state = FakeState({"language": "ru", "facts": ["old case"], "consulted_articles": []})
         message = FakeMessage()
 
@@ -192,6 +193,52 @@ def test_newer_consultation_owns_delivery_and_old_answer_is_suppressed(monkeypat
         assert old_result == _STALE
         assert new_message.answers == ["NEW ANSWER"]
         assert old_message.answers == []
+
+    asyncio.run(scenario())
+
+
+def test_delivery_check_and_send_share_request_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        send_started = asyncio.Event()
+        release_send = asyncio.Event()
+
+        class Service:
+            async def consult(self, question: str, *, case_context: str, language: str):
+                return "CURRENT ANSWER", []
+
+        class BlockingMessage(FakeMessage):
+            async def answer(self, text: str, **kwargs) -> None:
+                send_started.set()
+                await release_send.wait()
+                self.answers.append(text)
+
+        monkeypatch.setattr(base_bot, "service", Service())
+        state = FakeState({"language": "ru", "facts": [], "consulted_articles": []})
+        message = BlockingMessage()
+
+        consultation_task = asyncio.create_task(
+            _send_consultation_answer(
+                message,
+                state,
+                question="current",
+                case_context="",
+                language="ru",
+            )
+        )
+        await send_started.wait()
+        document_task = asyncio.create_task(
+            start_new_document_request(state, kind="contract", mode="contract_details")
+        )
+        await asyncio.sleep(0)
+        assert not document_task.done()
+
+        release_send.set()
+        assert await consultation_task == _DELIVERED
+        await document_task
+
+        assert message.answers == ["CURRENT ANSWER"]
+        assert state.data["request_kind"] == "contract"
+        assert "consultation_request_id" not in state.data
 
     asyncio.run(scenario())
 
