@@ -17,7 +17,6 @@ from korgan.request_scope import (
 class FakeState:
     def __init__(self, data: dict | None = None) -> None:
         self.data = dict(data or {})
-        self.key = SimpleNamespace(bot_id=1, chat_id=2, user_id=3, thread_id=None)
 
     async def get_data(self) -> dict:
         return dict(self.data)
