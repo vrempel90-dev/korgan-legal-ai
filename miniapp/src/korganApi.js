@@ -33,16 +33,23 @@ async function request(path, options = {}) {
   return payload;
 }
 
-function requireProfessionalRuntime(payload) {
+function requireProfessionalRuntime(health, parity) {
   if (
-    payload?.status !== 'ok'
-    || payload?.legal_runtime !== 'strict_bot'
-    || payload?.word_quality_target !== '10/10'
-    || payload?.preliminary_fallback !== true
+    health?.status !== 'ok'
+    || health?.legal_runtime !== 'strict_bot'
+    || health?.word_quality_target !== '10/10'
+    || health?.preliminary_fallback !== true
+    || parity?.status !== 'ok'
+    || parity?.api_version !== '0.8.0'
+    || parity?.service_outer !== 'ClaimPipelineV2Adapter'
+    || parity?.service_claim_mux !== 'ClaimServiceMux'
+    || parity?.service_stable !== 'PretrialResponseProductionService'
+    || parity?.word_quality_target !== '10/10'
+    || parity?.preliminary_fallback !== true
   ) {
     throw new Error('KORGAN professional legal runtime is not ready');
   }
-  return payload;
+  return { ...health, parity };
 }
 
 function requireProfessionalDocument(payload) {
@@ -64,7 +71,13 @@ async function uploadMaterial(caseId, file) {
 }
 
 export const korganApi = {
-  health: async () => requireProfessionalRuntime(await request('/health')),
+  health: async () => {
+    const [health, parity] = await Promise.all([
+      request('/health'),
+      request('/miniapp/parity'),
+    ]);
+    return requireProfessionalRuntime(health, parity);
+  },
   consultation: (message, caseId, language = 'ru') => request('/miniapp/consultation', {
     method: 'POST',
     body: JSON.stringify({ message, case_id: caseId || null, language }),
