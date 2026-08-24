@@ -1,1 +1,1 @@
-worker: python -m korgan.bot
+worker: python -m korgan.strict_bot
