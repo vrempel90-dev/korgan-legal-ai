@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
+from korgan.language_context import _CURRENT_LANGUAGE
 from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.pretrial import PretrialDraft, pretrial_quality_issues
 from korgan.pretrial_response import PretrialResponseDraft, pretrial_response_quality_issues
@@ -151,7 +152,6 @@ def test_verified_basis_projection_removes_internal_research_metadata() -> None:
 
 def test_verified_basis_projection_localizes_kazakh_article_label() -> None:
     basis = verified_legal_basis_from_research(_verified_research_kk(), language="kk")
-
     assert basis == ["Міндеттеме тиісті түрде орындалуға тиіс (ҚР АК 272-бабы)."]
     assert "статья 272" not in basis[0].lower()
 
@@ -257,47 +257,51 @@ def test_pretrial_kazakh_rescue_releases_verified_document() -> None:
     async def scenario() -> None:
         install_kazakh_legal_bridge()
         install_kazakh_article_forms()
-        research = _verified_research_kk()
-        initial = _draft_with_bad_article_kk()
-        assert pretrial_quality_issues(initial, research)
-        calls: list[dict] = []
+        token = _CURRENT_LANGUAGE.set("kk")
+        try:
+            research = _verified_research_kk()
+            initial = _draft_with_bad_article_kk()
+            assert pretrial_quality_issues(initial, research)
+            calls: list[dict] = []
 
-        async def original(_self, _context, _research, language="kk"):
-            return initial
+            async def original(_self, _context, _research, language="kk"):
+                return initial
 
-        class FakeService:
-            settings = SimpleNamespace(max_case_text_chars=20_000)
+            class FakeService:
+                settings = SimpleNamespace(max_case_text_chars=20_000)
 
-            async def _quality_repair(self, **kwargs):
-                calls.append(kwargs)
-                repaired = _draft_with_bad_article_kk()
-                return {
-                    "title": repaired.title,
-                    "sender": repaired.sender,
-                    "recipient": repaired.recipient,
-                    "facts": repaired.facts,
-                    "legal_basis": repaired.legal_basis,
-                    "demands": repaired.demands,
-                    "deadline": repaired.deadline,
-                    "consequences": repaired.consequences,
-                    "attachments": repaired.attachments,
-                    "verification_notes": [],
-                }
+                async def _quality_repair(self, **kwargs):
+                    calls.append(kwargs)
+                    repaired = _draft_with_bad_article_kk()
+                    return {
+                        "title": repaired.title,
+                        "sender": repaired.sender,
+                        "recipient": repaired.recipient,
+                        "facts": repaired.facts,
+                        "legal_basis": repaired.legal_basis,
+                        "demands": repaired.demands,
+                        "deadline": repaired.deadline,
+                        "consequences": repaired.consequences,
+                        "attachments": repaired.attachments,
+                        "verification_notes": [],
+                    }
 
-        result = await repair_pretrial_to_target(
-            FakeService(),
-            original,
-            "Тауар жеткізілді, төлем мерзімі өтті.",
-            research,
-            "kk",
-        )
-        assert len(calls) == 1
-        rendered_law = "\n".join(result.legal_basis)
-        assert "9999" not in rendered_law
-        assert "ҚР АК 272-бабы" in rendered_law
-        assert "статья 272" not in rendered_law.lower()
-        assert pretrial_quality_issues(result, research) == []
-        assert result.status is VerificationStatus.VERIFIED
+            result = await repair_pretrial_to_target(
+                FakeService(),
+                original,
+                "Тауар жеткізілді, төлем мерзімі өтті.",
+                research,
+                "kk",
+            )
+            assert len(calls) == 1
+            rendered_law = "\n".join(result.legal_basis)
+            assert "9999" not in rendered_law
+            assert "ҚР АК 272-бабы" in rendered_law
+            assert "статья 272" not in rendered_law.lower()
+            assert pretrial_quality_issues(result, research) == []
+            assert result.status is VerificationStatus.VERIFIED
+        finally:
+            _CURRENT_LANGUAGE.reset(token)
 
     asyncio.run(scenario())
 
