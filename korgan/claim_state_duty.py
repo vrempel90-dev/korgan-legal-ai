@@ -117,8 +117,11 @@ def decide_state_duty(
     draft: ClaimDraft,
 ) -> StateDutyDecision:
     """Choose and calculate the applicable ordinary Article 665 route."""
-    all_text = "\n".join([case_context or "", draft.title or "", *draft.requests])
-    if _SPECIAL_CATEGORY_RE.search(all_text):
+    # Route by the final court-facing relief, not incidental words in the case
+    # history. A source document may mention bankruptcy, divorce or an old court
+    # order without the current claim belonging to that special fee category.
+    relief_text = "\n".join([draft.title or "", *draft.requests])
+    if _SPECIAL_CATEGORY_RE.search(relief_text):
         return StateDutyDecision(
             mode="special",
             line=NEEDS_CALCULATION_MARKER,
@@ -151,6 +154,18 @@ def decide_state_duty(
         )
 
     nonproperty = _nonproperty_requests(draft, ledger)
+    if len(nonproperty) > 1:
+        return StateDutyDecision(
+            mode="multiple_nonproperty",
+            line=NEEDS_CALCULATION_MARKER,
+            amount=None,
+            needs_review=True,
+            note=(
+                "заявлено несколько самостоятельных неимущественных требований; до автоматического расчета "
+                "нужно определить, образуют ли они один способ защиты или подлежат отдельной оплате."
+            ),
+        )
+
     has_property = ledger.total > 0
     has_nonproperty = bool(nonproperty)
 
