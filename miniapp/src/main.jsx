@@ -4,7 +4,7 @@ import {
   Scale, MessageCircle, FileText, FolderOpen, ShieldCheck, Home, Bell,
   UserRound, ArrowRight, ArrowLeft, Search, ChevronRight, CheckCircle2,
   BriefcaseBusiness, ShoppingCart, Building2, Landmark, HandCoins, Send,
-  Download, LockKeyhole, Sparkles, Trash2, Languages, AlertTriangle
+  Download, LockKeyhole, Sparkles, Trash2, Languages, AlertTriangle, Paperclip
 } from 'lucide-react';
 import './styles.css';
 import { isBackendConnected, korganApi } from './korganApi';
@@ -83,8 +83,6 @@ function App() {
     (async () => {
       try {
         await korganApi.health();
-        // Staging API state is isolated and may restart independently. Reassert
-        // the already accepted local terms before reading server-side cases.
         await korganApi.acceptConsent(TERMS_VERSION);
         const result = await korganApi.listCases();
         if (!cancelled) {
@@ -106,9 +104,11 @@ function App() {
   const go = (next) => { haptic(); setNotice(''); setScreen(next); };
 
   const refreshCases = async () => {
-    if (!isBackendConnected()) return;
+    if (!isBackendConnected()) return [];
     const result = await korganApi.listCases();
-    setCases(result.cases || []);
+    const next = result.cases || [];
+    setCases(next);
+    return next;
   };
 
   const chooseDocument = (id) => {
@@ -163,6 +163,22 @@ function App() {
     setActiveCase(item);
     setDocumentResult(null);
     go('case');
+  };
+
+  const uploadMaterial = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !activeCase || busy) return;
+    setBusy(true);
+    setNotice('');
+    try {
+      const result = await korganApi.uploadMaterial(activeCase.id, file);
+      setActiveCase(result.case);
+      await refreshCases();
+      setNotice(`Материал «${file.name}» разобран и добавлен в дело.`);
+    } catch (error) {
+      setNotice(error.message || 'Не удалось разобрать материал.');
+    } finally { setBusy(false); }
   };
 
   const sendMessage = async () => {
@@ -274,9 +290,10 @@ function App() {
     const item = activeCase;
     if (!item) return <div className="app-shell"><Header title="Дело" back="cases" /><main className="page"><p>Выберите дело в разделе «Мои дела».</p></main><BottomNav /></div>;
     return <div className="app-shell"><Header title={`Дело ${item.id}`} back="cases" /><main className="page">
-      <section className="status-card"><div><span className="section-kicker">Статус</span><h2>{item.status === 'document_ready' ? 'Документ готов' : 'Дело создано'}</h2></div><span className="pill success">{item.language?.toUpperCase() || language.toUpperCase()}</span></section>
-      <section className="analysis-card"><div className="card-head"><div><span className="section-kicker">Материалы дела</span><h2>{item.title || documents.find(d => d.id === item.document_type)?.title || 'Юридическое дело'}</h2></div><Sparkles size={22}/></div><p>{item.description}</p>{item.verification_status && <div className="fact"><span>Проверка</span><strong>{item.verification_status}</strong></div>}</section>
-      {notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}
+      <section className="status-card"><div><span className="section-kicker">Статус</span><h2>{item.status === 'document_ready' ? 'Документ готов' : item.status === 'materials_ready' ? 'Материалы загружены' : 'Дело создано'}</h2></div><span className="pill success">{item.language?.toUpperCase() || language.toUpperCase()}</span></section>
+      <section className="analysis-card"><div className="card-head"><div><span className="section-kicker">Материалы дела</span><h2>{item.title || documents.find(d => d.id === item.document_type)?.title || 'Юридическое дело'}</h2></div><Sparkles size={22}/></div><p>{item.description}</p><div className="fact"><span>Файлов в деле</span><strong>{item.materials_count || 0}</strong></div>{item.material_names?.length > 0 && <div className="fact"><span>Загружено</span><strong>{item.material_names.join(', ')}</strong></div>}{item.verification_status && <div className="fact"><span>Проверка</span><strong>{item.verification_status}</strong></div>}</section>
+      {notice && <div className="success-note">{notice}</div>}
+      <label className="secondary wide" style={{ cursor: busy ? 'default' : 'pointer' }}><Paperclip size={18}/> {busy ? 'Обрабатываю…' : 'Добавить PDF / DOCX / фото'}<input style={{ display: 'none' }} disabled={busy} type="file" accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp" onChange={uploadMaterial}/></label>
       <button className="secondary wide" onClick={() => go('chat')}><MessageCircle size={18}/> Консультация по этому делу</button>
       <button className="primary wide" disabled={busy} onClick={generateDocument}>{busy ? 'Проверяю право и формирую…' : <><FileText size={18}/> Сформировать документ</>}</button>
       <button className="secondary wide danger" disabled={busy} onClick={deleteCurrentCase}><Trash2 size={18}/> Удалить дело</button>
@@ -299,7 +316,7 @@ function App() {
 
   if (screen === 'cases') return <div className="app-shell"><Header title="Мои дела" /><main className="page">
     {cases.length === 0 && <section className="analysis-card"><h2>Дел пока нет</h2><p>Создайте первое дело и опишите ситуацию своими словами.</p></section>}
-    {cases.map(item => <section className="case-list-item" key={item.id} onClick={() => openCase(item)}><div className="case-badge"><Scale size={20}/></div><div><strong>{item.title || documents.find(d => d.id === item.document_type)?.title || 'Юридическое дело'}</strong><small>{item.id} · {item.status === 'document_ready' ? 'документ готов' : 'создано'}</small></div><ChevronRight size={18}/></section>)}
+    {cases.map(item => <section className="case-list-item" key={item.id} onClick={() => openCase(item)}><div className="case-badge"><Scale size={20}/></div><div><strong>{item.title || documents.find(d => d.id === item.document_type)?.title || 'Юридическое дело'}</strong><small>{item.id} · {item.materials_count || 0} файл(ов) · {item.status === 'document_ready' ? 'документ готов' : 'в работе'}</small></div><ChevronRight size={18}/></section>)}
     <button className="primary wide" onClick={() => go('documents')}>Создать новое дело</button>
   </main><BottomNav /></div>;
 
@@ -313,7 +330,7 @@ function App() {
 
   return <div className="app-shell"><header className="topbar"><div className="brand-mark"><Scale size={18}/></div><div className="brand"><strong>KORGAN</strong><span>Legal AI</span></div></header><main className="home-page">
     <section className="hero"><div className="hero-copy"><div className="online"><span/> {backendOk ? 'AI подключён' : 'Подключение…'}</div><h1>Ваш AI-юрист</h1><p>Юридическая помощь, документы и сопровождение дела в одном приложении.</p><button onClick={() => go('chat')}>Начать консультацию <ArrowRight size={17}/></button></div><div className="hero-orb"><Scale size={52}/></div></section>
-    <section className="action-grid"><button className="action-card" onClick={() => go('chat')}><div className="action-icon consult"><MessageCircle/></div><h2>Консультация</h2><p>Реальный KORGAN AI и проверка источников</p></button><button className="action-card" onClick={() => go('documents')}><div className="action-icon document"><FileText/></div><h2>Подготовить документ</h2><p>Создайте дело и сформируйте DOCX</p></button><button className="action-card" onClick={async () => { try { await refreshCases(); } catch {} go('cases'); }}><div className="action-icon case"><FolderOpen/></div><h2>Мои дела</h2><p>Дела, статусы и документы</p></button><button className="action-card" onClick={() => go('profile')}><div className="action-icon review"><ShieldCheck/></div><h2>Конфиденциальность</h2><p>Согласие, язык и удаление данных</p></button></section>
+    <section className="action-grid"><button className="action-card" onClick={() => go('chat')}><div className="action-icon consult"><MessageCircle/></div><h2>Консультация</h2><p>Реальный KORGAN AI и проверка источников</p></button><button className="action-card" onClick={() => go('documents')}><div className="action-icon document"><FileText/></div><h2>Подготовить документ</h2><p>Создайте дело, загрузите материалы и получите DOCX</p></button><button className="action-card" onClick={async () => { try { await refreshCases(); } catch {} go('cases'); }}><div className="action-icon case"><FolderOpen/></div><h2>Мои дела</h2><p>Дела, материалы, статусы и документы</p></button><button className="action-card" onClick={() => go('profile')}><div className="action-icon review"><ShieldCheck/></div><h2>Конфиденциальность</h2><p>Согласие, язык и удаление данных</p></button></section>
     <section className="privacy-card" onClick={() => go('profile')}><div className="privacy-icon"><ShieldCheck size={19}/></div><div><strong>Данные под контролем</strong><p>Mini App работает через отдельный API и не вмешивается в production-бота.</p></div><ChevronRight size={18}/></section>
   </main><BottomNav /></div>;
 }
