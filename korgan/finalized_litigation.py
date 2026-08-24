@@ -5,12 +5,41 @@ import logging
 from korgan import document_quality as _dq
 from korgan import senior_claim_preflight as _sp
 from korgan.claim_quality_hotfix import FILING_ACTION_PREFIX, ProductionClaimService
-from korgan.fast_v2_production_legal import _deterministic_pre_qa
+from korgan.fast_v2_production_legal import _deterministic_pre_qa, _is_state_duty_request
 from korgan.late_interest_hotfix import _apply_verified_article_353, _today_kz
+from korgan.legal_calc import NEEDS_CALCULATION_MARKER
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
+from korgan.production_legal import STATE_DUTY_NOTE
 from korgan.professional_claim_finalizer import finalize_professional_claim
 
 LOGGER = logging.getLogger(__name__)
+_CLAIM_PRICE_NOTE_PREFIX = "Цена иска требует проверки: "
+
+
+def _safe_deterministic_pre_qa(case_context: str, research: LegalResearch, draft: ClaimDraft) -> None:
+    """Run the existing cleanup but fail closed on an unresolved claim price.
+
+    The legacy pre-QA recalculates state duty from ``draft.price_of_claim``. If
+    the canonical money ledger has already marked the prayer as ambiguous, an
+    older/model-provided price must not be allowed to produce a filing-looking
+    duty amount. All other deterministic cleanup still runs unchanged.
+    """
+    _deterministic_pre_qa(case_context, research, draft)
+    unresolved = any(
+        str(note).startswith(_CLAIM_PRICE_NOTE_PREFIX)
+        for note in draft.verification_notes
+    )
+    if not unresolved:
+        return
+
+    draft.state_duty = NEEDS_CALCULATION_MARKER
+    draft.requests = [
+        request for request in draft.requests
+        if not _is_state_duty_request(str(request))
+    ]
+    if STATE_DUTY_NOTE not in draft.verification_notes:
+        draft.verification_notes.append(STATE_DUTY_NOTE)
+    draft.status = VerificationStatus.NEEDS_VERIFICATION
 
 
 class FinalizedProductionClaimService(ProductionClaimService):
@@ -25,11 +54,11 @@ class FinalizedProductionClaimService(ProductionClaimService):
         draft = await super().draft_claim(case_context, research, language=language)
 
         finalize_professional_claim(case_context, research, draft, language=language)
-        _deterministic_pre_qa(case_context, research, draft)
+        _safe_deterministic_pre_qa(case_context, research, draft)
         _apply_verified_article_353(case_context, research, draft, filing_date=_today_kz())
 
         finalize_professional_claim(case_context, research, draft, language=language)
-        _deterministic_pre_qa(case_context, research, draft)
+        _safe_deterministic_pre_qa(case_context, research, draft)
 
         deterministic = _sp.deterministic_claim_preflight(case_context, research, draft)
         quality = _dq.assess_document_quality("claim", case_context, research, draft)
