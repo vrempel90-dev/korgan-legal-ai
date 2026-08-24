@@ -1,7 +1,7 @@
 """Monetary calculations for KORGAN documents — Python only, never the model.
 
 Every rate here is set by law and changes on a schedule the code cannot know,
-so rates, МРП and the NB RK base rate live in ``korgan/data/rates.json`` with
+so rates, MRP and the NB RK base rate live in ``korgan/data/rates.json`` with
 the date they were current on. Code reads that file; changing a rate is editing
 data, not shipping a release.
 
@@ -14,7 +14,7 @@ not approximated — the calculation returns nothing and the caller flags it.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
@@ -22,16 +22,20 @@ from pathlib import Path
 
 RATES_PATH = Path(__file__).resolve().parent.parent / "data" / "rates.json"
 
+# Compatibility names used by existing call sites/tests. Their legal semantics
+# are deliberately stricter than before: consumer claims are deferred under GPK
+# Article 106(3), not exempt; pensioner status alone is not a general Article 668
+# exemption. Article 668 currently exempts persons with disability generally.
 EXEMPTION_CONSUMER = "consumer_protection"
 EXEMPTION_DISABILITY = "disability_group_1_2"
 EXEMPTION_PENSIONER = "old_age_pensioner"
 
-#: Exemptions that remove the court duty entirely.
-FULL_EXEMPTIONS = frozenset({EXEMPTION_CONSUMER, EXEMPTION_DISABILITY, EXEMPTION_PENSIONER})
+FULL_EXEMPTIONS = frozenset({EXEMPTION_DISABILITY})
+DEFERRALS = frozenset({EXEMPTION_CONSUMER})
 
 EXEMPTION_LABELS = {
-    EXEMPTION_CONSUMER: "истец по иску о защите прав потребителей",
-    EXEMPTION_DISABILITY: "инвалид I или II группы",
+    EXEMPTION_CONSUMER: "гражданин по иску о защите прав потребителей",
+    EXEMPTION_DISABILITY: "лицо с инвалидностью",
     EXEMPTION_PENSIONER: "пенсионер по возрасту",
 }
 
@@ -55,13 +59,20 @@ class Rates:
     nb_base_rate: tuple[DatedRate, ...]
     duty_individual_rate: float
     duty_legal_entity_rate: float
-    duty_cap_mrp: int
+    duty_individual_cap_mrp: int
+    duty_legal_entity_cap_mrp: int
+    duty_nonproperty_mrp: float
     duty_source: str
     duty_verified: bool
     consumer_penalty_rate_per_day: float
     consumer_penalty_source: str
     consumer_penalty_verified: bool
     days_in_year: int
+
+    @property
+    def duty_cap_mrp(self) -> int:
+        """Deprecated compatibility alias for the physical-person cap."""
+        return self.duty_individual_cap_mrp
 
     def _on(self, table: tuple[DatedRate, ...], day: date, what: str) -> DatedRate:
         current: DatedRate | None = None
@@ -103,7 +114,9 @@ def load_rates(path: Path | str = RATES_PATH) -> Rates:
         nb_base_rate=_parse_table(payload["nb_base_rate"]),
         duty_individual_rate=float(duty["individual_rate"]),
         duty_legal_entity_rate=float(duty["legal_entity_rate"]),
-        duty_cap_mrp=int(duty["cap_mrp"]),
+        duty_individual_cap_mrp=int(duty["individual_cap_mrp"]),
+        duty_legal_entity_cap_mrp=int(duty["legal_entity_cap_mrp"]),
+        duty_nonproperty_mrp=float(duty["nonproperty_mrp"]),
         duty_source=str(duty.get("source", "")),
         duty_verified=bool(duty.get("verified", False)),
         consumer_penalty_rate_per_day=float(penalty["rate_per_day"]),
@@ -140,12 +153,7 @@ class ClaimPrice:
 
 
 def claim_price(components: list[ClaimComponent]) -> ClaimPrice:
-    """Sum of pecuniary claims only.
-
-    Non-pecuniary demands — moral damages, обеспечение иска, обязание совершить
-    действие — do not enter the claim price and therefore do not enter the duty
-    base either.
-    """
+    """Sum only components that legally enter the property-claim price."""
     included = tuple(item for item in components if item.pecuniary)
     excluded = tuple(item for item in components if not item.pecuniary)
     for item in included:
@@ -163,14 +171,26 @@ class DutyResult:
     rate: float
     cap: int
     exempt: bool
+    deferred: bool
     exemptions: tuple[str, ...]
+    deferrals: tuple[str, ...]
     source: str
     verified: bool
+
+    @property
+    def payable_now(self) -> int:
+        return 0 if self.exempt or self.deferred else self.amount
 
     def explain(self) -> str:
         if self.exempt:
             reasons = ", ".join(EXEMPTION_LABELS.get(item, item) for item in self.exemptions)
             return f"Истец освобождён от уплаты государственной пошлины ({reasons}); {self.source}"
+        if self.deferred:
+            reasons = ", ".join(EXEMPTION_LABELS.get(item, item) for item in self.deferrals)
+            return (
+                f"Государственная пошлина рассчитана в размере {format_kzt(self.amount)}, "
+                f"но её уплата отсрочена до принятия решения ({reasons}; статья 106 ГПК РК); {self.source}"
+            )
         return f"{format_kzt(self.amount)} ({self.rate:.0%} от цены иска, {self.source})"
 
 
@@ -182,36 +202,56 @@ def state_duty(
     rates: Rates | None = None,
     day: date | None = None,
 ) -> DutyResult:
-    """Court duty for a monetary claim, after exemptions."""
+    """Court duty for an ordinary monetary property claim.
+
+    This helper intentionally does not guess a special procedural category.
+    Consumer status is represented as a deferral, not a zero-rate exemption.
+    Pensioner status alone does not suppress the duty.
+    """
     if price < 0:
         raise ValueError("цена иска не может быть отрицательной")
 
     config = rates or load_rates()
-    applicable = tuple(item for item in exemptions if item in FULL_EXEMPTIONS)
+    applicable_exemptions = tuple(item for item in exemptions if item in FULL_EXEMPTIONS)
+    applicable_deferrals = tuple(item for item in exemptions if item in DEFERRALS)
     rate = config.duty_individual_rate if is_individual else config.duty_legal_entity_rate
-    cap = _round_tenge(Decimal(config.duty_cap_mrp) * Decimal(str(config.mrp_on(day or date.today()).value)))
+    cap_mrp = config.duty_individual_cap_mrp if is_individual else config.duty_legal_entity_cap_mrp
+    cap = _round_tenge(Decimal(cap_mrp) * Decimal(str(config.mrp_on(day or date.today()).value)))
+    amount = min(_round_tenge(Decimal(price) * Decimal(str(rate))), cap)
 
-    if applicable:
+    if applicable_exemptions:
         return DutyResult(
             amount=0,
             rate=rate,
             cap=cap,
             exempt=True,
-            exemptions=applicable,
+            deferred=False,
+            exemptions=applicable_exemptions,
+            deferrals=(),
             source=config.duty_source,
             verified=config.duty_verified,
         )
 
-    amount = min(_round_tenge(Decimal(price) * Decimal(str(rate))), cap)
     return DutyResult(
         amount=amount,
         rate=rate,
         cap=cap,
         exempt=False,
+        deferred=bool(applicable_deferrals),
         exemptions=(),
+        deferrals=applicable_deferrals,
         source=config.duty_source,
         verified=config.duty_verified,
     )
+
+
+def nonproperty_state_duty(*, demands: int = 1, rates: Rates | None = None, day: date | None = None) -> int:
+    """Calculate the 0.5 MRP component for separately chargeable non-property demands."""
+    if demands < 0:
+        raise ValueError("количество неимущественных требований не может быть отрицательным")
+    config = rates or load_rates()
+    mrp = config.mrp_on(day or date.today()).value
+    return _round_tenge(Decimal(str(mrp)) * Decimal(str(config.duty_nonproperty_mrp)) * Decimal(demands))
 
 
 # --- неустойка по дням -------------------------------------------------------
@@ -247,12 +287,7 @@ def daily_penalty(
     cap: int | None = None,
     rates: Rates | None = None,
 ) -> PenaltyResult:
-    """Contractual/statutory penalty accruing per day of delay.
-
-    ``cap`` is the ceiling the penalty may not exceed — for consumer work that
-    is the price of the order, which is why a long delay does not compound into
-    a demand larger than the job itself.
-    """
+    """Contractual/statutory penalty accruing per day of delay."""
     if base <= 0:
         raise ValueError("база для неустойки должна быть положительной")
     if days < 0:
@@ -308,12 +343,7 @@ def money_use_interest(
     annual_rate: float | None = None,
     rates: Rates | None = None,
 ) -> InterestResult:
-    """Interest for the use of another's money, at the NB RK base rate.
-
-    The rate defaults to the one effective on the day performance was due — the
-    day before delay started. A date with no configured rate raises rather than
-    guessing, so the caller flags the rate and keeps the provision.
-    """
+    """Interest for the use of another's money, at the NB RK base rate."""
     if principal <= 0:
         raise ValueError("сумма долга должна быть положительной")
     if end < start:
