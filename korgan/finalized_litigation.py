@@ -4,6 +4,7 @@ import logging
 
 from korgan import document_quality as _dq
 from korgan import senior_claim_preflight as _sp
+from korgan.claim_filing_completeness import enforce_article148_party_completeness
 from korgan.claim_quality_hotfix import FILING_ACTION_PREFIX, ProductionClaimService
 from korgan.claim_state_duty import apply_professional_state_duty
 from korgan.fast_v2_production_legal import _deterministic_pre_qa
@@ -37,6 +38,12 @@ class FinalizedProductionClaimService(ProductionClaimService):
 
         finalize_professional_claim(case_context, research, draft, language=language)
         _safe_deterministic_pre_qa(case_context, research, draft)
+
+        # Article 148 is a final filing-readiness gate, not a lower-level legal
+        # grounding invariant. Keeping it here preserves existing reusable
+        # finalizer semantics while ensuring every production claim is checked
+        # immediately before the senior preflight/export decision.
+        enforce_article148_party_completeness(draft)
 
         deterministic = _sp.deterministic_claim_preflight(case_context, research, draft)
         quality = _dq.assess_document_quality("claim", case_context, research, draft)
