@@ -35,6 +35,7 @@ _TERMINATION_RE = re.compile(r"расторг|прекращен|прекрат�
 _CONSUMER_VENUE_RE = re.compile(r"стать(?:я|и)\s*30\b.*потребител|потребител.*стать(?:я|и)\s*30\b", re.IGNORECASE | re.DOTALL)
 _GENERAL_VENUE_RE = re.compile(r"стать(?:я|и)\s*29\b", re.IGNORECASE)
 _CLAIM_PRICE_NOTE_PREFIX = "Цена иска требует проверки: "
+_NONPROPERTY_PRICE_LABEL = "не определяется (требование неимущественного характера)"
 
 _DISTRICTS = {
     "алатаус": "Алатауский",
@@ -198,14 +199,19 @@ def _recalculate_price(draft: ClaimDraft) -> None:
             sample = sample[:177].rstrip() + "..."
         draft.verification_notes.append(
             _CLAIM_PRICE_NOTE_PREFIX
-            + "в просительной части есть несколько денежных сумм без однозначного итога; "
+            + "в просительной части есть денежное требование, которое нельзя однозначно включить в цену иска; "
             + f"не использовать автоматический расчет госпошлины до проверки строки «{sample}»."
         )
         draft.status = VerificationStatus.NEEDS_VERIFICATION
         return
 
-    if ledger.components:
+    if ledger.total > 0:
         draft.price_of_claim = format_kzt(ledger.total)
+    elif ledger.nonproperty_money_components:
+        # A money-denominated moral-damage request remains non-property for the
+        # ordinary civil duty route. Displaying "Цена иска: 0 тенге" would imply
+        # a zero-valued property claim and is professionally misleading.
+        draft.price_of_claim = _NONPROPERTY_PRICE_LABEL
 
 
 def finalize_professional_claim(
