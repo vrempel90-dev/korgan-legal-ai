@@ -40,15 +40,29 @@ _RATE_RE_REVERSED = re.compile(
     rf"(?:[-—:;,]\s*)?{_NUMBER}\s*{_PERCENT_TOKEN}",
     re.IGNORECASE,
 )
+_RATE_RE_KK = re.compile(
+    rf"{_NUMBER}\s*(?:%|пайыз)\s*"
+    r"(?:(?:берешек|қарыз)\s+сомасынан\s*)?"
+    r"(?:күніне|әрбір\s+(?:кешіктірілген\s+|мерзімі\s+өткен\s+)?күн\s+үшін)\b",
+    re.IGNORECASE,
+)
 _CAP_RE = re.compile(
     rf"(?:но\s+)?(?:не\s+более|не\s+свыше|не\s+превыша\w*)\s*{_NUMBER}\s*{_PERCENT_TOKEN}",
+    re.IGNORECASE,
+)
+_CAP_RE_KK = re.compile(
+    rf"{_NUMBER}\s*(?:%|пайыз)\s*(?:-\s*)?(?:дан|ден)?\s*(?:аспай\w*|артық\s+емес)",
     re.IGNORECASE,
 )
 _CLAUSE_RE = re.compile(
     r"(?:пункт(?:ом|у|а|е)?|п\.)\s*(?P<clause>\d+(?:\.\d+){1,3})",
     re.IGNORECASE,
 )
-_CONTRACT_RE = re.compile(r"\bдоговор\w*\b", re.IGNORECASE)
+_CLAUSE_RE_KK = re.compile(
+    r"(?P<clause>\d+(?:\.\d+){1,3})\s*[-–]?\s*тарма\w*",
+    re.IGNORECASE,
+)
+_CONTRACT_RE = re.compile(r"\b(?:договор\w*|шарт\w*)\b", re.IGNORECASE)
 
 
 def _as_float(raw: str) -> float | None:
@@ -72,15 +86,25 @@ def _unique_numeric(matches: list[re.Match[str]]) -> list[float]:
     return values
 
 
+def _clause_matches(text: str, start: int = 0, end: int | None = None) -> list[re.Match[str]]:
+    stop = len(text) if end is None else end
+    matches = [*_CLAUSE_RE.finditer(text, start, stop), *_CLAUSE_RE_KK.finditer(text, start, stop)]
+    matches.sort(key=lambda match: match.start())
+    return matches
+
+
 def _nearest_clause(text: str, position: int) -> str:
+    preceding = [match for match in _clause_matches(text) if match.start() <= position]
+    if preceding:
+        return preceding[-1].group("clause")
+
     candidates: list[tuple[int, str]] = []
     start = max(0, position - 240)
     end = min(len(text), position + 240)
-    for match in _CLAUSE_RE.finditer(text, start, end):
+    for match in _clause_matches(text, start, end):
         candidates.append((abs(match.start() - position), match.group("clause")))
     if not candidates:
-        preceding = [match for match in _CLAUSE_RE.finditer(text) if match.start() <= position]
-        return preceding[-1].group("clause") if preceding else ""
+        return ""
     candidates.sort(key=lambda item: item[0])
     best_distance = candidates[0][0]
     best = {clause for distance, clause in candidates if distance == best_distance}
@@ -98,7 +122,7 @@ def _paragraph_for_position(text: str, position: int) -> str:
     if not text:
         return ""
 
-    clause_matches = list(_CLAUSE_RE.finditer(text))
+    clause_matches = _clause_matches(text)
     preceding = [match for match in clause_matches if match.start() <= position]
     if preceding:
         anchor = preceding[-1]
@@ -128,9 +152,10 @@ def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerm
     The parser is deliberately fail-closed. It accepts exactly one distinct
     daily rate and requires contractual wording near that rate. If different
     rates or different caps are present in the same clause, no terms are selected.
+    Russian and Kazakh contractual formulations are supported deterministically.
     """
     text = str(case_context or "")
-    rate_matches = [*_RATE_RE.finditer(text), *_RATE_RE_REVERSED.finditer(text)]
+    rate_matches = [*_RATE_RE.finditer(text), *_RATE_RE_REVERSED.finditer(text), *_RATE_RE_KK.finditer(text)]
     rates = _unique_numeric(rate_matches)
     if len(rates) != 1:
         return None
@@ -147,7 +172,7 @@ def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerm
     if not _CONTRACT_RE.search(local) and not _CONTRACT_RE.search(paragraph):
         return None
 
-    cap_matches = list(_CAP_RE.finditer(paragraph))
+    cap_matches = [*_CAP_RE.finditer(paragraph), *_CAP_RE_KK.finditer(paragraph)]
     caps = _unique_numeric(cap_matches)
     if len(caps) > 1:
         return None
