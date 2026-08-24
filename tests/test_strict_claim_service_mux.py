@@ -1,11 +1,8 @@
 import asyncio
-from types import SimpleNamespace
+import subprocess
+import sys
+import textwrap
 
-import pytest
-
-from korgan import bot as base_bot
-from korgan import claim_service_mux
-from korgan import strict_bot
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
 from korgan.claim_service_mux import ClaimServiceMux
 
@@ -27,7 +24,7 @@ class _Claim:
 def test_claim_service_mux_routes_only_claim_methods():
     stable = _Stable()
     claim = _Claim()
-    service = ClaimServiceMux(stable, claim)
+    service = ClaimServiceMux(stable, object(), claim_factory=lambda settings: claim)
 
     research = asyncio.run(service.research_case("ctx", language="kk"))
     draft = asyncio.run(service.draft_claim("ctx", "r", language="ru"))
@@ -38,76 +35,93 @@ def test_claim_service_mux_routes_only_claim_methods():
     assert service.settings is stable.settings
 
 
-def test_builder_wraps_mux_in_claim_pipeline(monkeypatch):
+def test_claim_service_is_lazy_and_reused():
     stable = _Stable()
     claim = _Claim()
+    builds = []
 
-    monkeypatch.setattr(claim_service_mux, "PretrialResponseProductionService", lambda settings: stable)
-    monkeypatch.setattr(claim_service_mux, "FinalizedProductionClaimService", lambda settings: claim)
+    def factory(settings):
+        builds.append(settings)
+        return claim
 
-    service = claim_service_mux.build_strict_legal_service(object())
+    settings = object()
+    service = ClaimServiceMux(stable, settings, claim_factory=factory)
 
-    assert isinstance(service, ClaimPipelineV2Adapter)
-    assert isinstance(service.inner, ClaimServiceMux)
-    assert service.inner.stable is stable
-    assert service.inner.claim is claim
+    assert builds == []
+    asyncio.run(service.research_case("first"))
+    asyncio.run(service.draft_claim("second", "research"))
+    assert builds == [settings]
 
 
-def test_strict_bot_main_installs_built_service(monkeypatch):
-    marker = object()
-    settings = SimpleNamespace(
-        telegram_bot_token="123:TEST",
-        payments_enabled=False,
-        consultation_limit_enabled=False,
+def test_strict_runtime_wraps_stable_service_with_claim_mux_in_subprocess():
+    script = textwrap.dedent(
+        r'''
+        import asyncio
+        from types import SimpleNamespace
+        from korgan import bot as base_bot
+        from korgan import strict_bot
+        from korgan.claim_service_mux import ClaimServiceMux
+
+        settings = SimpleNamespace(
+            telegram_bot_token="test-token",
+            payments_enabled=False,
+            consultation_limit_enabled=False,
+        )
+        strict_bot.get_settings = lambda: settings
+        strict_bot.apply_token_budget_guard = lambda current: None
+
+        stable = SimpleNamespace(settings=settings, stable_marker=True)
+        strict_bot.PretrialResponseProductionService = lambda current: stable
+        strict_bot.ClaimPipelineV2Adapter = lambda inner: inner
+        strict_bot.main_menu = lambda: object()
+
+        class MiddlewareTarget:
+            def outer_middleware(self, middleware):
+                return None
+
+        class FakeDispatcher:
+            def __init__(self, *, storage):
+                self.message = MiddlewareTarget()
+                self.callback_query = MiddlewareTarget()
+            def include_router(self, router):
+                return None
+            async def start_polling(self, bot):
+                return None
+
+        class FakeSession:
+            async def close(self):
+                return None
+
+        class FakeBot:
+            def __init__(self):
+                self.session = FakeSession()
+
+        async def noop(*args, **kwargs):
+            return None
+
+        strict_bot.Dispatcher = FakeDispatcher
+        strict_bot.MemoryStorage = lambda: object()
+        strict_bot.LanguageContextMiddleware = lambda: object()
+        strict_bot.ConsentMiddleware = lambda: object()
+        strict_bot.LocalizedClientSafeBot = lambda token: FakeBot()
+        strict_bot.start_corpus_refresh_task = lambda: None
+        strict_bot.claim_pipeline_v2_mode = lambda: "off"
+        strict_bot.configure_telegram_menu = noop
+        strict_bot.init_consultation_store = noop
+        strict_bot.close_consultation_store = noop
+
+        asyncio.run(strict_bot.main())
+        assert isinstance(base_bot.service, ClaimServiceMux)
+        assert base_bot.service.stable is stable
+        assert base_bot.service._claim is None
+        '''
     )
 
-    monkeypatch.setattr(strict_bot, "get_settings", lambda: settings)
-    monkeypatch.setattr(strict_bot, "apply_token_budget_guard", lambda current: None)
-    monkeypatch.setattr(strict_bot, "build_strict_legal_service", lambda current: marker)
-    monkeypatch.setattr(strict_bot, "init_consultation_store", lambda current: _noop())
-    monkeypatch.setattr(strict_bot, "close_consultation_store", _noop)
-    monkeypatch.setattr(strict_bot, "start_corpus_refresh_task", lambda: None)
-    monkeypatch.setattr(strict_bot, "configure_telegram_menu", _noop_bot)
-    monkeypatch.setattr(strict_bot, "LocalizedClientSafeBot", lambda token: _FakeBot())
-    monkeypatch.setattr(strict_bot, "Dispatcher", _FakeDispatcher)
-    monkeypatch.setattr(strict_bot, "LanguageContextMiddleware", lambda: object())
-    monkeypatch.setattr(strict_bot, "ConsentMiddleware", lambda: object())
-
-    asyncio.run(strict_bot.main())
-
-    assert base_bot.service is marker
-
-
-async def _noop(*args, **kwargs):
-    return None
-
-
-async def _noop_bot(*args, **kwargs):
-    return None
-
-
-class _FakeSession:
-    async def close(self):
-        return None
-
-
-class _FakeBot:
-    def __init__(self):
-        self.session = _FakeSession()
-
-
-class _FakeMiddleware:
-    def outer_middleware(self, middleware):
-        return None
-
-
-class _FakeDispatcher:
-    def __init__(self, *args, **kwargs):
-        self.message = _FakeMiddleware()
-        self.callback_query = _FakeMiddleware()
-
-    def include_router(self, router):
-        return None
-
-    async def start_polling(self, bot):
-        return None
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + "\n" + result.stderr
