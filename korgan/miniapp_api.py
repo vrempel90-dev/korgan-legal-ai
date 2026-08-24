@@ -28,7 +28,7 @@ from korgan.pretrial import build_pretrial_docx
 from korgan.pretrial_response import PretrialResponseProductionService, build_pretrial_response_docx
 from korgan.response_docx import build_response_to_claim_docx
 
-app = FastAPI(title="KORGAN Mini App API", version="0.5.0")
+app = FastAPI(title="KORGAN Mini App API", version="0.6.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -51,6 +51,7 @@ store = MiniAppStore(
 _DOCUMENT_TYPES = {"claim", "contract", "response", "pretrial", "pretrial_response"}
 _ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".docx", ".txt", ".jpg", ".jpeg", ".png", ".webp"}
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+_MAX_CONVERSATION_MESSAGES = 40
 _INIT_DATA_MAX_AGE_SECONDS = int(os.getenv("MINIAPP_INIT_DATA_MAX_AGE_SECONDS", "86400"))
 _generation_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
@@ -140,10 +141,15 @@ async def _require_consent(user_id: str) -> dict[str, Any]:
     return state
 
 
-def _public_case(item: dict[str, Any]) -> dict[str, Any]:
-    public = {k: v for k, v in item.items() if k not in {"document_base64", "materials"}}
+def _public_case(item: dict[str, Any], *, include_conversation: bool = False) -> dict[str, Any]:
+    hidden = {"document_base64", "materials", "conversation"}
+    public = {k: v for k, v in item.items() if k not in hidden}
     public["materials_count"] = len(item.get("materials") or [])
     public["material_names"] = [str(x.get("filename") or "") for x in item.get("materials") or []]
+    public["conversation_count"] = len(item.get("conversation") or [])
+    public["has_document"] = bool(item.get("document_base64"))
+    if include_conversation:
+        public["conversation"] = list(item.get("conversation") or [])
     return public
 
 
@@ -153,6 +159,12 @@ def _case_context(case: dict[str, Any]) -> str:
     if materials:
         chunks.append(
             "Материалы дела:\n" + "\n\n---\n\n".join(str(item.get("context") or "") for item in materials)
+        )
+    history = list(case.get("conversation") or [])[-12:]
+    if history:
+        chunks.append(
+            "Предыдущая консультация по делу (контекст, не источник новых фактов):\n"
+            + "\n".join(f"{item.get('role', '')}: {item.get('text', '')}" for item in history)
         )
     return "\n\n---\n\n".join(chunk for chunk in chunks if chunk)
 
@@ -216,7 +228,7 @@ async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "service": "korgan-miniapp-api",
-        "version": "0.5.0",
+        "version": "0.6.0",
         "storage": "postgres" if store.pool is not None else "memory",
         "state_encryption": "AES-256-GCM",
     }
@@ -241,6 +253,36 @@ async def list_cases(x_telegram_init_data: str = Header(default="")) -> dict[str
     return {"cases": [_public_case(item) for item in reversed(cases)]}
 
 
+@app.get("/miniapp/cases/{case_id}")
+async def get_case(case_id: str, x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
+    user_id = _identity(x_telegram_init_data)
+    state = await _require_consent(user_id)
+    case = state["cases"].get(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return {"case": _public_case(case, include_conversation=True)}
+
+
+@app.get("/miniapp/cases/{case_id}/document")
+async def get_document(case_id: str, x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
+    user_id = _identity(x_telegram_init_data)
+    state = await _require_consent(user_id)
+    case = state["cases"].get(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    encoded = str(case.get("document_base64") or "")
+    if not encoded:
+        raise HTTPException(status_code=404, detail="Document not generated")
+    return {
+        "case_id": case_id,
+        "filename": str(case.get("filename") or "KORGAN_document.docx"),
+        "document_base64": encoded,
+        "title": str(case.get("title") or ""),
+        "verification_status": str(case.get("verification_status") or ""),
+        "verification_notes": list(case.get("verification_notes") or []),
+    }
+
+
 @app.post("/miniapp/cases")
 async def create_case(payload: CaseRequest, x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
     user_id = _identity(x_telegram_init_data)
@@ -257,10 +299,11 @@ async def create_case(payload: CaseRequest, x_telegram_init_data: str = Header(d
         "language": "kk" if payload.language == "kk" else "ru",
         "status": "created",
         "materials": [],
+        "conversation": [],
     }
     state["cases"][case_id] = item
     await store.save(user_id, state)
-    return {"case": _public_case(item)}
+    return {"case": _public_case(item, include_conversation=True)}
 
 
 @app.post("/miniapp/cases/{case_id}/materials")
@@ -278,7 +321,6 @@ async def upload_material(
     filename = (file.filename or "material").strip()
     if _extension(filename) not in _ALLOWED_UPLOAD_EXTENSIONS:
         raise HTTPException(status_code=415, detail="Поддерживаются PDF, DOCX, TXT, JPG, JPEG, PNG и WEBP")
-
     data = await file.read(_MAX_UPLOAD_BYTES + 1)
     if len(data) > _MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Файл больше 20 МБ")
@@ -293,36 +335,38 @@ async def upload_material(
         raise HTTPException(status_code=502, detail="Не удалось разобрать материал") from exc
 
     materials = list(case.get("materials") or [])
-    materials.append({
-        "filename": filename,
-        "content_type": file.content_type or "",
-        "context": extracted.as_context(),
-    })
+    materials.append({"filename": filename, "content_type": file.content_type or "", "context": extracted.as_context()})
     case["materials"] = materials[-settings.max_case_documents :]
     case["status"] = "materials_ready"
     await store.save(user_id, state)
-    return {
-        "ok": True,
-        "case": _public_case(case),
-        "preview": extracted.as_context()[:1800],
-    }
+    return {"ok": True, "case": _public_case(case, include_conversation=True), "preview": extracted.as_context()[:1800]}
 
 
 @app.post("/miniapp/consultation")
 async def consultation(payload: ConsultationRequest, x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
     user_id = _identity(x_telegram_init_data)
     state = await _require_consent(user_id)
+    case: dict[str, Any] | None = None
     case_context = ""
     if payload.case_id:
         case = state["cases"].get(payload.case_id)
         if not case:
             raise HTTPException(status_code=404, detail="Case not found")
         case_context = _case_context(case)
+
     answer, urls = await service.consult(
         payload.message,
         case_context=case_context,
         language="kk" if payload.language == "kk" else "ru",
     )
+    if case is not None:
+        conversation = list(case.get("conversation") or [])
+        conversation.extend([
+            {"role": "user", "text": payload.message, "ts": int(time.time())},
+            {"role": "ai", "text": answer, "sources": list(urls or []), "ts": int(time.time())},
+        ])
+        case["conversation"] = conversation[-_MAX_CONVERSATION_MESSAGES:]
+        await store.save(user_id, state)
     return {"answer": answer, "sources": urls}
 
 
@@ -347,16 +391,14 @@ async def generate_document(payload: GenerateRequest, x_telegram_init_data: str 
         language = "kk" if str(case.get("language") or payload.language) == "kk" else "ru"
         context = _case_context(case)
         draft, file_bytes, filename = await _generate(document_type, context, language)
-        case.update(
-            {
-                "status": "document_ready",
-                "title": getattr(draft, "title", "") or filename,
-                "verification_status": getattr(getattr(draft, "status", None), "value", str(getattr(draft, "status", ""))),
-                "verification_notes": list(getattr(draft, "verification_notes", []) or []),
-                "document_base64": base64.b64encode(file_bytes).decode("ascii"),
-                "filename": filename,
-            }
-        )
+        case.update({
+            "status": "document_ready",
+            "title": getattr(draft, "title", "") or filename,
+            "verification_status": getattr(getattr(draft, "status", None), "value", str(getattr(draft, "status", ""))),
+            "verification_notes": list(getattr(draft, "verification_notes", []) or []),
+            "document_base64": base64.b64encode(file_bytes).decode("ascii"),
+            "filename": filename,
+        })
         await store.save(user_id, state)
 
     return {
