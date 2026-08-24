@@ -28,7 +28,7 @@ from korgan.pretrial import build_pretrial_docx
 from korgan.pretrial_response import PretrialResponseProductionService, build_pretrial_response_docx
 from korgan.response_docx import build_response_to_claim_docx
 
-app = FastAPI(title="KORGAN Mini App API", version="0.6.0")
+app = FastAPI(title="KORGAN Mini App API", version="0.6.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -154,17 +154,28 @@ def _public_case(item: dict[str, Any], *, include_conversation: bool = False) ->
 
 
 def _case_context(case: dict[str, Any]) -> str:
+    """Build drafting context only from user-supplied facts and uploaded material.
+
+    AI consultation answers remain available as UI history, but they are never
+    fed back into research/drafting as facts. This prevents a previous model
+    answer from becoming self-reinforcing evidence in a later Word document.
+    """
     chunks = [str(case.get("description") or "").strip()]
     materials = case.get("materials") or []
     if materials:
         chunks.append(
             "Материалы дела:\n" + "\n\n---\n\n".join(str(item.get("context") or "") for item in materials)
         )
-    history = list(case.get("conversation") or [])[-12:]
-    if history:
+
+    user_history = [
+        str(item.get("text") or "").strip()
+        for item in list(case.get("conversation") or [])[-20:]
+        if item.get("role") == "user" and str(item.get("text") or "").strip()
+    ]
+    if user_history:
         chunks.append(
-            "Предыдущая консультация по делу (контекст, не источник новых фактов):\n"
-            + "\n".join(f"{item.get('role', '')}: {item.get('text', '')}" for item in history)
+            "Дополнительные факты, сообщённые пользователем в консультации:\n"
+            + "\n".join(f"- {text}" for text in user_history[-10:])
         )
     return "\n\n---\n\n".join(chunk for chunk in chunks if chunk)
 
@@ -228,7 +239,7 @@ async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "service": "korgan-miniapp-api",
-        "version": "0.6.0",
+        "version": "0.6.1",
         "storage": "postgres" if store.pool is not None else "memory",
         "state_encryption": "AES-256-GCM",
     }
