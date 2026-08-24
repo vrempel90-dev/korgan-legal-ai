@@ -5,8 +5,10 @@ from types import SimpleNamespace
 
 from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.pretrial import PretrialDraft, pretrial_quality_issues
+from korgan.pretrial_response import PretrialResponseDraft, pretrial_response_quality_issues
 from korgan.provision_check import verified_claim_line
 from korgan.universal_word_quality_guard import (
+    repair_pretrial_response_to_target,
     repair_pretrial_to_target,
     verified_legal_basis_from_research,
 )
@@ -53,12 +55,27 @@ def _draft_with_bad_article() -> PretrialDraft:
     )
 
 
+def _response_with_bad_article() -> PretrialResponseDraft:
+    return PretrialResponseDraft(
+        status=VerificationStatus.NEEDS_VERIFICATION,
+        title="Ответ на досудебную претензию",
+        sender=["ТОО «Вектор Строй»"],
+        recipient=["ТОО «Арман Снабжение»"],
+        reference="Претензия по договору поставки",
+        claim_summary=["Заявлено требование об оплате задолженности."],
+        position=["Требование рассматривается в подтвержденной материалами части."],
+        objections=["Размер требования подлежит сверке по первичным документам."],
+        legal_basis=["Согласно статье 9999 ГК РК обязательство считается прекращенным автоматически."],
+        response_terms=["Предлагаем провести сверку документов и расчетов."],
+        attachments=["Копии имеющихся первичных документов"],
+        verification_notes=[],
+        source_urls=[_ADILET],
+    )
+
+
 def test_verified_basis_projection_removes_internal_research_metadata() -> None:
     basis = verified_legal_basis_from_research(_verified_research())
-
-    assert basis == [
-        "Обязательство должно исполняться надлежащим образом (статья 272 ГК РК)."
-    ]
+    assert basis == ["Обязательство должно исполняться надлежащим образом (статья 272 ГК РК)."]
     assert "текст нормы" not in basis[0]
     assert "источник:" not in basis[0]
 
@@ -99,12 +116,58 @@ def test_pretrial_repairs_bad_article_from_verified_research_without_second_llm_
             research,
             "ru",
         )
-
         assert len(calls) == 1
         rendered_law = "\n".join(result.legal_basis)
         assert "9999" not in rendered_law
         assert "статья 272 ГК РК" in rendered_law
         assert pretrial_quality_issues(result, research) == []
+        assert result.status is VerificationStatus.VERIFIED
+
+    asyncio.run(scenario())
+
+
+def test_pretrial_response_repairs_bad_article_without_second_llm_call() -> None:
+    async def scenario() -> None:
+        research = _verified_research()
+        initial = _response_with_bad_article()
+        assert pretrial_response_quality_issues(initial, research)
+        calls: list[dict] = []
+
+        async def original(_self, _context, _research, language="ru"):
+            return initial
+
+        class FakeService:
+            settings = SimpleNamespace(max_case_text_chars=20_000)
+
+            async def _quality_repair(self, **kwargs):
+                calls.append(kwargs)
+                repaired = _response_with_bad_article()
+                return {
+                    "title": repaired.title,
+                    "sender": repaired.sender,
+                    "recipient": repaired.recipient,
+                    "reference": repaired.reference,
+                    "claim_summary": repaired.claim_summary,
+                    "position": repaired.position,
+                    "objections": repaired.objections,
+                    "legal_basis": repaired.legal_basis,
+                    "response_terms": repaired.response_terms,
+                    "attachments": repaired.attachments,
+                    "verification_notes": [],
+                }
+
+        result = await repair_pretrial_response_to_target(
+            FakeService(),
+            original,
+            "Получена претензия по договору поставки; требуется подготовить мотивированный ответ.",
+            research,
+            "ru",
+        )
+        assert len(calls) == 1
+        rendered_law = "\n".join(result.legal_basis)
+        assert "9999" not in rendered_law
+        assert "статья 272 ГК РК" in rendered_law
+        assert pretrial_response_quality_issues(result, research) == []
         assert result.status is VerificationStatus.VERIFIED
 
     asyncio.run(scenario())
@@ -120,5 +183,4 @@ def test_verified_basis_projection_fails_closed_without_source_bound_claims() ->
         source_urls=[],
         notes=[],
     )
-
     assert verified_legal_basis_from_research(research) == []
