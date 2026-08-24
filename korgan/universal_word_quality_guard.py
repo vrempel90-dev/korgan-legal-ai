@@ -5,6 +5,7 @@ import re
 from typing import Any, Awaitable, Callable
 
 from korgan import document_quality, universal_quality_service
+from korgan.citation_audit import extract_references, runtime_provisions
 from korgan.fast_v2_production_legal import _normalize_state_duty_request
 from korgan.legal_calc import NEEDS_CALCULATION_MARKER, format_kzt, gosposhlina_line
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch, VerificationStatus
@@ -209,8 +210,6 @@ def _penalty_amount(case_context: str) -> int | None:
     if not explicit_segments:
         return None
 
-    # Search the whole source context so a marker can state the remedy while the
-    # immediately adjacent source sentence contains its already-calculated amount.
     segments = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+|\n+", case_context or "") if segment.strip()]
     for segment in segments:
         terms = list(_PENALTY_RE.finditer(segment))
@@ -335,6 +334,49 @@ def _preliminary_after_repair_failure(draft: Any, issues: list[str]) -> Any:
     return draft
 
 
+def verified_legal_basis_from_research(research: LegalResearch) -> list[str]:
+    """Project only source-bound VERIFIED claims into client-facing legal basis.
+
+    The model never gets to choose a replacement article here. A claim is eligible
+    only when citation_audit can build exactly one official Adilet runtime provision
+    from it. Internal research metadata and quote markers are removed before the
+    business document is rendered; the canonical article reference remains so the
+    finished paragraph is audited again against that same runtime provision.
+    """
+    result: list[str] = []
+    for raw in research.verified_claims or []:
+        claim = str(raw or "").strip()
+        if not claim or "[основание:" not in claim:
+            continue
+        records = runtime_provisions([claim])
+        if len(records) != 1:
+            continue
+        statement = claim.split("[основание:", 1)[0].strip()
+        if not statement:
+            continue
+        statement = statement.replace("«", "").replace("»", "").replace('"', "").strip()
+        reference = records[0].reference
+        existing = extract_references(statement)
+        if existing and not any(reference.matches(item) for item in existing):
+            continue
+        if existing:
+            line = statement
+        else:
+            line = f"{statement.rstrip(' .;')} ({reference.label()})."
+        if line and line not in result:
+            result.append(line)
+    return result[:6]
+
+
+def _rescue_verified_legal_basis(draft: Any, research: LegalResearch) -> bool:
+    basis = verified_legal_basis_from_research(research)
+    if not basis:
+        return False
+    draft.legal_basis = basis
+    LOGGER.info("UNIVERSAL_WORD_QUALITY verified_law_rescue provisions=%d", len(basis))
+    return True
+
+
 async def repair_pretrial_to_target(
     self: Any,
     original: Callable[..., Awaitable[PretrialDraft]],
@@ -368,16 +410,24 @@ async def repair_pretrial_to_target(
         normalize_pretrial(repaired)
         sanitize_draft_instructions(repaired)
         second = pretrial_quality_issues(repaired, research)
-        repaired.verification_notes = _refresh_issue_notes(repaired.verification_notes, first, second)
+        final_issues = second
+        if second and _rescue_verified_legal_basis(repaired, research):
+            normalize_pretrial(repaired)
+            final_issues = pretrial_quality_issues(repaired, research)
+        repaired.verification_notes = _refresh_issue_notes(
+            repaired.verification_notes,
+            list(dict.fromkeys([*first, *second])),
+            final_issues,
+        )
         repaired.status = (
             VerificationStatus.VERIFIED
-            if not second and research.status is VerificationStatus.VERIFIED and not repaired.verification_notes
+            if not final_issues and research.status is VerificationStatus.VERIFIED and not repaired.verification_notes
             else VerificationStatus.NEEDS_VERIFICATION
         )
         LOGGER.info(
             "UNIVERSAL_WORD_QUALITY kind=pretrial target=10 issues_before=%d issues_after=%d",
             len(first),
-            len(second),
+            len(final_issues),
         )
         return repaired
     except Exception:
@@ -420,16 +470,24 @@ async def repair_pretrial_response_to_target(
         normalize_pretrial_response(repaired)
         sanitize_draft_instructions(repaired)
         second = pretrial_response_quality_issues(repaired, research)
-        repaired.verification_notes = _refresh_issue_notes(repaired.verification_notes, first, second)
+        final_issues = second
+        if second and _rescue_verified_legal_basis(repaired, research):
+            normalize_pretrial_response(repaired)
+            final_issues = pretrial_response_quality_issues(repaired, research)
+        repaired.verification_notes = _refresh_issue_notes(
+            repaired.verification_notes,
+            list(dict.fromkeys([*first, *second])),
+            final_issues,
+        )
         repaired.status = (
             VerificationStatus.VERIFIED
-            if not second and research.status is VerificationStatus.VERIFIED and not repaired.verification_notes
+            if not final_issues and research.status is VerificationStatus.VERIFIED and not repaired.verification_notes
             else VerificationStatus.NEEDS_VERIFICATION
         )
         LOGGER.info(
             "UNIVERSAL_WORD_QUALITY kind=pretrial_response target=10 issues_before=%d issues_after=%d",
             len(first),
-            len(second),
+            len(final_issues),
         )
         return repaired
     except Exception:
@@ -445,15 +503,9 @@ def install_universal_word_quality_guard() -> None:
     if _INSTALLED:
         return
 
-    # Existing UniversalQualityProductionService already performs one bounded
-    # repair for claim/contract/response. Raising the target makes that same
-    # mechanism repair every deterministic defect instead of stopping at 8.5.
     document_quality.MIN_READY_SCORE = TARGET_READY_SCORE
     universal_quality_service.MIN_READY_SCORE = TARGET_READY_SCORE
 
-    # Make the common AI repair itself fail-open. Claim/contract/response already
-    # had a quality repair loop before this guard; raising the threshold must not
-    # make a transient repair failure suppress an otherwise renderable Word file.
     original_quality_repair = UniversalQualityProductionService._quality_repair
 
     async def resilient_quality_repair(self: UniversalQualityProductionService, **kwargs: Any) -> dict[str, Any]:
@@ -471,10 +523,6 @@ def install_universal_word_quality_guard() -> None:
 
     UniversalQualityProductionService._quality_repair = resilient_quality_repair  # type: ignore[assignment]
 
-    # The production claim calculator is imported by value into fast_v2, so patch
-    # both globals. Calls from existing deterministic QA remain RU-compatible;
-    # the final release pass receives the actual document language and localizes
-    # the filing-facing duty request for Kazakh documents.
     from korgan import fast_v2_production_legal, production_legal
 
     production_legal._apply_state_duty = apply_state_duty_from_draft
