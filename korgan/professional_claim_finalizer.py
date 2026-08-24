@@ -7,6 +7,7 @@ from pathlib import Path
 
 from korgan.claim_corpus_health import enforce_claim_corpus_health
 from korgan.claim_filing_accuracy import apply_claim_filing_accuracy
+from korgan.claim_money_ledger import build_claim_money_ledger
 from korgan.claim_release_invariants import enforce_claim_release_invariants
 from korgan.legal_calc import format_kzt
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
@@ -19,7 +20,6 @@ _VERIFIED_LINE_RE = re.compile(
 )
 _COURT_SOURCE_RE = re.compile(r"\[основание:\s*официальный перечень судов;\s*источник:", re.IGNORECASE)
 _ARTICLE_RE = re.compile(r"(?:статья|статьи|ст\.)\s*\d+(?:-\d+)?", re.IGNORECASE)
-_MONEY_RE = re.compile(r"(?<!\d)(\d[\d\s\u00a0]*(?:[.,]\d{1,2})?)\s*(?:тенге|тг\b|₸)", re.IGNORECASE)
 _MORAL_RE = re.compile(r"моральн\w*\s+вред|нравственн\w*\s+страдан|моральн\w*\s+страдан", re.IGNORECASE)
 _SUBJECTIVE_RE = re.compile(
     r"переживан\w*|стресс\w*|нервн\w*|нравственн\w*\s+страдан\w*|"
@@ -32,11 +32,9 @@ _PROCESS_MOTION_RE = re.compile(
     re.IGNORECASE,
 )
 _TERMINATION_RE = re.compile(r"расторг|прекращен|прекратить\s+договор|признать\s+договор\s+прекращ", re.IGNORECASE)
-_STATE_DUTY_RE = re.compile(r"пошлин", re.IGNORECASE)
-_COST_RE = re.compile(r"судебн\w*\s+расход|расход\w*\s+по\s+оплат", re.IGNORECASE)
-_ALTERNATIVE_RE = re.compile(r"альтернативн", re.IGNORECASE)
 _CONSUMER_VENUE_RE = re.compile(r"стать(?:я|и)\s*30\b.*потребител|потребител.*стать(?:я|и)\s*30\b", re.IGNORECASE | re.DOTALL)
 _GENERAL_VENUE_RE = re.compile(r"стать(?:я|и)\s*29\b", re.IGNORECASE)
+_CLAIM_PRICE_NOTE_PREFIX = "Цена иска требует проверки: "
 
 _DISTRICTS = {
     "алатаус": "Алатауский",
@@ -180,25 +178,34 @@ def _sanitize_relief(case_context: str, research: LegalResearch, draft: ClaimDra
         draft.requests = [item for item in draft.requests if not _TERMINATION_RE.search(item)]
 
 
-def _parse_amount(value: str) -> int:
-    digits = re.sub(r"[\s\u00a0]", "", value).replace(",", ".")
-    try:
-        return round(float(digits))
-    except ValueError:
-        return 0
-
-
 def _recalculate_price(draft: ClaimDraft) -> None:
-    amounts: list[int] = []
-    for request in draft.requests:
-        if _STATE_DUTY_RE.search(request) or _COST_RE.search(request) or _ALTERNATIVE_RE.search(request):
-            continue
-        for match in _MONEY_RE.finditer(request):
-            amount = _parse_amount(match.group(1))
-            if amount > 0:
-                amounts.append(amount)
-    if amounts:
-        draft.price_of_claim = format_kzt(sum(amounts))
+    """Set one authoritative claim price from independent monetary remedies.
+
+    State duty and court costs are excluded by the ledger. A prayer line that
+    contains both components and an explicit total contributes only that total.
+    If a multi-amount prayer is ambiguous, the existing price is preserved and
+    the draft cannot silently become VERIFIED until the calculation is checked.
+    """
+    draft.verification_notes = [
+        note for note in draft.verification_notes
+        if not str(note).startswith(_CLAIM_PRICE_NOTE_PREFIX)
+    ]
+
+    ledger = build_claim_money_ledger(list(draft.requests or []))
+    if ledger.unresolved_requests:
+        sample = ledger.unresolved_requests[0]
+        if len(sample) > 180:
+            sample = sample[:177].rstrip() + "..."
+        draft.verification_notes.append(
+            _CLAIM_PRICE_NOTE_PREFIX
+            + "в просительной части есть несколько денежных сумм без однозначного итога; "
+            + f"не использовать автоматический расчет госпошлины до проверки строки «{sample}»."
+        )
+        draft.status = VerificationStatus.NEEDS_VERIFICATION
+        return
+
+    if ledger.components:
+        draft.price_of_claim = format_kzt(ledger.total)
 
 
 def finalize_professional_claim(
@@ -208,7 +215,7 @@ def finalize_professional_claim(
     *,
     language: str | None = None,
 ) -> None:
-    """Apply non-model professional release invariants before scoring/export."""
+    """Apply non-model professional drafting invariants before final release checks."""
     _resolve_court(case_context, research, draft)
     _apply_verified_legal_basis(research, draft)
     apply_claim_filing_accuracy(case_context, research, draft)
