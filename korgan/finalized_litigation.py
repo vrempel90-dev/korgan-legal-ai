@@ -5,6 +5,7 @@ import logging
 from korgan import document_quality as _dq
 from korgan import senior_claim_preflight as _sp
 from korgan.claim_filing_completeness import enforce_article148_party_completeness
+from korgan.claim_profile_grounding import ground_claim_profile_from_corpus
 from korgan.claim_quality_hotfix import FILING_ACTION_PREFIX, ProductionClaimService
 from korgan.claim_state_duty import StateDutyDecision, apply_professional_state_duty
 from korgan.fast_v2_production_legal import _deterministic_pre_qa
@@ -47,6 +48,12 @@ class FinalizedProductionClaimService(ProductionClaimService):
         research: LegalResearch,
         language: str = "ru",
     ) -> ClaimDraft:
+        # Give the drafting stack the minimum profile-specific material-law
+        # backbone from the same current Adilet corpus that will re-check the
+        # filing later. Article numbers here are routing keys only; the actual
+        # heading/body/source are loaded from corpus and remain fail-closed.
+        ground_claim_profile_from_corpus(case_context, research)
+
         draft = await super().draft_claim(case_context, research, language=language)
 
         # Remove serialization/intake artefacts before any filing calculation or
