@@ -14,6 +14,7 @@ from korgan.legal.corpus_refresh import start_corpus_refresh_task
 from korgan.pretrial_response import PretrialResponseProductionService
 from korgan.token_budget_guard import apply_token_budget_guard
 
+PARITY_REVISION = "2026-08-24.2"
 settings = core.settings
 apply_token_budget_guard(settings)
 
@@ -58,6 +59,7 @@ async def parity() -> dict[str, Any]:
     return {
         "status": "ok",
         "api_version": "0.8.0",
+        "parity_revision": PARITY_REVISION,
         "legal_runtime": "strict_bot",
         "service_outer": type(service).__name__,
         "service_claim_mux": type(inner).__name__ if inner is not None else "",
