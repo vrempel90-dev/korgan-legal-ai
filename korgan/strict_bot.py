@@ -10,8 +10,9 @@ from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
-from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter, claim_pipeline_v2_mode
+from korgan.claim_pipeline_v2 import claim_pipeline_v2_mode
 from korgan.claim_quality_hotfix import install_runtime_hotfix
+from korgan.claim_service_mux import build_strict_legal_service
 from korgan.client_document_guidance_router import router as client_document_guidance_router
 from korgan.client_document_runtime_guidance import install_client_document_runtime_guidance
 from korgan.client_safe_ui import install_client_safe_runtime
@@ -39,7 +40,6 @@ from korgan.payment_pdf_hotfix import install_payment_pdf_hotfix
 from korgan.payment_runtime import router as payment_router
 from korgan.prepayment_gate import install_generation_prepayment_gate
 from korgan.prepayment_runtime import router as prepayment_router
-from korgan.pretrial_response import PretrialResponseProductionService
 from korgan.pretrial_response_runtime import install_pretrial_response_transport, router as pretrial_response_router
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
@@ -107,8 +107,7 @@ async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
 async def main() -> None:
     settings = get_settings()
     apply_token_budget_guard(settings)
-    stable_service = PretrialResponseProductionService(settings)
-    base_bot.service = ClaimPipelineV2Adapter(stable_service)
+    base_bot.service = build_strict_legal_service(settings)
     base_bot.MENU = main_menu()
     await init_consultation_store(settings)
 
