@@ -44,6 +44,28 @@ def test_state_duty_and_court_costs_do_not_enter_claim_price():
     assert ledger.total == 1_000_000
 
 
+def test_moral_damage_amount_is_nonproperty_and_excluded_from_claim_price():
+    ledger = build_claim_money_ledger([
+        "Взыскать задолженность 1 000 000 тенге.",
+        "Взыскать компенсацию морального вреда 200 000 тенге.",
+    ])
+
+    assert ledger.unresolved_requests == []
+    assert ledger.total == 1_000_000
+    assert len(ledger.nonproperty_money_components) == 1
+    assert ledger.nonproperty_money_components[0].kind == "moral_damage"
+
+
+def test_prose_total_mixing_debt_and_moral_damage_does_not_inflate_claim_price():
+    ledger = build_claim_money_ledger([
+        "Взыскать основной долг 1 000 000 тенге и моральный вред 200 000 тенге, итого 1 200 000 тенге."
+    ])
+
+    assert ledger.unresolved_requests == []
+    assert ledger.total == 1_000_000
+    assert any(item.kind == "moral_damage" and not item.included_in_claim_price for item in ledger.components)
+
+
 def test_duplicate_prayer_line_is_counted_once():
     request = "Взыскать задолженность 2 300 000 тенге."
     ledger = build_claim_money_ledger([request, request])
