@@ -1,12 +1,12 @@
 """Deterministic monetary ledger for civil claims.
 
-The prayer section is written for a judge, not for arithmetic.  It can contain
-component amounts and a repeated total in the same sentence.  Treating every
+The prayer section is written for a judge, not for arithmetic. It can contain
+component amounts and a repeated total in the same sentence. Treating every
 currency token as an independent claim therefore overstates the claim price and
 then overstates state duty.
 
 This module converts monetary prayer requests into one canonical ledger without
-an LLM call.  It deliberately fails closed when a multi-amount request cannot be
+an LLM call. It deliberately fails closed when a multi-amount request cannot be
 resolved unambiguously: an uncertain claim price must not silently become a
 filing-ready number.
 """
@@ -21,7 +21,10 @@ _AMOUNT_RE = re.compile(
     r"(?<!\d)(\d[\d\s\u00a0]*(?:[.,]\d{1,2})?)\s*(?:тенге|теңге|тг\b|₸|kzt)",
     re.IGNORECASE,
 )
-_STATE_DUTY_RE = re.compile(r"(?:госпошлин\w*|государственн\w*\s+пошлин\w*|мемлекетт(?:ік|iк)\s+баж)", re.IGNORECASE)
+_STATE_DUTY_RE = re.compile(
+    r"(?:госпошлин\w*|государственн\w*\s+пошлин\w*|мемлекетт(?:ік|iк)\s+баж)",
+    re.IGNORECASE,
+)
 _COST_RE = re.compile(
     r"(?:судебн\w*\s+расход\w*|расход\w*\s+(?:на|по)\s+(?:представител|юридическ|оплат)\w*|"
     r"сот\s+шығын\w*|өкіл\w*\s+шығын\w*)",
@@ -78,32 +81,48 @@ def _amount(value: str) -> int:
 
 
 def _kind(text: str, start: int, end: int) -> str:
-    # Prefer the nearest semantic label; a wide enough window supports common
-    # forms such as "неустойку в размере 996 000 тенге" without allowing a
-    # distant label to classify every number in the sentence.
-    before = text[max(0, start - 80):start]
-    after = text[end:min(len(text), end + 45)]
-    for code, pattern in _KIND_PATTERNS:
-        if pattern.search(before) or pattern.search(after):
-            return code
-    return "other"
+    """Bind an amount to the nearest recognised remedy label.
+
+    Pattern order must never decide legal meaning. In a single sentence such as
+    ``основной долг 12 000 000 ... неустойку 996 000`` both labels may be near
+    the first amount. We therefore use distance and prefer a preceding label on
+    ties, which mirrors ordinary legal drafting.
+    """
+    candidates: list[tuple[int, int, int, str]] = []
+    for order, (code, pattern) in enumerate(_KIND_PATTERNS):
+        for match in pattern.finditer(text or ""):
+            if match.end() <= start:
+                distance = start - match.end()
+                if distance <= 80:
+                    candidates.append((distance, 0, order, code))
+            elif match.start() >= end:
+                distance = match.start() - end
+                if distance <= 45:
+                    candidates.append((distance, 1, order, code))
+            else:
+                candidates.append((0, 0, order, code))
+    if not candidates:
+        return "other"
+    return min(candidates)[3]
 
 
 def _explicit_total_index(text: str, matches: list[re.Match[str]]) -> int | None:
     markers = list(_TOTAL_MARKER_RE.finditer(text))
     if markers:
-        # A total is normally written after the marker ("итого: 100"), but
-        # Russian/Kazakh prose also permits "100 тенге всего".
         marker = markers[-1]
-        after = [idx for idx, match in enumerate(matches) if match.start() >= marker.end() and match.start() - marker.end() <= 90]
+        after = [
+            idx for idx, match in enumerate(matches)
+            if match.start() >= marker.end() and match.start() - marker.end() <= 90
+        ]
         if after:
             return after[0]
-        before = [idx for idx, match in enumerate(matches) if match.end() <= marker.start() and marker.start() - match.end() <= 45]
+        before = [
+            idx for idx, match in enumerate(matches)
+            if match.end() <= marker.start() and marker.start() - match.end() <= 45
+        ]
         if before:
             return before[-1]
 
-    # "10 000 + 500 = 10 500 тенге" is an explicit arithmetic total even if
-    # the author omitted the word "итого".
     equals = text.rfind("=")
     if equals >= 0:
         after_equals = [idx for idx, match in enumerate(matches) if match.start() > equals]
@@ -134,18 +153,12 @@ def _resolved_components(request: str) -> list[ClaimMoneyComponent] | None:
     if len(matches) == 1:
         return [ClaimMoneyComponent(_kind(request, matches[0].start(), matches[0].end()), values[0], request)]
 
-    # Detect an unlabelled arithmetic total: component amounts followed or
-    # preceded by their exact sum.  This removes the most dangerous historical
-    # double-counting pattern without guessing at legal meaning.
     if len(values) >= 3 and values[-1] == sum(values[:-1]):
         return [ClaimMoneyComponent("total", values[-1], request)]
     if len(values) >= 3 and values[0] == sum(values[1:]):
         return [ClaimMoneyComponent("total", values[0], request)]
 
     kinds = [_kind(request, match.start(), match.end()) for match in matches]
-    # Multiple amounts in one prayer line are safe to add only when each one is
-    # tied to a different recognised remedy (e.g. principal + penalty).  Two
-    # unlabelled figures are ambiguous and must not become a silent calculation.
     if "other" not in kinds and len(set(kinds)) == len(kinds):
         return [
             ClaimMoneyComponent(kind, value, request)
