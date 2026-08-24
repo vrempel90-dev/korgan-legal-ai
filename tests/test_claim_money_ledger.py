@@ -23,6 +23,16 @@ def test_separate_independent_property_requests_are_summed():
     assert {item.kind for item in ledger.components} == {"principal", "penalty"}
 
 
+def test_same_line_independent_components_bind_to_nearest_labels():
+    ledger = build_claim_money_ledger([
+        "Взыскать основной долг 12 000 000 тенге и неустойку 996 000 тенге."
+    ])
+
+    assert ledger.unresolved_requests == []
+    assert ledger.total == 12_996_000
+    assert [item.kind for item in ledger.components] == ["principal", "penalty"]
+
+
 def test_state_duty_and_court_costs_do_not_enter_claim_price():
     ledger = build_claim_money_ledger([
         "Взыскать задолженность 1 000 000 тенге.",
