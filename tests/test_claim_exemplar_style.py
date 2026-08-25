@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from korgan.claim_exemplar_style import CLAIM_EXEMPLAR_STYLE, exemplar_body_blocks, with_claim_exemplar_style
+from korgan.docx_blocks import Prose
 from korgan.legal_types import ClaimDraft, VerificationStatus
 
 
@@ -20,7 +21,7 @@ def test_style_context_is_idempotent() -> None:
     assert first == second
 
 
-def test_russian_claim_body_has_no_artificial_legal_analysis_heading() -> None:
+def test_russian_claim_body_uses_classic_prose_not_ai_section_heading() -> None:
     draft = ClaimDraft(
         status=VerificationStatus.VERIFIED,
         title="И С К\nо взыскании суммы задолженности",
@@ -38,6 +39,7 @@ def test_russian_claim_body_has_no_artificial_legal_analysis_heading() -> None:
     )
     blocks = exemplar_body_blocks(draft, kk=False)
     rendered = "\n".join(str(getattr(block, "text", getattr(block, "items", block))) for block in blocks)
-    assert "Правовое обоснование" not in rendered
+    transition = next(block for block in blocks if getattr(block, "text", "").startswith("Правовое обоснование"))
+    assert isinstance(transition, Prose)
     assert "На основании вышеизложенного ПРОШУ СУД:" in rendered
     assert "Приложения:" in rendered
