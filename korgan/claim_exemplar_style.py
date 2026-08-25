@@ -7,8 +7,10 @@ never copied. Current source-bound law and existing fact locks remain authoritat
 
 from __future__ import annotations
 
+import re
 from typing import Any, Awaitable, Callable
 
+from korgan.contract_numbering import strip_leading_number
 from korgan.docx_blocks import AutoNumberedList, Block, Prose
 
 
@@ -33,6 +35,12 @@ CLAIM_EXEMPLAR_STYLE = """
 """.strip()
 
 
+_PRAYER_ONLY = re.compile(
+    r"^\s*(?:на основании вышеизложенного(?:[^\n]{0,220})?\s+)?(?:и\s+)?прошу\s+суд\s*:?\s*$",
+    re.IGNORECASE,
+)
+
+
 def with_claim_exemplar_style(case_context: str) -> str:
     """Append non-factual house-style instructions to the drafting context only."""
     marker = "ВНУТРЕННИЙ СТИЛЕВОЙ СТАНДАРТ KORGAN — ИСКИ ПО ОБРАЗЦАМ"
@@ -41,25 +49,63 @@ def with_claim_exemplar_style(case_context: str) -> str:
     return f"{case_context}\n\n---\n{CLAIM_EXEMPLAR_STYLE}"
 
 
+def _clean_narrative_line(value: str) -> str:
+    """The renderer owns the single prayer transition; model duplicates are dropped."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if _PRAYER_ONLY.match(text):
+        return ""
+    # A model sometimes appends the transition to the end of an otherwise useful
+    # paragraph. Keep the substantive prefix, but never emit a second ПРОШУ СУД.
+    low = text.lower()
+    marker = low.find("прошу суд")
+    if marker >= 0:
+        prefix = text[:marker]
+        start = prefix.lower().rfind("на основании вышеизложенного")
+        if start >= 0:
+            prefix = prefix[:start]
+        return prefix.rstrip(" ,;:-")
+    return text
+
+
+def _clean_list(items: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    for item in items:
+        text = _clean_narrative_line(str(item))
+        if not text:
+            continue
+        text = strip_leading_number(text).strip()
+        if text:
+            cleaned.append(text)
+    return cleaned
+
+
 def exemplar_body_blocks(draft: Any, *, kk: bool) -> list[Block]:
-    """Render a traditional pleading body without artificial AI section headings."""
+    """Render a traditional pleading body with one canonical prayer transition."""
     if kk:
         assert _ORIGINAL_BODY_BLOCKS is not None
         return _ORIGINAL_BODY_BLOCKS(draft, kk=kk)
 
-    blocks: list[Block] = [Prose(fact) for fact in draft.facts]
-    if draft.legal_basis:
-        # Keep the golden release check for legal substance while avoiding a visual
-        # AI-style section heading. In real pleadings this reads as a transition
-        # sentence, followed immediately by the verified provisions.
+    facts = [text for text in (_clean_narrative_line(x) for x in draft.facts) if text]
+    legal_basis = [text for text in (_clean_narrative_line(x) for x in draft.legal_basis) if text]
+    requests = _clean_list(list(draft.requests))
+    attachments = _clean_list(list(draft.attachments))
+
+    blocks: list[Block] = [Prose(fact) for fact in facts]
+    if legal_basis:
+        # This prose marker satisfies the golden substance check without creating
+        # a visual AI-style heading; concrete verified provisions must follow it.
         blocks.append(Prose("Правовое обоснование заявленных требований составляют следующие применимые нормы законодательства Республики Казахстан."))
-        blocks.extend(Prose(basis) for basis in draft.legal_basis)
+        blocks.extend(Prose(basis) for basis in legal_basis)
     if draft.late_interest:
-        blocks.append(Prose(draft.late_interest))
+        late = _clean_narrative_line(draft.late_interest)
+        if late:
+            blocks.append(Prose(late))
     blocks.append(Prose("На основании вышеизложенного ПРОШУ СУД:"))
-    blocks.append(AutoNumberedList(list(draft.requests)))
+    blocks.append(AutoNumberedList(requests))
     blocks.append(Prose("Приложения:"))
-    blocks.append(AutoNumberedList(list(draft.attachments), restart=True))
+    blocks.append(AutoNumberedList(attachments, restart=True))
     return blocks
 
 
