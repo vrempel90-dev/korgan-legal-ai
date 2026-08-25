@@ -72,6 +72,7 @@ def test_usage_observer_preserves_arguments_and_return_value(caplog):
         return payload, response
 
     try:
+        caplog.set_level("INFO", logger="korgan.openai_usage_observability")
         cls._structured_response = fake_structured_response
         observer._INSTALLED = False
         observer.install_openai_usage_observability()
