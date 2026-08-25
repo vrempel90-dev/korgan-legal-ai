@@ -78,6 +78,10 @@ def install_universal_document_invariants_v2() -> None:
             export = rendered_docx_blockers(file_bytes, ready_expected=quality.ready and not internal_issues)
             if export:
                 internal_issues.extend(classify_issue(f"экспорт Word: {item}") for item in export)
+                # Export is part of the release state.  A document that gained a
+                # final-stage blocker cannot keep VERIFIED metadata/decoration.
+                draft.status = VerificationStatus.NEEDS_VERIFICATION
+                file_bytes = build_contract_docx(draft)
             if internal_issues:
                 file_bytes = append_review_markers(file_bytes, [item.text for item in internal_issues], language=lang)
 
@@ -147,6 +151,8 @@ def install_universal_document_invariants_v2() -> None:
             export = rendered_docx_blockers(file_bytes, ready_expected=quality.ready and not internal_issues)
             if export:
                 internal_issues.extend(classify_issue(f"экспорт Word: {item}") for item in export)
+                draft.status = VerificationStatus.NEEDS_VERIFICATION
+                file_bytes = build_response_to_claim_docx(draft)
             if internal_issues:
                 file_bytes = append_review_markers(file_bytes, [item.text for item in internal_issues], language=lang)
 
