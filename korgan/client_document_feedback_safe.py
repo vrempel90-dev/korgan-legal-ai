@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable
 from korgan import client_document_feedback_hotfix as core
 from korgan import client_document_notices as notices
 from korgan import client_feedback_20260825 as client_feedback
+from korgan.contract_preamble_qa_guard import install_contract_preamble_qa_guard
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
@@ -61,6 +62,7 @@ def install_client_document_feedback_safe() -> None:
     core.install_research_prompt_patch()
     core.install_quality_patches()
     client_feedback.install_client_feedback_20260825()
+    install_contract_preamble_qa_guard()
     from korgan import senior_claim_preflight
     setattr(
         senior_claim_preflight.deterministic_claim_preflight,
