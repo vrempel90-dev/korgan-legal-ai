@@ -11,6 +11,7 @@ from korgan import bot as base_bot
 from korgan.i18n import KK, normalize_language
 from korgan.pipeline_invariants_v2 import exact_client_diagnostics, split_issues
 from korgan.pretrial import build_pretrial_docx, is_pretrial_request, pretrial_quality_issues
+from korgan.pretrial_money_invariant import ensure_pretrial_money
 from korgan.request_scope import (
     current_request_id,
     is_main_menu_text,
@@ -78,8 +79,10 @@ async def _ask_pretrial(message: Message, state: FSMContext) -> None:
     await message.answer(prompt, reply_markup=main_menu(lang))
 
 
-def _all_pretrial_issues(draft, research) -> list[str]:
+def _all_pretrial_issues(draft, research, money_issue: str = "") -> list[str]:
     issues = list(pretrial_quality_issues(draft, research))
+    if money_issue and money_issue not in issues:
+        issues.append(money_issue)
     for note in research.notes or []:
         text = str(note or "").strip()
         if text.startswith("INTERNAL_QUALITY:"):
@@ -91,8 +94,6 @@ def _all_pretrial_issues(draft, research) -> list[str]:
 
 async def _generate(message: Message, state: FSMContext) -> None:
     await _save_text(message, state)
-    # current_request_id registers this handler as the sole heavy task. A newer
-    # message cancels it before another research/draft stage can start.
     request_id = await current_request_id(state, "pretrial")
     lang = await _lang(state)
     context = await base_bot._case_context(state)
@@ -121,7 +122,8 @@ async def _generate(message: Message, state: FSMContext) -> None:
             LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=pretrial request_id=%s stage=after_research", request_id)
             return
         draft = await draft_method(context, research, language=lang)
-        issues = _all_pretrial_issues(draft, research)
+        money = ensure_pretrial_money(context, draft, language=lang)
+        issues = _all_pretrial_issues(draft, research, money.issue)
         file_bytes = build_pretrial_docx(draft, language=lang)
     except Exception:
         LOGGER.exception("Pretrial demand generation failed")
