@@ -111,7 +111,7 @@ def test_docx_header_always_shows_state_duty() -> None:
 def test_docx_header_shows_marker_when_duty_is_unknown() -> None:
     header = _header_text(build_claim_docx(_draft()))
 
-    assert NEEDS_CALCULATION_MARKER in header
+    assert "[ДАННЫЕ: размер государственной пошлины]" in header
 
 
 def test_stale_duty_notes_are_dropped_after_calculation() -> None:
