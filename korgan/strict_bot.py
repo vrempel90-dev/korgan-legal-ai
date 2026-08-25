@@ -29,6 +29,7 @@ from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
 from korgan.payment_gate import install_payment_gate
 from korgan.payment_runtime import router as payment_router
+from korgan.pipeline_policy_bridges_v2 import install_consultation_invariants_v2, install_finalized_policy_bridge_v2
 from korgan.pretrial import PretrialProductionService
 from korgan.pretrial_response_payment import install_pretrial_response_payment_labels
 from korgan.pretrial_response_runtime import router as pretrial_response_router
@@ -54,6 +55,8 @@ install_consultation_quota_bridge()
 # all older hotfixes and enforce cross-cutting I1-I10 release invariants.
 install_production_invariants_v2()
 install_universal_document_invariants_v2()
+install_finalized_policy_bridge_v2()
+install_consultation_invariants_v2(PretrialProductionService)
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
