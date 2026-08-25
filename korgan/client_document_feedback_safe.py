@@ -16,6 +16,7 @@ from korgan import client_feedback_20260825 as client_feedback
 from korgan.claim_exemplar_architecture import install_claim_exemplar_architecture
 from korgan.claim_exemplar_style import install_claim_exemplar_style
 from korgan.claim_money_authority import install_claim_money_authority
+from korgan.claim_ten_test_gate import install_claim_ten_test_gate
 from korgan.contract_preamble_qa_guard import install_contract_preamble_qa_guard
 from korgan.production_cost_speed_optimizer_safe import install_production_cost_speed_optimizer_safe
 
@@ -71,6 +72,10 @@ def install_client_document_feedback_safe() -> None:
     # the reasoning/petitum follow their professional pleading structure.
     install_claim_exemplar_style()
     install_claim_exemplar_architecture()
+    # The T1-T10 objective decorates the existing architecture repair rather
+    # than adding another model round. Final DOCX normalization only inserts
+    # honest [ДАННЫЕ]/[СВЕРИТЬ] gaps and judicial-cost slots for debt claims.
+    install_claim_ten_test_gate()
     # One deterministic monetary ledger owns claim price. State-duty routing
     # consumes that ledger and may only restore a dropped amount when the exact
     # price is independently present in the user's materials.
