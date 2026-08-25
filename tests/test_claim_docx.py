@@ -86,8 +86,9 @@ def test_missing_party_still_renders_placeholder() -> None:
     payload = build_claim_docx(_draft(claimant=[], defendant=["Ответчик:"]))
 
     header = _header_text(payload)
-    assert "[ТРЕБУЕТ УТОЧНЕНИЯ: данные истца]" in header
-    assert "[ТРЕБУЕТ УТОЧНЕНИЯ: данные ответчика]" in header
+    assert "[ДАННЫЕ: данные истца]" in header
+    assert "[ДАННЫЕ: ИИН ответчика]" in header
+    assert "[ДАННЫЕ: адрес ответчика]" in header
 
 
 def test_attachments_restart_numbering_from_one() -> None:
