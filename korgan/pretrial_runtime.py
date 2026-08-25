@@ -9,6 +9,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from korgan import bot as base_bot
 from korgan.i18n import KK, normalize_language
+from korgan.pipeline_invariants_v2 import exact_client_diagnostics, split_issues
 from korgan.pretrial import build_pretrial_docx, is_pretrial_request, pretrial_quality_issues
 from korgan.request_scope import (
     current_request_id,
@@ -62,7 +63,6 @@ async def _save_text(message: Message, state: FSMContext) -> None:
 
 
 async def _ask_pretrial(message: Message, state: FSMContext) -> None:
-    """Open a fresh pretrial request without starting generation."""
     lang = await _lang(state)
     await state.update_data(mode="pretrial_waiting")
     prompt = (
@@ -78,8 +78,21 @@ async def _ask_pretrial(message: Message, state: FSMContext) -> None:
     await message.answer(prompt, reply_markup=main_menu(lang))
 
 
+def _all_pretrial_issues(draft, research) -> list[str]:
+    issues = list(pretrial_quality_issues(draft, research))
+    for note in research.notes or []:
+        text = str(note or "").strip()
+        if text.startswith("INTERNAL_QUALITY:"):
+            issue = text.split(":", 1)[1].strip()
+            if issue and issue not in issues:
+                issues.append(issue)
+    return issues
+
+
 async def _generate(message: Message, state: FSMContext) -> None:
     await _save_text(message, state)
+    # current_request_id registers this handler as the sole heavy task. A newer
+    # message cancels it before another research/draft stage can start.
     request_id = await current_request_id(state, "pretrial")
     lang = await _lang(state)
     context = await base_bot._case_context(state)
@@ -104,8 +117,11 @@ async def _generate(message: Message, state: FSMContext) -> None:
 
     try:
         research = await research_method(context, language=lang)
+        if not await request_is_current(state, request_id, "pretrial"):
+            LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=pretrial request_id=%s stage=after_research", request_id)
+            return
         draft = await draft_method(context, research, language=lang)
-        issues = pretrial_quality_issues(draft, research)
+        issues = _all_pretrial_issues(draft, research)
         file_bytes = build_pretrial_docx(draft, language=lang)
     except Exception:
         LOGGER.exception("Pretrial demand generation failed")
@@ -124,14 +140,35 @@ async def _generate(message: Message, state: FSMContext) -> None:
         LOGGER.info("STALE_DOCUMENT_SUPPRESSED kind=pretrial request_id=%s", request_id)
         return
 
-    if issues:
-        LOGGER.warning("PRETRIAL_PRELIMINARY issues=%s", issues[:6])
+    user_issues, internal_issues = split_issues(issues)
+    if user_issues:
+        diagnostics = exact_client_diagnostics("pretrial", user_issues)
+        LOGGER.warning(
+            "PIPELINE_QUALITY_GATE kind=pretrial issues_after=%d action=BLOCK block_class=NEEDS_USER_DATA issues=%s",
+            len(issues),
+            user_issues[:6],
+        )
+        text = (
+            "Претензия пока не сформирована: нужны данные, которые может предоставить только пользователь.\n\n"
+            + diagnostics
+        )
+        await message.answer(text, reply_markup=menu)
+        return
+
+    if internal_issues:
+        diagnostics = exact_client_diagnostics("pretrial", internal_issues)
+        LOGGER.warning(
+            "PIPELINE_QUALITY_GATE kind=pretrial issues_after=%d action=DELIVER_WITH_DIAGNOSTIC block_class=INTERNAL_QUALITY issues=%s",
+            len(issues),
+            internal_issues[:6],
+        )
         caption = (
-            "✅ Сотқа дейінгі талаптың жобасы Word (.docx) форматында дайын. Жіберер алдында деректемелер мен сомаларды тексеріңіз."
-            if lang == KK else
-            "✅ Проект досудебной претензии сформирован в Word (.docx). Перед направлением проверьте реквизиты и суммы."
+            "⚠️ PRELIMINARY · Проект досудебной претензии сформирован. "
+            "KORGAN обнаружил внутренние вопросы качества; они не перекладываются на пользователя.\n\n"
+            + diagnostics
         )
     else:
+        LOGGER.info("PIPELINE_QUALITY_GATE kind=pretrial issues_after=0 action=DELIVER result=PASS")
         caption = (
             "✅ Сотқа дейінгі талап Word (.docx) форматында дайын."
             if lang == KK else
@@ -141,7 +178,7 @@ async def _generate(message: Message, state: FSMContext) -> None:
     filename = "KORGAN_sotqa_deyingi_talap.docx" if lang == KK else "KORGAN_dosudebnaya_pretenziya.docx"
     await message.answer_document(
         BufferedInputFile(file_bytes, filename=filename),
-        caption=caption,
+        caption=caption[:1000],
         reply_markup=menu,
     )
 
@@ -151,8 +188,6 @@ async def pretrial_callback(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if callback.message is not None:
         await start_new_document_request(state, kind="pretrial", mode="pretrial_waiting")
-        # A menu click only opens a fresh request. Never pass the bot's callback
-        # message into the generator: generation/payment must require new client input.
         await _ask_pretrial(callback.message, state)
 
 
