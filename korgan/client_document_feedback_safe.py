@@ -15,6 +15,7 @@ from korgan import client_document_notices as notices
 from korgan import client_feedback_20260825 as client_feedback
 from korgan.claim_exemplar_architecture import install_claim_exemplar_architecture
 from korgan.claim_exemplar_style import install_claim_exemplar_style
+from korgan.claim_money_authority import install_claim_money_authority
 from korgan.contract_preamble_qa_guard import install_contract_preamble_qa_guard
 
 LOGGER = logging.getLogger(__name__)
@@ -69,6 +70,10 @@ def install_client_document_feedback_safe() -> None:
     # the reasoning/petitum follow their professional pleading structure.
     install_claim_exemplar_style()
     install_claim_exemplar_architecture()
+    # One deterministic monetary ledger owns claim price.  State-duty routing
+    # consumes that ledger and may only restore a dropped amount when the exact
+    # price is independently present in the user's materials.
+    install_claim_money_authority()
     from korgan import senior_claim_preflight
     setattr(
         senior_claim_preflight.deterministic_claim_preflight,
