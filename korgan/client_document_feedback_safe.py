@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable
 from korgan import client_document_feedback_hotfix as core
 from korgan import client_document_notices as notices
 from korgan import client_feedback_20260825 as client_feedback
+from korgan.claim_exemplar_architecture import install_claim_exemplar_architecture
 from korgan.claim_exemplar_style import install_claim_exemplar_style
 from korgan.contract_preamble_qa_guard import install_contract_preamble_qa_guard
 
@@ -56,7 +57,7 @@ def _install_payment_notices() -> None:
 
 
 def install_client_document_feedback_safe() -> None:
-    """Install CodeRabbit-reviewed QA/UI hooks without payment-routing changes."""
+    """Install verified QA/UI hooks without payment-routing changes."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -64,7 +65,10 @@ def install_client_document_feedback_safe() -> None:
     core.install_quality_patches()
     client_feedback.install_client_feedback_20260825()
     install_contract_preamble_qa_guard()
+    # Style makes the Word output look like the exemplars; architecture makes
+    # the reasoning/petitum follow their professional pleading structure.
     install_claim_exemplar_style()
+    install_claim_exemplar_architecture()
     from korgan import senior_claim_preflight
     setattr(
         senior_claim_preflight.deterministic_claim_preflight,
