@@ -1,13 +1,15 @@
 """Single deterministic money authority for civil claims.
 
 The model may draft prose, but it must never be the final owner of claim price.
-This module reconciles the court prayer into one monetary ledger and repairs only
-one safe regression: a repair step dropped the amount from a single recovery
-request while the same price is still source-grounded in the user's materials.
+This module reconciles the court prayer into one monetary ledger.  Goal-v2 also
+closes the production hole where an explicit debt/contractual-penalty amount was
+present in the client input but a drafting pass dropped the money before the
+ledger ever saw it.
 
-No legal tariff is chosen here.  State-duty routing remains in claim_state_duty;
-this layer only guarantees that every downstream calculator sees one canonical
-claim price derived from the final prayer or a narrowly source-grounded repair.
+No legal tariff is chosen here. State-duty routing remains in claim_state_duty.
+Every source repair below is fail-closed: only an unambiguous debt amount and an
+explicit recovery intent may seed the prayer; contractual penalty is calculated
+by the existing deterministic contractual_penalty engine.
 """
 from __future__ import annotations
 
@@ -36,6 +38,16 @@ _PRINCIPAL_RE = re.compile(
     r"(?:основн\w*\s+долг\w*|задолженн\w*|долг\w*|предоплат\w*|аванс\w*|"
     r"стоимост\w*\s+(?:работ|услуг|товар)|оплат\w*\s+(?:работ|услуг|товар)|"
     r"берешек\w*|борыш\w*|алдын\s+ала\s+төлем\w*)",
+    re.IGNORECASE,
+)
+_EXPLICIT_DEBT_RE = re.compile(
+    r"(?:основн\w*\s+долг\w*|задолженн\w*|сумм\w*\s+долг\w*|долг\w*\s+(?:состав|в\s+размер)|"
+    r"берешек\w*|негізгі\s+борыш\w*)",
+    re.IGNORECASE,
+)
+_NON_DEBT_PRICE_RE = re.compile(
+    r"(?:цена\s+договор\w*|стоимост\w*\s+договор\w*|общ\w*\s+стоимост\w*|"
+    r"шарт\w*\s+бағас\w*)",
     re.IGNORECASE,
 )
 _PENALTY_RE = re.compile(
@@ -84,14 +96,120 @@ def _append_amount(request: str, amount: int) -> str:
     return f"{core} в размере {format_kzt(amount)}{punctuation or '.'}"
 
 
-def _safe_price_fallback(case_context: str, draft: ClaimDraft) -> tuple[int, int] | None:
-    """Return (request_index, amount) only for a source-grounded dropped amount.
+def _source_principal_amount(case_context: str) -> int | None:
+    """Return one explicit claimed debt amount, never a merely contractual price."""
+    candidates: list[int] = []
+    for segment in re.split(r"(?<=[.!?])\s+|\n+", str(case_context or "")):
+        text = " ".join(segment.split()).strip()
+        if not text or not _EXPLICIT_DEBT_RE.search(text):
+            continue
+        # A clause that says only "contract price" is not proof of outstanding
+        # debt.  If the same clause explicitly says задолженность/долг, the debt
+        # cue wins and the amount is eligible.
+        if _NON_DEBT_PRICE_RE.search(text) and not re.search(r"(?i)(?:задолженн|основн\w*\s+долг|сумм\w*\s+долг|берешек)", text):
+            continue
+        values = parse_all_amounts_kzt(text)
+        if len(set(values)) == 1 and values[0] > 0:
+            candidates.append(values[0])
+    unique = list(dict.fromkeys(candidates))
+    return unique[0] if len(unique) == 1 else None
 
-    This does NOT infer a claim price from arbitrary case numbers.  It requires:
-    - exactly one principal recovery request lost its amount;
-    - draft.price_of_claim still contains one concrete amount;
-    - the exact same amount exists in the user's case materials/facts.
-    """
+
+def _source_demands_principal(case_context: str) -> bool:
+    text = str(case_context or "")
+    if not _RECOVERY_RE.search(text):
+        return False
+    return bool(_EXPLICIT_DEBT_RE.search(text) or _PRINCIPAL_RE.search(text))
+
+
+def _seed_principal_from_source(case_context: str, draft: ClaimDraft) -> tuple[bool, int | None]:
+    """Restore money that was dropped before the ledger, without inventing relief."""
+    existing = build_claim_money_ledger(list(draft.requests or []))
+    if any(item.kind == "principal" and item.amount > 0 for item in existing.components):
+        principal = next(item.amount for item in existing.components if item.kind == "principal" and item.amount > 0)
+        return False, principal
+    if not _source_demands_principal(case_context):
+        return False, None
+    amount = _source_principal_amount(case_context)
+    if amount is None:
+        return False, None
+
+    candidates = [
+        index for index, request in enumerate(draft.requests or [])
+        if _principal_request_without_amount(str(request))
+    ]
+    if len(candidates) == 1:
+        draft.requests[candidates[0]] = _append_amount(str(draft.requests[candidates[0]]), amount)
+    elif not candidates:
+        draft.requests.append(
+            f"Взыскать с ответчика в пользу истца основной долг в размере {format_kzt(amount)}."
+        )
+    else:
+        return False, None
+    LOGGER.warning(
+        "CLAIM_MONEY_AUTHORITY source_seed principal=%s reason=explicit_debt_dropped_before_ledger",
+        amount,
+    )
+    return True, amount
+
+
+def _seed_contractual_penalty_from_source(case_context: str, draft: ClaimDraft) -> tuple[bool, object | None]:
+    """Use the existing deterministic cap-aware calculator after principal seed."""
+    prayer = "\n".join(str(x) for x in draft.requests or [])
+    if _PENALTY_RE.search(prayer):
+        return False, None
+    try:
+        from korgan import universal_word_quality_guard as guard
+        from korgan.universal_word_final_hardening import (
+            _append_contractual_penalty_calculation,
+            calculated_contractual_penalty_from_source,
+        )
+        if not guard._source_penalty_demand_segments(case_context):
+            return False, None
+        result = calculated_contractual_penalty_from_source(case_context, draft)
+        if result is None:
+            return False, None
+        draft.requests.append(guard._render_penalty_request(result.amount, "ru"))
+        _append_contractual_penalty_calculation(draft, result, "ru")
+        LOGGER.warning(
+            "CLAIM_MONEY_AUTHORITY source_seed penalty=%s days=%s capped=%s cap_amount=%s cap_reached_on=%s",
+            result.amount,
+            result.days,
+            result.capped,
+            result.cap_amount,
+            result.cap_reached_on.isoformat() if result.cap_reached_on else None,
+        )
+        return True, result
+    except Exception:
+        LOGGER.exception("CLAIM_MONEY_AUTHORITY source penalty calculation failed closed")
+        return False, None
+
+
+def seed_claim_money_from_source(case_context: str, draft: ClaimDraft) -> bool:
+    """Goal-v2 I5: explicit monetary input must reach the ledger."""
+    monetary_input = bool(parse_all_amounts_kzt(str(case_context or "")))
+    principal_changed, principal = _seed_principal_from_source(case_context, draft)
+    penalty_changed, penalty = _seed_contractual_penalty_from_source(case_context, draft)
+    ledger = build_claim_money_ledger(list(draft.requests or []))
+    LOGGER.info(
+        "PIPELINE_INVARIANT I5 monetary_input=%s source_principal=%s ledger_total=%s unresolved=%s result=%s",
+        monetary_input,
+        principal,
+        ledger.total,
+        len(ledger.unresolved_requests),
+        "PASS" if (not monetary_input or ledger.total > 0) else "FAIL",
+    )
+    if penalty is not None and getattr(penalty, "cap_reached_on", None) is not None:
+        LOGGER.info(
+            "PIPELINE_INVARIANT I5 penalty_cap amount=%s reached_on=%s",
+            getattr(penalty, "amount", None),
+            penalty.cap_reached_on.isoformat(),
+        )
+    return principal_changed or penalty_changed
+
+
+def _safe_price_fallback(case_context: str, draft: ClaimDraft) -> tuple[int, int] | None:
+    """Return (request_index, amount) only for a source-grounded dropped amount."""
     amount = parse_amount_kzt(str(draft.price_of_claim or ""))
     if amount is None or amount <= 0:
         return None
@@ -109,13 +227,8 @@ def _safe_price_fallback(case_context: str, draft: ClaimDraft) -> tuple[int, int
 
 
 def reconcile_claim_money(case_context: str, draft: ClaimDraft) -> ClaimMoneyAuthorityResult:
-    """Make the final prayer ledger the single source of truth for claim price.
-
-    Existing monetary prayer lines always win.  A stale/model-written
-    ``price_of_claim`` can never override them.  The only fallback repairs a
-    single amount that disappeared from a principal recovery request and is
-    independently present in the user's materials.
-    """
+    """Make the final prayer ledger the single source of truth for claim price."""
+    source_repaired = seed_claim_money_from_source(case_context, draft)
     ledger = build_claim_money_ledger(list(draft.requests or []))
 
     if ledger.unresolved_requests:
@@ -123,17 +236,18 @@ def reconcile_claim_money(case_context: str, draft: ClaimDraft) -> ClaimMoneyAut
         return ClaimMoneyAuthorityResult(
             ledger=ledger,
             price=None,
+            repaired_request=source_repaired,
             needs_review=True,
             reason="неоднозначное денежное требование в ПРОШУ СУД",
         )
 
     if ledger.total > 0:
         draft.price_of_claim = format_kzt(ledger.total)
-        return ClaimMoneyAuthorityResult(ledger=ledger, price=ledger.total)
+        return ClaimMoneyAuthorityResult(ledger=ledger, price=ledger.total, repaired_request=source_repaired)
 
     if ledger.nonproperty_money_components:
         draft.price_of_claim = NONPROPERTY_PRICE_LABEL
-        return ClaimMoneyAuthorityResult(ledger=ledger, price=None)
+        return ClaimMoneyAuthorityResult(ledger=ledger, price=None, repaired_request=source_repaired)
 
     fallback = _safe_price_fallback(case_context, draft)
     if fallback is not None:
@@ -153,19 +267,17 @@ def reconcile_claim_money(case_context: str, draft: ClaimDraft) -> ClaimMoneyAut
                 repaired_request=True,
             )
 
-    # Never leave an orphaned model price when the court prayer contains no
-    # deterministically classifiable property amount.  That orphan caused the
-    # month-long `price=...` / `STATE_DUTY_FINAL mode=unclassified` split.
     if parse_amount_kzt(str(draft.price_of_claim or "")) is not None:
         draft.price_of_claim = CLAIM_PRICE_NEEDS_CALCULATION
         return ClaimMoneyAuthorityResult(
             ledger=ledger,
             price=None,
+            repaired_request=source_repaired,
             needs_review=True,
             reason="цена иска не подтверждена денежным требованием в ПРОШУ СУД",
         )
 
-    return ClaimMoneyAuthorityResult(ledger=ledger, price=None)
+    return ClaimMoneyAuthorityResult(ledger=ledger, price=None, repaired_request=source_repaired)
 
 
 _INSTALLED = False
