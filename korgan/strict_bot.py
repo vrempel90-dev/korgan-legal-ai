@@ -19,6 +19,7 @@ from korgan.consultation_quota_runtime import router as consultation_quota_route
 from korgan.consultation_ui_runtime import router as consultation_ui_router
 from korgan.contact_handlers import router as contact_router
 from korgan.document_category_router import router as document_category_router
+from korgan.invariant_correctness_hotfix_v2 import CancelActiveGenerationMiddleware, install_invariant_correctness_hotfix_v2
 from korgan.invariant_observability_v2 import install_invariant_observability_v2
 from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
@@ -36,7 +37,7 @@ from korgan.pretrial_response_payment import install_pretrial_response_payment_l
 from korgan.pretrial_response_runtime import router as pretrial_response_router
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
-from korgan.production_invariants_v2 import CancelStaleGenerationMiddleware, install_production_invariants_v2
+from korgan.production_invariants_v2 import install_production_invariants_v2
 from korgan.research_balance_v2 import install_research_balance_v2
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.review_cta_runtime import router as review_cta_router
@@ -61,6 +62,9 @@ install_universal_document_invariants_v2()
 install_finalized_policy_bridge_v2()
 install_consultation_invariants_v2(PretrialProductionService)
 install_invariant_observability_v2(PretrialProductionService)
+# PR-review correctness layer is last so its scoped overrides see the final
+# document entrypoints. It never registers payment/admin/quota tasks.
+install_invariant_correctness_hotfix_v2()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
@@ -83,9 +87,10 @@ async def main() -> None:
     await configure_telegram_menu(bot)
 
     dp = Dispatcher(storage=MemoryStorage())
-    stale_guard = CancelStaleGenerationMiddleware()
-    # New user activity cancels an older in-flight run before a second heavy
-    # research/draft chain can start for the same chat (I10).
+    stale_guard = CancelActiveGenerationMiddleware()
+    # Every new update may cancel an older *registered document generation*, but
+    # ordinary handlers are never themselves made cancellable (I10 without
+    # corrupting payment/admin state transitions).
     dp.message.outer_middleware(stale_guard)
     dp.callback_query.outer_middleware(stale_guard)
     language_middleware = LanguageContextMiddleware()
