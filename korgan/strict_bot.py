@@ -34,6 +34,7 @@ from korgan.pretrial_response_payment import install_pretrial_response_payment_l
 from korgan.pretrial_response_runtime import router as pretrial_response_router
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
+from korgan.production_invariants_v2 import CancelStaleGenerationMiddleware, install_production_invariants_v2
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.review_cta_runtime import router as review_cta_router
 from korgan.stable_legal_release import install_stable_legal_release
@@ -48,6 +49,9 @@ install_client_safe_runtime()
 install_pretrial_response_payment_labels()
 install_payment_gate()
 install_consultation_quota_bridge()
+# Must be installed last: this layer observes the final production behavior of
+# all older hotfixes and enforces cross-cutting I1-I10 release invariants.
+install_production_invariants_v2()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
@@ -70,6 +74,11 @@ async def main() -> None:
     await configure_telegram_menu(bot)
 
     dp = Dispatcher(storage=MemoryStorage())
+    stale_guard = CancelStaleGenerationMiddleware()
+    # New user activity cancels an older in-flight run before a second heavy
+    # research/draft chain can start for the same chat (I10).
+    dp.message.outer_middleware(stale_guard)
+    dp.callback_query.outer_middleware(stale_guard)
     language_middleware = LanguageContextMiddleware()
     dp.message.outer_middleware(language_middleware)
     dp.callback_query.outer_middleware(language_middleware)
@@ -102,7 +111,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: >=8.5 quality core + RAG + RU/KK + isolated claim/pretrial/pretrial-response routes + stable citation release + Kaspi payment gate=%s + consultation limit=%s",
+        "Starting KORGAN: >=8.5 quality core + production invariants v2 + RAG + RU/KK + isolated claim/pretrial/pretrial-response routes + stable citation release + Kaspi payment gate=%s + consultation limit=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
     )
