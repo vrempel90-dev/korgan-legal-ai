@@ -15,7 +15,7 @@ def test_safe_installer_enables_only_external_only_repair_skip(monkeypatch):
     )
     monkeypatch.setattr(safe.optimizer, "_install_research_scope_optimizer", lambda: calls.append("scope"))
     monkeypatch.setattr(safe.optimizer, "_install_rag_search_context_optimizer", lambda: calls.append("rag"))
-    monkeypatch.setattr(safe.optimizer, "_install_futile_repair_skip", lambda: calls.append("repair-skip"))
+    monkeypatch.setattr(safe, "_install_safe_futile_repair_skip", lambda: calls.append("repair-skip"))
     monkeypatch.setattr(safe.optimizer, "_install_economic_court_registry", lambda: calls.append("court"))
 
     original_refresh = lambda path=None: 0
