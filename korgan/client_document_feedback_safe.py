@@ -17,6 +17,7 @@ from korgan.claim_exemplar_architecture import install_claim_exemplar_architectu
 from korgan.claim_exemplar_style import install_claim_exemplar_style
 from korgan.claim_money_authority import install_claim_money_authority
 from korgan.contract_preamble_qa_guard import install_contract_preamble_qa_guard
+from korgan.production_cost_speed_optimizer_safe import install_production_cost_speed_optimizer_safe
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
@@ -70,10 +71,14 @@ def install_client_document_feedback_safe() -> None:
     # the reasoning/petitum follow their professional pleading structure.
     install_claim_exemplar_style()
     install_claim_exemplar_architecture()
-    # One deterministic monetary ledger owns claim price.  State-duty routing
+    # One deterministic monetary ledger owns claim price. State-duty routing
     # consumes that ledger and may only restore a dropped amount when the exact
     # price is independently present in the user's materials.
     install_claim_money_authority()
+    # Cost/speed optimization is deliberately installed after all claim quality
+    # layers. The SAFE installer trims only deterministic/research overhead and
+    # leaves every existing model repair and release gate untouched.
+    install_production_cost_speed_optimizer_safe()
     from korgan import senior_claim_preflight
     setattr(
         senior_claim_preflight.deterministic_claim_preflight,
