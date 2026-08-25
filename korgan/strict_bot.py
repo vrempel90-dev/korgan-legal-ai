@@ -39,6 +39,7 @@ from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.review_cta_runtime import router as review_cta_router
 from korgan.stable_legal_release import install_stable_legal_release
 from korgan.ui import main_menu
+from korgan.universal_document_invariants_v2 import install_universal_document_invariants_v2
 
 install_runtime_hotfix()
 install_kazakh_legal_bridge()
@@ -49,9 +50,10 @@ install_client_safe_runtime()
 install_pretrial_response_payment_labels()
 install_payment_gate()
 install_consultation_quota_bridge()
-# Must be installed last: this layer observes the final production behavior of
-# all older hotfixes and enforces cross-cutting I1-I10 release invariants.
+# Must be installed last: these layers observe the final production behavior of
+# all older hotfixes and enforce cross-cutting I1-I10 release invariants.
 install_production_invariants_v2()
+install_universal_document_invariants_v2()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
