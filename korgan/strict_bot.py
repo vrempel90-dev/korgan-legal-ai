@@ -38,6 +38,7 @@ from korgan.payment_delivery_bridge import install_payment_delivery_bridge
 from korgan.payment_gate import install_payment_gate
 from korgan.payment_pdf_hotfix import install_payment_pdf_hotfix
 from korgan.payment_runtime import router as payment_router
+from korgan.pipeline_invariants_v2 import install_pipeline_invariants_v2
 from korgan.prepayment_gate import install_generation_prepayment_gate
 from korgan.prepayment_runtime import router as prepayment_router
 from korgan.pretrial_response import PretrialResponseProductionService
@@ -73,6 +74,11 @@ install_universal_word_quality_guard()
 # the universal guard so its release path cannot select principal debt as a
 # penalty or lose precision on large KZT amounts.
 install_universal_word_final_hardening()
+# Goal-v2 MUST be last in the legal quality stack. It observes the actual
+# production consultation/draft/repair methods, overrides the earlier strong-RAG
+# low web-context optimization with the requested HIGH experiment, and stops
+# repeated repair calls only after every other wrapper has been installed.
+install_pipeline_invariants_v2()
 install_client_safe_runtime()
 install_pretrial_response_transport()
 install_response_voice_guard()
