@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import logging
 
-from korgan import document_quality as _dq
-from korgan import senior_claim_preflight as _sp
 from korgan.claim_filing_completeness import enforce_article148_party_completeness
 from korgan.claim_profile_grounding import ground_claim_profile_from_corpus
-from korgan.claim_quality_hotfix import FILING_ACTION_PREFIX, ProductionClaimService
+from korgan.claim_quality_hotfix import (
+    FILING_ACTION_PREFIX,
+    ProductionClaimService,
+    _patched_assess_document_quality,
+    _patched_preflight,
+)
 from korgan.claim_state_duty import StateDutyDecision, apply_professional_state_duty
 from korgan.fast_v2_production_legal import _deterministic_pre_qa
 from korgan.filing_text_sanitizer import sanitize_claim_filing_text
@@ -23,7 +26,6 @@ def _safe_deterministic_pre_qa(
     research: LegalResearch,
     draft: ClaimDraft,
 ) -> StateDutyDecision:
-    """Preserve legacy cleanup, then let the professional router own final duty."""
     _deterministic_pre_qa(case_context, research, draft)
     decision = apply_professional_state_duty(case_context, research, draft)
     LOGGER.info(
@@ -40,7 +42,15 @@ def _safe_deterministic_pre_qa(
 
 
 class FinalizedProductionClaimService(ProductionClaimService):
-    """Current production quality core plus deterministic professional release gates."""
+    """Current production quality core plus deterministic professional release gates.
+
+    Goal-v2 invariant I8 requires the repaired and finalized stages to use the
+    same filing-vs-substance scoring policy.  The old code repaired with the
+    production-scoped patched assessor, then finalized with the raw global
+    assessor; filing-only Article 148 notes therefore reduced 8.4 -> 7.8 after
+    repair had already finished.  Finalization now uses the exact same assessor
+    and preflight semantics as the repaired stage.
+    """
 
     async def draft_claim(
         self,
@@ -48,24 +58,14 @@ class FinalizedProductionClaimService(ProductionClaimService):
         research: LegalResearch,
         language: str = "ru",
     ) -> ClaimDraft:
-        # Give the drafting stack the minimum profile-specific material-law
-        # backbone from the same current Adilet corpus that will re-check the
-        # filing later. Article numbers here are routing keys only; the actual
-        # heading/body/source are loaded from corpus and remain fail-closed.
         ground_claim_profile_from_corpus(case_context, research)
 
         draft = await super().draft_claim(case_context, research, language=language)
+        repaired_quality = _patched_assess_document_quality("claim", case_context, research, draft)
+        repaired_score = float(repaired_quality.score)
 
-        # Remove serialization/intake artefacts before any filing calculation or
-        # quality score sees them. This changes formatting noise only, never a
-        # legal conclusion, amount or factual proposition.
         sanitize_claim_filing_text(draft)
 
-        # Contract/source materials often identify a future claimant as Supplier,
-        # Customer, Contractor, Creditor, etc. If the model preserved the party
-        # name but omitted BIN/IIN in the court caption, restore only the exact
-        # identifier that is source-bound to that same party. Never infer party
-        # type from the selected court or from the opposing party's identifier.
         identity = hydrate_claimant_identity(case_context, draft.claimant)
         if identity is not None:
             LOGGER.info(
@@ -79,19 +79,25 @@ class FinalizedProductionClaimService(ProductionClaimService):
         _safe_deterministic_pre_qa(case_context, research, draft)
         _apply_verified_article_353(case_context, research, draft, filing_date=_today_kz())
 
-        # Article 353 may add a verified monetary component. Re-finalize price,
-        # then re-run the deterministic duty router from the actual final prayer.
         finalize_professional_claim(case_context, research, draft, language=language)
         sanitize_claim_filing_text(draft)
         _safe_deterministic_pre_qa(case_context, research, draft)
 
-        # Article 148 is a final filing-readiness gate, not an intake form and
-        # not a reusable legal-grounding invariant. It is deliberately applied
-        # only here, immediately before senior preflight/export readiness.
         enforce_article148_party_completeness(draft)
 
-        deterministic = _sp.deterministic_claim_preflight(case_context, research, draft)
-        quality = _dq.assess_document_quality("claim", case_context, research, draft)
+        # IMPORTANT: same policy as FastProfessional repaired preflight. Filing
+        # data the user must provide remains a filing action, not a new internal
+        # quality penalty introduced after repair.
+        deterministic = _patched_preflight(case_context, research, draft)
+        quality = _patched_assess_document_quality("claim", case_context, research, draft)
+        finalized_score = float(quality.score)
+        monotonic = finalized_score >= repaired_score
+        LOGGER.info(
+            "PIPELINE_INVARIANT I8 repaired_score=%.1f finalized_score=%.1f result=%s",
+            repaired_score,
+            finalized_score,
+            "PASS" if monotonic else "FAIL",
+        )
         LOGGER.info(
             "FINALIZED_PROFESSIONAL_CLAIM score=%.1f ready=%s deterministic=%s blockers=%s",
             quality.score,
@@ -99,6 +105,17 @@ class FinalizedProductionClaimService(ProductionClaimService):
             deterministic[:6],
             quality.hard_blockers[:6],
         )
+
+        # If a truly new substantive blocker appears despite using the same
+        # policy, never hide it behind the numeric score. It is an internal
+        # quality defect and must be visible to downstream Goal-v2 delivery.
+        if not monotonic:
+            marker = (
+                "[СВЕРИТЬ: финальная детерминированная обработка выявила новый внутренний дефект; "
+                f"оценка {repaired_score:.1f} -> {finalized_score:.1f}]"
+            )
+            if marker not in draft.verification_notes:
+                draft.verification_notes.append(marker)
 
         filing = [
             str(note)
