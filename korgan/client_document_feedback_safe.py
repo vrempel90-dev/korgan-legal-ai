@@ -19,6 +19,7 @@ from korgan.claim_money_authority import install_claim_money_authority
 from korgan.claim_ten_test_context_fix import install_claim_ten_test_context_fix
 from korgan.claim_ten_test_gate import install_claim_ten_test_gate
 from korgan.contract_preamble_qa_guard import install_contract_preamble_qa_guard
+from korgan.openai_usage_observability import install_openai_usage_observability
 from korgan.production_cost_speed_optimizer_safe import install_production_cost_speed_optimizer_safe
 
 LOGGER = logging.getLogger(__name__)
@@ -82,6 +83,10 @@ def install_client_document_feedback_safe() -> None:
     # consumes that ledger and may only restore a dropped amount when the exact
     # price is independently present in the user's materials.
     install_claim_money_authority()
+    # Install read-only usage logging before the speed optimizer wraps the fast
+    # research method, so the optimizer delegates through the observer. This
+    # records token counters only and never changes prompts/models/tools/results.
+    install_openai_usage_observability()
     # Cost/speed optimization is deliberately installed after all claim quality
     # layers. The SAFE installer trims only deterministic/research overhead and
     # leaves every existing model repair and release gate untouched.
