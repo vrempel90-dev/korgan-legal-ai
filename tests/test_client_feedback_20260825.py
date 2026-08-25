@@ -78,8 +78,11 @@ def test_contract_combined_requisites_are_not_duplicated_and_spec_is_present() -
     assert lowered.count("реквизиты и подписи сторон") == 1
     assert "Заключительные положения и реквизиты сторон" not in text
     assert "Заключительные положения" in text
-    assert text.count("БИН 111111111111") == 1
-    assert text.count("БИН 222222222222") == 1
+    # BИН legitimately appears once in the party identification/preamble and once
+    # in the canonical requisites table. Bank identifiers exist only in requisites
+    # and therefore must occur exactly once.
+    assert text.count("БИК ABCDKZKX") == 1
+    assert text.count("БИК EFGHKZKX") == 1
     assert "СПЕЦИФИКАЦИЯ" in text
     assert "Наименование" in text
     assert "Количество" in text
