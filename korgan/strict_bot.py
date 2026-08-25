@@ -36,6 +36,7 @@ from korgan.pretrial_response_runtime import router as pretrial_response_router
 from korgan.pretrial_runtime import router as pretrial_router
 from korgan.professional_rag_bridge import install_professional_rag_bridge
 from korgan.production_invariants_v2 import CancelStaleGenerationMiddleware, install_production_invariants_v2
+from korgan.research_balance_v2 import install_research_balance_v2
 from korgan.reply_menu_handlers import router as reply_menu_router
 from korgan.review_cta_runtime import router as review_cta_router
 from korgan.stable_legal_release import install_stable_legal_release
@@ -54,6 +55,7 @@ install_consultation_quota_bridge()
 # Must be installed last: these layers observe the final production behavior of
 # all older hotfixes and enforce cross-cutting I1-I10 release invariants.
 install_production_invariants_v2()
+install_research_balance_v2(PretrialProductionService)
 install_universal_document_invariants_v2()
 install_finalized_policy_bridge_v2()
 install_consultation_invariants_v2(PretrialProductionService)
