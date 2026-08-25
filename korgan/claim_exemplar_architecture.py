@@ -98,15 +98,20 @@ def _money(value: str) -> bool:
     return bool(u and "ТРЕБУЕТ" not in u and "NEEDS" not in u and re.search(r"\d[\d\s\u00a0]*\s*(?:ТЕНГЕ|₸)", u))
 
 
+def _penalty(text: str) -> bool:
+    low = (text or "").lower()
+    return "неустойк" in low or "пен" in low
+
+
 def architecture_issues(case_context: str, research: LegalResearch, draft: ClaimDraft) -> list[str]:
     context = (case_context or "").lower()
     reasoning = "\n".join([*draft.facts, *draft.legal_basis, draft.late_interest or ""]).lower()
     prayer = "\n".join(draft.requests).lower()
     issues: list[str] = []
 
-    if any(x in context for x in ("неустойк", "пеня", "пени")) and any(x in reasoning for x in ("неустойк", "пеня", "пени")) and not any(x in prayer for x in ("неустойк", "пеня", "пени")):
+    if _penalty(context) and _penalty(reasoning) and not _penalty(prayer):
         issues.append("Мотивировка обосновывает неустойку/пеню, но требование отсутствует в ПРОШУ СУД.")
-    if ("353" in reasoning or "чужими деньгами" in reasoning) and not ("353" in prayer or "чужими деньгами" in prayer or "неустойк" in prayer):
+    if ("353" in reasoning or "чужими деньгами" in reasoning) and not ("353" in prayer or "чужими деньгами" in prayer or _penalty(prayer)):
         issues.append("Мотивировка содержит самостоятельное денежное требование по статье 353/чужим деньгам, но петитум его не отражает либо мотивировка должна быть удалена как нерелевантная.")
     if _money(draft.state_duty) and "госпошлин" not in prayer and "государственн" not in prayer:
         issues.append("В проекте есть конкретный расчет госпошлины, но ПРОШУ СУД не содержит требования о взыскании этого судебного расхода.")
