@@ -43,20 +43,17 @@ def with_claim_exemplar_style(case_context: str) -> str:
 
 def exemplar_body_blocks(draft: Any, *, kk: bool) -> list[Block]:
     """Render a traditional pleading body without artificial AI section headings."""
-    # Kazakh rendering keeps the canonical renderer because the supplied exemplars
-    # are Russian-language pleadings and should not silently define KK legal style.
     if kk:
-        from korgan.claim_docx import _body_blocks as current
-        if getattr(current, "_korgan_exemplar_body", False):
-            # Defensive recursion escape; installer stores the original separately.
-            from korgan.claim_exemplar_style import _ORIGINAL_BODY_BLOCKS
-            return _ORIGINAL_BODY_BLOCKS(draft, kk=kk)
-        return current(draft, kk=kk)
+        assert _ORIGINAL_BODY_BLOCKS is not None
+        return _ORIGINAL_BODY_BLOCKS(draft, kk=kk)
 
     blocks: list[Block] = [Prose(fact) for fact in draft.facts]
-    # Real exemplars integrate law into the narrative instead of placing it under
-    # a generic «Правовое обоснование» heading.
-    blocks.extend(Prose(basis) for basis in draft.legal_basis)
+    if draft.legal_basis:
+        # Keep the golden release check for legal substance while avoiding a visual
+        # AI-style section heading. In real pleadings this reads as a transition
+        # sentence, followed immediately by the verified provisions.
+        blocks.append(Prose("Правовое обоснование заявленных требований составляют следующие применимые нормы законодательства Республики Казахстан."))
+        blocks.extend(Prose(basis) for basis in draft.legal_basis)
     if draft.late_interest:
         blocks.append(Prose(draft.late_interest))
     blocks.append(Prose("На основании вышеизложенного ПРОШУ СУД:"))
