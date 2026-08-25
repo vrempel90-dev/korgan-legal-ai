@@ -19,6 +19,7 @@ from korgan.consultation_quota_runtime import router as consultation_quota_route
 from korgan.consultation_ui_runtime import router as consultation_ui_router
 from korgan.contact_handlers import router as contact_router
 from korgan.document_category_router import router as document_category_router
+from korgan.invariant_observability_v2 import install_invariant_observability_v2
 from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
 from korgan.kazakh_ui import router as kazakh_router
@@ -59,6 +60,7 @@ install_research_balance_v2(PretrialProductionService)
 install_universal_document_invariants_v2()
 install_finalized_policy_bridge_v2()
 install_consultation_invariants_v2(PretrialProductionService)
+install_invariant_observability_v2(PretrialProductionService)
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
