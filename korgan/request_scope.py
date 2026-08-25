@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from aiogram.fsm.context import FSMContext
 
 from korgan.i18n import BUTTONS, KK, RU
+
+LOGGER = logging.getLogger(__name__)
 
 DOCUMENT_REQUEST_KINDS = frozenset({
     "claim",
@@ -17,6 +20,9 @@ DOCUMENT_REQUEST_KINDS = frozenset({
 })
 
 _REQUEST_LOCKS: dict[tuple[object, ...], asyncio.Lock] = {}
+# One heavy generation task may own a Telegram session at a time.  A newer user
+# request cancels the old task before it can spend another research/draft call.
+_ACTIVE_GENERATIONS: dict[tuple[object, ...], tuple[str, str, asyncio.Task]] = {}
 
 # Only request/case-specific keys are reset. Consent, selected language,
 # consultation counters and other account/session settings are preserved.
@@ -41,13 +47,8 @@ _REQUEST_SCOPED_KEYS = {
     "client_checklist_kind",
     "generation_progress_request_id",
     "generation_progress_kind",
-    # Any new document request invalidates an in-flight consultation response.
-    # The OpenAI call may already be running, but its stale result must never be
-    # written into a newer document/request state or sent to the client.
     "consultation_request_id",
     "consultation_request_started_at",
-    # Payment is bound to one immutable request_id. A new document request must
-    # never inherit either an old receipt session or an already-confirmed payment.
     "payment_admin_doc_message_id",
     "payment_kind",
     "payment_language",
@@ -83,7 +84,6 @@ _MAIN_MENU_TEXTS = frozenset(
 
 
 def _request_lock_key(state: FSMContext) -> tuple[object, ...]:
-    """Build a stable per-Telegram-session lock key across FSMContext instances."""
     key = getattr(state, "key", None)
     if key is None:
         return ("state", id(state))
@@ -97,7 +97,6 @@ def _request_lock_key(state: FSMContext) -> tuple[object, ...]:
 
 
 def document_request_lock(state: FSMContext) -> asyncio.Lock:
-    """Return the lock shared by request replacement and final client notices."""
     key = _request_lock_key(state)
     lock = _REQUEST_LOCKS.get(key)
     if lock is None:
@@ -106,13 +105,51 @@ def document_request_lock(state: FSMContext) -> asyncio.Lock:
     return lock
 
 
+def _register_current_task(state: FSMContext, request_id: str, kind: str) -> None:
+    task = asyncio.current_task()
+    if task is None or not request_id:
+        return
+    key = _request_lock_key(state)
+    existing = _ACTIVE_GENERATIONS.get(key)
+    if existing is not None and existing[2] is task:
+        _ACTIVE_GENERATIONS[key] = (request_id, kind, task)
+        return
+    _ACTIVE_GENERATIONS[key] = (request_id, kind, task)
+    LOGGER.info(
+        "PIPELINE_INVARIANT I10 generation_registered request_id=%s kind=%s task=%s",
+        request_id,
+        kind,
+        id(task),
+    )
+
+
+def _cancel_previous_generation(state: FSMContext, *, replacement_kind: str) -> None:
+    key = _request_lock_key(state)
+    existing = _ACTIVE_GENERATIONS.get(key)
+    if existing is None:
+        return
+    old_request_id, old_kind, task = existing
+    current = asyncio.current_task()
+    if task is current or task.done():
+        if task.done():
+            _ACTIVE_GENERATIONS.pop(key, None)
+        return
+    task.cancel()
+    _ACTIVE_GENERATIONS.pop(key, None)
+    LOGGER.warning(
+        "PIPELINE_INVARIANT I10 stale_generation_cancelled_before_next_stage old_request_id=%s old_kind=%s replacement_kind=%s task=%s",
+        old_request_id,
+        old_kind,
+        replacement_kind,
+        id(task),
+    )
+
+
 def is_main_menu_text(text: str | None) -> bool:
-    """Return True for persistent navigation buttons in either client language."""
     return (text or "").strip() in _MAIN_MENU_TEXTS
 
 
 def active_document_kind(data: dict) -> str | None:
-    """Return the document section that owns the current request, if any."""
     kind = str(data.get("request_kind") or "")
     request_id = str(data.get("request_id") or "")
     if request_id and kind in DOCUMENT_REQUEST_KINDS:
@@ -133,15 +170,16 @@ def request_label(kind: str, language: str = "ru") -> str:
 
 
 async def current_request_id(state: FSMContext, kind: str) -> str:
-    """Return the active request id only when it still belongs to ``kind``."""
+    """Return the active request id and register this handler as its heavy task."""
     data = await state.get_data()
     if data.get("request_kind") != kind:
         return ""
-    return str(data.get("request_id") or "")
+    request_id = str(data.get("request_id") or "")
+    _register_current_task(state, request_id, kind)
+    return request_id
 
 
 async def request_is_current(state: FSMContext, request_id: str, kind: str) -> bool:
-    """Return whether an async result still belongs to the active request."""
     if not request_id:
         return False
     data = await state.get_data()
@@ -152,24 +190,19 @@ async def request_is_current(state: FSMContext, request_id: str, kind: str) -> b
 
 
 async def start_new_consultation_request(state: FSMContext) -> str:
-    """Replace only the consultation generation token, preserving the case.
-
-    A second legal question must make the first asynchronous answer stale. The
-    update is deliberately partial: unrelated facts, documents, language and
-    payment state may be changing in other handlers and must never be replaced
-    from an older full-state snapshot.
-    """
+    """Replace a consultation token and cancel any older heavy generation first."""
     async with document_request_lock(state):
+        _cancel_previous_generation(state, replacement_kind="consultation")
         request_id = uuid4().hex
         await state.update_data(
             consultation_request_id=request_id,
             consultation_request_started_at=datetime.now(timezone.utc).isoformat(),
         )
+        _register_current_task(state, request_id, "consultation")
         return request_id
 
 
 async def consultation_request_is_current(state: FSMContext, request_id: str) -> bool:
-    """Return whether a consultation result still owns the client response."""
     if not request_id:
         return False
     data = await state.get_data()
@@ -182,11 +215,12 @@ async def start_new_document_request(
     kind: str,
     mode: str,
 ) -> str:
-    """Atomically replace the active document request without touching consent settings."""
+    """Atomically replace the request and cancel the previous heavy task first."""
     if kind not in DOCUMENT_REQUEST_KINDS:
         raise ValueError(f"Unsupported document request kind: {kind}")
 
     async with document_request_lock(state):
+        _cancel_previous_generation(state, replacement_kind=kind)
         data = dict(await state.get_data())
         for key in _REQUEST_SCOPED_KEYS:
             data.pop(key, None)
@@ -204,4 +238,9 @@ async def start_new_document_request(
             }
         )
         await state.set_data(data)
+        LOGGER.info(
+            "PIPELINE_INVARIANT I10 request_replaced request_id=%s kind=%s result=PASS",
+            request_id,
+            kind,
+        )
         return request_id
