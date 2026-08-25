@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
+import asyncio
 
 from korgan import miniapp_api_v3
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
@@ -17,8 +17,10 @@ def test_miniapp_uses_exact_strict_bot_service_chain() -> None:
 
 
 def test_parity_probe_exposes_required_production_capabilities() -> None:
-    with TestClient(miniapp_api_v3.app) as client:
-        payload = client.get('/miniapp/parity').json()
+    # miniapp_api_v4 intentionally reuses and mutates the same FastAPI app while
+    # pytest imports all test modules during collection. Calling the v3 probe
+    # directly keeps this v3 contract test isolated from v4 route replacement.
+    payload = asyncio.run(miniapp_api_v3.parity())
     assert payload['status'] == 'ok'
     assert payload['api_version'] == '0.8.0'
     assert payload['legal_runtime'] == 'strict_bot'
