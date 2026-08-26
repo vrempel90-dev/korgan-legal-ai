@@ -1,0 +1,10 @@
+/* Bottom navigation cleanup: consultation remains available from the home card. */
+.bottom-nav {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+/* 3 = AI-юрист, 4 = Помощь (already intentionally hidden in the current UI). */
+.bottom-nav button:nth-child(3),
+.bottom-nav button:nth-child(4) {
+  display: none !important;
+}
