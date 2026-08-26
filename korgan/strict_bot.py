@@ -66,8 +66,8 @@ install_stable_legal_release()
 # actually opened an allowed official source and the rule passed verification.
 install_professional_consultation_guard()
 # One bounded repair policy for all five Word document types. It raises the
-# filing-ready target to 10/10 while preserving PRELIMINARY Word delivery when
-# a remaining factual/legal gap cannot be repaired without inventing data.
+# filing-ready target to 10/10 while preserving the existing quality fallback;
+# payment gating remains independent and prevents unpaid delivery/generation.
 install_universal_word_quality_guard()
 # Exact Decimal arithmetic and source-safe monetary extraction are layered after
 # the universal guard so its release path cannot select principal debt as a
@@ -77,9 +77,9 @@ install_client_safe_runtime()
 install_pretrial_response_transport()
 install_response_voice_guard()
 install_payment_pdf_hotfix()
-# Keep the transport-level gate as a fail-closed fallback. Normal new requests
-# are paid before generation; only an admin-confirmed paid-generation context can
-# pass this gate directly. Any unexpected generator still gets held, never free.
+# Keep the transport-level gate as a fail-closed fallback. Normal requests are
+# paid before generation; only a verified paid-generation context can pass it.
+# Any unexpected generator still gets held, never exposed for free.
 install_payment_gate()
 install_payment_delivery_bridge()
 install_upload_followup_guard()
@@ -134,12 +134,10 @@ async def main() -> None:
     # state. Otherwise the first tap on «Документ / Құжат» can be swallowed as
     # case text and the client has to tap twice.
     dp.include_router(document_menu_entry_router)
-    # Negative transaction ids are pre-generation payments. This router must
-    # receive their admin decisions before the legacy held-document runtime.
+    # Keep prepayment compatibility callbacks before the generic payment router.
+    # New negative-id payments do not require an admin decision: the receipt
+    # handler invokes paid generation immediately after strict AI verification.
     dp.include_router(prepayment_router)
-    # Receipt flow remains conservative: AI pre-check first, then explicit admin
-    # confirmation against Kaspi Pay history. Positive legacy transactions can
-    # still release documents created before this deployment.
     dp.include_router(payment_router)
     dp.include_router(contact_router)
     # Exact RU/KK consultation and price buttons are handled here before the
@@ -168,7 +166,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + strict receipt AI verification + automatic paid generation=%s + manual payment confirmation=False + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
