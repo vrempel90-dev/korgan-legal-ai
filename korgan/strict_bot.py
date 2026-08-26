@@ -50,6 +50,7 @@ from korgan.request_race_guard import install_request_race_guard
 from korgan.response_voice_guard import install_response_voice_guard
 from korgan.review_cta_runtime import router as review_cta_router
 from korgan.stable_legal_release import install_stable_legal_release
+from korgan.temporal_penalty_payment_hardening import install_temporal_penalty_payment_hardening
 from korgan.token_budget_guard import apply_token_budget_guard
 from korgan.ui import main_menu
 from korgan.universal_word_final_hardening import install_universal_word_final_hardening
@@ -73,6 +74,9 @@ install_universal_word_quality_guard()
 # the universal guard so its release path cannot select principal debt as a
 # penalty or lose precision on large KZT amounts.
 install_universal_word_final_hardening()
+# Add only deterministic temporal penalty arithmetic and payment requisites.
+# This wrapper reuses the already-installed model stages and adds no model call.
+install_temporal_penalty_payment_hardening()
 install_client_safe_runtime()
 install_pretrial_response_transport()
 install_response_voice_guard()
