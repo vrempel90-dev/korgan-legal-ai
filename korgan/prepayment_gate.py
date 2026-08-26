@@ -22,7 +22,7 @@ _PAID_DELIVERY: ContextVar[tuple[int, str] | None] = ContextVar(
 
 
 def begin_paid_delivery(user_id: int, kind: str) -> Token[tuple[int, str] | None]:
-    """Authorize DOCX delivery only inside one confirmed generation task."""
+    """Authorize DOCX delivery only inside one verified paid generation task."""
     return _PAID_DELIVERY.set((int(user_id), str(kind)))
 
 
@@ -31,7 +31,7 @@ def end_paid_delivery(token: Token[tuple[int, str] | None]) -> None:
 
 
 def is_paid_delivery_authorized(user_id: int, kind: str) -> bool:
-    """True only while an admin-confirmed paid generation is executing."""
+    """True only while a verified paid generation is executing."""
     return _PAID_DELIVERY.get() == (int(user_id), str(kind))
 
 
@@ -69,6 +69,7 @@ def paid_generation_markup(
     kind: str,
     language: str,
 ) -> InlineKeyboardMarkup:
+    """Legacy compatibility button for payment cards sent before auto-verification."""
     signature = sign_paid_generation(settings, user_id, transaction_id, kind, language)
     text = "⚙️ Құжатты дайындау" if language == KK else "⚙️ Подготовить документ"
     return InlineKeyboardMarkup(
@@ -87,23 +88,23 @@ def prepayment_offer_text(kind: str, language: str, amount: int) -> str:
             "💳 Құжатты дайындау алдындағы төлем\n\n"
             f"Қызмет құны: {amount_text} ₸\n"
             f"Құжат: {label}.\n\n"
-            "AI құжатты әлі дайындаған жоқ. Құжатты құқықтық талдау және Word-файлды қалыптастыру "
-            "төлем расталғаннан кейін ғана басталады.\n\n"
+            "AI құжатты әлі дайындаған жоқ. Құқықтық талдау және Word-файлды қалыптастыру "
+            "төлем тексерілгеннен кейін ғана басталады.\n\n"
             "1. Kaspi арқылы төлеңіз.\n"
             "2. «✅ Төледім» түймесін басыңыз.\n"
             "3. Толық чекті жіберіңіз.\n\n"
-            "Чек алдымен AI арқылы тексеріледі, содан кейін әкімші нақты төлемді Kaspi Pay тарихымен растайды."
+            "KORGAN AI чекті автоматты түрде тексереді. Чек тексеруден өтсе, құжатты дайындау бірден автоматты түрде басталады."
         )
     return (
         "💳 Оплата перед подготовкой документа\n\n"
         f"Стоимость: {amount_text} ₸\n"
         f"Документ: {label}.\n\n"
         "AI ещё не формировал документ. Юридический анализ и подготовка Word-файла начнутся "
-        "только после подтверждения оплаты.\n\n"
+        "только после проверки оплаты.\n\n"
         "1. Оплатите через Kaspi.\n"
         "2. Нажмите «✅ Я оплатил».\n"
         "3. Пришлите полный чек.\n\n"
-        "Чек сначала проходит AI-проверку, затем администратор подтверждает фактический платёж по истории Kaspi Pay."
+        "KORGAN AI автоматически проверит чек. Если проверка пройдена, подготовка документа начнётся сразу — подтверждение администратора не требуется."
     )
 
 
@@ -114,11 +115,13 @@ def _reservation_text(user_id: int, request_id: str, kind: str, language: str, a
         f"Заявка: {request_id}\n"
         f"Документ: {document_label(kind, language)}\n"
         f"Сумма: {amount} ₸\n"
-        "Документ ещё НЕ генерировался. Ожидается подтверждение оплаты."
+        "Документ ещё НЕ генерировался. Ожидается автоматическая AI-проверка чека."
     )
 
 
 def _safe_admin(admin_ids: set[int] | frozenset[int], user_id: int) -> int | None:
+    # The private admin chat is only used as a durable source of a Telegram
+    # reservation message id. The admin does not participate in verification.
     return next((admin_id for admin_id in sorted(admin_ids) if admin_id != user_id), None)
 
 
@@ -128,8 +131,7 @@ async def ensure_prepayment(message: Message, state: FSMContext, *, kind: str) -
     Intake stays free: the client may describe the matter and upload materials.
     Once the request has enough material to enter legal research/drafting, this
     gate creates a payment transaction instead. No research or DOCX generation is
-    allowed until the receipt passes AI pre-check and an administrator confirms
-    the payment.
+    allowed until the submitted receipt passes strict automatic AI verification.
     """
     settings = get_settings()
     if not settings.payments_enabled:
@@ -179,10 +181,10 @@ async def ensure_prepayment(message: Message, state: FSMContext, *, kind: str) -
     ):
         await state.update_data(mode="prepayment_waiting")
         await message.answer(
-            "💳 Оплата по этой заявке уже ожидается. Используйте карточку оплаты выше и после оплаты пришлите чек."
+            "💳 Оплата по этой заявке уже ожидается. Используйте карточку оплаты выше и после оплаты пришлите чек — KORGAN AI проверит его автоматически."
             if language != KK
             else
-            "💳 Бұл өтінім бойынша төлем күтілуде. Жоғарыдағы төлем карточкасын пайдаланып, төлемнен кейін чекті жіберіңіз."
+            "💳 Бұл өтінім бойынша төлем күтілуде. Жоғарыдағы төлем карточкасын пайдаланып, төлемнен кейін чекті жіберіңіз — KORGAN AI оны автоматты түрде тексереді."
         )
         return False
 
@@ -226,11 +228,11 @@ async def ensure_prepayment(message: Message, state: FSMContext, *, kind: str) -
 
     # Negative ids are reserved for pre-generation payment transactions. Legacy
     # positive ids still identify already-generated held documents and remain
-    # releasable through the old compatibility flow.
+    # releasable through the compatibility flow.
     transaction_id = -int(reservation.message_id)
 
-    # A client can switch document types while the admin reservation is being
-    # created. Never show a payment card for a request that is no longer current.
+    # A client can switch document types while the reservation is being created.
+    # Never show a payment card for a request that is no longer current.
     latest = await state.get_data()
     if (
         str(latest.get("request_id") or "") != request_id
@@ -266,7 +268,7 @@ async def _context(state: FSMContext) -> str:
 
 
 def install_generation_prepayment_gate() -> None:
-    """Patch every active legal-document generator with the same prepay rule."""
+    """Patch every active legal-document generator with the same hard prepay rule."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -335,4 +337,4 @@ def install_generation_prepayment_gate() -> None:
     universal_document_runtime._send_response = response_guarded
 
     _INSTALLED = True
-    LOGGER.info("KORGAN pre-generation payment gate installed for all legal document types")
+    LOGGER.info("KORGAN hard prepay gate installed: AI-verified receipt required before legal document generation")
