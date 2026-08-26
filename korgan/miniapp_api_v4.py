@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from fastapi import File, Header, HTTPException, UploadFile
+from pydantic import BaseModel
 
 from korgan import miniapp_api_v3 as runtime
 from korgan.consultation_quota import (
@@ -20,14 +21,31 @@ from korgan.consultation_quota import (
     reserve_free_consultation,
     strict_consultation_receipt_issues,
 )
-from korgan.payment import ReceiptAnalyzer
+from korgan.miniapp_document_payments import (
+    DocumentPaymentOrder,
+    accept_document_receipt_precheck,
+    close_document_payment_store,
+    consume_document_order,
+    create_document_order,
+    decide_document_order,
+    get_document_order,
+    get_scope_order,
+    init_document_payment_store,
+    list_document_orders_for_admin,
+)
+from korgan.payment import ReceiptAnalyzer, receipt_hard_issues
 
 core = runtime.core
 app = runtime.app
 settings = runtime.settings
 service = runtime.service
-PARITY_REVISION = "2026-08-24.3"
+PARITY_REVISION = "2026-08-26.1"
 _RECEIPT_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
+
+
+class AdminDocumentPaymentDecision(BaseModel):
+    approved: bool
+    note: str = ""
 
 
 def _drop_route(path: str, method: str) -> None:
@@ -42,20 +60,24 @@ def _drop_route(path: str, method: str) -> None:
     ]
 
 
-# Replace v2's direct unlimited consultation and v3's parity probe before the
-# ASGI app starts. All other v2/v3 endpoints remain unchanged.
+# Replace v2's direct unlimited consultation, direct document generation and
+# v3's parity probe. All changes stay inside the dedicated Mini App ASGI app;
+# strict_bot and Telegram polling/runtime are never modified.
 _drop_route("/miniapp/consultation", "POST")
+_drop_route("/miniapp/documents/generate", "POST")
 _drop_route("/miniapp/parity", "GET")
 
 
 @app.on_event("startup")
-async def _quota_startup() -> None:
+async def _business_startup() -> None:
     await init_consultation_store(settings)
+    await init_document_payment_store(settings)
 
 
 @app.on_event("shutdown")
-async def _quota_shutdown() -> None:
+async def _business_shutdown() -> None:
     await close_consultation_store()
+    await close_document_payment_store()
 
 
 def _quota_user_id(identity: str) -> int:
@@ -63,10 +85,21 @@ def _quota_user_id(identity: str) -> int:
         return int(identity)
     except (TypeError, ValueError):
         # Stable negative id for explicitly enabled staging/dev auth. Real
-        # Telegram WebApp identities are numeric and therefore share quota with
-        # the production Telegram agent exactly.
+        # Telegram WebApp identities are numeric and share quota with the agent.
         value = int(hashlib.sha256(str(identity).encode()).hexdigest()[:15], 16)
         return -(value or 1)
+
+
+def _is_admin(identity: str) -> bool:
+    try:
+        return int(identity) in settings.admin_ids
+    except (TypeError, ValueError):
+        return False
+
+
+def _require_admin(identity: str) -> None:
+    if not _is_admin(identity):
+        raise HTTPException(status_code=403, detail="Administrator access required")
 
 
 def _payment_payload(order: ConsultationOrder) -> dict[str, Any]:
@@ -76,6 +109,61 @@ def _payment_payload(order: ConsultationOrder) -> dict[str, Any]:
         "kaspi_url": settings.kaspi_payment_url,
         "status": order.status,
         "receipt_accept": ["PDF", "JPG", "JPEG", "PNG", "WEBP"],
+    }
+
+
+def _document_payment_payload(order: DocumentPaymentOrder) -> dict[str, Any]:
+    return {
+        "order_id": order.id,
+        "case_id": order.case_id,
+        "document_type": order.document_type,
+        "amount_kzt": order.amount_kzt,
+        "kaspi_url": settings.kaspi_payment_url,
+        "status": order.status,
+        "approval_required": True,
+        "decision_note": order.decision_note,
+        "receipt_accept": ["PDF", "JPG", "JPEG", "PNG", "WEBP"],
+    }
+
+
+def _document_admin_payload(order: DocumentPaymentOrder) -> dict[str, Any]:
+    return {
+        "order_id": order.id,
+        "client_ref": order.user_key[:12],
+        "case_id": order.case_id,
+        "document_type": order.document_type,
+        "language": order.language,
+        "amount_kzt": order.amount_kzt,
+        "status": order.status,
+        "transaction_id": order.transaction_id,
+        "receipt_check": order.receipt_check,
+        "decision_note": order.decision_note,
+    }
+
+
+def _document_scope(case: dict[str, Any], document_type: str, language: str) -> str:
+    # One payment authorizes one immutable factual scope. Any material or user
+    # fact added after payment changes this digest and therefore requires a new
+    # approval, matching the agent's request-scope semantics.
+    context = core._case_context(case)
+    value = f"{document_type}\n{language}\n{context}".encode("utf-8")
+    return hashlib.sha256(value).hexdigest()
+
+
+def _receipt_check_payload(check: Any) -> dict[str, Any]:
+    return {
+        "readable": bool(check.readable),
+        "looks_like_kaspi": bool(check.looks_like_kaspi),
+        "payment_successful": bool(check.payment_successful),
+        "amount_kzt": int(check.amount_kzt or 0),
+        "date_time": str(check.date_time or ""),
+        "merchant_or_recipient": str(check.merchant_or_recipient or ""),
+        "payer": str(check.payer or ""),
+        "receipt_or_transaction_id": str(check.receipt_or_transaction_id or ""),
+        "rnm": str(check.rnm or ""),
+        "fp": str(check.fp or ""),
+        "suspicious_signals": [str(x) for x in check.suspicious_signals],
+        "notes": [str(x) for x in check.notes],
     }
 
 
@@ -113,7 +201,7 @@ async def _answer_paid_order(
         )
     except Exception as exc:
         # The order intentionally remains paid so the client can retry without
-        # paying again, matching the Telegram agent's paid-consultation flow.
+        # paying again, matching the paid-consultation flow.
         raise HTTPException(
             status_code=503,
             detail="Чек уже принят, но юридический AI временно не ответил. Повторная оплата не нужна.",
@@ -160,6 +248,8 @@ async def parity() -> dict[str, Any]:
         "consultation_price_kzt": int(settings.consultation_price_kzt),
         "document_payments_enabled": bool(settings.payments_enabled),
         "document_price_kzt": int(settings.document_price_kzt),
+        "document_manual_confirmation": True,
+        "document_payment_admin_configured": bool(settings.admin_ids),
         "document_types": sorted(core._DOCUMENT_TYPES),
     }
 
@@ -174,6 +264,8 @@ async def pricing(x_telegram_init_data: str = Header(default="")) -> dict[str, A
         "consultation_price_kzt": int(settings.consultation_price_kzt),
         "document_price_kzt": int(settings.document_price_kzt),
         "document_payments_enabled": bool(settings.payments_enabled),
+        "document_manual_confirmation": True,
+        "is_admin": _is_admin(identity),
         "kaspi_url": settings.kaspi_payment_url if settings.consultation_limit_enabled or settings.payments_enabled else "",
     }
 
@@ -314,3 +406,177 @@ async def retry_paid_consultation(
     if order is None:
         raise HTTPException(status_code=404, detail="Платёжный запрос не найден")
     return await _answer_paid_order(identity=identity, state=state, order=order)
+
+
+@app.post("/miniapp/documents/generate")
+async def generate_document(
+    payload: core.GenerateRequest,
+    x_telegram_init_data: str = Header(default=""),
+) -> dict[str, Any]:
+    # When business payments are disabled, preserve the existing Mini App
+    # behavior exactly. The Telegram agent is not involved in either path.
+    if not settings.payments_enabled:
+        return await core.generate_document(payload, x_telegram_init_data)
+
+    if not settings.kaspi_payment_url.strip() or not settings.admin_ids:
+        raise HTTPException(
+            status_code=503,
+            detail="Оплата документов временно недоступна: администратор или Kaspi не настроены. Подготовка документа не начата.",
+        )
+
+    identity = core.legacy._identity(x_telegram_init_data)
+    state = await core.legacy._require_consent(identity)
+    case = state["cases"].get(payload.case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    document_type = str(case.get("document_type") or payload.document_type or "claim")
+    if document_type not in core._DOCUMENT_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported document type")
+    language = "kk" if str(case.get("language") or payload.language) == "kk" else "ru"
+    context = core._case_context(case)
+    if not context.strip():
+        raise HTTPException(status_code=422, detail="Добавьте описание ситуации или загрузите материалы дела")
+
+    user_key = core.store.user_key(identity)
+    scope = _document_scope(case, document_type, language)
+    order = await get_scope_order(user_key=user_key, case_id=payload.case_id, case_fingerprint=scope)
+    if order is None:
+        order = await create_document_order(
+            user_key=user_key,
+            case_id=payload.case_id,
+            case_fingerprint=scope,
+            document_type=document_type,
+            language=language,
+            amount_kzt=settings.document_price_kzt,
+        )
+
+    if order.status != "approved":
+        return {
+            "payment_required": True,
+            "generation_started": False,
+            "payment": _document_payment_payload(order),
+        }
+
+    # The expensive legal research and Word generation starts only after a
+    # human administrator has confirmed the real payment in Kaspi history.
+    try:
+        result = await core.generate_document(payload, x_telegram_init_data)
+    except Exception:
+        # Keep approval intact on a technical failure so the user can retry
+        # without paying again.
+        raise
+    if not await consume_document_order(order.id, user_key=user_key):
+        raise HTTPException(status_code=409, detail="Подтверждённая оплата уже использована для генерации")
+    return {
+        **result,
+        "payment_required": False,
+        "paid": True,
+        "payment_order_id": order.id,
+    }
+
+
+@app.post("/miniapp/documents/payments/{order_id}/receipt")
+async def document_payment_receipt(
+    order_id: int,
+    file: UploadFile = File(...),
+    x_telegram_init_data: str = Header(default=""),
+) -> dict[str, Any]:
+    identity = core.legacy._identity(x_telegram_init_data)
+    await core.legacy._require_consent(identity)
+    user_key = core.store.user_key(identity)
+    order = await get_document_order(order_id, user_key=user_key)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Платёжный запрос не найден")
+    if order.status != "pending_receipt":
+        raise HTTPException(status_code=409, detail="Чек по этому запросу уже передан на проверку или оплата уже подтверждена")
+
+    filename = (file.filename or "receipt").strip()
+    if core.legacy._extension(filename) not in _RECEIPT_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="Пришлите полный чек как PDF, JPG, JPEG, PNG или WEBP")
+    data = await file.read(core._MAX_UPLOAD_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="Пустой файл")
+    if len(data) > core._MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Файл больше 20 МБ")
+
+    try:
+        check = await ReceiptAnalyzer(settings).analyze(data, filename, file.content_type or "")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Не удалось выполнить предварительную проверку чека. Документ не разблокирован.") from exc
+
+    # Document payments intentionally use the same policy as the agent:
+    # obvious failures are rejected automatically, but AI never declares the
+    # banking fact final. A human administrator must still compare Kaspi Pay.
+    issues = receipt_hard_issues(check, order.amount_kzt)
+    if issues:
+        raise HTTPException(
+            status_code=422,
+            detail="Чек не прошёл предварительную проверку: " + "; ".join(issues[:6]),
+        )
+
+    accepted = await accept_document_receipt_precheck(
+        order_id=order.id,
+        user_key=user_key,
+        receipt_hash=receipt_fingerprint(data),
+        transaction_id=check.receipt_or_transaction_id,
+        receipt_check=_receipt_check_payload(check),
+    )
+    if not accepted:
+        raise HTTPException(status_code=409, detail="Этот чек/номер операции уже использовался или запрос уже обработан")
+
+    updated = await get_document_order(order.id, user_key=user_key)
+    assert updated is not None
+    return {
+        "ok": True,
+        "payment_required": True,
+        "generation_started": False,
+        "payment": _document_payment_payload(updated),
+        "message": "Чек прошёл предварительную проверку и ожидает ручного подтверждения администратора по Kaspi Pay.",
+    }
+
+
+@app.get("/miniapp/documents/payments/{order_id}")
+async def document_payment_status(
+    order_id: int,
+    x_telegram_init_data: str = Header(default=""),
+) -> dict[str, Any]:
+    identity = core.legacy._identity(x_telegram_init_data)
+    await core.legacy._require_consent(identity)
+    order = await get_document_order(order_id, user_key=core.store.user_key(identity))
+    if order is None:
+        raise HTTPException(status_code=404, detail="Платёжный запрос не найден")
+    return {"payment": _document_payment_payload(order)}
+
+
+@app.get("/miniapp/admin/document-payments")
+async def admin_document_payments(
+    status: str = "awaiting_admin",
+    x_telegram_init_data: str = Header(default=""),
+) -> dict[str, Any]:
+    identity = core.legacy._identity(x_telegram_init_data)
+    await core.legacy._require_consent(identity)
+    _require_admin(identity)
+    orders = await list_document_orders_for_admin(status=status, limit=50)
+    return {"orders": [_document_admin_payload(order) for order in orders]}
+
+
+@app.post("/miniapp/admin/document-payments/{order_id}/decision")
+async def admin_document_payment_decision(
+    order_id: int,
+    payload: AdminDocumentPaymentDecision,
+    x_telegram_init_data: str = Header(default=""),
+) -> dict[str, Any]:
+    identity = core.legacy._identity(x_telegram_init_data)
+    await core.legacy._require_consent(identity)
+    _require_admin(identity)
+    order = await get_document_order(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Платёжный запрос не найден")
+    if order.status != "awaiting_admin":
+        raise HTTPException(status_code=409, detail="Этот платёжный запрос уже обработан")
+    if not await decide_document_order(order.id, approved=payload.approved, note=payload.note):
+        raise HTTPException(status_code=409, detail="Не удалось зафиксировать решение: статус уже изменился")
+    updated = await get_document_order(order.id)
+    assert updated is not None
+    return {"ok": True, "order": _document_admin_payload(updated)}
