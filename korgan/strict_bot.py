@@ -25,6 +25,10 @@ from korgan.contact_handlers import router as contact_router
 from korgan.document_category_router import router as document_category_router
 from korgan.document_generator_ownership_guard import install_document_generator_ownership_guard
 from korgan.document_menu_entry import router as document_menu_entry_router
+from korgan.document_receipt_replay_guard import (
+    close_document_receipt_replay_guard,
+    init_document_receipt_replay_guard,
+)
 from korgan.document_section_lock import router as document_section_lock_router
 from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
@@ -61,25 +65,15 @@ install_kazakh_legal_bridge()
 install_kazakh_article_forms()
 install_professional_rag_bridge()
 install_stable_legal_release()
-# Ordinary consultations use the same source-bound standard as documents: an
-# exact article/rate/deadline cannot reach Telegram unless the current response
-# actually opened an allowed official source and the rule passed verification.
 install_professional_consultation_guard()
-# One bounded repair policy for all five Word document types. It raises the
-# filing-ready target to 10/10 while preserving the existing quality fallback;
-# payment gating remains independent and prevents unpaid delivery/generation.
 install_universal_word_quality_guard()
-# Exact Decimal arithmetic and source-safe monetary extraction are layered after
-# the universal guard so its release path cannot select principal debt as a
-# penalty or lose precision on large KZT amounts.
 install_universal_word_final_hardening()
 install_client_safe_runtime()
 install_pretrial_response_transport()
 install_response_voice_guard()
 install_payment_pdf_hotfix()
-# Keep the transport-level gate as a fail-closed fallback. Normal requests are
-# paid before generation; only a verified paid-generation context can pass it.
-# Any unexpected generator still gets held, never exposed for free.
+# Transport fallback remains fail-closed. Normal requests are paid before
+# generation and pass only inside a verified paid-delivery context.
 install_payment_gate()
 install_payment_delivery_bridge()
 install_upload_followup_guard()
@@ -89,17 +83,8 @@ install_consultation_quota_bridge()
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
 
-# The selected button must remain authoritative all the way down to the actual
-# research/drafting function. Install this after every document runtime exists,
-# but before the prepayment wrapper is layered on top of the generators.
 install_document_generator_ownership_guard()
-
-# Install only after all active generator modules are loaded. Every normal path
-# that can enter legal research/drafting is wrapped by the same prepayment rule;
-# menu/intake prompts remain free and do not generate a Word document.
 install_generation_prepayment_gate()
-# Client guidance is presentation-only and must be layered after the canonical
-# generator/prepayment wiring. It wraps intake prompts, never generators.
 install_client_document_runtime_guidance()
 
 LOGGER = logging.getLogger(__name__)
@@ -117,6 +102,7 @@ async def main() -> None:
     base_bot.service = ClaimPipelineV2Adapter(ClaimServiceMux(stable_service, settings))
     base_bot.MENU = main_menu()
     await init_consultation_store(settings)
+    await init_document_receipt_replay_guard(settings)
 
     bot = LocalizedClientSafeBot(token=settings.telegram_bot_token)
     await configure_telegram_menu(bot)
@@ -130,27 +116,17 @@ async def main() -> None:
     dp.include_router(admin_router)
     dp.include_router(start_router)
     dp.include_router(safety_router)
-    # Persistent navigation must win over every active document/payment/intake
-    # state. Otherwise the first tap on «Документ / Құжат» can be swallowed as
-    # case text and the client has to tap twice.
     dp.include_router(document_menu_entry_router)
-    # Keep prepayment compatibility callbacks before the generic payment router.
-    # New negative-id payments do not require an admin decision: the receipt
-    # handler invokes paid generation immediately after strict AI verification.
+    # Legacy callbacks stay first only for already-issued old payment cards.
+    # New negative-id transactions proceed from receipt AI verification directly
+    # to paid generation; no administrator action is part of the normal flow.
     dp.include_router(prepayment_router)
     dp.include_router(payment_router)
     dp.include_router(contact_router)
-    # Exact RU/KK consultation and price buttons are handled here before the
-    # legacy language/menu routers, so client-facing tariff text stays in sync.
     dp.include_router(consultation_ui_router)
-    # These three KK document callbacks must enter the same immutable request
-    # scope as RU and the other document kinds before the legacy Kazakh router.
     dp.include_router(client_document_guidance_router)
     dp.include_router(kazakh_router)
     dp.include_router(review_cta_router)
-    # The selected document button owns all intake text. This router must run
-    # before text-based intent/category routers so case facts cannot switch a
-    # claim into a contract, pretrial demand or response (and vice versa).
     dp.include_router(document_section_lock_router)
     dp.include_router(document_category_router)
     dp.include_router(pretrial_response_router)
@@ -158,15 +134,12 @@ async def main() -> None:
     dp.include_router(universal_claim_router)
     dp.include_router(universal_document_router)
     dp.include_router(reply_menu_router)
-    # Must remain immediately before base_bot.router: all document/menu routers
-    # get first refusal, while ordinary legal questions are quota-gated here.
-    # KazakhLegalText yields to this router while the quota feature is enabled.
     dp.include_router(consultation_quota_router)
     dp.include_router(base_bot.router)
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + strict receipt AI verification + automatic paid generation=%s + manual payment confirmation=False + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + strict receipt AI verification + durable receipt anti-replay + automatic paid generation=%s + manual payment confirmation=False + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
@@ -178,6 +151,7 @@ async def main() -> None:
             corpus_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await corpus_task
+        await close_document_receipt_replay_guard()
         await close_consultation_store()
         await bot.session.close()
 
