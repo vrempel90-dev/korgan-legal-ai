@@ -30,7 +30,8 @@ def test_payment_offer_is_compact_and_kaspi_link_is_only_in_button() -> None:
     settings = _settings()
     text = payment_offer_text("pretrial", "ru", 1000)
     assert "Стоимость: 1 000 ₸" in text
-    assert "Word-файл будет выдан только после подтверждения оплаты" in text
+    assert "Документ не выдаётся до проверки оплаты" in text
+    assert "KORGAN AI автоматически проверит чек" in text
     assert "pay.kaspi.kz" not in text
 
     markup = payment_offer_markup(settings, 12345, 678, "pretrial", "ru")
@@ -97,7 +98,7 @@ def test_receipt_precheck_blocks_wrong_amount_and_failed_payment() -> None:
     assert any("900 ₸ вместо 1000 ₸" in item for item in issues)
 
 
-def test_receipt_precheck_never_auto_releases_even_when_fields_match() -> None:
+def test_receipt_precheck_accepts_only_complete_clean_receipt_for_ai_release_gate() -> None:
     check = ReceiptCheck(
         readable=True,
         looks_like_kaspi=True,
