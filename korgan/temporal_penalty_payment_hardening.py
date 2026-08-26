@@ -7,11 +7,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from korgan.contractual_penalty import (
-    TemporalPenaltyResult,
-    calc_temporal_contractual_penalty,
-    parse_contractual_penalty_terms,
-)
+from korgan.contractual_penalty import TemporalPenaltyResult, calc_temporal_contractual_penalty, parse_contractual_penalty_terms
 from korgan.legal_calc import format_kzt
 from korgan.legal_types import ClaimDraft, LegalResearch
 
@@ -22,10 +18,7 @@ _DATE = r"\d{1,2}[./-]\d{1,2}[./-]\d{4}"
 _AMOUNT = r"\d[\d\s\u00a0]*(?:[.,]\d{1,2})?"
 _MONEY_RE = re.compile(rf"(?<!\d)({_AMOUNT})\s*(?:тенге|теңге|тг\b|₸)", re.I)
 _PENALTY_RE = re.compile(r"(?i)(?:договорн\w*\s+неустойк\w*|неустойк\w*|пен[яию]\b|өсімпұл\w*|тұрақсыздық\s+айыб\w*)")
-_PENALTY_DEMAND_RE = re.compile(
-    r"(?is)(?:(?:треб\w*|взыск\w*|уплат\w*|прос\w*).{0,120}(?:неустойк\w*|пен[яию]\b)|"
-    r"(?:неустойк\w*|пен[яию]\b).{0,120}(?:треб\w*|взыск\w*|уплат\w*|подлеж\w*))"
-)
+_PENALTY_DEMAND_RE = re.compile(r"(?is)(?:(?:треб\w*|взыск\w*|уплат\w*|прос\w*).{0,120}(?:неустойк\w*|пен[яию]\b)|(?:неустойк\w*|пен[яию]\b).{0,120}(?:треб\w*|взыск\w*|уплат\w*|подлеж\w*))")
 _MONEY_DEMAND_RE = re.compile(r"(?i)(?:взыск\w*|уплат\w*|перечисл\w*|погас\w*|возмест\w*|треб\w*)")
 _FORBIDDEN = (
     re.compile(r"(?i)подлеж\w*\s+уточнен\w*"),
@@ -33,9 +26,8 @@ _FORBIDDEN = (
     re.compile(r"(?i)в\s+размере\s*,?\s*подлежащ\w*\s+начислен\w*"),
     re.compile(r"(?i)сумм\w*\s+подлеж\w*\s+уточнен\w*"),
 )
-_TRANSFER_RE = re.compile(
-    r"(?i)(?:перечисл\w*|оплат\w*).{0,100}(?:расч[её]тн\w*\s+сч[её]т|банковск\w*\s+сч[её]т|ИИК\b|IBAN\b)"
-)
+_TRANSFER_RE = re.compile(r"(?i)(?:перечисл\w*|оплат\w*).{0,100}(?:расч[её]тн\w*\s+сч[её]т|банковск\w*\s+сч[её]т|ИИК\b|IBAN\b)")
+_TRANSFER_TAIL_RE = re.compile(r"(?is)((?:пут[её]м\s+)?перечисл\w*[^\n]*?(?:расч[её]тн\w*\s+сч[её]т|банковск\w*\s+сч[её]т|ИИК\b|IBAN\b)[^\n]*)")
 _BANK_MARKER = "[ДАННЫЕ: банковские реквизиты для перечисления — ИИК, банк, БИК, КБе]"
 _IBAN_RE = re.compile(r"(?i)(?:ИИК|IBAN)\s*[:№-]?\s*(KZ[0-9A-Z]{13,30})")
 _BIC_RE = re.compile(r"(?i)БИК\s*[:№-]?\s*([A-Z0-9]{8,11})")
@@ -44,19 +36,9 @@ _BIN_RE = re.compile(r"(?i)БИН\s*[:№-]?\s*(\d{12})")
 _NAME_RE = re.compile(r"(?i)((?:ТОО|АО)\s*[«\"][^»\"]+[»\"])")
 _BANK_LINE_RE = re.compile(r"(?im)^\s*(?:Банк\s*:\s*)?([^\n;]*\bбанк\b[^\n;]*)$")
 _PURPOSE_RE = re.compile(r"(?im)(?:назначение\s+платежа|төлем\s+мақсаты)\s*[:\-]?\s*([^\n;]+)")
-
-_EXPLICIT_DUE_RE = re.compile(
-    rf"(?is)(?:крайн\w*\s+(?:дата|срок)\s+(?:оплат\w*|исполнен\w*)|"
-    rf"срок\s+(?:оплат\w*|исполнен\w*)|оплат\w*\s+до)"
-    rf"[^\n]{{0,140}}?(?P<date>{_DATE})"
-)
-_DUE_BEFORE_ACTION_RE = re.compile(
-    rf"(?is)(?:до|не\s+позднее)\s+(?P<date>{_DATE})[^\n.]{{0,80}}(?:оплат\w*|исполн\w*)"
-)
-_AS_OF_RE = re.compile(
-    rf"(?is)(?:по\s+состоянию\s+на|на\s+дату\s+документ\w*|дата\s+документ\w*\s*[:\-]?|"
-    rf"дата\s+претензи\w*\s*[:\-]?)\s*(?P<date>{_DATE})"
-)
+_EXPLICIT_DUE_RE = re.compile(rf"(?is)(?:крайн\w*\s+(?:дата|срок)\s+(?:оплат\w*|исполнен\w*)|срок\s+(?:оплат\w*|исполнен\w*)|оплат\w*\s+до)[^\n]{{0,140}}?(?P<date>{_DATE})")
+_DUE_BEFORE_ACTION_RE = re.compile(rf"(?is)(?:до|не\s+позднее)\s+(?P<date>{_DATE})[^\n.]{{0,80}}(?:оплат\w*|исполн\w*)")
+_AS_OF_RE = re.compile(rf"(?is)(?:по\s+состоянию\s+на|на\s+дату\s+документ\w*|дата\s+документ\w*\s*[:\-]?|дата\s+претензи\w*\s*[:\-]?)\s*(?P<date>{_DATE})")
 _TERM_DAYS_RE = re.compile(r"(?is)срок\s+оплат\w*[^\n.]{0,100}?(?P<days>\d{1,3})\s+календарн\w*\s+дн\w*")
 _EVENT_RES = (
     re.compile(rf"(?is)(?:поставк\w*|передач\w*\s+товар\w*|товар\w*\s+(?:поставлен|передан)\w*)[^\d]{{0,60}}(?P<date>{_DATE})"),
@@ -92,32 +74,27 @@ def due_date_from_context(case_context: str) -> date | None:
     for pattern in (_EXPLICIT_DUE_RE, _DUE_BEFORE_ACTION_RE):
         match = pattern.search(text)
         if match:
-            value = _parse_date(match.group("date"))
-            if value:
-                return value
-
+            parsed = _parse_date(match.group("date"))
+            if parsed:
+                return parsed
     term = _TERM_DAYS_RE.search(text)
-    if not term:
-        return None
-    days = int(term.group("days"))
-    if days <= 0:
+    if not term or int(term.group("days")) <= 0:
         return None
     for pattern in _EVENT_RES:
         match = pattern.search(text)
         if match:
             event_date = _parse_date(match.group("date"))
             if event_date:
-                # Art. 173 convention: day one is the day after the event.
-                return event_date + timedelta(days=days)
+                return event_date + timedelta(days=int(term.group("days")))
     return None
 
 
 def as_of_date_from_context(case_context: str) -> date:
     match = _AS_OF_RE.search(str(case_context or ""))
     if match:
-        value = _parse_date(match.group("date"))
-        if value:
-            return value
+        parsed = _parse_date(match.group("date"))
+        if parsed:
+            return parsed
     return datetime.now(ZoneInfo("Asia/Almaty")).date()
 
 
@@ -130,11 +107,7 @@ def base_amount_from_context(case_context: str) -> int | None:
             continue
         around = text[max(0, match.start() - 85): min(len(text), match.end() + 85)].casefold()
         score = 0
-        if re.search(
-            r"(?:стоимост\w*.{0,45}(?:товар|услуг|работ)|(?:товар|услуг|работ)\w*.{0,45}стоимост\w*|"
-            r"сумм\w*\s+договор\w*)",
-            around,
-        ):
+        if re.search(r"(?:стоимост\w*.{0,45}(?:товар|услуг|работ)|(?:товар|услуг|работ)\w*.{0,45}стоимост\w*|сумм\w*\s+договор\w*)", around):
             score += 35
         if re.search(r"основн\w*\s+долг|задолженн|сумм\w*\s+обязательств", around):
             score += 15
@@ -167,11 +140,7 @@ def payments_from_context(case_context: str) -> list[tuple[date, int]]:
     return sorted(result, key=lambda item: item[0])
 
 
-def calculate_temporal_penalty_from_context(
-    case_context: str,
-    *,
-    payment_allocation: str = "principal",
-) -> TemporalPenaltyResult | None:
+def calculate_temporal_penalty_from_context(case_context: str, *, payment_allocation: str = "principal") -> TemporalPenaltyResult | None:
     text = str(case_context or "")
     if not _PENALTY_DEMAND_RE.search(text):
         return None
@@ -192,18 +161,10 @@ def calculate_temporal_penalty_from_context(
     )
     LOGGER.info(
         "TEMPORAL_PENALTY_CALC base=%s due_date=%s delay_start=%s as_of=%s segments=%s total_before_cap=%s cap_amount=%s cap_reached_date=%s total=%s daily_after=%s outstanding_principal=%s convention=%s",
-        base,
-        due.isoformat(),
-        (due + timedelta(days=1)).isoformat(),
-        as_of.isoformat(),
-        result.segments,
-        result.total_before_cap,
-        result.cap_amount,
+        base, due.isoformat(), (due + timedelta(days=1)).isoformat(), as_of.isoformat(), result.segments,
+        result.total_before_cap, result.cap_amount,
         result.cap_reached_date.isoformat() if result.cap_reached_date else None,
-        result.total,
-        result.daily_after,
-        result.outstanding_principal,
-        result.convention,
+        result.total, result.daily_after, result.outstanding_principal, result.convention,
     )
     return result
 
@@ -215,8 +176,7 @@ def _fmt_date(value: date) -> str:
 def _rate_percent(segment: dict[str, object]) -> str:
     base = int(segment["base"])
     daily = int(segment["rate_per_day"])
-    value = daily * 100 / base if base else 0
-    return f"{value:g}".replace(".", ",")
+    return f"{(daily * 100 / base if base else 0):g}".replace(".", ",")
 
 
 def render_penalty_calculation(result: TemporalPenaltyResult, *, language: str = "ru") -> list[str]:
@@ -224,8 +184,7 @@ def render_penalty_calculation(result: TemporalPenaltyResult, *, language: str =
         return []
     lines = ["Детерминированный расчёт договорной неустойки:"]
     for index, segment in enumerate(result.segments, start=1):
-        start = segment["from"]
-        end = segment["to"]
+        start, end = segment["from"], segment["to"]
         assert isinstance(start, date) and isinstance(end, date)
         lines.append(
             f"{index}) {_fmt_date(start)}–{_fmt_date(end)}: база {format_kzt(int(segment['base']))}; "
@@ -235,16 +194,16 @@ def render_penalty_calculation(result: TemporalPenaltyResult, *, language: str =
     if result.cap_amount is not None:
         reached = _fmt_date(result.cap_reached_date) if result.cap_reached_date else "не достигнут"
         lines.append(
-            f"Сумма до ограничителя: {format_kzt(result.total_before_cap or 0)}. "
-            f"Договорный ограничитель: {format_kzt(result.cap_amount)}; дата достижения ограничителя: {reached}. "
-            f"Итог на дату расчёта: {format_kzt(result.total)}."
+            f"Сумма до ограничителя: {format_kzt(result.total_before_cap or 0)}. Договорный ограничитель: "
+            f"{format_kzt(result.cap_amount)}; дата достижения ограничителя: {reached}. Итог на дату расчёта: {format_kzt(result.total)}."
         )
     else:
         lines.append(f"Итого договорная неустойка на дату расчёта: {format_kzt(result.total)}.")
-    if result.daily_after:
-        lines.append(f"Текущее ежедневное начисление после даты расчёта: {format_kzt(result.daily_after)} в день.")
-    else:
-        lines.append("Текущее ежедневное начисление после даты расчёта: 0 тенге; договорный ограничитель достигнут.")
+    lines.append(
+        f"Текущее ежедневное начисление после даты расчёта: {format_kzt(result.daily_after)} в день."
+        if result.daily_after
+        else "Текущее ежедневное начисление после даты расчёта: 0 тенге; договорный ограничитель достигнут."
+    )
     lines.append(
         "Соглашения расчёта: просрочка начинается со дня, следующего за последним днём срока исполнения; "
         "календарные дни в каждом сегменте считаются включительно; в день частичной оплаты неустойка начисляется "
@@ -273,6 +232,11 @@ def _canonical_penalty_demand(result: TemporalPenaltyResult, language: str) -> s
     return f"Уплатить договорную неустойку по состоянию на {as_of} в размере {amount}."
 
 
+def _preserved_transfer_tail(text: str) -> str:
+    match = _TRANSFER_TAIL_RE.search(str(text or ""))
+    return match.group(1).strip() if match else ""
+
+
 def apply_penalty_result_to_draft(draft: Any, result: TemporalPenaltyResult | None, *, language: str = "ru") -> bool:
     if result is None or result.total is None:
         return False
@@ -281,11 +245,14 @@ def apply_penalty_result_to_draft(draft: Any, result: TemporalPenaltyResult | No
         return False
     demands = list(getattr(draft, attr) or [])
     canonical = _canonical_penalty_demand(result, language)
-    indices = [i for i, value in enumerate(demands) if _PENALTY_RE.search(str(value))]
+    indices = [index for index, value in enumerate(demands) if _PENALTY_RE.search(str(value))]
     changed = False
     if indices:
-        if demands[indices[0]] != canonical:
-            demands[indices[0]] = canonical
+        index = indices[0]
+        tail = _preserved_transfer_tail(str(demands[index]))
+        rewritten = canonical if not tail else f"{canonical.rstrip('.')} — {tail}"
+        if demands[index] != rewritten:
+            demands[index] = rewritten
             changed = True
     else:
         demands.append(canonical)
@@ -302,46 +269,34 @@ def apply_penalty_result_to_draft(draft: Any, result: TemporalPenaltyResult | No
 
 
 def _document_lines(draft: Any) -> list[str]:
-    result: list[str] = []
+    lines: list[str] = []
     for attr in ("title", "sender", "recipient", "claimant", "defendant", "facts", "legal_basis", "demands", "requests", "deadline", "consequences", "attachments"):
         value = getattr(draft, attr, None)
         if isinstance(value, list):
-            result.extend(str(item) for item in value if str(item).strip())
+            lines.extend(str(item) for item in value if str(item).strip())
         elif value:
-            result.append(str(value))
-    return result
+            lines.append(str(value))
+    return lines
 
 
 def _bank_complete(text: str) -> bool:
     upper = text.upper()
-    return bool(
-        _IBAN_RE.search(text)
-        and _BIC_RE.search(text)
-        and _KBE_RE.search(text)
-        and "БАНК" in upper
-        and _BIN_RE.search(text)
-        and ("НАЗНАЧЕНИЕ ПЛАТЕЖА" in upper or "ТӨЛЕМ МАҚСАТЫ" in upper)
-    )
+    return bool(_IBAN_RE.search(text) and _BIC_RE.search(text) and _KBE_RE.search(text) and "БАНК" in upper and _BIN_RE.search(text) and ("НАЗНАЧЕНИЕ ПЛАТЕЖА" in upper or "ТӨЛЕМ МАҚСАТЫ" in upper))
 
 
 def _bank_requisites_from_source(case_context: str) -> str:
     text = str(case_context or "")
-    iban = _IBAN_RE.search(text)
-    bic = _BIC_RE.search(text)
-    kbe = _KBE_RE.search(text)
-    bank = _BANK_LINE_RE.search(text)
+    iban, bic, kbe, bank = _IBAN_RE.search(text), _BIC_RE.search(text), _KBE_RE.search(text), _BANK_LINE_RE.search(text)
     if not (iban and bic and kbe and bank):
         return _BANK_MARKER
-    name = _NAME_RE.search(text)
-    bin_match = _BIN_RE.search(text)
-    purpose = _PURPOSE_RE.search(text)
+    name, bin_match, purpose = _NAME_RE.search(text), _BIN_RE.search(text), _PURPOSE_RE.search(text)
     recipient = name.group(1) if name else "[ДАННЫЕ: наименование получателя]"
     bin_text = bin_match.group(1) if bin_match else "[ДАННЫЕ: БИН получателя]"
-    bank_text = " ".join(bank.group(1).split())
     purpose_text = purpose.group(1).strip() if purpose else "[ДАННЫЕ: назначение платежа]"
     return (
         f"Банковские реквизиты получателя: {recipient}; БИН: {bin_text}; ИИК: {iban.group(1)}; "
-        f"Банк: {bank_text}; БИК: {bic.group(1)}; КБе: {kbe.group(1)}; Назначение платежа: {purpose_text}."
+        f"Банк: {' '.join(bank.group(1).split())}; БИК: {bic.group(1)}; КБе: {kbe.group(1)}; "
+        f"Назначение платежа: {purpose_text}."
     )
 
 
@@ -398,7 +353,7 @@ def _enforce_or_raise(draft: Any, case_context: str, result: TemporalPenaltyResu
 
 
 def install_temporal_penalty_payment_hardening() -> None:
-    """Wrap the existing claim/pretrial stages without adding a model round."""
+    """Wrap existing claim/pretrial stages exactly once; add no model call."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -416,7 +371,6 @@ def install_temporal_penalty_payment_hardening() -> None:
         return draft
 
     PretrialProductionService.draft_pretrial = pretrial_with_temporal_money  # type: ignore[assignment]
-
     current_claim = StableLegalProductionService.draft_claim
 
     async def claim_with_temporal_money(self: StableLegalProductionService, case_context: str, research: LegalResearch, language: str = "ru") -> ClaimDraft:
