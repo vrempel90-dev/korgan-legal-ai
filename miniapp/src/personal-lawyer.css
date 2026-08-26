@@ -1,0 +1,96 @@
+.personal-lawyer-card{
+  grid-column:1/-1;
+  min-height:132px;
+  display:grid;
+  grid-template-columns:54px 1fr 30px;
+  align-items:center;
+  gap:14px;
+  padding:18px;
+  border-color:rgba(75,211,162,.26);
+  background:
+    radial-gradient(circle at 100% 0%,rgba(75,211,162,.11),transparent 38%),
+    linear-gradient(145deg,#121719,#0e1214);
+}
+
+.personal-lawyer-card::before{
+  content:"";
+  position:absolute;
+  inset:auto -34px -58px auto;
+  width:150px;
+  height:150px;
+  border:1px solid rgba(75,211,162,.08);
+  border-radius:50%;
+  pointer-events:none;
+}
+
+.personal-lawyer-card:hover,
+.personal-lawyer-card:focus-visible{
+  border-color:rgba(75,211,162,.48);
+  outline:none;
+}
+
+.personal-lawyer-icon{
+  width:54px;
+  height:54px;
+  border-radius:17px;
+  display:grid;
+  place-items:center;
+  font-family:Georgia,"Times New Roman",serif;
+  font-size:25px;
+  color:var(--emerald);
+  background:linear-gradient(145deg,#10271f,#0d1815);
+  border:1px solid rgba(75,211,162,.24);
+  box-shadow:inset 0 0 24px rgba(75,211,162,.06);
+}
+
+.personal-lawyer-copy{
+  min-width:0;
+}
+
+.personal-lawyer-card .section-kicker{
+  color:#78cdb0;
+}
+
+.personal-lawyer-card h2{
+  margin:6px 0 6px;
+  font-size:16px;
+  line-height:1.2;
+}
+
+.personal-lawyer-card p{
+  margin:0;
+  max-width:340px;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.45;
+}
+
+.personal-lawyer-arrow{
+  width:30px;
+  height:30px;
+  border-radius:50%;
+  display:grid;
+  place-items:center;
+  justify-self:end;
+  color:#0e1512;
+  background:var(--emerald);
+  font-size:18px;
+  font-weight:900;
+  box-shadow:0 8px 20px rgba(75,211,162,.16);
+}
+
+@media (max-width:380px){
+  .personal-lawyer-card{
+    grid-template-columns:48px 1fr 26px;
+    gap:11px;
+    padding:15px;
+  }
+  .personal-lawyer-icon{
+    width:48px;
+    height:48px;
+    border-radius:15px;
+    font-size:22px;
+  }
+  .personal-lawyer-card h2{font-size:15px}
+  .personal-lawyer-arrow{width:26px;height:26px;font-size:16px}
+}
