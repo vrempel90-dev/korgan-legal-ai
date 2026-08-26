@@ -17,6 +17,7 @@ from korgan.client_document_guidance_router import router as client_document_gui
 from korgan.client_document_runtime_guidance import install_client_document_runtime_guidance
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
+from korgan.consultation_local_corpus_bridge import install_local_first_consultation
 from korgan.consultation_quota import close_consultation_store, init_consultation_store
 from korgan.consultation_quota_bridge import install_consultation_quota_bridge
 from korgan.consultation_quota_runtime import router as consultation_quota_router
@@ -66,6 +67,10 @@ install_kazakh_article_forms()
 install_professional_rag_bridge()
 install_stable_legal_release()
 install_professional_consultation_guard()
+# Consultations use the same local verified-corpus fast path as documents. Any
+# missing/ambiguous legal coverage delegates to the existing source-bound web
+# consultation guard unchanged.
+install_local_first_consultation()
 install_universal_word_quality_guard()
 install_universal_word_final_hardening()
 install_client_safe_runtime()
@@ -139,7 +144,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + strict receipt AI verification + durable receipt anti-replay + automatic paid generation=%s + manual payment confirmation=False + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: local-corpus-first research/consultation + guarded web fallback + hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + strict receipt AI verification + durable receipt anti-replay + automatic paid generation=%s + manual payment confirmation=False + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
