@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -16,10 +17,21 @@ def _telegram_api(token: str, method: str, payload: dict[str, object] | None = N
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=12) as response:
-        data = json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        description = f"HTTP {exc.code}"
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+            description = str(body.get("description") or description)
+        except Exception:
+            pass
+        raise RuntimeError(f"{method}: {description}") from exc
+
     if not data.get("ok"):
-        raise RuntimeError(f"Telegram Bot API {method} failed")
+        description = str(data.get("description") or "unknown Telegram error")
+        raise RuntimeError(f"{method}: {description}")
     return data
 
 
@@ -39,6 +51,7 @@ def register_miniapp_menu() -> None:
         me = _telegram_api(token, "getMe")
         bot = me.get("result") if isinstance(me.get("result"), dict) else {}
         username = str(bot.get("username") or "unknown")
+        print(f"TELEGRAM_MINIAPP_BOT bot=@{username}", flush=True)
 
         _telegram_api(
             token,
@@ -51,24 +64,34 @@ def register_miniapp_menu() -> None:
                 }
             },
         )
+        print(f"TELEGRAM_MINIAPP_MENU_SET bot=@{username} url={miniapp_url}", flush=True)
 
-        check = _telegram_api(token, "getChatMenuButton")
-        result = check.get("result") if isinstance(check.get("result"), dict) else {}
-        web_app = result.get("web_app") if isinstance(result.get("web_app"), dict) else {}
-        registered_url = str(web_app.get("url") or "")
-        registered_text = str(result.get("text") or "")
-        registered_type = str(result.get("type") or "")
+        last_result: dict[str, object] = {}
+        for _ in range(3):
+            time.sleep(0.35)
+            check = _telegram_api(token, "getChatMenuButton")
+            result = check.get("result") if isinstance(check.get("result"), dict) else {}
+            last_result = result
+            web_app = result.get("web_app") if isinstance(result.get("web_app"), dict) else {}
+            registered_url = str(web_app.get("url") or "")
+            registered_type = str(result.get("type") or "")
+            if registered_type == "web_app" and registered_url.rstrip("/") == miniapp_url.rstrip("/"):
+                registered_text = str(result.get("text") or button_text)
+                print(
+                    f"TELEGRAM_MINIAPP_MENU_REGISTERED bot=@{username} text={registered_text!r} url={registered_url}",
+                    flush=True,
+                )
+                return
 
-        if registered_type != "web_app" or registered_url != miniapp_url:
-            raise RuntimeError("Telegram menu verification mismatch")
-
+        actual_type = str(last_result.get("type") or "unknown")
         print(
-            f"TELEGRAM_MINIAPP_MENU_REGISTERED bot=@{username} text={registered_text!r} url={registered_url}",
+            f"TELEGRAM_MINIAPP_MENU_VERIFY_WARNING bot=@{username} actual_type={actual_type}",
             flush=True,
         )
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, RuntimeError, ValueError) as exc:
-        # The Mini App API must stay available even if Telegram is temporarily unreachable.
-        print(f"TELEGRAM_MINIAPP_MENU_WARNING error={type(exc).__name__}", flush=True)
+    except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as exc:
+        # Telegram setup is deliberately isolated from the production AI agent
+        # and must never prevent the dedicated Mini App API from starting.
+        print(f"TELEGRAM_MINIAPP_MENU_WARNING detail={exc}", flush=True)
 
 
 def main() -> None:
