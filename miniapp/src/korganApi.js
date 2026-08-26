@@ -48,6 +48,7 @@ function requireProfessionalRuntime(health, parity) {
     || parity?.preliminary_fallback !== true
     || typeof parity?.consultation_limit_enabled !== 'boolean'
     || typeof parity?.document_payments_enabled !== 'boolean'
+    || (parity?.document_payments_enabled && parity?.document_manual_confirmation !== true)
   ) {
     throw new Error('KORGAN professional legal runtime is not ready');
   }
@@ -76,6 +77,12 @@ async function uploadConsultationReceipt(orderId, file) {
   const body = new FormData();
   body.append('file', file);
   return request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+}
+
+async function uploadDocumentReceipt(orderId, file) {
+  const body = new FormData();
+  body.append('file', file);
+  return request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
 }
 
 export const korganApi = {
@@ -122,12 +129,20 @@ export const korganApi = {
     }
     return results;
   },
-  generateDocument: async (caseId, documentType = 'claim', language = 'ru') => requireProfessionalDocument(
-    await request('/miniapp/documents/generate', {
+  generateDocument: async (caseId, documentType = 'claim', language = 'ru') => {
+    const result = await request('/miniapp/documents/generate', {
       method: 'POST',
       body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
-    }),
-  ),
+    });
+    return result?.payment_required ? result : requireProfessionalDocument(result);
+  },
+  uploadDocumentReceipt,
+  documentPaymentStatus: (orderId) => request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}`),
+  adminDocumentPayments: (status = 'awaiting_admin') => request(`/miniapp/admin/document-payments?status=${encodeURIComponent(status)}`),
+  adminDocumentPaymentDecision: (orderId, approved, note = '') => request(`/miniapp/admin/document-payments/${encodeURIComponent(orderId)}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ approved: Boolean(approved), note }),
+  }),
   listCases: () => request('/miniapp/cases'),
   deleteCase: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}`, { method: 'DELETE' }),
   deleteMyData: () => request('/miniapp/me', { method: 'DELETE' }),
