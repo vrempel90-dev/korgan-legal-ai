@@ -5,10 +5,15 @@ export function getTelegramWebApp() {
 export function initTelegram() {
   const tg = getTelegramWebApp();
   if (!tg) return null;
+
   tg.ready();
   tg.expand();
-  tg.setHeaderColor?.('#06152f');
-  tg.setBackgroundColor?.('#f4f7fb');
+
+  // Keep Telegram chrome visually consistent with the KORGAN Mini App.
+  tg.setHeaderColor?.('#090b0d');
+  tg.setBackgroundColor?.('#090b0d');
+  tg.setBottomBarColor?.('#090b0d');
+
   return tg;
 }
 
