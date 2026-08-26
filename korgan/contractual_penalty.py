@@ -35,6 +35,26 @@ class ContractualPenalty:
         return self.terms.cap_percent
 
 
+@dataclass(frozen=True, slots=True)
+class TemporalPenaltyResult:
+    """Deterministic time-accrual result used by document pipelines.
+
+    ``segments`` deliberately uses the public contract keys (``from``/``to``)
+    instead of model-facing prose so the same structure can be logged, tested
+    and rendered without an LLM doing any arithmetic.
+    """
+
+    segments: list[dict[str, object]]
+    total_before_cap: int | None
+    cap_amount: int | None
+    cap_reached_date: date | None
+    total: int | None
+    daily_after: int
+    outstanding_principal: int
+    convention: dict[str, str]
+    no_penalty_clause: bool = False
+
+
 _NUMBER = r"(?P<value>\d+(?:[.,]\d+)?)"
 _PERCENT_TOKEN = r"(?:%|процент(?:а|ов)?\b)"
 _RATE_BASE_RU = (
@@ -248,4 +268,173 @@ def calc_contractual_penalty(
         capped=capped,
         cap_amount=cap_amount,
         cap_reached_on=cap_reached_on,
+    )
+
+
+def _round_money(value: Decimal) -> int:
+    from decimal import ROUND_HALF_UP
+
+    return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def _ceil_positive(value: Decimal) -> int:
+    from decimal import ROUND_CEILING
+
+    return int(value.to_integral_value(rounding=ROUND_CEILING))
+
+
+def _temporal_convention(payment_allocation: str) -> dict[str, str]:
+    return {
+        "delay_start": "due_date + 1 calendar day",
+        "day_count": "calendar days, both segment endpoints included",
+        "payment_day_base": "old principal applies on the payment date",
+        "payment_effective": "payment reduces the accrual base from the next calendar day",
+        "payment_allocation": payment_allocation,
+        "rounding": "ROUND_HALF_UP to whole KZT for reported monetary values",
+    }
+
+
+def calc_temporal_contractual_penalty(
+    *,
+    base_amount: int,
+    due_date: date,
+    rate_percent_per_day: float | None,
+    cap_percent: float | None,
+    payments: list[tuple[date, int]] | None,
+    as_of_date: date,
+    payment_allocation: str = "principal",
+) -> TemporalPenaltyResult:
+    """Accrue a contractual daily penalty over a changing principal balance.
+
+    The due date itself is never a delay day: accrual begins on the next
+    calendar day. A payment is charged on the old base on its payment date and
+    reduces principal from the following day. The allocation policy is an
+    explicit parameter; this implementation supports the agreed ``principal``
+    policy and fails closed instead of silently applying another order.
+    """
+    if base_amount < 0:
+        raise ValueError("Сумма обязательства не может быть отрицательной")
+    if cap_percent is not None and cap_percent <= 0:
+        raise ValueError("Ограничитель должен быть положительным")
+    if rate_percent_per_day is not None and rate_percent_per_day <= 0:
+        raise ValueError("Ставка неустойки должна быть положительной")
+    if payment_allocation != "principal":
+        raise ValueError(
+            "Неподдерживаемый порядок погашения: передайте отдельную реализацию/политику вместо молчаливой подстановки"
+        )
+
+    normalized_payments: list[tuple[date, int]] = []
+    for payment_date, amount in payments or []:
+        if amount <= 0:
+            raise ValueError("Сумма платежа должна быть положительной")
+        normalized_payments.append((payment_date, int(amount)))
+    normalized_payments.sort(key=lambda item: item[0])
+
+    total_paid_through_as_of = sum(amount for payment_date, amount in normalized_payments if payment_date <= as_of_date)
+    if total_paid_through_as_of > base_amount:
+        raise ValueError("Сумма платежей превышает исходный основной долг")
+    outstanding_at_as_of = base_amount - total_paid_through_as_of
+    convention = _temporal_convention(payment_allocation)
+
+    if rate_percent_per_day is None:
+        return TemporalPenaltyResult(
+            segments=[],
+            total_before_cap=None,
+            cap_amount=None,
+            cap_reached_date=None,
+            total=None,
+            daily_after=0,
+            outstanding_principal=outstanding_at_as_of,
+            convention=convention,
+            no_penalty_clause=True,
+        )
+
+    delay_start = due_date + timedelta(days=1)
+    rate = Decimal(str(rate_percent_per_day)) / Decimal("100")
+    cap_exact = (
+        Decimal(base_amount) * Decimal(str(cap_percent)) / Decimal("100")
+        if cap_percent is not None
+        else None
+    )
+    cap_amount = _round_money(cap_exact) if cap_exact is not None else None
+
+    if as_of_date < delay_start or base_amount == 0:
+        return TemporalPenaltyResult(
+            segments=[],
+            total_before_cap=0,
+            cap_amount=cap_amount,
+            cap_reached_date=None,
+            total=0,
+            daily_after=0,
+            outstanding_principal=outstanding_at_as_of,
+            convention=convention,
+        )
+
+    outstanding = base_amount
+    for payment_date, amount in normalized_payments:
+        if payment_date < delay_start:
+            outstanding -= amount
+
+    payments_by_date: dict[date, int] = {}
+    for payment_date, amount in normalized_payments:
+        if delay_start <= payment_date <= as_of_date:
+            payments_by_date[payment_date] = payments_by_date.get(payment_date, 0) + amount
+
+    segments: list[dict[str, object]] = []
+    accrued_exact = Decimal("0")
+    cap_reached_date: date | None = None
+    cursor = delay_start
+
+    for boundary in [*sorted(payments_by_date), as_of_date]:
+        if boundary < cursor:
+            continue
+        if outstanding > 0:
+            days = (boundary - cursor).days + 1
+            daily_exact = Decimal(outstanding) * rate
+            segment_exact = daily_exact * Decimal(days)
+            if (
+                cap_exact is not None
+                and cap_reached_date is None
+                and daily_exact > 0
+                and accrued_exact < cap_exact <= accrued_exact + segment_exact
+            ):
+                days_to_cap = _ceil_positive((cap_exact - accrued_exact) / daily_exact)
+                cap_reached_date = cursor + timedelta(days=max(days_to_cap - 1, 0))
+            segments.append(
+                {
+                    "from": cursor,
+                    "to": boundary,
+                    "base": outstanding,
+                    "rate_per_day": _round_money(daily_exact),
+                    "days": days,
+                    "amount": _round_money(segment_exact),
+                }
+            )
+            accrued_exact += segment_exact
+
+        if boundary in payments_by_date:
+            outstanding -= payments_by_date[boundary]
+            if outstanding < 0:
+                raise ValueError("Платёж уменьшил основной долг ниже нуля")
+            cursor = boundary + timedelta(days=1)
+        else:
+            cursor = boundary + timedelta(days=1)
+
+    total_before_cap = _round_money(accrued_exact)
+    total = min(total_before_cap, cap_amount) if cap_amount is not None else total_before_cap
+    if cap_exact is not None and accrued_exact < cap_exact:
+        cap_reached_date = None
+
+    current_daily = _round_money(Decimal(outstanding_at_as_of) * rate)
+    daily_after = 0 if cap_reached_date is not None and cap_reached_date <= as_of_date else current_daily
+
+    return TemporalPenaltyResult(
+        segments=segments,
+        total_before_cap=total_before_cap,
+        cap_amount=cap_amount,
+        cap_reached_date=cap_reached_date,
+        total=total,
+        daily_after=daily_after,
+        outstanding_principal=outstanding_at_as_of,
+        convention=convention,
     )
