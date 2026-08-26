@@ -13,8 +13,6 @@ from korgan.config import get_settings
 from korgan.localized_transport import _document_caption_with_review, _document_review_markup
 from korgan.payment import (
     ReceiptAnalyzer,
-    admin_decision_markup,
-    admin_receipt_summary,
     receipt_hard_issues,
     verify_admin_action,
     verify_user_payment,
@@ -48,6 +46,7 @@ def _parse_user_callback(data: str) -> tuple[int, str, str, str] | None:
 
 
 def _parse_admin_callback(data: str) -> tuple[str, int, int, str, str, str] | None:
+    """Compatibility parser for admin cards created by older deployments."""
     parts = data.split(":")
     if len(parts) != 7 or parts[0] != "pay" or parts[1] not in {"ok", "no"}:
         return None
@@ -96,7 +95,7 @@ async def payment_prices(message: Message, state: FSMContext) -> None:
             "• Сотқа дейінгі талап\n"
             "• Талапқа пікір\n"
             "• Шарт\n\n"
-            "💳 Төлем Kaspi арқылы жүргізіледі. Word-файл төлем расталғаннан кейін ғана беріледі.\n\n"
+            "💳 Төлем Kaspi арқылы жүргізіледі. Word-файл KORGAN AI чекті тексергеннен кейін ғана дайындалып/беріледі.\n\n"
             "👨‍⚖️ Дайын құжатты кәсіби заңгердің тексеруі — бөлек ақылы қызмет."
         )
     else:
@@ -107,7 +106,7 @@ async def payment_prices(message: Message, state: FSMContext) -> None:
             "• Досудебная претензия\n"
             "• Отзыв на иск\n"
             "• Договор\n\n"
-            "💳 Оплата через Kaspi. Word-файл выдаётся только после подтверждения оплаты.\n\n"
+            "💳 Оплата через Kaspi. Word-файл готовится/выдаётся только после автоматической проверки чека KORGAN AI.\n\n"
             "👨‍⚖️ Проверка готового документа профессиональным юристом — отдельная платная услуга."
         )
     await message.answer(text)
@@ -137,10 +136,10 @@ async def payment_proof_requested(callback: CallbackQuery, state: FSMContext) ->
     await callback.answer()
     if callback.message:
         text = (
-            "📎 Төлем чегін толық түрде фото немесе PDF ретінде жіберіңіз. Сома, күн/уақыт және төлем мәртебесі көрінуі керек."
+            "📎 Төлем чегін толық түрде фото немесе PDF ретінде жіберіңіз. Сома, күн/уақыт, операция нөмірі және төлем мәртебесі көрінуі керек. AI тексеруі сәтті болса, құжат автоматты түрде іске қосылады."
             if language == "kk"
             else
-            "📎 Пришлите полный чек оплаты фото или PDF. Должны быть видны сумма, дата/время и статус платежа."
+            "📎 Пришлите полный чек оплаты фото или PDF. Должны быть видны сумма, дата/время, номер операции и успешный статус платежа. Если AI-проверка пройдена, документ запустится автоматически."
         )
         await callback.message.answer(text)
 
@@ -158,6 +157,7 @@ async def payment_receipt_text(message: Message, state: FSMContext) -> None:
 
 @router.message(PaymentReceiptFilter())
 async def payment_receipt_received(message: Message, state: FSMContext) -> None:
+    """AI-verifies a receipt and immediately releases/starts the paid document."""
     settings = get_settings()
     data = await state.get_data()
     user_id = message.from_user.id if message.from_user else None
@@ -165,7 +165,7 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
         return
 
     try:
-        admin_doc_message_id = int(data.get("payment_admin_doc_message_id"))
+        transaction_id = int(data.get("payment_admin_doc_message_id"))
     except (TypeError, ValueError):
         await state.update_data(mode="main")
         await message.answer("Платёжная сессия устарела. Нажмите «✅ Я оплатил» под карточкой оплаты ещё раз.")
@@ -173,17 +173,10 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
     kind = str(data.get("payment_kind") or "")
     language = str(data.get("payment_language") or "ru")
     signature = str(data.get("payment_signature") or "")
-    if not verify_user_payment(settings, signature, user_id, admin_doc_message_id, kind, language):
+    if not verify_user_payment(settings, signature, user_id, transaction_id, kind, language):
         await state.update_data(mode="main")
         await message.answer("Платёжная сессия устарела. Нажмите «✅ Я оплатил» ещё раз.")
         return
-
-    admins = sorted(settings.admin_ids)
-    if not admins:
-        LOGGER.error("PAYMENT_NO_ADMIN receipt user=%s", user_id)
-        await message.answer("Не удалось передать оплату на подтверждение. Обратитесь в техподдержку; документ не разблокирован.")
-        return
-    admin_id = admins[0]
 
     payload = await _receipt_bytes(message)
     if payload is None:
@@ -194,25 +187,23 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
     try:
         check = await ReceiptAnalyzer(settings).analyze(raw, filename, mime)
     except Exception:
-        # The client explicitly requires verification before release. If the AI
-        # receipt check is unavailable, do not create an admin approval button:
-        # there must be no path from an unchecked receipt to document delivery.
         LOGGER.exception("PAYMENT_RECEIPT_AI_FAILED user=%s", user_id)
         await message.answer(
-            "⚠️ Сейчас не удалось выполнить обязательную проверку чека. "
-            "Документ остаётся заблокирован и не будет выдан без проверки. Попробуйте отправить чек ещё раз позже."
+            "⚠️ Сейчас не удалось выполнить обязательную AI-проверку чека. Документ остаётся заблокирован. Отправьте чек ещё раз позже."
             if language != "kk"
             else
-            "⚠️ Қазір чекті міндетті тексеру орындалмады. Құжат бұғатталған күйде қалады және тексерусіз берілмейді. Чекті кейін қайта жіберіңіз."
+            "⚠️ Қазір чекті міндетті AI-тексеру орындалмады. Құжат бұғатталған күйде қалады. Чекті кейін қайта жіберіңіз."
         )
         return
 
     hard_issues = receipt_hard_issues(check, settings.document_price_kzt)
     if hard_issues:
+        LOGGER.warning("PAYMENT_AI_REJECTED user=%s kind=%s issues=%s", user_id, kind, hard_issues[:6])
         await message.answer(
-            "❌ Чек не прошёл предварительную проверку:\n• "
-            + "\n• ".join(hard_issues[:5])
-            + "\n\nПришлите полный корректный чек. Документ пока не выдан."
+            ("❌ Чек не прошёл автоматическую проверку:\n• " + "\n• ".join(hard_issues[:6]) + "\n\nДокумент не запущен и не выдан. Пришлите полный корректный чек.")
+            if language != "kk"
+            else
+            ("❌ Чек автоматты тексеруден өтпеді:\n• " + "\n• ".join(hard_issues[:6]) + "\n\nҚұжат іске қосылған жоқ және берілген жоқ. Толық дұрыс чекті жіберіңіз.")
         )
         return
 
@@ -220,46 +211,71 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
         kind=kind,
         receipt_submitted=True,
         receipt_precheck_passed=True,
-        admin_confirmed=False,
+        ai_verified=True,
     )
-    if release_guard.allowed:
-        # Defensive invariant: no document should ever be releasable before the
-        # explicit administrator confirmation step below.
-        LOGGER.critical("PAYMENT_GUARD_INVALID_PREADMIN_RELEASE user=%s kind=%s", user_id, kind)
-        await message.answer("Документ не выдан: ошибка защищённой проверки оплаты. Обратитесь в техподдержку.")
+    if not release_guard.allowed:
+        LOGGER.critical("PAYMENT_AI_RELEASE_GUARD_BLOCKED user=%s kind=%s reason=%s", user_id, kind, release_guard.reason)
+        await message.answer("Документ не выдан: защищённая проверка оплаты не завершена.")
         return
 
-    try:
-        await message.bot.copy_message(chat_id=admin_id, from_chat_id=message.chat.id, message_id=message.message_id)
-        summary = admin_receipt_summary(
-            check,
+    LOGGER.info(
+        "PAYMENT_AI_VERIFIED user=%s kind=%s transaction=%s receipt_id=%s amount=%s",
+        user_id,
+        kind,
+        transaction_id,
+        check.receipt_or_transaction_id[:80],
+        check.amount_kzt,
+    )
+
+    # Negative ids are the current hard-prepay flow: no document exists yet.
+    # The verified receipt starts legal research/generation immediately.
+    if transaction_id < 0:
+        from korgan.prepayment_runtime import run_ai_verified_prepayment_generation
+
+        await run_ai_verified_prepayment_generation(
+            message=message,
+            state=state,
             user_id=user_id,
+            transaction_id=transaction_id,
             kind=kind,
             language=language,
-            amount=settings.document_price_kzt,
         )
-        await message.bot.send_message(
-            admin_id,
-            summary,
-            reply_markup=admin_decision_markup(settings, user_id, admin_doc_message_id, kind, language),
+        return
+
+    # Positive ids are legacy held documents generated by an older deployment.
+    # Keep them recoverable, but release automatically after the same strict AI
+    # verification instead of asking the administrator to confirm.
+    storage_admin_id = next((admin_id for admin_id in sorted(settings.admin_ids) if admin_id != user_id), None)
+    if storage_admin_id is None:
+        LOGGER.error("PAYMENT_LEGACY_STORAGE_MISSING user=%s kind=%s", user_id, kind)
+        await message.answer("Оплата проверена, но старый сохранённый документ недоступен. Обратитесь в техподдержку; повторно платить не нужно.")
+        return
+    try:
+        await message.bot.copy_message(
+            chat_id=user_id,
+            from_chat_id=storage_admin_id,
+            message_id=transaction_id,
+            caption=_document_caption_with_review(kind, language),
+            reply_markup=_document_review_markup(kind, language),
         )
     except Exception:
-        LOGGER.exception("PAYMENT_ADMIN_FORWARD_FAILED user=%s", user_id)
-        await message.answer("Не удалось передать чек на подтверждение. Документ не разблокирован. Попробуйте ещё раз позже.")
+        LOGGER.exception("PAYMENT_LEGACY_AUTO_RELEASE_FAILED user=%s doc_msg=%s", user_id, transaction_id)
+        await message.answer("Оплата проверена, но старый документ не удалось выдать. Повторно платить не нужно; обратитесь в техподдержку.")
         return
 
     await state.update_data(mode="main")
+    LOGGER.info("PAYMENT_AI_VERIFIED_LEGACY_RELEASE user=%s kind=%s transaction=%s", user_id, kind, transaction_id)
     await message.answer(
-        "✅ Чек принят. Он прошёл предварительную AI-проверку и отправлен на финальное подтверждение оплаты. "
-        "Word-файл будет выдан только после сверки платежа администратором."
+        "✅ KORGAN AI проверил чек. Оплата принята, Word-файл выдан выше."
         if language != "kk"
         else
-        "✅ Чек қабылданды. Ол алдын ала AI-тексеруден өтіп, төлемді соңғы растауға жіберілді. Word-файл әкімші төлемді тексергеннен кейін ғана беріледі."
+        "✅ KORGAN AI чекті тексерді. Төлем қабылданды, Word-файл жоғарыда берілді."
     )
 
 
 @router.callback_query(F.data.startswith("pay:ok:") | F.data.startswith("pay:no:"))
 async def admin_payment_decision(callback: CallbackQuery) -> None:
+    """Legacy recovery for admin cards sent before automatic verification deploy."""
     parsed = _parse_admin_callback(callback.data or "")
     settings = get_settings()
     admin_id = callback.from_user.id if callback.from_user else None
@@ -284,11 +300,7 @@ async def admin_payment_decision(callback: CallbackQuery) -> None:
     if action == "no":
         await callback.answer("Оплата отклонена.")
         await callback.message.edit_text(current_text + "\n\n❌ ОПЛАТА ОТКЛОНЕНА", reply_markup=None)
-        await callback.bot.send_message(
-            user_id,
-            "❌ Оплату пока не удалось подтвердить. Проверьте платёж/чек и нажмите «✅ Я оплатил» под карточкой оплаты повторно. "
-            "Документ не выдан."
-        )
+        await callback.bot.send_message(user_id, "❌ Старый платёж отклонён. Документ не выдан.")
         return
 
     release_guard = can_release_paid_document(
@@ -298,8 +310,7 @@ async def admin_payment_decision(callback: CallbackQuery) -> None:
         admin_confirmed=True,
     )
     if not release_guard.allowed:
-        LOGGER.error("PAYMENT_RELEASE_GUARD_BLOCKED user=%s kind=%s reason=%s", user_id, kind, release_guard.reason)
-        await callback.answer("Документ остаётся заблокирован: проверка оплаты не завершена.", show_alert=True)
+        await callback.answer("Документ остаётся заблокирован.", show_alert=True)
         return
 
     try:
@@ -311,16 +322,9 @@ async def admin_payment_decision(callback: CallbackQuery) -> None:
             reply_markup=_document_review_markup(kind, language),
         )
     except Exception:
-        LOGGER.exception("PAYMENT_DOCUMENT_RELEASE_FAILED user=%s doc_msg=%s", user_id, admin_doc_message_id)
-        await callback.answer("Не удалось выдать документ. Решение не зафиксировано — повторите.", show_alert=True)
+        LOGGER.exception("PAYMENT_LEGACY_DOCUMENT_RELEASE_FAILED user=%s doc_msg=%s", user_id, admin_doc_message_id)
+        await callback.answer("Не удалось выдать старый документ. Повторите.", show_alert=True)
         return
 
-    await callback.answer("Оплата подтверждена, документ выдан.")
-    await callback.message.edit_text(current_text + "\n\n✅ ОПЛАТА ПОДТВЕРЖДЕНА — документ выдан клиенту.", reply_markup=None)
-    await callback.bot.send_message(
-        user_id,
-        "✅ Оплата подтверждена. Word-файл выдан выше."
-        if language != "kk"
-        else
-        "✅ Төлем расталды. Word-файл жоғарыда берілді."
-    )
+    await callback.answer("Старый платёж подтверждён, документ выдан.")
+    await callback.message.edit_text(current_text + "\n\n✅ LEGACY ОПЛАТА ПОДТВЕРЖДЕНА — документ выдан.", reply_markup=None)
