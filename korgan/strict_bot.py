@@ -10,6 +10,7 @@ from aiogram.types import MenuButtonDefault
 
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
+from korgan.claim_generation_progress import install_claim_generation_progress
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter, claim_pipeline_v2_mode
 from korgan.claim_quality_hotfix import install_runtime_hotfix
 from korgan.claim_service_mux import ClaimServiceMux
@@ -91,6 +92,9 @@ from korgan.universal_document_runtime import router as universal_document_route
 install_document_generator_ownership_guard()
 install_generation_prepayment_gate()
 install_client_document_runtime_guidance()
+# Installed last so the progress ContextVar wraps the canonical prepayment
+# generator and can report the actual research -> draft transition.
+install_claim_generation_progress()
 
 LOGGER = logging.getLogger(__name__)
 
@@ -144,7 +148,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: local-corpus-first research/consultation + guarded web fallback + hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + strict receipt AI verification + durable receipt anti-replay + automatic paid generation=%s + manual payment confirmation=False + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: local-corpus-first research/consultation + guarded web fallback + claim progress + hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + strict receipt AI verification + durable receipt anti-replay + automatic paid generation=%s + manual payment confirmation=False + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
