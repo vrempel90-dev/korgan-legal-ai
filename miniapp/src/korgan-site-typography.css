@@ -1,0 +1,101 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@300;400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap');
+
+:root {
+  --korgan-display-font: 'Roboto Condensed', 'Arial Narrow', Arial, sans-serif;
+  --korgan-body-font: 'Roboto', Arial, sans-serif;
+}
+
+html, body, #root, button, input, textarea, select {
+  font-family: var(--korgan-body-font) !important;
+}
+
+.hero h1,
+.big-title h1,
+.ready-page h1,
+.payment-page h1,
+.analysis-card h1,
+.analysis-card h2,
+.action-card h2,
+.list-row strong,
+.case-list-item strong,
+.profile-card h2,
+.status-card h2,
+.subbar strong,
+.brand strong,
+.personal-lawyer-copy h2 {
+  font-family: var(--korgan-display-font) !important;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+}
+
+.hero h1 {
+  font-weight: 300;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+}
+
+.hero p,
+.big-title p,
+.action-card p,
+.analysis-card p,
+.case-description,
+.personal-lawyer-copy p,
+.privacy-card p,
+.list-row small,
+.case-list-item small {
+  font-family: var(--korgan-body-font) !important;
+  font-weight: 300;
+  letter-spacing: 0;
+}
+
+.primary,
+.secondary,
+.hero button,
+.lawyer-btn,
+.bottom-nav button,
+.top-status,
+.section-kicker,
+.eyebrow,
+.price-note,
+.pill,
+.fact,
+.settings-row,
+.language-switch button {
+  font-family: var(--korgan-display-font) !important;
+}
+
+.primary,
+.secondary,
+.hero button,
+.lawyer-btn {
+  font-weight: 600;
+  letter-spacing: 0.005em;
+}
+
+.section-kicker,
+.eyebrow,
+.top-status {
+  font-weight: 600;
+  letter-spacing: 0.09em;
+}
+
+.bottom-nav span {
+  font-family: var(--korgan-display-font) !important;
+  font-weight: 400;
+}
+
+.brand strong {
+  font-weight: 400;
+  letter-spacing: 0.13em;
+}
+
+.brand span {
+  font-family: var(--korgan-display-font) !important;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+}
+
+@media (max-width: 520px) {
+  .hero h1 { font-size: 36px; }
+  .action-card h2 { font-size: 16px; }
+}
