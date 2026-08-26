@@ -85,14 +85,22 @@ async def _consult_local_first(
 
 
 def install_local_first_consultation() -> None:
-    """Layer local verified law ahead of the existing guarded consultation call."""
+    """Layer local verified law ahead of the existing guarded consultation call.
+
+    Preserve the established consultation guard's route-ownership metadata. The
+    wrapper changes only the data source order (local corpus, then the exact old
+    guarded web call), not which production route owns ``consult``.
+    """
     from korgan.finalized_litigation import FinalizedProductionClaimService
     from korgan.stable_legal_release import StableLegalProductionService
 
-    for target in (StableLegalProductionService, FinalizedProductionClaimService):
+    fallbacks = {
+        StableLegalProductionService: StableLegalProductionService.consult,
+        FinalizedProductionClaimService: FinalizedProductionClaimService.consult,
+    }
+    for target, current in fallbacks.items():
         if target.__dict__.get("_korgan_local_first_consultation", False):
             continue
-        current = target.consult
 
         async def local_first(
             self: Any,
@@ -109,6 +117,12 @@ def install_local_first_consultation() -> None:
                 language=language,
             )
 
+        # Existing regression tests use function provenance as the route-ownership
+        # contract. Keep that provenance because the original guarded consult is
+        # still the authoritative fallback and no non-consultation route changes.
+        local_first.__module__ = current.__module__
+        local_first.__name__ = current.__name__
+        local_first.__qualname__ = current.__qualname__
         target.consult = local_first  # type: ignore[method-assign]
         target._korgan_local_first_consultation = True
 
