@@ -8,17 +8,17 @@ function isKazakhUi() {
 function copyForCurrentLanguage() {
   if (isKazakhUi()) {
     return {
-      kicker: 'LIVE LAWYER',
+      kicker: 'PERSONAL COUNSEL',
       title: 'Сіздің жеке заңгеріңіз',
-      description: 'Тікелей тірі заңгермен кеңесу. Қызмет ақылы, құны мен шарттарын заңгер нақтылайды.',
+      description: 'Жеке заңгермен тікелей кеңесу. Қызмет ақылы; құны мен шарттары жұмыс басталғанға дейін нақтыланады.',
       aria: 'Жеке заңгерге WhatsApp арқылы жазу',
     };
   }
 
   return {
-    kicker: 'LIVE LAWYER',
+    kicker: 'PERSONAL COUNSEL',
     title: 'Ваш персональный юрист',
-    description: 'Прямая консультация живого юриста. Услуга платная, стоимость и условия уточняются у юриста.',
+    description: 'Прямая консультация с персональным юристом. Услуга платная; стоимость и условия уточняются до начала работы.',
     aria: 'Написать персональному юристу в WhatsApp',
   };
 }
