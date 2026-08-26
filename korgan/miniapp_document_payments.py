@@ -175,8 +175,6 @@ async def create_document_order(
     pool = _require_pool()
     async with pool.acquire() as connection:
         async with connection.transaction():
-            # Payment is bound to an immutable case scope. Any previous unpaid
-            # scope for this same case becomes invalid as soon as facts change.
             await connection.execute(
                 """
                 UPDATE korgan_miniapp_document_orders
@@ -224,14 +222,19 @@ async def create_document_order(
     return _from_row(row)
 
 
-async def accept_document_receipt_precheck(
+async def _accept_receipt(
     *,
     order_id: int,
     user_key: str,
     receipt_hash: str,
     transaction_id: str,
     receipt_check: dict[str, Any],
+    target_status: str,
+    decision_note: str,
 ) -> bool:
+    """Atomically reserve a unique receipt and move one pending order forward."""
+    if target_status not in {"awaiting_admin", "approved"}:
+        raise ValueError("unsupported receipt target status")
     txid = transaction_id.strip() or None
     pool = _require_pool()
     try:
@@ -253,22 +256,79 @@ async def accept_document_receipt_precheck(
                     txid,
                     order_id,
                 )
-                updated = await connection.execute(
-                    """
-                    UPDATE korgan_miniapp_document_orders
-                    SET status='awaiting_admin', receipt_hash=$3, transaction_id=$4,
-                        receipt_check=$5::jsonb, receipt_at=NOW(), decision_note=''
-                    WHERE id=$1 AND user_key=$2 AND status='pending_receipt'
-                    """,
-                    order_id,
-                    user_key,
-                    receipt_hash,
-                    txid,
-                    json.dumps(receipt_check, ensure_ascii=False),
-                )
+                if target_status == "approved":
+                    updated = await connection.execute(
+                        """
+                        UPDATE korgan_miniapp_document_orders
+                        SET status='approved', receipt_hash=$3, transaction_id=$4,
+                            receipt_check=$5::jsonb, receipt_at=NOW(), decided_at=NOW(), decision_note=$6
+                        WHERE id=$1 AND user_key=$2 AND status='pending_receipt'
+                        """,
+                        order_id,
+                        user_key,
+                        receipt_hash,
+                        txid,
+                        json.dumps(receipt_check, ensure_ascii=False),
+                        decision_note[:500],
+                    )
+                else:
+                    updated = await connection.execute(
+                        """
+                        UPDATE korgan_miniapp_document_orders
+                        SET status='awaiting_admin', receipt_hash=$3, transaction_id=$4,
+                            receipt_check=$5::jsonb, receipt_at=NOW(), decision_note=$6
+                        WHERE id=$1 AND user_key=$2 AND status='pending_receipt'
+                        """,
+                        order_id,
+                        user_key,
+                        receipt_hash,
+                        txid,
+                        json.dumps(receipt_check, ensure_ascii=False),
+                        decision_note[:500],
+                    )
                 return updated.endswith("1")
     except asyncpg.UniqueViolationError:
         return False
+
+
+async def accept_document_receipt_precheck(
+    *,
+    order_id: int,
+    user_key: str,
+    receipt_hash: str,
+    transaction_id: str,
+    receipt_check: dict[str, Any],
+) -> bool:
+    """Legacy/manual path retained for already deployed admin tooling."""
+    return await _accept_receipt(
+        order_id=order_id,
+        user_key=user_key,
+        receipt_hash=receipt_hash,
+        transaction_id=transaction_id,
+        receipt_check=receipt_check,
+        target_status="awaiting_admin",
+        decision_note="",
+    )
+
+
+async def accept_document_receipt_ai_verified(
+    *,
+    order_id: int,
+    user_key: str,
+    receipt_hash: str,
+    transaction_id: str,
+    receipt_check: dict[str, Any],
+) -> bool:
+    """Normal path: strict AI verification atomically authorizes generation."""
+    return await _accept_receipt(
+        order_id=order_id,
+        user_key=user_key,
+        receipt_hash=receipt_hash,
+        transaction_id=transaction_id,
+        receipt_check=receipt_check,
+        target_status="approved",
+        decision_note="AI receipt verification passed",
+    )
 
 
 async def decide_document_order(
@@ -277,6 +337,7 @@ async def decide_document_order(
     approved: bool,
     note: str = "",
 ) -> bool:
+    """Legacy recovery/admin tool for orders already in awaiting_admin."""
     pool = _require_pool()
     if approved:
         updated = await pool.execute(
@@ -289,8 +350,6 @@ async def decide_document_order(
             note[:500],
         )
     else:
-        # Rejection reopens this same order for a fresh receipt. The rejected
-        # receipt remains globally registered so it cannot be reused.
         updated = await pool.execute(
             """
             UPDATE korgan_miniapp_document_orders
