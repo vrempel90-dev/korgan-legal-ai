@@ -32,6 +32,7 @@ def test_f2_supply_cap_reached_on_100th_delay_day() -> None:
     assert result.outstanding_principal == 3_250_000
     assert result.no_penalty_clause is False
     assert result.convention["delay_start"] == "due_date + 1 calendar day"
+    assert result.convention["day_count"] == "calendar days, both segment endpoints included"
 
 
 def test_f3_services_partial_payment_changes_base_next_day() -> None:
