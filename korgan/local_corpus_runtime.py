@@ -172,8 +172,12 @@ async def research_case_from_local_corpus(
         )
         return None
 
+    strategy_notes = _strategy_notes(payload)
     rendered_model_text = "\n".join(
-        f"{block.get('thesis', '')}\n{block.get('link_to_facts', '')}" for block in blocks
+        [
+            *(f"{block.get('thesis', '')}\n{block.get('link_to_facts', '')}" for block in blocks),
+            *strategy_notes,
+        ]
     )
     leaked = find_unvalidated_citations(rendered_model_text, validation)
     if leaked:
@@ -190,7 +194,6 @@ async def research_case_from_local_corpus(
     ]
     coverage_complete_raw = payload.get("coverage_complete")
     coverage_complete = bool(coverage_complete_raw) if coverage_complete_raw is not None else not coverage_gaps
-    strategy_notes = _strategy_notes(payload)
 
     if require_complete_coverage:
         if not coverage_complete or coverage_gaps:
