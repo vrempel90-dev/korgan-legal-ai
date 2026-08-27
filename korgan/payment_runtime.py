@@ -127,12 +127,15 @@ async def payment_proof_requested(callback: CallbackQuery, state: FSMContext) ->
         await callback.answer("Запрос устарел. Сформируйте документ заново.", show_alert=True)
         return
 
+    offer_date = getattr(callback.message, "date", None) if callback.message else None
+    offer_time = offer_date.isoformat() if offer_date is not None else ""
     await state.update_data(
         mode="payment_receipt",
         payment_admin_doc_message_id=admin_doc_message_id,
         payment_kind=kind,
         payment_language=language,
         payment_signature=signature,
+        payment_offer_time=offer_time,
     )
     await callback.answer()
     if callback.message:
@@ -179,6 +182,24 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
         await message.answer("Платёжная сессия устарела. Нажмите «✅ Я оплатил» ещё раз.")
         return
 
+    offer_time = str(data.get("payment_offer_time") or "").strip()
+    expected_recipient = settings.kaspi_payment_recipient.strip()
+    if not offer_time or not expected_recipient:
+        LOGGER.critical(
+            "PAYMENT_VERIFICATION_CONTEXT_MISSING user=%s kind=%s offer_time=%s recipient=%s",
+            user_id,
+            kind,
+            bool(offer_time),
+            bool(expected_recipient),
+        )
+        await message.answer(
+            "⚠️ Автоматическая проверка оплаты временно недоступна. Документ остаётся заблокирован. Повторно платить не нужно — нажмите «✅ Я оплатил» на карточке оплаты и отправьте чек ещё раз."
+            if language != "kk"
+            else
+            "⚠️ Төлемді автоматты тексеру уақытша қолжетімсіз. Құжат бұғатталған күйде қалады. Қайта төлеу қажет емес — төлем карточкасындағы «✅ Төледім» түймесін басып, чекті қайта жіберіңіз."
+        )
+        return
+
     payload = await _receipt_bytes(message)
     if payload is None:
         await message.answer("Не удалось прочитать файл. Пришлите полный чек как фото, JPG/PNG/WEBP или PDF.")
@@ -190,14 +211,19 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
     except Exception:
         LOGGER.exception("PAYMENT_RECEIPT_AI_FAILED user=%s", user_id)
         await message.answer(
-            "⚠️ Сейчас не удалось выполнить обязательную AI-проверку чека. Документ остаётся заблокирован. Отправьте чек ещё раз позже."
+            "⚠️ Сейчас не удалось выполнить обязательную AI-проверку чека. Документ остаётся заблокирован. Повторно платить не нужно; отправьте чек ещё раз позже."
             if language != "kk"
             else
-            "⚠️ Қазір чекті міндетті AI-тексеру орындалмады. Құжат бұғатталған күйде қалады. Чекті кейін қайта жіберіңіз."
+            "⚠️ Қазір чекті міндетті AI-тексеру орындалмады. Құжат бұғатталған күйде қалады. Қайта төлеу қажет емес; чекті кейін қайта жіберіңіз."
         )
         return
 
-    hard_issues = receipt_hard_issues(check, settings.document_price_kzt)
+    hard_issues = receipt_hard_issues(
+        check,
+        settings.document_price_kzt,
+        expected_recipient=expected_recipient,
+        offered_at=offer_time,
+    )
     if hard_issues:
         LOGGER.warning("PAYMENT_AI_REJECTED user=%s kind=%s issues=%s", user_id, kind, hard_issues[:6])
         await message.answer(
@@ -220,13 +246,28 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
         return
 
     request_id = str(data.get("prepayment_request_id") or data.get("request_id") or f"legacy:{transaction_id}")
-    reserved = await reserve_verified_document_receipt(
-        receipt_hash=receipt_fingerprint(raw),
-        transaction_id=check.receipt_or_transaction_id,
-        user_id=user_id,
-        request_id=request_id,
-        document_kind=kind,
-    )
+    try:
+        reserved = await reserve_verified_document_receipt(
+            receipt_hash=receipt_fingerprint(raw),
+            transaction_id=check.receipt_or_transaction_id,
+            user_id=user_id,
+            request_id=request_id,
+            document_kind=kind,
+        )
+    except Exception:
+        LOGGER.exception(
+            "PAYMENT_RECEIPT_REPLAY_GUARD_FAILED user=%s kind=%s transaction=%s",
+            user_id,
+            kind,
+            transaction_id,
+        )
+        await message.answer(
+            "⚠️ Не удалось безопасно проверить уникальность чека. Документ остаётся заблокирован. Повторно платить не нужно — отправьте этот же чек ещё раз позже."
+            if language != "kk"
+            else
+            "⚠️ Чектің бірегейлігін қауіпсіз тексеру мүмкін болмады. Құжат бұғатталған күйде қалады. Қайта төлеу қажет емес — осы чекті кейін қайта жіберіңіз."
+        )
+        return
     if not reserved:
         LOGGER.warning(
             "PAYMENT_RECEIPT_REPLAY_BLOCKED user=%s kind=%s transaction=%s receipt_id=%s",
@@ -244,18 +285,19 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
         return
 
     LOGGER.info(
-        "PAYMENT_AI_VERIFIED user=%s kind=%s transaction=%s receipt_id=%s amount=%s",
+        "PAYMENT_AI_VERIFIED user=%s kind=%s transaction=%s receipt_id=%s amount=%s recipient=%s",
         user_id,
         kind,
         transaction_id,
         check.receipt_or_transaction_id[:80],
         check.amount_kzt,
+        check.merchant_or_recipient[:80],
     )
 
     if transaction_id < 0:
         from korgan.prepayment_runtime import run_ai_verified_prepayment_generation
 
-        await run_ai_verified_prepayment_generation(
+        started = await run_ai_verified_prepayment_generation(
             message=message,
             state=state,
             user_id=user_id,
@@ -263,11 +305,20 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
             kind=kind,
             language=language,
         )
+        if not started:
+            await state.update_data(mode="payment_receipt")
+            await message.answer(
+                "⚠️ Чек уже безопасно закреплён за этой заявкой, но документ не удалось запустить. Повторно платить не нужно — отправьте этот же чек ещё раз."
+                if language != "kk"
+                else
+                "⚠️ Чек осы өтінімге қауіпсіз бекітілді, бірақ құжатты іске қосу мүмкін болмады. Қайта төлеу қажет емес — осы чекті қайта жіберіңіз."
+            )
         return
 
     storage_admin_id = next((admin_id for admin_id in sorted(settings.admin_ids) if admin_id != user_id), None)
     if storage_admin_id is None:
         LOGGER.error("PAYMENT_LEGACY_STORAGE_MISSING user=%s kind=%s", user_id, kind)
+        await state.update_data(mode="payment_receipt")
         await message.answer("Оплата проверена, но старый сохранённый документ недоступен. Обратитесь в техподдержку; повторно платить не нужно.")
         return
     try:
@@ -280,7 +331,8 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
         )
     except Exception:
         LOGGER.exception("PAYMENT_LEGACY_AUTO_RELEASE_FAILED user=%s doc_msg=%s", user_id, transaction_id)
-        await message.answer("Оплата проверена, но старый документ не удалось выдать. Повторно платить не нужно; обратитесь в техподдержку.")
+        await state.update_data(mode="payment_receipt")
+        await message.answer("Оплата проверена, но старый документ не удалось выдать. Повторно платить не нужно; отправьте этот же чек ещё раз или обратитесь в техподдержку.")
         return
 
     await state.update_data(mode="main")
