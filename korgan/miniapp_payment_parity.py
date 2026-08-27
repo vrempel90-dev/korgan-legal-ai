@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from typing import Any
-
-import asyncpg
 
 from korgan import miniapp_document_payments as legacy
 
@@ -55,17 +54,21 @@ async def accept_ai_verified_document_receipt(
             if status not in {"pending_receipt", "awaiting_admin"}:
                 return False
 
-            try:
-                await connection.execute(
-                    """
-                    INSERT INTO korgan_miniapp_document_receipts(receipt_hash, transaction_id, order_id)
-                    VALUES($1,$2,$3)
-                    """,
-                    receipt_hash,
-                    txid,
-                    order_id,
-                )
-            except asyncpg.UniqueViolationError:
+            # ON CONFLICT DO NOTHING keeps the transaction usable. Catching a
+            # UniqueViolationError inside this transaction would leave it in an
+            # aborted state and make the idempotency lookup below fail.
+            inserted = await connection.fetchrow(
+                """
+                INSERT INTO korgan_miniapp_document_receipts(receipt_hash, transaction_id, order_id)
+                VALUES($1,$2,$3)
+                ON CONFLICT DO NOTHING
+                RETURNING receipt_hash, transaction_id, order_id
+                """,
+                receipt_hash,
+                txid,
+                order_id,
+            )
+            if inserted is None:
                 existing = await connection.fetchrow(
                     """
                     SELECT receipt_hash, transaction_id, order_id
@@ -93,7 +96,7 @@ async def accept_ai_verified_document_receipt(
                 user_key,
                 receipt_hash,
                 txid,
-                __import__("json").dumps(receipt_check, ensure_ascii=False),
+                json.dumps(receipt_check, ensure_ascii=False),
             )
             if updated.endswith("1"):
                 return True
