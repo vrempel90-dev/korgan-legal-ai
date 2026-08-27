@@ -106,30 +106,30 @@ def test_new_receipt_flow_routes_exact_active_request_for_all_five_kinds(monkeyp
 
     class State:
         def __init__(self, data: dict[str, object]) -> None:
-  self.data = dict(data)
+            self.data = dict(data)
 
         async def get_data(self) -> dict[str, object]:
-  return dict(self.data)
+            return dict(self.data)
 
         async def update_data(self, **kwargs: object) -> None:
-  self.data.update(kwargs)
+            self.data.update(kwargs)
 
     class Message:
         def __init__(self, user_id: int) -> None:
-  self.from_user = SimpleNamespace(id=user_id)
-  self.answers: list[str] = []
+            self.from_user = SimpleNamespace(id=user_id)
+            self.answers: list[str] = []
 
         async def answer(self, text: str, **_kwargs: object) -> None:
-  self.answers.append(text)
+            self.answers.append(text)
 
     async def fetch_receipt(_url: str):
         return SimpleNamespace(
-  receipt_fingerprint="fiscal-hash",
-  transaction_id="RNM:RRN:FP",
-  amount_kzt=1000,
-  seller_bin="",
-  rnm="123456789012",
-  fp="456789",
+            receipt_fingerprint="fiscal-hash",
+            transaction_id="RNM:RRN:FP",
+            amount_kzt=1000,
+            seller_bin="",
+            rnm="123456789012",
+            fp="456789",
         )
 
     def issues(_receipt, expected_amount: int, **_kwargs) -> list[str]:
@@ -156,22 +156,22 @@ def test_new_receipt_flow_routes_exact_active_request_for_all_five_kinds(monkeyp
         request_id = f"request-{kind}"
         signature = sign_user_payment(settings, user_id, transaction_id, kind, "ru")
         state = State({
-  "mode": "payment_receipt",
-  "request_id": request_id,
-  "request_kind": kind,
-  "prepayment_request_id": request_id,
-  "prepayment_kind": kind,
-  "prepayment_transaction_id": transaction_id,
-  "payment_admin_doc_message_id": transaction_id,
-  "payment_kind": kind,
-  "payment_language": "ru",
-  "payment_signature": signature,
-  "payment_offer_time": "2026-08-18T10:00:00+05:00",
+            "mode": "payment_receipt",
+            "request_id": request_id,
+            "request_kind": kind,
+            "prepayment_request_id": request_id,
+            "prepayment_kind": kind,
+            "prepayment_transaction_id": transaction_id,
+            "payment_admin_doc_message_id": transaction_id,
+            "payment_kind": kind,
+            "payment_language": "ru",
+            "payment_signature": signature,
+            "payment_offer_time": "2026-08-18T10:00:00+05:00",
         })
         asyncio.run(payment_runtime._verify_and_release_fiscal_url(
-  Message(user_id),
-  state,
-  "https://receipt.kaspi.kz/web/fiscal?f=123456789012&i=456789&s=1000&t=20260818110000",
+            Message(user_id),
+            state,
+            "https://receipt.kaspi.kz/web/fiscal?f=123456789012&i=456789&s=1000&t=20260818110000",
         ))
 
     assert calls == [
@@ -181,6 +181,8 @@ def test_new_receipt_flow_routes_exact_active_request_for_all_five_kinds(monkeyp
         (1004, "response", "request-response", -5004),
         (1005, "contract", "request-contract", -5005),
     ]
+
+
 def test_replay_storage_failure_keeps_document_blocked_and_says_do_not_repay(monkeypatch) -> None:
     settings = Settings(
         telegram_bot_token="123456:TEST_TOKEN",
@@ -195,41 +197,41 @@ def test_replay_storage_failure_keeps_document_blocked_and_says_do_not_repay(mon
 
     class State:
         data = {
-  "request_id": "request-1",
-  "request_kind": kind,
-  "prepayment_request_id": "request-1",
-  "prepayment_kind": kind,
-  "prepayment_transaction_id": transaction_id,
-  "payment_admin_doc_message_id": transaction_id,
-  "payment_kind": kind,
-  "payment_language": "ru",
-  "payment_signature": sign_user_payment(settings, user_id, transaction_id, kind, "ru"),
-  "payment_offer_time": "2026-08-18T10:00:00+05:00",
+            "request_id": "request-1",
+            "request_kind": kind,
+            "prepayment_request_id": "request-1",
+            "prepayment_kind": kind,
+            "prepayment_transaction_id": transaction_id,
+            "payment_admin_doc_message_id": transaction_id,
+            "payment_kind": kind,
+            "payment_language": "ru",
+            "payment_signature": sign_user_payment(settings, user_id, transaction_id, kind, "ru"),
+            "payment_offer_time": "2026-08-18T10:00:00+05:00",
         }
 
         async def get_data(self):
-  return dict(self.data)
+            return dict(self.data)
 
         async def update_data(self, **kwargs):
-  self.data.update(kwargs)
+            self.data.update(kwargs)
 
     class Message:
         from_user = SimpleNamespace(id=user_id)
 
         def __init__(self) -> None:
-  self.answers: list[str] = []
+            self.answers: list[str] = []
 
         async def answer(self, text: str, **_kwargs: object) -> None:
-  self.answers.append(text)
+            self.answers.append(text)
 
     async def fetch_receipt(_url: str):
         return SimpleNamespace(
-  receipt_fingerprint="fiscal-hash-fail",
-  transaction_id="RNM:RRN:FP-FAIL",
-  amount_kzt=1000,
-  seller_bin="",
-  rnm="123456789012",
-  fp="456789",
+            receipt_fingerprint="fiscal-hash-fail",
+            transaction_id="RNM:RRN:FP-FAIL",
+            amount_kzt=1000,
+            seller_bin="",
+            rnm="123456789012",
+            fp="456789",
         )
 
     def issues(_receipt, _expected_amount: int, **_kwargs) -> list[str]:
@@ -259,6 +261,8 @@ def test_replay_storage_failure_keeps_document_blocked_and_says_do_not_repay(mon
 
     assert generated["value"] is False
     assert any("Повторно платить не нужно" in text for text in message.answers)
+
+
 def test_new_request_clears_all_payment_authorization_fields() -> None:
     keys = request_scope._REQUEST_SCOPED_KEYS
     required = {
