@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     payments_enabled: bool = False
     kaspi_payment_url: str = ""
     kaspi_payment_recipient: str = "OpenCourt (KORGAN)"
+    # Exact 12-digit seller BIN from the KORGAN fiscal receipt. When configured,
+    # it is authoritative and stronger than display-name matching.
+    kaspi_payment_bin: str = ""
     document_price_kzt: int = 1000
 
     # Consultation quota/payment gate. Kept separately from document payments so
