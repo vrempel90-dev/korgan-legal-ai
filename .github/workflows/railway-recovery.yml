@@ -1,0 +1,77 @@
+name: railway-recovery
+
+on:
+  push:
+    branches:
+      - ops/railway-recovery-exec4
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN_A: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_TOKEN_B: ${{ secrets.RAILWAY_API_TOKEN }}
+      RAILWAY_TOKEN_C: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+      TELEGRAM_TOKEN_A: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_TOKEN_B: ${{ secrets.BOT_TOKEN }}
+    steps:
+      - name: Cancel stale Railway deployments
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="${RAILWAY_TOKEN_A:-${RAILWAY_TOKEN_B:-${RAILWAY_TOKEN_C:-}}}"
+          if [ -z "$TOKEN" ]; then
+            echo "railway_token_present=false"
+            exit 0
+          fi
+          echo "railway_token_present=true"
+          cancel_one() {
+            local id="$1"
+            local payload response
+            payload=$(jq -nc --arg id "$id" '{query:"mutation($id:String!){deploymentCancel(id:$id)}",variables:{id:$id}}')
+            response=$(curl -sS https://backboard.railway.app/graphql/v2 \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $TOKEN" \
+              --data "$payload" || true)
+            if echo "$response" | jq -e '.data.deploymentCancel != null and (.errors|not)' >/dev/null 2>&1; then
+              echo "cancel_${id}=requested_auth_bearer"
+              return 0
+            fi
+            response=$(curl -sS https://backboard.railway.app/graphql/v2 \
+              -H "Content-Type: application/json" \
+              -H "Project-Access-Token: $TOKEN" \
+              --data "$payload" || true)
+            if echo "$response" | jq -e '.data.deploymentCancel != null and (.errors|not)' >/dev/null 2>&1; then
+              echo "cancel_${id}=requested_project_token"
+            else
+              echo "cancel_${id}=failed"
+            fi
+          }
+          cancel_one 8e53a7cb-3e4f-4077-a10d-4790b5b2e993
+          cancel_one 1222772a-1699-4ada-a470-3be812d98b2b
+          cancel_one 330d81fd-ade2-4837-93be-ce76e886be45
+
+      - name: Restore Telegram Mini App menu
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="${TELEGRAM_TOKEN_A:-${TELEGRAM_TOKEN_B:-}}"
+          if [ -z "$TOKEN" ]; then
+            echo "telegram_token_present=false"
+            exit 0
+          fi
+          echo "telegram_token_present=true"
+          TARGET="https://korgan-miniapp-staging-production.up.railway.app"
+          payload=$(jq -nc --arg url "$TARGET" '{menu_button:{type:"web_app",text:"Открыть KORGAN",web_app:{url:$url}}}')
+          curl -fsS "https://api.telegram.org/bot${TOKEN}/setChatMenuButton" \
+            -H "Content-Type: application/json" \
+            --data "$payload" >/tmp/set-menu.json
+          jq -e '.ok == true' /tmp/set-menu.json >/dev/null
+          curl -fsS "https://api.telegram.org/bot${TOKEN}/getChatMenuButton" \
+            -H "Content-Type: application/json" \
+            --data '{}' >/tmp/get-menu.json
+          jq -e --arg url "$TARGET" '.ok == true and .result.type == "web_app" and (.result.web_app.url | rtrimstr("/")) == ($url | rtrimstr("/"))' /tmp/get-menu.json >/dev/null
+          echo "telegram_menu_restored=true"
