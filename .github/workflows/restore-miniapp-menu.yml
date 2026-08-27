@@ -1,0 +1,83 @@
+name: Restore working Mini App menu
+
+on:
+  push:
+    branches:
+      - ops/restore-miniapp-menu
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_ID: 55005af0-1691-4fd3-8b2c-6964d6bcd92b
+  ENVIRONMENT_ID: be0cde49-2f1c-4286-ae40-e4a693a19641
+  SERVICE_ID: 4a7be27e-a413-4b09-9a91-915c893d676b
+  TARGET_MINIAPP_URL: https://korgan-miniapp-staging-production.up.railway.app
+  RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+  RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+jobs:
+  restore-menu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require Railway credential
+        shell: bash
+        run: |
+          if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "No Railway credential is configured in GitHub Actions secrets."
+            exit 2
+          fi
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Link production OFD API service
+        run: railway link --project "$PROJECT_ID" --environment "$ENVIRONMENT_ID" --service "$SERVICE_ID"
+
+      - name: Switch Telegram menu to known-good Mini App
+        shell: bash
+        run: |
+          cat > /tmp/switch_menu.py <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+          target = os.environ.get("TARGET_MINIAPP_URL", "").strip()
+          if not token:
+              raise SystemExit("TELEGRAM_BOT_TOKEN is missing from Railway service variables")
+          if not target.startswith("https://"):
+              raise SystemExit("TARGET_MINIAPP_URL is invalid")
+
+          def call(method, payload):
+              req = urllib.request.Request(
+                  f"https://api.telegram.org/bot{token}/{method}",
+                  data=json.dumps(payload).encode("utf-8"),
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+              with urllib.request.urlopen(req, timeout=15) as response:
+                  body = json.loads(response.read().decode("utf-8"))
+              if not body.get("ok"):
+                  raise SystemExit(f"Telegram {method} failed: {body.get('description', 'unknown error')}")
+              return body
+
+          call(
+              "setChatMenuButton",
+              {
+                  "menu_button": {
+                      "type": "web_app",
+                      "text": "Открыть KORGAN",
+                      "web_app": {"url": target},
+                  }
+              },
+          )
+          result = call("getChatMenuButton", {}).get("result") or {}
+          web_app = result.get("web_app") or {}
+          actual = str(web_app.get("url") or "").rstrip("/")
+          if result.get("type") != "web_app" or actual != target.rstrip("/"):
+              raise SystemExit(f"Menu verification failed: type={result.get('type')} url={actual}")
+          print(f"MENU_RESTORED url={actual}")
+          PY
+
+          railway run python /tmp/switch_menu.py
