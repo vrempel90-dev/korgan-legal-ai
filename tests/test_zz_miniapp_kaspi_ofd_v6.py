@@ -138,13 +138,15 @@ def test_v6_endpoint_has_no_ai_receipt_analyzer_or_file_upload_contract() -> Non
 
 def test_launcher_and_frontend_are_pinned_to_ofd_contract() -> None:
     launcher = (ROOT / "korgan" / "miniapp_telegram_launcher.py").read_text(encoding="utf-8")
+    cors_wrapper = (ROOT / "korgan" / "miniapp_api_v7.py").read_text(encoding="utf-8")
     api = (ROOT / "miniapp" / "src" / "korganApiV2.js").read_text(encoding="utf-8")
     server = (ROOT / "miniapp" / "server.mjs").read_text(encoding="utf-8")
     ui = (ROOT / "miniapp" / "src" / "payment-ofd-copy.js").read_text(encoding="utf-8")
     index = (ROOT / "miniapp" / "index.html").read_text(encoding="utf-8")
 
-    assert 'uvicorn.run("korgan.miniapp_api_v6:app"' in launcher
-    assert "miniapp_api_v5:app" not in launcher
+    assert 'uvicorn.run("korgan.miniapp_api_v7:app"' in launcher
+    assert "from korgan import miniapp_api_v6 as runtime" in cors_wrapper
+    assert "ReceiptAnalyzer" not in cors_wrapper
     assert "api_version !== '1.1.0'" in api
     assert "consultation_ai_receipt_verification !== false" in api
     assert "consultation_ofd_receipt_verification !== true" in api
