@@ -52,6 +52,7 @@ _REQUEST_SCOPED_KEYS = {
     "payment_kind",
     "payment_language",
     "payment_signature",
+    "payment_offer_time",
     "prepayment_transaction_id",
     "prepayment_request_id",
     "prepayment_kind",

@@ -1,28 +1,73 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from korgan.legal.pipeline import research_from_corpus
+from korgan.legal_types import LegalResearch, VerificationStatus
 
 LOGGER = logging.getLogger(__name__)
 
 
-def install_professional_rag_bridge() -> None:
-    """Feed local Adilet corpus candidates into the existing professional research pass.
+async def _research_local_first(
+    service: Any,
+    original_research: Callable[..., Awaitable[LegalResearch]],
+    case_context: str,
+    language: str = "ru",
+) -> LegalResearch:
+    """Use a complete validated local-corpus result, else preserve web research exactly."""
+    from korgan.local_corpus_runtime import research_case_from_local_corpus
 
-    The local corpus is a retrieval accelerator, not an authority shortcut. The
-    professional service still performs its source-bound official web pass and
-    only accepts law after the existing VERIFIED checks. No extra model call is
-    added: the corpus contributes only deterministic candidate text to the one
-    research prompt that already existed in the stable production path.
+    try:
+        local = await research_case_from_local_corpus(
+            service,
+            case_context,
+            language,
+            require_complete_coverage=True,
+        )
+    except Exception:
+        LOGGER.exception("Professional local-first research failed — preserving web fallback")
+        local = None
+
+    if (
+        local is not None
+        and local.status == VerificationStatus.VERIFIED
+        and local.verified_claims
+        and local.source_urls
+        and not local.unverified_claims
+    ):
+        LOGGER.info(
+            "PROFESSIONAL_LOCAL_CORPUS_FAST_HIT verified=%d sources=%d strategy=%d web_search=skipped",
+            len(local.verified_claims),
+            len(local.source_urls),
+            len(local.notes),
+        )
+        return local
+
+    LOGGER.info("PROFESSIONAL_LOCAL_CORPUS_FALLBACK web_search=required")
+    return await original_research(service, case_context, language=language)
+
+
+def install_professional_rag_bridge() -> None:
+    """Make the verified local Adilet corpus the first production research path.
+
+    Two layers are installed:
+    1. local-first: a complete, mechanically validated corpus result returns
+       immediately and therefore avoids the live web-search round trip;
+    2. unchanged fallback: if local coverage is absent/incomplete/ambiguous, the
+       existing professional source-bound web research runs exactly as before,
+       with local corpus candidates appended only as search hints.
+
+    No legal rule becomes VERIFIED from model memory. The local fast path accepts
+    only article_ids actually offered from the current corpus and validated back
+    against that corpus. Any uncertainty falls back to the existing web path.
     """
     from korgan import fast_professional_litigation as litigation
 
     if getattr(litigation, "_korgan_local_rag_bridge_installed", False):
         return
 
-    original = litigation._professional_research_prompt
+    original_prompt = litigation._professional_research_prompt
 
     def bridged_prompt(
         case_context: str,
@@ -31,7 +76,7 @@ def install_professional_rag_bridge() -> None:
         checked_on: str,
         **kwargs: Any,
     ) -> str:
-        prompt = original(
+        prompt = original_prompt(
             case_context,
             max_chars=max_chars,
             checked_on=checked_on,
@@ -64,5 +109,24 @@ def install_professional_rag_bridge() -> None:
         )
 
     litigation._professional_research_prompt = bridged_prompt
+
+    cls = litigation.FastProfessionalLitigationService
+    original_research = cls.research_case
+
+    async def local_first_research(
+        self: Any,
+        case_context: str,
+        language: str = "ru",
+    ) -> LegalResearch:
+        return await _research_local_first(
+            self,
+            original_research,
+            case_context,
+            language,
+        )
+
+    local_first_research._korgan_local_first_research = True  # type: ignore[attr-defined]
+    cls.research_case = local_first_research
+
     litigation._korgan_local_rag_bridge_installed = True
-    LOGGER.info("Installed KORGAN professional local-RAG bridge")
+    LOGGER.info("Installed KORGAN professional local-first corpus + web fallback bridge")

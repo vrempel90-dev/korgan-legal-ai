@@ -15,8 +15,6 @@ def _callbacks(markup) -> list[str]:
 
 
 def test_pretrial_response_intent_is_separate_from_pretrial_and_claim_response() -> None:
-    # Low-level parser keeps the former alias for compatibility with already
-    # stored/internal text. Runtime/category routing no longer exposes it.
     assert is_pretrial_response_request("подготовь отзыв на претензию по этим материалам")
     assert is_pretrial_response_request("составь ответ на досудебную претензию")
     assert not is_pretrial_response_request("подготовь досудебную претензию")
@@ -49,23 +47,22 @@ def test_new_document_is_known_to_transport_and_payment() -> None:
 
     install_pretrial_response_transport()
     assert localized_transport._DOCUMENT_KINDS["korgan_otvet_na_pretenziyu.docx"] == "pretrial_response"
-    # Legacy filename remains recognized only so an already-held document from
-    # an older deployment can still be released after payment.
     assert localized_transport._DOCUMENT_KINDS["korgan_otzyv_na_pretenziyu.docx"] == "pretrial_response"
     assert payment.document_label("pretrial_response", "ru") == "ответ на претензию"
     assert "Ответ на претензию" in localized_transport._document_client_caption("pretrial_response", "ru")
 
 
-def test_auto_payment_offer_preserves_admin_confirmation() -> None:
+def test_auto_payment_offer_requires_ai_check_but_not_admin_confirmation() -> None:
     from korgan import payment_gate
 
     install_auto_payment()
     text = payment_gate.payment_offer_text("claim", "ru", 1000)
     assert "KORGAN AI" in text
-    assert "администратор" in text.lower()
+    assert "автоматически" in text.lower()
+    assert "без подтверждения администратора" in text.lower()
 
 
-def test_auto_payment_receipt_delegates_to_canonical_manual_confirmation(monkeypatch) -> None:
+def test_auto_payment_receipt_delegates_to_canonical_ai_auto_release(monkeypatch) -> None:
     calls: list[tuple[object, object]] = []
 
     async def fake_payment_receipt_received(message, state) -> None:

@@ -4,7 +4,10 @@ import base64
 import hashlib
 import hmac
 import json
+import re
+import unicodedata
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -60,6 +63,16 @@ _RECEIPT_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+_KZ_TZ = timezone(timedelta(hours=5))
+_RECEIPT_DATE_FORMATS = (
+    "%d.%m.%Y %H:%M:%S",
+    "%d.%m.%Y %H:%M",
+    "%d/%m/%Y %H:%M:%S",
+    "%d/%m/%Y %H:%M",
+    "%d-%m-%Y %H:%M:%S",
+    "%d-%m-%Y %H:%M",
+)
+
 
 @dataclass(frozen=True)
 class ReceiptCheck:
@@ -82,7 +95,12 @@ class ReceiptCheck:
 
 
 class ReceiptAnalyzer:
-    """AI pre-check only. Final payment confirmation is always manual/admin-side."""
+    """Strict AI verifier for a client-submitted Kaspi receipt.
+
+    This verifies the visible receipt, not Kaspi's private transaction history.
+    Ambiguous, incomplete or suspicious receipts fail closed and never unlock a
+    paid document.
+    """
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -92,12 +110,13 @@ class ReceiptAnalyzer:
         suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
         encoded = base64.b64encode(data).decode("ascii")
         prompt = (
-            "Проведи предварительную проверку чека оплаты KORGAN. Извлеки только то, что реально видно. "
-            "Определи, похож ли документ на чек/квитанцию Kaspi, отмечена ли оплата как успешная, сумму, дату/время, "
-            "получателя, плательщика, номер операции/чека, РНМ и ФП при наличии. Отдельно перечисли визуальные признаки "
-            "возможного редактирования, обрезки критичных полей, несовпадающих шрифтов/слоёв или иных аномалий. "
-            "Не называй чек подлинным: у тебя нет прямого доступа к Kaspi Pay/ОФД. Если поле не видно — оставь пустую строку, "
-            "для суммы используй 0."
+            "Проведи строгую автоматическую проверку чека оплаты KORGAN. Извлеки только то, что реально видно. "
+            "Определи, похож ли документ на чек/квитанцию Kaspi, явно ли отмечена оплата как успешная, сумму, дату/время, "
+            "получателя, плательщика, номер операции/чека, РНМ и ФП при наличии. Отдельно перечисли любые визуальные признаки "
+            "возможного редактирования, обрезки критичных полей, несовпадающих шрифтов/слоёв, повторного монтажа или иных аномалий. "
+            "Не выдумывай и не достраивай поля. Если статус успешной оплаты не виден однозначно — payment_successful=false. "
+            "Если поле не видно — оставь пустую строку, для суммы используй 0. Не называй изображение криптографически подлинным: "
+            "проверка основана только на содержимом присланного чека."
         )
         if suffix == "pdf" or mime_type == "application/pdf":
             content: list[dict[str, Any]] = [{
@@ -120,8 +139,9 @@ class ReceiptAnalyzer:
         response = await self.client.responses.create(
             model=self.settings.openai_vision_model,
             instructions=(
-                "Ты модуль антифрода KORGAN. Работай консервативно: не выдумывай реквизиты и не подтверждай банковский факт оплаты. "
-                "Твоя задача — только предварительная визуальная/реквизитная проверка перед обязательной ручной сверкой администратором."
+                "Ты автоматический антифрод-модуль KORGAN для проверки платёжного чека перед выдачей платного документа. "
+                "Работай максимально консервативно: не выдумывай реквизиты, не игнорируй подозрительные признаки и не ставь "
+                "payment_successful=true без явно видимого успешного статуса. Любую существенную неоднозначность отрази в suspicious_signals."
             ),
             input=content,
             text={"format": {"type": "json_schema", "name": "korgan_receipt_check", "schema": _RECEIPT_SCHEMA, "strict": True}},
@@ -176,24 +196,24 @@ def payment_offer_text(kind: str, language: str, amount: int) -> str:
     label = document_label(kind, language)
     if language == KK:
         return (
-            "💳 Құжат дайын\n\n"
+            "💳 Құжатқа төлем\n\n"
             f"Қызмет құны: {amount:,} ₸".replace(",", " ")
             + f"\nҚұжат: {label}.\n\n"
-            "Word-файл төлем расталғаннан кейін ғана беріледі.\n"
+            "Құжат төлем тексерілгенге дейін берілмейді.\n"
             "1. Kaspi арқылы төлеңіз.\n"
             "2. «✅ Төледім» түймесін басыңыз.\n"
             "3. Толық чекті жіберіңіз.\n\n"
-            "Чек алдымен AI арқылы тексеріледі, содан кейін төлемді әкімші Kaspi Pay тарихымен растайды."
+            "KORGAN AI чекті автоматты түрде тексереді. Тексеру сәтті болса, құжат бірден дайындалып/беріледі."
         )
     return (
-        "💳 Документ готов\n\n"
+        "💳 Оплата документа\n\n"
         f"Стоимость: {amount:,} ₸".replace(",", " ")
         + f"\nДокумент: {label}.\n\n"
-        "Word-файл будет выдан только после подтверждения оплаты.\n"
+        "Документ не выдаётся до проверки оплаты.\n"
         "1. Оплатите через Kaspi.\n"
         "2. Нажмите «✅ Я оплатил».\n"
         "3. Пришлите полный чек.\n\n"
-        "Чек сначала проходит AI-проверку, затем администратор подтверждает платёж по истории Kaspi Pay."
+        "KORGAN AI автоматически проверит чек. Если проверка пройдена, документ сразу начнёт готовиться/будет выдан."
     )
 
 
@@ -213,11 +233,57 @@ def admin_storage_caption(user_id: int, kind: str, language: str, amount: int) -
         f"Клиент Telegram ID: {user_id}\n"
         f"Документ: {document_label(kind, language)}\n"
         f"Сумма: {amount} ₸\n"
-        "Не выдавать до подтверждения оплаты."
+        "Не выдавать до автоматической проверки оплаты."
     )
 
 
-def receipt_hard_issues(check: ReceiptCheck, expected_amount: int) -> list[str]:
+def _normalize_recipient(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return "".join(ch for ch in normalized if ch.isalnum())
+
+
+def _parse_receipt_datetime(value: str | datetime) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = " ".join(str(value or "").strip().split())
+        if not text:
+            return None
+        iso = text.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(iso)
+        except ValueError:
+            parsed = None
+            for fmt in _RECEIPT_DATE_FORMATS:
+                try:
+                    parsed = datetime.strptime(text, fmt)
+                    break
+                except ValueError:
+                    continue
+            if parsed is None:
+                compact = re.sub(r"\s+", " ", text)
+                for fmt in _RECEIPT_DATE_FORMATS:
+                    try:
+                        parsed = datetime.strptime(compact, fmt)
+                        break
+                    except ValueError:
+                        continue
+                if parsed is None:
+                    return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_KZ_TZ)
+    return parsed.astimezone(timezone.utc)
+
+
+def receipt_hard_issues(
+    check: ReceiptCheck,
+    expected_amount: int,
+    *,
+    expected_recipient: str = "",
+    offered_at: str | datetime | None = None,
+    now: datetime | None = None,
+) -> list[str]:
+    """Return blockers for automatic release. Any blocker means fail closed."""
     issues: list[str] = []
     if not check.readable:
         issues.append("чек не читается полностью")
@@ -227,10 +293,40 @@ def receipt_hard_issues(check: ReceiptCheck, expected_amount: int) -> list[str]:
         issues.append("на чеке не подтверждён успешный платёж")
     if check.amount_kzt != expected_amount:
         issues.append(f"сумма на чеке {check.amount_kzt} ₸ вместо {expected_amount} ₸")
+    if not check.date_time.strip():
+        issues.append("на чеке не распознаны дата/время платежа")
+    if not check.receipt_or_transaction_id.strip():
+        issues.append("на чеке не распознан номер операции/чека")
+
+    if expected_recipient.strip():
+        actual_recipient = _normalize_recipient(check.merchant_or_recipient)
+        configured_recipient = _normalize_recipient(expected_recipient)
+        if not actual_recipient:
+            issues.append("на чеке не распознан получатель платежа")
+        elif actual_recipient != configured_recipient:
+            issues.append("получатель платежа не соответствует KORGAN")
+
+    if offered_at is not None and check.date_time.strip():
+        receipt_time = _parse_receipt_datetime(check.date_time)
+        offer_time = _parse_receipt_datetime(offered_at)
+        if receipt_time is None:
+            issues.append("дата/время платежа не распознаны в допустимом формате")
+        elif offer_time is None:
+            issues.append("не удалось подтвердить время открытия текущей оплаты")
+        else:
+            if receipt_time < offer_time - timedelta(minutes=2):
+                issues.append("платёж выполнен до открытия текущей заявки на оплату")
+            current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+            if receipt_time > current + timedelta(minutes=10):
+                issues.append("дата/время платежа находятся недопустимо в будущем")
+
+    if check.suspicious_signals:
+        issues.append("AI обнаружил признаки возможного изменения или аномалии чека")
     return issues
 
 
 def admin_receipt_summary(check: ReceiptCheck | None, *, user_id: int, kind: str, language: str, amount: int, ai_error: str = "") -> str:
+    """Legacy/recovery summary kept for old transactions; normal flow is automatic."""
     lines = [
         "💳 KORGAN — ПРОВЕРКА ОПЛАТЫ",
         "",
@@ -239,7 +335,7 @@ def admin_receipt_summary(check: ReceiptCheck | None, *, user_id: int, kind: str
         f"Ожидаемая сумма: {amount} ₸",
     ]
     if check is None:
-        lines += ["", "⚠️ AI-проверка недоступна. Требуется полная ручная сверка."]
+        lines += ["", "⚠️ AI-проверка недоступна. Документ автоматически не разблокирован."]
         if ai_error:
             lines.append(f"Техническая причина: {ai_error[:180]}")
     else:
@@ -257,7 +353,6 @@ def admin_receipt_summary(check: ReceiptCheck | None, *, user_id: int, kind: str
         ]
         if check.suspicious_signals:
             lines += ["", "⚠️ AI отметил аномалии:", *[f"• {x}" for x in check.suspicious_signals[:6]]]
-    lines += ["", "Перед подтверждением обязательно сверить реальный платёж в Kaspi Pay → История."]
     return "\n".join(lines)
 
 
