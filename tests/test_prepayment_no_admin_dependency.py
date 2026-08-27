@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from korgan import prepayment_gate
+from korgan import prepayment_auto_payment as auto_payment
 from korgan.config import Settings
 
 
@@ -21,12 +21,12 @@ def _settings() -> Settings:
 
 def test_local_transaction_id_is_negative_stable_and_request_scoped() -> None:
     settings = _settings()
-    first = prepayment_gate._prepayment_transaction_id(settings, 62171871, "request-1", "claim")
+    first = auto_payment.prepayment_transaction_id(settings, 62171871, "request-1", "claim")
     assert first < 0
-    assert first == prepayment_gate._prepayment_transaction_id(settings, 62171871, "request-1", "claim")
-    assert first != prepayment_gate._prepayment_transaction_id(settings, 62171871, "request-2", "claim")
-    assert first != prepayment_gate._prepayment_transaction_id(settings, 62171871, "request-1", "contract")
-    assert first != prepayment_gate._prepayment_transaction_id(settings, 62171872, "request-1", "claim")
+    assert first == auto_payment.prepayment_transaction_id(settings, 62171871, "request-1", "claim")
+    assert first != auto_payment.prepayment_transaction_id(settings, 62171871, "request-2", "claim")
+    assert first != auto_payment.prepayment_transaction_id(settings, 62171871, "request-1", "contract")
+    assert first != auto_payment.prepayment_transaction_id(settings, 62171872, "request-1", "claim")
 
 
 def test_payment_offer_does_not_depend_on_separate_admin_chat(monkeypatch) -> None:
@@ -60,10 +60,10 @@ def test_payment_offer_does_not_depend_on_separate_admin_chat(monkeypatch) -> No
         async def answer(self, text: str, **kwargs):
             self.answers.append((text, kwargs))
 
-    monkeypatch.setattr(prepayment_gate, "get_settings", lambda: settings)
+    monkeypatch.setattr(auto_payment, "get_settings", lambda: settings)
     state = State()
     message = Message()
-    allowed = asyncio.run(prepayment_gate.ensure_prepayment(message, state, kind="claim"))
+    allowed = asyncio.run(auto_payment.ensure_prepayment_without_admin(message, state, kind="claim"))
 
     assert allowed is False
     assert state.data["mode"] == "prepayment_waiting"
