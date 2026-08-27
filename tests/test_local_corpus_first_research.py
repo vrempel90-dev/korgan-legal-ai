@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+from korgan.legal.corpus import ACT_GPK
 from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.professional_rag_bridge import _research_local_first
 
@@ -100,3 +101,97 @@ def test_local_needs_verification_cannot_bypass_web_fallback(monkeypatch) -> Non
 
     assert calls["web"] == 1
     assert result.status == VerificationStatus.VERIFIED
+
+
+def _local_payload(**overrides):
+    payload = {
+        "legal_basis": [{
+            "article_id": "offered-1",
+            "thesis": "Проверенная норма применяется к спору.",
+            "link_to_facts": "Связь с фактами пользователя.",
+        }],
+        "coverage_complete": True,
+        "coverage_gaps": [],
+        "case_theory": ["Иск о взыскании подтверждённого долга."],
+        "remedies": ["Взыскать подтверждённую сумму долга."],
+        "evidence_map": ["Приложить договор и подтверждение оплаты."],
+        "risks": ["Оценить возражения ответчика."],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _run_strict_local(monkeypatch, payload, *, act_id=ACT_GPK, leaked=None):
+    import korgan.local_corpus_runtime as runtime
+
+    offered = SimpleNamespace(prompt_block="offered corpus", offered_ids=("offered-1",))
+
+    class Corpus:
+        def close(self) -> None:
+            return None
+
+    provision = SimpleNamespace(
+        act_id=act_id,
+        body="Проверенная норма применяется к спору.",
+        url="https://adilet.zan.kz/rus/docs/test",
+        act_title="Тестовый нормативный акт",
+        label=lambda: "статья 1",
+    )
+    accepted = SimpleNamespace(
+        article_id="offered-1",
+        thesis="Проверенная норма применяется к спору.",
+        provision=provision,
+    )
+    validation = SimpleNamespace(rejected=[], accepted=[accepted])
+
+    monkeypatch.setattr(runtime, "research_from_corpus", lambda *args, **kwargs: offered)
+    monkeypatch.setattr(runtime, "open_corpus", lambda: Corpus())
+    monkeypatch.setattr(runtime, "validate_blocks", lambda *args, **kwargs: validation)
+    monkeypatch.setattr(runtime, "paraphrase_defects", lambda *args, **kwargs: [])
+    monkeypatch.setattr(runtime, "verified_claim_line", lambda *args, **kwargs: "verified claim")
+    monkeypatch.setattr(
+        runtime,
+        "find_unvalidated_citations",
+        lambda rendered, validation_result: leaked(rendered) if leaked else [],
+    )
+
+    class Service:
+        settings = SimpleNamespace(max_case_text_chars=60000, openai_model="test-model")
+
+        async def _structured_response(self, **kwargs):
+            return payload, None
+
+    return asyncio.run(
+        runtime.research_case_from_local_corpus(
+            Service(),
+            "Истец обращается в суд и просит взыскать долг.",
+            require_complete_coverage=True,
+        )
+    )
+
+
+def test_strict_local_corpus_rejects_each_incomplete_coverage_shape(monkeypatch) -> None:
+    invalid_payloads = [
+        _local_payload(coverage_complete=False),
+        _local_payload(coverage_gaps=["Нужна дополнительная норма."]),
+        _local_payload(case_theory=[]),
+        _local_payload(remedies=[]),
+    ]
+    for payload in invalid_payloads:
+        assert _run_strict_local(monkeypatch, payload) is None
+
+
+def test_strict_local_corpus_rejects_litigation_without_gpk(monkeypatch) -> None:
+    assert _run_strict_local(monkeypatch, _local_payload(), act_id="civil-code") is None
+
+
+def test_strict_local_corpus_rejects_unoffered_citation_in_strategy(monkeypatch) -> None:
+    payload = _local_payload(risks=["Проверить применение статьи 999 ГК."])
+    seen = {"strategy_scanned": False}
+
+    def leaked(rendered: str) -> list[str]:
+        seen["strategy_scanned"] = "статьи 999" in rendered
+        return ["статья 999"] if seen["strategy_scanned"] else []
+
+    assert _run_strict_local(monkeypatch, payload, leaked=leaked) is None
+    assert seen["strategy_scanned"] is True
