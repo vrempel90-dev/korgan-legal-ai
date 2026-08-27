@@ -1,0 +1,13 @@
+:root{--korgan-wordmark:url('/korgan-wordmark.svg')}
+.app-shell{isolation:isolate}
+.app-shell::after{content:"";position:absolute;inset:-150px -120px;pointer-events:none;z-index:0;background-image:var(--korgan-wordmark);background-repeat:repeat;background-size:190px auto;opacity:.026;transform:rotate(-14deg) scale(1.12);transform-origin:center}
+.app-shell>header,.app-shell>main,.app-shell>nav{position:relative;z-index:1}
+.topbar .brand-mark{width:148px;height:34px;min-width:148px;border:0;border-radius:0;background:var(--korgan-wordmark) center/contain no-repeat;box-shadow:none;overflow:visible}
+.topbar .brand-mark::before,.topbar .brand-mark::after,.topbar .brand-mark svg{display:none!important}
+.topbar .brand{display:none!important}
+.topbar .top-status{margin-left:auto;max-width:118px}
+.consent-page .brand-mark.large{width:min(290px,78vw);height:64px;border:0;border-radius:0;background:var(--korgan-wordmark) left center/contain no-repeat;box-shadow:none;margin:4px 0 8px;overflow:visible}
+.consent-page .brand-mark.large::before,.consent-page .brand-mark.large::after,.consent-page .brand-mark.large svg{display:none!important}
+.hero-orb{background-color:#090b0d;background-image:var(--korgan-wordmark);background-position:center;background-repeat:no-repeat;background-size:88% auto}
+.hero-orb::before,.hero-orb::after,.hero-orb svg{display:none!important}
+@media(max-width:380px){.topbar .brand-mark{width:124px;min-width:124px;height:30px}.topbar .top-status{max-width:88px;font-size:8px}.app-shell::after{background-size:165px auto;opacity:.024}}
