@@ -40,7 +40,7 @@ function requireProfessionalRuntime(health, parity) {
     || health?.word_quality_target !== '10/10'
     || health?.preliminary_fallback !== true
     || parity?.status !== 'ok'
-    || parity?.api_version !== '0.9.0'
+    || parity?.api_version !== '1.0.0'
     || parity?.service_outer !== 'ClaimPipelineV2Adapter'
     || parity?.service_claim_mux !== 'ClaimServiceMux'
     || parity?.service_stable !== 'PretrialResponseProductionService'
