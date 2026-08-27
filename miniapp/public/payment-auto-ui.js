@@ -75,7 +75,7 @@
   }
 
   const style = document.createElement('style');
-  style.textContent = '.manual-card{display:none!important}';
+  style.textContent = '.manual-card,.admin-entry{display:none!important}';
   document.head.appendChild(style);
 
   const observer = new MutationObserver(scheduleUiSync);
