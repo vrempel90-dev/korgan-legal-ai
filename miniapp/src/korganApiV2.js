@@ -30,14 +30,17 @@ function requireParity(health, parity) {
     || health?.legal_runtime !== 'strict_bot'
     || health?.word_quality_target !== '10/10'
     || parity?.status !== 'ok'
-    || parity?.api_version !== '1.0.0'
+    || parity?.api_version !== '1.1.0'
     || parity?.service_outer !== 'ClaimPipelineV2Adapter'
     || parity?.service_claim_mux !== 'ClaimServiceMux'
     || parity?.service_stable !== 'PretrialResponseProductionService'
     || parity?.word_quality_target !== '10/10'
-    || parity?.consultation_ai_receipt_verification !== true
+    || parity?.consultation_ai_receipt_verification !== false
+    || parity?.consultation_ofd_receipt_verification !== true
     || parity?.document_manual_confirmation !== false
-    || parity?.document_ai_receipt_verification !== true
+    || parity?.document_ai_receipt_verification !== false
+    || parity?.document_ofd_receipt_verification !== true
+    || parity?.receipt_input !== 'fiscal_qr_url'
   ) throw new Error('KORGAN professional Mini App runtime is not ready');
   return { ...health, parity };
 }
@@ -53,6 +56,64 @@ async function upload(path, file) {
   const body = new FormData();
   body.append('file', file);
   return request(path, { method: 'POST', body });
+}
+
+function normalizeFiscalUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'receipt.kaspi.kz') return '';
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+async function detectFiscalQrFromImage(file) {
+  if (!file || !String(file.type || '').startsWith('image/')) return '';
+  if (typeof window.BarcodeDetector !== 'function') return '';
+  try {
+    const formats = await window.BarcodeDetector.getSupportedFormats?.().catch(() => []);
+    if (Array.isArray(formats) && formats.length && !formats.includes('qr_code')) return '';
+    const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+    const bitmap = await createImageBitmap(file);
+    try {
+      const codes = await detector.detect(bitmap);
+      for (const code of codes || []) {
+        const url = normalizeFiscalUrl(code?.rawValue);
+        if (url) return url;
+      }
+    } finally {
+      bitmap.close?.();
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+async function resolveFiscalQrUrl(file) {
+  const detected = await detectFiscalQrFromImage(file);
+  if (detected) return detected;
+
+  const pasted = window.prompt(
+    'Не удалось автоматически прочитать QR. Отсканируйте QR именно на фискальном чеке и вставьте сюда открывшуюся ссылку receipt.kaspi.kz',
+    '',
+  );
+  const normalized = normalizeFiscalUrl(pasted);
+  if (!normalized) {
+    throw new Error('Нужна официальная QR-ссылка фискального чека receipt.kaspi.kz');
+  }
+  return normalized;
+}
+
+async function submitFiscalReceipt(path, file) {
+  const qrUrl = await resolveFiscalQrUrl(file);
+  return request(path, {
+    method: 'POST',
+    body: JSON.stringify({ qr_url: qrUrl }),
+  });
 }
 
 export const korganApi = {
@@ -77,7 +138,10 @@ export const korganApi = {
     method: 'POST', body: JSON.stringify({ message, case_id: caseId || null, language }),
   }),
   pendingConsultationPayment: () => request('/miniapp/consultation/payment/pending'),
-  uploadConsultationReceipt: (orderId, file) => upload(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt`, file),
+  uploadConsultationReceipt: (orderId, file) => submitFiscalReceipt(
+    `/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt`,
+    file,
+  ),
   retryPaidConsultation: (orderId) => request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/retry`, { method: 'POST' }),
   generateDocument: async (caseId, documentType, language = 'ru') => {
     const result = await request('/miniapp/documents/generate', {
@@ -86,7 +150,7 @@ export const korganApi = {
     return result?.payment_required ? result : requireDocument(result);
   },
   uploadDocumentReceipt: async (orderId, file) => requireDocument(
-    await upload(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, file),
+    await submitFiscalReceipt(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, file),
   ),
   retryPaidDocument: async (orderId) => requireDocument(
     await request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/retry`, { method: 'POST' }),
