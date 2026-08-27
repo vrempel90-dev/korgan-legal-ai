@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 
 from aiogram import F, Router
@@ -54,6 +55,36 @@ def _parse_admin_callback(data: str) -> tuple[str, int, int, str, str, str] | No
         return parts[1], int(parts[2]), int(parts[3]), parts[4], parts[5], parts[6]
     except ValueError:
         return None
+
+
+async def _receipt_bytes(message: Message) -> tuple[bytes, str, str] | None:
+    """Legacy file loader kept only for older paid-consultation compatibility.
+
+    Document payment verification does not call this helper and remains strictly
+    Kaspi OFD fiscal-QR based.
+    """
+    if message.photo:
+        item = message.photo[-1]
+        file_id = item.file_id
+        filename = "kaspi_receipt.jpg"
+        mime = "image/jpeg"
+    elif message.document:
+        doc = message.document
+        filename = doc.file_name or "kaspi_receipt"
+        mime = doc.mime_type or "application/octet-stream"
+        suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+        if mime not in {"application/pdf", "image/jpeg", "image/png", "image/webp"} and suffix not in {"pdf", "jpg", "jpeg", "png", "webp"}:
+            return None
+        file_id = doc.file_id
+    else:
+        return None
+
+    tg_file = await message.bot.get_file(file_id)
+    if not tg_file.file_path:
+        return None
+    output = io.BytesIO()
+    await message.bot.download_file(tg_file.file_path, destination=output)
+    return output.getvalue(), filename, mime
 
 
 def _fiscal_qr_instruction(language: str) -> str:
@@ -268,8 +299,6 @@ async def _verify_and_release_fiscal_url(message: Message, state: FSMContext, re
     )
 
     if payment_transaction_id < 0:
-        # Function name is retained for backward compatibility with the existing
-        # paid-generation state machine; no AI payment verification is used here.
         from korgan.prepayment_runtime import run_ai_verified_prepayment_generation
 
         started = await run_ai_verified_prepayment_generation(
