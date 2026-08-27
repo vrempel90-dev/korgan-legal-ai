@@ -5,6 +5,14 @@ import json
 from typing import Any
 
 from korgan import miniapp_document_payments as legacy
+from korgan.miniapp_document_payments import DocumentPaymentOrder
+
+
+def _one_row(command_tag: str) -> bool:
+    try:
+        return int(command_tag.rsplit(" ", 1)[-1]) == 1
+    except (ValueError, IndexError):
+        return False
 
 
 async def get_document_order_created_at(order_id: int, *, user_key: str) -> datetime | None:
@@ -14,6 +22,69 @@ async def get_document_order_created_at(order_id: int, *, user_key: str) -> date
         order_id,
         user_key,
     )
+
+
+async def create_document_order_preserving_paid_scope(
+    *,
+    user_key: str,
+    case_id: str,
+    case_fingerprint: str,
+    document_type: str,
+    language: str,
+    amount_kzt: int,
+) -> DocumentPaymentOrder:
+    """Create a current-scope order without cancelling an already paid scope."""
+    pool = legacy._require_pool()
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            # Only an unpaid offer can be invalidated by a changed factual scope.
+            # AI-verified/legacy-held payments remain durable and retryable for
+            # the exact scope they purchased.
+            await connection.execute(
+                """
+                UPDATE korgan_miniapp_document_orders
+                SET status='cancelled', decided_at=NOW(), decision_note='case scope changed before payment'
+                WHERE user_key=$1 AND case_id=$2
+                  AND case_fingerprint<>$3
+                  AND status='pending_receipt'
+                """,
+                user_key,
+                case_id,
+                case_fingerprint,
+            )
+            existing = await connection.fetchrow(
+                """
+                SELECT id, user_key, case_id, case_fingerprint, document_type, language,
+                       amount_kzt, status, transaction_id, receipt_check, decision_note
+                FROM korgan_miniapp_document_orders
+                WHERE user_key=$1 AND case_id=$2 AND case_fingerprint=$3
+                  AND status IN ('pending_receipt', 'awaiting_admin', 'approved')
+                ORDER BY id DESC LIMIT 1
+                FOR UPDATE
+                """,
+                user_key,
+                case_id,
+                case_fingerprint,
+            )
+            if existing is not None:
+                return legacy._from_row(existing)
+            row = await connection.fetchrow(
+                """
+                INSERT INTO korgan_miniapp_document_orders(
+                    user_key, case_id, case_fingerprint, document_type, language, amount_kzt
+                ) VALUES($1,$2,$3,$4,$5,$6)
+                RETURNING id, user_key, case_id, case_fingerprint, document_type, language,
+                          amount_kzt, status, transaction_id, receipt_check, decision_note
+                """,
+                user_key,
+                case_id,
+                case_fingerprint,
+                document_type,
+                language,
+                amount_kzt,
+            )
+    assert row is not None
+    return legacy._from_row(row)
 
 
 async def accept_ai_verified_document_receipt(
@@ -54,9 +125,6 @@ async def accept_ai_verified_document_receipt(
             if status not in {"pending_receipt", "awaiting_admin"}:
                 return False
 
-            # ON CONFLICT DO NOTHING keeps the transaction usable. Catching a
-            # UniqueViolationError inside this transaction would leave it in an
-            # aborted state and make the idempotency lookup below fail.
             inserted = await connection.fetchrow(
                 """
                 INSERT INTO korgan_miniapp_document_receipts(receipt_hash, transaction_id, order_id)
@@ -98,7 +166,7 @@ async def accept_ai_verified_document_receipt(
                 txid,
                 json.dumps(receipt_check, ensure_ascii=False),
             )
-            if updated.endswith("1"):
+            if _one_row(updated):
                 return True
 
             final = await connection.fetchrow(
