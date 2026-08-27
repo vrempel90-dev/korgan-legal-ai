@@ -53,6 +53,39 @@ async def close_document_receipt_replay_guard() -> None:
         _POOL = None
 
 
+def _same_request(row: asyncpg.Record | None, *, user_id: int, request_id: str, document_kind: str) -> bool:
+    if row is None:
+        return False
+    return (
+        int(row["user_id"]) == int(user_id)
+        and str(row["request_id"]) == str(request_id)
+        and str(row["document_kind"]) == str(document_kind)
+    )
+
+
+async def _existing_reservation(receipt_hash: str, transaction_id: str | None) -> asyncpg.Record | None:
+    if _POOL is None:
+        raise RuntimeError("Document receipt anti-replay guard is not initialized")
+    row = await _POOL.fetchrow(
+        """
+        SELECT receipt_hash, transaction_id, user_id, request_id, document_kind
+        FROM korgan_document_receipt_replay_guard
+        WHERE receipt_hash = $1
+        """,
+        receipt_hash,
+    )
+    if row is None and transaction_id:
+        row = await _POOL.fetchrow(
+            """
+            SELECT receipt_hash, transaction_id, user_id, request_id, document_kind
+            FROM korgan_document_receipt_replay_guard
+            WHERE transaction_id = $1
+            """,
+            transaction_id,
+        )
+    return row
+
+
 async def reserve_verified_document_receipt(
     *,
     receipt_hash: str,
@@ -61,7 +94,7 @@ async def reserve_verified_document_receipt(
     request_id: str,
     document_kind: str,
 ) -> bool:
-    """Atomically reserve a verified receipt so it cannot pay twice."""
+    """Reserve a verified receipt once, while allowing safe same-request retries."""
     if _POOL is None:
         raise RuntimeError("Document receipt anti-replay guard is not initialized")
     txid = transaction_id.strip() or None
@@ -79,7 +112,17 @@ async def reserve_verified_document_receipt(
             str(request_id),
             str(document_kind),
         )
-        return result.endswith("1")
+        if result.endswith("1"):
+            return True
     except asyncpg.UniqueViolationError:
-        # A repeated transaction id with different file bytes is also replay.
-        return False
+        # A repeated transaction id with different file bytes is replay unless it
+        # belongs to the exact same user/request/kind and is only being retried.
+        pass
+
+    existing = await _existing_reservation(receipt_hash, txid)
+    return _same_request(
+        existing,
+        user_id=user_id,
+        request_id=request_id,
+        document_kind=document_kind,
+    )
