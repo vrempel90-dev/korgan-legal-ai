@@ -1,1 +1,2 @@
-Trigger isolated Railway staging deployment for KORGAN Mini App.
+Trigger Railway deployment for KORGAN Mini App Kaspi OFD production candidate.
+2026-08-27 fiscal QR payment verification.
