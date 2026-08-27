@@ -104,6 +104,8 @@ def _consultation_payment_text_ofd(language: str, free_limit: int, amount_kzt: i
     )
 
 
+consultation_payment_text = _consultation_payment_text_ofd
+
 def _fiscal_qr_instruction(language: str) -> str:
     if language == "kk":
         return (
@@ -445,7 +447,7 @@ async def limited_consultation(message: Message, state: FSMContext) -> None:
         )
         await state.update_data(mode="main")
         await message.answer(
-            _consultation_payment_text_ofd(language, settings.free_consultations_per_day, settings.consultation_price_kzt),
+            consultation_payment_text(language, settings.free_consultations_per_day, settings.consultation_price_kzt),
             reply_markup=consultation_payment_markup(settings, user_id, order.id, language),
         )
         return
