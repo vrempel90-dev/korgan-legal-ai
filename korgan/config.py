@@ -29,8 +29,11 @@ class Settings(BaseSettings):
     payments_enabled: bool = False
     kaspi_payment_url: str = ""
     kaspi_payment_recipient: str = "OpenCourt (KORGAN)"
-    # Exact 12-digit seller BIN from the KORGAN fiscal receipt. When configured,
-    # it is authoritative and stronger than display-name matching.
+    # Existing Railway production names. Seller BIN is authoritative; RNM is an
+    # optional additional merchant identity check for the fiscal device.
+    kaspi_seller_bin: str = ""
+    kaspi_rnm: str = ""
+    # Compatibility with the temporary OFD branch variable name.
     kaspi_payment_bin: str = ""
     document_price_kzt: int = 1000
 
@@ -52,6 +55,14 @@ class Settings(BaseSettings):
     @property
     def legal_domains(self) -> list[str]:
         return [item.strip().lower() for item in self.official_legal_domains.split(",") if item.strip()]
+
+    @property
+    def payment_seller_bin(self) -> str:
+        return (self.kaspi_seller_bin or self.kaspi_payment_bin).strip()
+
+    @property
+    def payment_rnm(self) -> str:
+        return self.kaspi_rnm.strip()
 
     @property
     def admin_ids(self) -> set[int]:
