@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from korgan.config import Settings
@@ -22,8 +23,28 @@ def _settings() -> Settings:
         admin_telegram_ids="777",
         payments_enabled=True,
         kaspi_payment_url="https://pay.kaspi.kz/pay/hk3wdvjz",
+        kaspi_payment_recipient="OpenCourt (KORGAN)",
         document_price_kzt=1000,
     )
+
+
+def _clean_receipt(**overrides) -> ReceiptCheck:
+    values = {
+        "readable": True,
+        "looks_like_kaspi": True,
+        "payment_successful": True,
+        "amount_kzt": 1000,
+        "date_time": "18.08.2026 11:00",
+        "merchant_or_recipient": "OpenCourt (KORGAN)",
+        "payer": "Client",
+        "receipt_or_transaction_id": "ABC",
+        "rnm": "123",
+        "fp": "456",
+        "suspicious_signals": (),
+        "notes": (),
+    }
+    values.update(overrides)
+    return ReceiptCheck(**values)
 
 
 def test_payment_offer_is_compact_and_kaspi_link_is_only_in_button() -> None:
@@ -79,48 +100,66 @@ def test_admin_decision_is_signed_and_bound_to_user_document_and_kind() -> None:
 
 
 def test_receipt_precheck_blocks_wrong_amount_and_failed_payment() -> None:
-    check = ReceiptCheck(
-        readable=True,
-        looks_like_kaspi=True,
-        payment_successful=False,
-        amount_kzt=900,
-        date_time="18.08.2026 11:00",
-        merchant_or_recipient="Test IP",
-        payer="Client",
-        receipt_or_transaction_id="ABC",
-        rnm="",
-        fp="",
-        suspicious_signals=(),
-        notes=(),
-    )
+    check = _clean_receipt(payment_successful=False, amount_kzt=900)
     issues = receipt_hard_issues(check, 1000)
     assert any("успешный платёж" in item for item in issues)
     assert any("900 ₸ вместо 1000 ₸" in item for item in issues)
 
 
 def test_receipt_precheck_accepts_only_complete_clean_receipt_for_ai_release_gate() -> None:
-    check = ReceiptCheck(
-        readable=True,
-        looks_like_kaspi=True,
-        payment_successful=True,
-        amount_kzt=1000,
-        date_time="18.08.2026 11:00",
-        merchant_or_recipient="Test IP",
-        payer="Client",
-        receipt_or_transaction_id="ABC",
-        rnm="123",
-        fp="456",
-        suspicious_signals=(),
-        notes=(),
-    )
+    check = _clean_receipt()
     assert receipt_hard_issues(check, 1000) == []
     assert check.payment_successful is True
+
+    without_date = _clean_receipt(date_time="")
+    without_transaction = _clean_receipt(receipt_or_transaction_id="")
+    assert any("дата/время" in issue for issue in receipt_hard_issues(without_date, 1000))
+    assert any("номер операции/чека" in issue for issue in receipt_hard_issues(without_transaction, 1000))
+
+
+def test_receipt_precheck_requires_configured_recipient_and_current_payment_window() -> None:
+    settings = _settings()
+    clean = _clean_receipt()
+    issues = receipt_hard_issues(
+        clean,
+        1000,
+        expected_recipient=settings.kaspi_payment_recipient,
+        offered_at="2026-08-18T10:00:00+05:00",
+        now=datetime(2026, 8, 18, 7, 0, tzinfo=timezone.utc),
+    )
+    assert issues == []
+
+    wrong_recipient = _clean_receipt(merchant_or_recipient="Unrelated Merchant")
+    assert any(
+        "получатель платежа" in issue
+        for issue in receipt_hard_issues(
+            wrong_recipient,
+            1000,
+            expected_recipient=settings.kaspi_payment_recipient,
+            offered_at="2026-08-18T10:00:00+05:00",
+            now=datetime(2026, 8, 18, 7, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    stale = _clean_receipt(date_time="18.08.2026 09:30")
+    assert any(
+        "до открытия текущей заявки" in issue
+        for issue in receipt_hard_issues(
+            stale,
+            1000,
+            expected_recipient=settings.kaspi_payment_recipient,
+            offered_at="2026-08-18T10:00:00+05:00",
+            now=datetime(2026, 8, 18, 7, 0, tzinfo=timezone.utc),
+        )
+    )
 
 
 def test_kazakh_payment_offer_uses_same_price_and_no_raw_url() -> None:
     settings = _settings()
     text = payment_offer_text("contract", "kk", settings.document_price_kzt)
     assert "1 000 ₸" in text
+    assert "Құжат төлем тексерілгенге дейін берілмейді." in text
+    assert "KORGAN AI чекті автоматты түрде тексереді." in text
     assert "pay.kaspi.kz" not in text
     markup = payment_offer_markup(settings, 12345, 678, "contract", "kk")
     assert markup.inline_keyboard[0][0].url == settings.kaspi_payment_url
