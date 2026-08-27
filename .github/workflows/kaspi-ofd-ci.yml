@@ -1,0 +1,41 @@
+name: Kaspi OFD payment CI
+
+on:
+  push:
+    branches:
+      - feat/kaspi-ofd-fiscal-qr-miniapp
+      - feat/kaspi-ofd-fiscal-qr-agent
+  pull_request:
+    branches:
+      - feature/miniapp-ui-v1
+      - feature/openai-docs-claims
+
+jobs:
+  kaspi-ofd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Run OFD regression tests
+        shell: bash
+        run: |
+          tests=()
+          [[ -f tests/test_kaspi_ofd.py ]] && tests+=(tests/test_kaspi_ofd.py)
+          [[ -f tests/test_zz_miniapp_kaspi_ofd_v6.py ]] && tests+=(tests/test_zz_miniapp_kaspi_ofd_v6.py)
+          test ${#tests[@]} -gt 0
+          python -m pytest -q "${tests[@]}"
+      - uses: actions/setup-node@v4
+        if: ${{ hashFiles('miniapp/package.json') != '' }}
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: miniapp/package-lock.json
+      - name: Build Mini App
+        if: ${{ hashFiles('miniapp/package.json') != '' }}
+        working-directory: miniapp
+        run: npm install && npm run build
