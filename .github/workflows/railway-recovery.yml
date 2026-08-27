@@ -11,18 +11,23 @@ permissions:
 jobs:
   recover:
     runs-on: ubuntu-latest
+    environment: production
     env:
       RAILWAY_TOKEN_A: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_TOKEN_B: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_TOKEN_C: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+      RAILWAY_TOKEN_D: ${{ secrets.RAILWAY_DEPLOY_TOKEN }}
+      RAILWAY_TOKEN_E: ${{ secrets.RAILWAY_SERVICE_TOKEN }}
       TELEGRAM_TOKEN_A: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_TOKEN_B: ${{ secrets.BOT_TOKEN }}
+      TELEGRAM_TOKEN_C: ${{ secrets.KORGAN_TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_TOKEN_D: ${{ secrets.TELEGRAM_TOKEN }}
     steps:
       - name: Cancel stale Railway deployments
         shell: bash
         run: |
           set -euo pipefail
-          TOKEN="${RAILWAY_TOKEN_A:-${RAILWAY_TOKEN_B:-${RAILWAY_TOKEN_C:-}}}"
+          TOKEN="${RAILWAY_TOKEN_A:-${RAILWAY_TOKEN_B:-${RAILWAY_TOKEN_C:-${RAILWAY_TOKEN_D:-${RAILWAY_TOKEN_E:-}}}}}"
           if [ -z "$TOKEN" ]; then
             echo "railway_token_present=false"
             exit 0
@@ -58,7 +63,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TOKEN="${TELEGRAM_TOKEN_A:-${TELEGRAM_TOKEN_B:-}}"
+          TOKEN="${TELEGRAM_TOKEN_A:-${TELEGRAM_TOKEN_B:-${TELEGRAM_TOKEN_C:-${TELEGRAM_TOKEN_D:-}}}}"
           if [ -z "$TOKEN" ]; then
             echo "telegram_token_present=false"
             exit 0
