@@ -56,6 +56,7 @@ from korgan.request_race_guard import install_request_race_guard
 from korgan.response_voice_guard import install_response_voice_guard
 from korgan.review_cta_runtime import router as review_cta_router
 from korgan.stable_legal_release import install_stable_legal_release
+from korgan.telegram_branding import ensure_telegram_profile_branding
 from korgan.token_budget_guard import apply_token_budget_guard
 from korgan.ui import main_menu
 from korgan.universal_word_final_hardening import install_universal_word_final_hardening
@@ -115,6 +116,8 @@ async def main() -> None:
 
     bot = LocalizedClientSafeBot(token=settings.telegram_bot_token)
     await configure_telegram_menu(bot)
+    if str(getattr(settings, "database_url", "") or "").strip():
+        await ensure_telegram_profile_branding(settings)
 
     dp = Dispatcher(storage=MemoryStorage())
     language_middleware = LanguageContextMiddleware()
