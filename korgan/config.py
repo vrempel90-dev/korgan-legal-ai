@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     payments_enabled: bool = False
     kaspi_payment_url: str = ""
     kaspi_payment_recipient: str = "OpenCourt (KORGAN)"
+    kaspi_seller_bin: str = ""
+    kaspi_rnm: str = ""
     document_price_kzt: int = 1000
 
     # Consultation quota/payment gate. Kept separately from document payments so
