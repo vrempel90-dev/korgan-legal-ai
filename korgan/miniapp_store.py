@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -27,6 +28,8 @@ class MiniAppStore:
         self.retention_days = max(1, min(int(retention_days), 365))
         self.pool: asyncpg.Pool | None = None
         self.memory: dict[str, dict[str, Any]] = {}
+        self._user_locks: dict[str, asyncio.Lock] = {}
+        self._user_locks_guard = asyncio.Lock()
         self._encryption_key = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -36,6 +39,22 @@ class MiniAppStore:
 
     def user_key(self, user_id: str) -> str:
         return hmac.new(self.secret, str(user_id).encode("utf-8"), hashlib.sha256).hexdigest()
+
+    async def user_lock(self, user_id: str) -> asyncio.Lock:
+        """Return a process-wide lock for one authenticated Mini App identity.
+
+        Mini App handlers read encrypted state, can perform long-running AI work,
+        and then write the whole state snapshot. The API middleware holds this
+        lock across the complete request so two requests for the same user cannot
+        overwrite each other's intervening changes inside one Railway process.
+        """
+        key = self.user_key(user_id)
+        async with self._user_locks_guard:
+            lock = self._user_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._user_locks[key] = lock
+            return lock
 
     def _encode_state(self, state: dict[str, Any], *, aad: str) -> dict[str, str | int]:
         plaintext = json.dumps(state, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
