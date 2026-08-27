@@ -1,7 +1,6 @@
-const API_BASE = import.meta.env.VITE_KORGAN_API_BASE || '';
+const API_BASE = '/korgan-api';
 
 async function request(path, options = {}) {
-  if (!API_BASE) throw new Error('KORGAN_API_NOT_CONNECTED');
   const tg = window.Telegram?.WebApp;
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers = {
@@ -159,4 +158,4 @@ export const korganApi = {
   getDocument: async (caseId) => requireDocument(await request(`/miniapp/cases/${encodeURIComponent(caseId)}/document`)),
 };
 
-export const isBackendConnected = () => Boolean(API_BASE);
+export const isBackendConnected = () => true;
