@@ -1,0 +1,8 @@
+/* Official K | KORGAN branding supplied by the owner. */
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;background-image:url('/korgan-logo.png');background-repeat:repeat;background-size:280px auto;background-position:18px 22px;opacity:.035;transform:rotate(-8deg) scale(1.08);transform-origin:center}
+#root,.app-shell{position:relative;z-index:1}
+.brand-mark{width:118px!important;height:34px!important;border:0!important;border-radius:0!important;background:url('/korgan-logo.png') center/contain no-repeat!important;box-shadow:none!important}
+.brand-mark.large{width:220px!important;height:54px!important;margin-bottom:16px}
+.brand-mark::before,.brand-mark::after,.brand-mark svg{display:none!important;content:none!important}
+.brand{display:none!important}
+.topbar{gap:10px}
