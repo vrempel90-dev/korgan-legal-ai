@@ -1,1 +1,1 @@
-Kaspi OFD API v6 release marker: 2026-08-27
+Kaspi OFD API v6 release marker: 2026-08-28 recovery
