@@ -3,6 +3,7 @@ name: Kaspi OFD payment CI
 on:
   push:
     branches:
+      - feat/miniapp-full-agent-parity
       - feat/kaspi-ofd-fiscal-qr-miniapp
       - feat/kaspi-ofd-fiscal-qr-agent
   pull_request:
@@ -34,6 +35,10 @@ jobs:
         if: ${{ hashFiles('miniapp/package.json') != '' }}
         with:
           node-version: '20'
+      - name: Validate Mini App server
+        if: ${{ hashFiles('miniapp/package.json') != '' }}
+        working-directory: miniapp
+        run: node --check server.mjs
       - name: Build Mini App
         if: ${{ hashFiles('miniapp/package.json') != '' }}
         working-directory: miniapp
