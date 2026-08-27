@@ -35,6 +35,7 @@ function requireParity(health, parity) {
     || parity?.service_claim_mux !== 'ClaimServiceMux'
     || parity?.service_stable !== 'PretrialResponseProductionService'
     || parity?.word_quality_target !== '10/10'
+    || parity?.consultation_ai_receipt_verification !== true
     || parity?.document_manual_confirmation !== false
     || parity?.document_ai_receipt_verification !== true
   ) throw new Error('KORGAN professional Mini App runtime is not ready');
@@ -75,6 +76,7 @@ export const korganApi = {
   consultation: (message, caseId, language = 'ru') => request('/miniapp/consultation', {
     method: 'POST', body: JSON.stringify({ message, case_id: caseId || null, language }),
   }),
+  pendingConsultationPayment: () => request('/miniapp/consultation/payment/pending'),
   uploadConsultationReceipt: (orderId, file) => upload(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt`, file),
   retryPaidConsultation: (orderId) => request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/retry`, { method: 'POST' }),
   generateDocument: async (caseId, documentType, language = 'ru') => {
