@@ -38,5 +38,5 @@ def can_release_paid_document(
     if ofd_verified:
         return ReleaseDecision(True, "payment_kaspi_ofd_verified")
     if ai_verified:
-        return ReleaseDecision(True, "payment_legacy_ai_verified")
+        return ReleaseDecision(True, "payment_ai_verified")
     return ReleaseDecision(True, "payment_legacy_admin_confirmed")
