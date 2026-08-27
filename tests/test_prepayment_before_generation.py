@@ -11,6 +11,8 @@ import korgan.prepayment_gate as prepayment_gate
 import korgan.prepayment_runtime as prepayment_runtime
 import korgan.request_scope as request_scope
 from korgan import pretrial_response_runtime, pretrial_runtime, universal_claim_runtime, universal_document_runtime
+from korgan.config import Settings
+from korgan.payment import ReceiptCheck, sign_user_payment
 
 
 def test_all_five_document_generators_are_wrapped_by_prepayment_gate() -> None:
@@ -35,7 +37,16 @@ def test_production_runtime_installs_prepayment_before_generators_and_keeps_fall
     assert source.index("install_payment_gate()") < source.index("install_generation_prepayment_gate()")
     assert "dp.include_router(prepayment_router)" in source
     assert source.index("dp.include_router(prepayment_router)") < source.index("dp.include_router(payment_router)")
-    assert "manual payment confirmation=False" in source
+    # Production release semantics are behavioral: AI verification can release
+    # without admin confirmation, while a non-verified receipt remains blocked.
+    for kind in payment_release_guard.PAID_DOCUMENT_KINDS:
+        assert payment_release_guard.can_release_paid_document(
+            kind=kind,
+            receipt_submitted=True,
+            receipt_precheck_passed=True,
+            ai_verified=True,
+            admin_confirmed=False,
+        ).allowed
 
 
 def test_prepayment_copy_never_claims_document_is_already_ready() -> None:
@@ -82,15 +93,175 @@ def test_legacy_paid_generation_callback_remains_signed_for_old_cards() -> None:
     ) is None
 
 
-def test_new_receipt_flow_calls_immediate_ai_verified_prepayment_generation() -> None:
-    receipt_source = inspect.getsource(payment_runtime.payment_receipt_received)
-    generation_source = inspect.getsource(prepayment_runtime.run_ai_verified_prepayment_generation)
-    assert "if transaction_id < 0" in receipt_source
-    assert "run_ai_verified_prepayment_generation" in receipt_source
-    assert "ai_verified=True" in generation_source
-    assert "begin_paid_delivery" in generation_source
-    assert "_run_paid_generation" in generation_source
-    assert "PREPAY_AI_VERIFIED_GENERATION_COMPLETED" in generation_source
+def test_new_receipt_flow_routes_exact_active_request_for_all_five_kinds(monkeypatch) -> None:
+    settings = Settings(
+        telegram_bot_token="123456:TEST_TOKEN",
+        openai_api_key="test-openai",
+        payments_enabled=True,
+        kaspi_payment_url="https://pay.kaspi.kz/pay/hk3wdvjz",
+        kaspi_payment_recipient="OpenCourt (KORGAN)",
+        document_price_kzt=1000,
+    )
+    calls: list[tuple[int, str, str, int]] = []
+
+    class State:
+        def __init__(self, data: dict[str, object]) -> None:
+            self.data = dict(data)
+
+        async def get_data(self) -> dict[str, object]:
+            return dict(self.data)
+
+        async def update_data(self, **kwargs: object) -> None:
+            self.data.update(kwargs)
+
+    class Message:
+        def __init__(self, user_id: int) -> None:
+            self.from_user = SimpleNamespace(id=user_id)
+            self.answers: list[str] = []
+
+        async def answer(self, text: str, **_kwargs: object) -> None:
+            self.answers.append(text)
+
+    class Analyzer:
+        def __init__(self, _settings: Settings) -> None:
+            pass
+
+        async def analyze(self, _raw: bytes, _filename: str, _mime: str) -> ReceiptCheck:
+            return ReceiptCheck(
+                readable=True,
+                looks_like_kaspi=True,
+                payment_successful=True,
+                amount_kzt=1000,
+                date_time="18.08.2026 11:00",
+                merchant_or_recipient="OpenCourt (KORGAN)",
+                payer="Client",
+                receipt_or_transaction_id="TX-123",
+                rnm="123",
+                fp="456",
+                suspicious_signals=(),
+                notes=(),
+            )
+
+    async def receipt_bytes(_message) -> tuple[bytes, str, str]:
+        return b"receipt", "receipt.jpg", "image/jpeg"
+
+    async def reserve(**_kwargs) -> bool:
+        return True
+
+    async def generate(*, message, state, user_id, transaction_id, kind, language) -> bool:
+        calls.append((user_id, kind, str((await state.get_data())["request_id"]), transaction_id))
+        return True
+
+    monkeypatch.setattr(payment_runtime, "get_settings", lambda: settings)
+    monkeypatch.setattr(payment_runtime, "ReceiptAnalyzer", Analyzer)
+    monkeypatch.setattr(payment_runtime, "_receipt_bytes", receipt_bytes)
+    monkeypatch.setattr(payment_runtime, "reserve_verified_document_receipt", reserve)
+    monkeypatch.setattr(prepayment_runtime, "run_ai_verified_prepayment_generation", generate)
+
+    kinds = ["claim", "pretrial", "pretrial_response", "response", "contract"]
+    for index, kind in enumerate(kinds, start=1):
+        user_id = 1000 + index
+        transaction_id = -(5000 + index)
+        request_id = f"request-{kind}"
+        signature = sign_user_payment(settings, user_id, transaction_id, kind, "ru")
+        state = State({
+            "mode": "payment_receipt",
+            "request_id": request_id,
+            "request_kind": kind,
+            "prepayment_request_id": request_id,
+            "prepayment_kind": kind,
+            "prepayment_transaction_id": transaction_id,
+            "payment_admin_doc_message_id": transaction_id,
+            "payment_kind": kind,
+            "payment_language": "ru",
+            "payment_signature": signature,
+            "payment_offer_time": "2026-08-18T10:00:00+05:00",
+        })
+        asyncio.run(payment_runtime.payment_receipt_received(Message(user_id), state))
+
+    assert calls == [
+        (1001, "claim", "request-claim", -5001),
+        (1002, "pretrial", "request-pretrial", -5002),
+        (1003, "pretrial_response", "request-pretrial_response", -5003),
+        (1004, "response", "request-response", -5004),
+        (1005, "contract", "request-contract", -5005),
+    ]
+
+
+def test_replay_storage_failure_keeps_document_blocked_and_says_do_not_repay(monkeypatch) -> None:
+    settings = Settings(
+        telegram_bot_token="123456:TEST_TOKEN",
+        openai_api_key="test-openai",
+        payments_enabled=True,
+        kaspi_payment_recipient="OpenCourt (KORGAN)",
+        document_price_kzt=1000,
+    )
+    user_id = 123
+    transaction_id = -456
+    kind = "claim"
+
+    class State:
+        data = {
+            "request_id": "request-1",
+            "request_kind": kind,
+            "prepayment_request_id": "request-1",
+            "prepayment_kind": kind,
+            "prepayment_transaction_id": transaction_id,
+            "payment_admin_doc_message_id": transaction_id,
+            "payment_kind": kind,
+            "payment_language": "ru",
+            "payment_signature": sign_user_payment(settings, user_id, transaction_id, kind, "ru"),
+            "payment_offer_time": "2026-08-18T10:00:00+05:00",
+        }
+
+        async def get_data(self):
+            return dict(self.data)
+
+        async def update_data(self, **kwargs):
+            self.data.update(kwargs)
+
+    class Message:
+        from_user = SimpleNamespace(id=user_id)
+
+        def __init__(self) -> None:
+            self.answers: list[str] = []
+
+        async def answer(self, text: str, **_kwargs: object) -> None:
+            self.answers.append(text)
+
+    class Analyzer:
+        def __init__(self, _settings) -> None:
+            pass
+
+        async def analyze(self, *_args) -> ReceiptCheck:
+            return ReceiptCheck(
+                True, True, True, 1000, "18.08.2026 11:00", "OpenCourt (KORGAN)",
+                "Client", "TX-FAIL", "", "", (), (),
+            )
+
+    async def receipt_bytes(_message):
+        return b"receipt", "receipt.jpg", "image/jpeg"
+
+    async def broken_reserve(**_kwargs):
+        raise RuntimeError("db unavailable")
+
+    generated = {"value": False}
+
+    async def generate(**_kwargs):
+        generated["value"] = True
+        return True
+
+    monkeypatch.setattr(payment_runtime, "get_settings", lambda: settings)
+    monkeypatch.setattr(payment_runtime, "ReceiptAnalyzer", Analyzer)
+    monkeypatch.setattr(payment_runtime, "_receipt_bytes", receipt_bytes)
+    monkeypatch.setattr(payment_runtime, "reserve_verified_document_receipt", broken_reserve)
+    monkeypatch.setattr(prepayment_runtime, "run_ai_verified_prepayment_generation", generate)
+
+    message = Message()
+    asyncio.run(payment_runtime.payment_receipt_received(message, State()))
+
+    assert generated["value"] is False
+    assert any("Повторно платить не нужно" in text for text in message.answers)
 
 
 def test_new_request_clears_all_payment_authorization_fields() -> None:
@@ -100,6 +271,7 @@ def test_new_request_clears_all_payment_authorization_fields() -> None:
         "payment_kind",
         "payment_language",
         "payment_signature",
+        "payment_offer_time",
         "prepayment_transaction_id",
         "prepayment_request_id",
         "prepayment_kind",
