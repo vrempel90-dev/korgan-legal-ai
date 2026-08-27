@@ -161,3 +161,8 @@ def test_launcher_and_frontend_are_pinned_to_ofd_contract() -> None:
     assert "https.request" in server
     assert "AI не принимает решение об оплате" in ui
     assert "/src/payment-ofd-copy.js" in index
+
+
+def test_ofd_frontend_origin_is_allowed_by_api_cors() -> None:
+    source = Path("korgan/miniapp_api_v2.py").read_text(encoding="utf-8")
+    assert "https://korgan-miniapp-ofd-production.up.railway.app" in source

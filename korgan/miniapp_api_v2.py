@@ -27,6 +27,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://korgan-miniapp-staging-production.up.railway.app",
+        "https://korgan-miniapp-ofd-production.up.railway.app",
         "http://localhost:5173",
     ],
     allow_credentials=False,
