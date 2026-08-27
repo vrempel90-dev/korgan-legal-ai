@@ -139,6 +139,7 @@ def test_v6_endpoint_has_no_ai_receipt_analyzer_or_file_upload_contract() -> Non
 def test_launcher_and_frontend_are_pinned_to_ofd_contract() -> None:
     launcher = (ROOT / "korgan" / "miniapp_telegram_launcher.py").read_text(encoding="utf-8")
     api = (ROOT / "miniapp" / "src" / "korganApiV2.js").read_text(encoding="utf-8")
+    server = (ROOT / "miniapp" / "server.mjs").read_text(encoding="utf-8")
     ui = (ROOT / "miniapp" / "src" / "payment-ofd-copy.js").read_text(encoding="utf-8")
     index = (ROOT / "miniapp" / "index.html").read_text(encoding="utf-8")
 
@@ -151,5 +152,10 @@ def test_launcher_and_frontend_are_pinned_to_ofd_contract() -> None:
     assert "document_ofd_receipt_verification !== true" in api
     assert "JSON.stringify({ qr_url: qrUrl })" in api
     assert "BarcodeDetector" in api
+    assert "const API_BASE = '/korgan-api'" in api
+    assert "KORGAN_API_PROXY_TARGET" in server
+    assert "process.env.VITE_KORGAN_API_BASE" in server
+    assert "delete headers.origin" in server
+    assert "https.request" in server
     assert "AI не принимает решение об оплате" in ui
     assert "/src/payment-ofd-copy.js" in index
