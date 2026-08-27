@@ -1,0 +1,48 @@
+name: Hotfix runtime compatibility
+
+on:
+  push:
+    branches:
+      - fix/telegram-consultation-ofd
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/telegram-consultation-ofd
+      - name: Apply compatibility alias
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('korgan/consultation_quota_runtime.py')
+          source = path.read_text(encoding='utf-8')
+          alias = 'consultation_payment_text = _consultation_payment_text_ofd'
+          if alias not in source:
+              source = source.replace(
+                  '\n\ndef _fiscal_qr_instruction(language: str) -> str:',
+                  f'\n\n{alias}\n\ndef _fiscal_qr_instruction(language: str) -> str:',
+                  1,
+              )
+          source = source.replace(
+              '_consultation_payment_text_ofd(language, settings.free_consultations_per_day, settings.consultation_price_kzt)',
+              'consultation_payment_text(language, settings.free_consultations_per_day, settings.consultation_price_kzt)',
+              1,
+          )
+          path.write_text(source, encoding='utf-8')
+          PY
+      - name: Commit patch if needed
+        run: |
+          if git diff --quiet -- korgan/consultation_quota_runtime.py; then
+            echo 'No patch needed'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add korgan/consultation_quota_runtime.py
+          git commit -m 'fix: preserve consultation payment text compatibility'
+          git push origin HEAD:fix/telegram-consultation-ofd
