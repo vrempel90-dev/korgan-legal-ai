@@ -1,0 +1,37 @@
+/* UX cleanup for KORGAN Mini App. Presentation only; no application/API/AI logic. */
+
+/* One primary consultation entry is enough: keep bottom AI-lawyer navigation and the consultation card. */
+.hero button {
+  display: none !important;
+}
+
+.hero p {
+  margin-bottom: 0 !important;
+}
+
+@media (max-width: 599px) {
+  .hero {
+    min-height: 0 !important;
+    padding: 22px 20px !important;
+    align-items: center !important;
+  }
+
+  .hero h1 {
+    margin: 10px 0 12px !important;
+  }
+
+  .hero p {
+    max-width: 100% !important;
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+  }
+
+  .hero-orb,
+  .hero::after {
+    display: none !important;
+  }
+
+  .online {
+    max-width: 100% !important;
+  }
+}
