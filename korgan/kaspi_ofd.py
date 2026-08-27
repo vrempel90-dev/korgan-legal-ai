@@ -13,7 +13,9 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 _KASPI_RECEIPT_HOST = "receipt.kaspi.kz"
-_KASPI_RECEIPT_PATH = "/api/v3/receipt/download"
+_KASPI_DOWNLOAD_PATH = "/api/v3/receipt/download"
+_KASPI_WEB_PATH = "/web"
+_KASPI_FISCAL_PATH = "/web/fiscal"
 _MAX_RECEIPT_BYTES = 512_000
 _KZ_TZ = timezone(timedelta(hours=5))
 _DATE_FORMATS = (
@@ -70,6 +72,7 @@ class KaspiFiscalReceipt:
     rnm: str
     fp: str
     ofd_name: str
+    payment_method: str
     raw_text: str
 
     @property
@@ -83,8 +86,31 @@ class KaspiFiscalReceipt:
         return hashlib.sha256(payload).hexdigest()
 
 
+def _safe_port(parsed) -> int | None:  # noqa: ANN001
+    try:
+        return parsed.port
+    except ValueError as exc:
+        raise KaspiOFDVerificationError("Некорректный порт ссылки Kaspi ОФД") from exc
+
+
+def _query_dict(parsed, allowed: set[str]) -> dict[str, str]:  # noqa: ANN001
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    params: dict[str, str] = {}
+    for key, val in pairs:
+        if key not in allowed or key in params:
+            raise KaspiOFDVerificationError("Некорректные параметры ссылки фискального чека")
+        params[key] = val.strip()
+    return params
+
+
 def canonicalize_kaspi_receipt_url(value: str) -> str:
-    """Validate a fiscal QR target and return a stable official Kaspi URL."""
+    """Validate a fiscal QR target and return a stable official Kaspi URL.
+
+    Kaspi currently exposes fiscal receipts through three official shapes:
+    ``/web``, ``/web/fiscal`` and ``/api/v3/receipt/download``. The ``/web``
+    form is normalized to the download endpoint because it exposes the same
+    receipt with a deterministic total/status block that is easier to verify.
+    """
     text = str(value or "").strip()
     if len(text) > 2048:
         raise KaspiOFDVerificationError("Ссылка фискального чека слишком длинная")
@@ -95,27 +121,38 @@ def canonicalize_kaspi_receipt_url(value: str) -> str:
         raise KaspiOFDVerificationError("Некорректная ссылка фискального чека")
     if (parsed.hostname or "").lower() != _KASPI_RECEIPT_HOST:
         raise KaspiOFDVerificationError("QR не ведёт на официальный receipt.kaspi.kz")
-    if parsed.port not in (None, 443):
+    if _safe_port(parsed) not in (None, 443):
         raise KaspiOFDVerificationError("Некорректный порт ссылки Kaspi ОФД")
-    if parsed.path.rstrip("/") != _KASPI_RECEIPT_PATH:
-        raise KaspiOFDVerificationError("QR ведёт не на страницу фискального чека Kaspi ОФД")
     if parsed.fragment:
         raise KaspiOFDVerificationError("Некорректный фрагмент ссылки фискального чека")
 
-    pairs = parse_qsl(parsed.query, keep_blank_values=True)
-    params: dict[str, str] = {}
-    allowed = {"extTranId", "hash", "locale", "sale_date"}
-    for key, val in pairs:
-        if key not in allowed or key in params:
-            raise KaspiOFDVerificationError("Некорректные параметры ссылки фискального чека")
-        params[key] = val.strip()
-    if not params.get("extTranId") or not params.get("sale_date"):
-        raise KaspiOFDVerificationError("В QR отсутствуют обязательные данные Kaspi ОФД")
-    if "hash" in params and not re.fullmatch(r"[0-9a-fA-F]{32,128}", params["hash"]):
-        raise KaspiOFDVerificationError("Некорректная подпись ссылки Kaspi ОФД")
+    path = parsed.path.rstrip("/") or "/"
+    if path in {_KASPI_DOWNLOAD_PATH, _KASPI_WEB_PATH}:
+        params = _query_dict(parsed, {"extTranId", "hash", "locale", "sale_date"})
+        if not params.get("extTranId") or not params.get("sale_date"):
+            raise KaspiOFDVerificationError("В QR отсутствуют обязательные данные Kaspi ОФД")
+        if "hash" in params and params["hash"] and not re.fullmatch(r"[0-9a-fA-F]{32,128}", params["hash"]):
+            raise KaspiOFDVerificationError("Некорректная подпись ссылки Kaspi ОФД")
+        ordered = [(key, params[key]) for key in ("extTranId", "hash", "locale", "sale_date") if params.get(key)]
+        if not any(key == "locale" for key, _ in ordered):
+            ordered.insert(-1 if ordered else 0, ("locale", "ru"))
+        return urlunparse(("https", _KASPI_RECEIPT_HOST, _KASPI_DOWNLOAD_PATH, "", urlencode(ordered), ""))
 
-    ordered = [(key, params[key]) for key in ("extTranId", "hash", "locale", "sale_date") if key in params]
-    return urlunparse(("https", _KASPI_RECEIPT_HOST, _KASPI_RECEIPT_PATH, "", urlencode(ordered), ""))
+    if path == _KASPI_FISCAL_PATH:
+        params = _query_dict(parsed, {"f", "i", "s", "t", "locale"})
+        for required in ("f", "i", "s", "t"):
+            if not params.get(required):
+                raise KaspiOFDVerificationError("В QR отсутствуют обязательные фискальные данные")
+        if not re.fullmatch(r"\d{8,20}", params["f"]):
+            raise KaspiOFDVerificationError("Некорректный РНМ в QR фискального чека")
+        if not re.fullmatch(r"\d{4,30}", params["i"]):
+            raise KaspiOFDVerificationError("Некорректный ФП в QR фискального чека")
+        if not re.fullmatch(r"\d+(?:[.,]\d{1,2})?", params["s"]):
+            raise KaspiOFDVerificationError("Некорректная сумма в QR фискального чека")
+        ordered = [(key, params[key]) for key in ("f", "i", "s", "t", "locale") if params.get(key)]
+        return urlunparse(("https", _KASPI_RECEIPT_HOST, _KASPI_FISCAL_PATH, "", urlencode(ordered), ""))
+
+    raise KaspiOFDVerificationError("QR ведёт не на страницу фискального чека Kaspi ОФД")
 
 
 def _fetch_sync(url: str, timeout: float) -> tuple[bytes, str]:
@@ -166,18 +203,21 @@ def _visible_lines(body: bytes) -> tuple[list[str], str]:
 
 
 def _value_after_label(lines: list[str], labels: tuple[str, ...]) -> str:
-    folded_labels = tuple(label.casefold() for label in labels)
+    qualifiers = {"по астане", "по времени астаны"}
     for index, line in enumerate(lines):
         folded = line.casefold()
-        for label, label_folded in zip(labels, folded_labels):
+        for label in labels:
+            label_folded = label.casefold()
             pos = folded.find(label_folded)
             if pos < 0:
                 continue
             rest = line[pos + len(label):].lstrip(" :№-—")
-            if rest:
+            if rest and rest.casefold() not in qualifiers and not re.fullmatch(r"\([^)]{1,20}\)", rest):
                 return rest.strip()
-            if index + 1 < len(lines):
-                return lines[index + 1].strip()
+            for candidate in lines[index + 1:index + 4]:
+                if candidate.casefold() in qualifiers or re.fullmatch(r"\([^)]{1,20}\)", candidate):
+                    continue
+                return candidate.strip()
     return ""
 
 
@@ -186,7 +226,7 @@ def _digits(value: str) -> str:
 
 
 def _amount(value: str) -> int:
-    match = re.search(r"(?<!\d)(\d{1,3}(?:[ .]\d{3})*|\d+)(?:[,.](\d{1,2}))?\s*(?:₸|тг|KZT)?", value, re.I)
+    match = re.search(r"(?<!\d)(\d+(?:[ .]\d{3})*)(?:[,.](\d{1,2}))?(?!\d)", value)
     if not match:
         return 0
     integer = re.sub(r"\D", "", match.group(1))
@@ -196,6 +236,19 @@ def _amount(value: str) -> int:
     return int(integer or 0)
 
 
+def _query_amount(query: dict[str, str]) -> int:
+    raw = query.get("s", "").replace(",", ".")
+    if not raw:
+        return 0
+    try:
+        numeric = float(raw)
+    except ValueError:
+        return 0
+    if numeric < 0 or not numeric.is_integer():
+        return 0
+    return int(numeric)
+
+
 def parse_kaspi_ofd_receipt(url: str, body: bytes) -> KaspiFiscalReceipt:
     canonical = canonicalize_kaspi_receipt_url(url)
     parsed_url = urlparse(canonical)
@@ -203,34 +256,35 @@ def parse_kaspi_ofd_receipt(url: str, body: bytes) -> KaspiFiscalReceipt:
     lines, text = _visible_lines(body)
     folded = text.casefold()
 
-    status_markers = (
-        "платеж успешно совершен",
-        "платёж успешно совершен",
-        "оплата успешно произведена",
-        "оплата успешно совершена",
-        "оплата совершена",
-        "успешно оплачено",
-    )
-    successful = any(marker in folded for marker in status_markers)
-
-    amount_raw = _value_after_label(lines, ("Итого", "К оплате", "Сумма оплаты", "Сумма покупки", "Сумма"))
-    amount_kzt = _amount(amount_raw)
-    if not amount_kzt:
-        candidates = re.findall(r"(?<!\d)(\d{1,3}(?:[ .]\d{3})*|\d+)\s*₸", text)
-        amounts = [_amount(item) for item in candidates]
-        amounts = [item for item in amounts if item > 0]
-        amount_kzt = amounts[-1] if amounts else 0
-
-    receipt_number = _value_after_label(lines, ("№ чека", "Номер чека", "Чек №"))
-    sale_datetime = _value_after_label(lines, ("Дата и время", "Дата/время", "Время продажи"))
+    receipt_number = _value_after_label(lines, ("№ чека (RRN)", "№ чека", "Номер чека", "Чек №"))
+    sale_datetime = _value_after_label(lines, ("Дата и время по Астане", "Дата и время", "Дата/время", "Время продажи"))
     seller_name = _value_after_label(lines, ("Наименование продавца", "Продавец", "Организация"))
     seller_bin = _digits(_value_after_label(lines, ("ИИН/БИН продавца", "БИН продавца", "ИИН/БИН", "БИН")))
     rnm = re.sub(r"\s+", "", _value_after_label(lines, ("РНМ",)))
     fp = re.sub(r"\s+", "", _value_after_label(lines, ("ФП", "Фискальный признак")))
     ofd_name = _value_after_label(lines, ("ОФД", "Оператор фискальных данных"))
+    payment_method = _value_after_label(lines, ("Оплачено", "Способ оплаты"))
 
     if not sale_datetime:
-        sale_datetime = query.get("sale_date", "")
+        sale_datetime = query.get("sale_date") or query.get("t", "")
+    if not rnm and parsed_url.path == _KASPI_FISCAL_PATH:
+        rnm = query.get("f", "")
+    if not fp and parsed_url.path == _KASPI_FISCAL_PATH:
+        fp = query.get("i", "")
+
+    amount_kzt = _query_amount(query)
+    if not amount_kzt:
+        amount_raw = _value_after_label(lines, ("Итого", "К оплате", "Сумма оплаты", "Сумма покупки", "Сумма"))
+        amount_kzt = _amount(amount_raw)
+    if not amount_kzt:
+        # The Kaspi download receipt places the transaction total before the
+        # line items. Do not sum arbitrary visible amounts because that could
+        # confuse unit price, VAT and total values.
+        first_tenge = re.search(r"(?<!\d)(\d+(?:[ .]\d{3})*)\s*₸", text)
+        amount_kzt = _amount(first_tenge.group(1)) if first_tenge else 0
+
+    is_fiscal_page = "фискальный чек" in folded
+    successful = bool(is_fiscal_page and receipt_number and rnm and fp and ofd_name and payment_method)
 
     return KaspiFiscalReceipt(
         canonical_url=canonical,
@@ -245,6 +299,7 @@ def parse_kaspi_ofd_receipt(url: str, body: bytes) -> KaspiFiscalReceipt:
         rnm=rnm[:120],
         fp=fp[:160],
         ofd_name=ofd_name[:120],
+        payment_method=payment_method[:120],
         raw_text=text[:20_000],
     )
 
@@ -295,7 +350,7 @@ def fiscal_receipt_issues(
     """Return deterministic blockers. Any issue keeps the paid result locked."""
     issues: list[str] = []
     if not receipt.successful:
-        issues.append("Kaspi ОФД не подтвердил успешную оплату")
+        issues.append("Kaspi ОФД не подтвердил полноценный фискальный чек")
     if receipt.amount_kzt != int(expected_amount):
         issues.append(f"сумма фискального чека {receipt.amount_kzt} ₸ вместо {expected_amount} ₸")
     if not receipt.transaction_id.strip():
@@ -306,6 +361,8 @@ def fiscal_receipt_issues(
         issues.append("в фискальном чеке не найден ФП")
     if "kaspi" not in _normalize(receipt.ofd_name) or "офд" not in receipt.ofd_name.casefold():
         issues.append("оператор фискальных данных не подтверждён как Kaspi ОФД")
+    if "kaspi" not in _normalize(receipt.payment_method):
+        issues.append("фискальный чек не подтверждает оплату через Kaspi")
 
     configured_bin = _digits(expected_bin)
     if configured_bin:
@@ -314,7 +371,7 @@ def fiscal_receipt_issues(
         elif receipt.seller_bin != configured_bin:
             issues.append("БИН продавца в фискальном чеке не соответствует KORGAN")
     elif expected_recipient.strip():
-        haystack = _normalize(receipt.seller_name or receipt.raw_text)
+        haystack = _normalize(receipt.raw_text)
         tokens = [_normalize(token) for token in re.findall(r"[A-Za-zА-Яа-яЁё0-9]+", expected_recipient)]
         tokens = [token for token in tokens if len(token) >= 5]
         if not tokens or not any(token in haystack for token in tokens):
