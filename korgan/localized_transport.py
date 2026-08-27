@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from aiogram import Bot
 from aiogram.methods import SendDocument
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    MenuButtonDefault,
+    MenuButtonWebApp,
+    ReplyKeyboardMarkup,
+    WebAppInfo,
+)
 
 from korgan.client_safe_ui import ClientSafeBot, _clean_upload, sanitize_client_text
 from korgan.i18n import BUTTONS, KK, RU, tr
@@ -185,6 +194,24 @@ class LocalizedClientSafeBot(ClientSafeBot):
         if isinstance(method, SendDocument):
             method = _prepare_send_document(method)
         return await super().__call__(method, request_timeout=request_timeout)
+
+    async def set_chat_menu_button(
+        self,
+        chat_id: int | None = None,
+        menu_button: Any | None = None,
+        request_timeout: int | None = None,
+    ) -> Any:
+        """Preserve the configured KORGAN Mini App when startup asks for the default menu."""
+        miniapp_url = os.getenv("MINIAPP_PUBLIC_URL", "").strip()
+        if chat_id is None and isinstance(menu_button, MenuButtonDefault) and miniapp_url.startswith("https://"):
+            button_text = os.getenv("TELEGRAM_MINIAPP_MENU_TEXT", "Открыть KORGAN").strip() or "Открыть KORGAN"
+            menu_button = MenuButtonWebApp(text=button_text, web_app=WebAppInfo(url=miniapp_url))
+        return await Bot.set_chat_menu_button(
+            self,
+            chat_id=chat_id,
+            menu_button=menu_button,
+            request_timeout=request_timeout,
+        )
 
     async def send_message(self, chat_id: Any, text: str, *args: Any, **kwargs: Any) -> Any:
         if "reply_markup" in kwargs:
