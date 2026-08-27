@@ -2,14 +2,15 @@
 .app-shell{isolation:isolate}
 .app-shell::after{content:"";position:absolute;inset:-150px -120px;pointer-events:none;z-index:0;background-image:var(--korgan-wordmark);background-repeat:repeat;background-size:190px auto;opacity:.026;transform:rotate(-14deg) scale(1.12);transform-origin:center}
 .app-shell>header,.app-shell>main,.app-shell>nav{position:relative;z-index:1}
-.topbar .brand-mark{width:188px;height:44px;min-width:188px;border:0;border-radius:0;background:none;box-shadow:none;overflow:visible;display:flex;align-items:center;gap:8px;color:#fff}
+.topbar{justify-content:center!important;position:relative}
+.topbar .brand-mark{width:auto;height:44px;min-width:0;border:0;border-radius:0;background:none;box-shadow:none;overflow:visible;display:flex;align-items:center;justify-content:center;color:#fff;margin:0 auto}
 .topbar .brand-mark svg{display:none!important}
-.topbar .brand-mark::before{content:"K";display:block!important;font-family:Georgia,"Times New Roman",serif;font-size:46px;font-weight:400;line-height:.82;letter-spacing:-.08em;color:#fff;transform:scaleY(1.13);transform-origin:center}
-.topbar .brand-mark::after{content:"| KORGAN";display:block!important;position:static;width:auto;height:auto;background:none;box-shadow:none;font-family:Georgia,"Times New Roman",serif;font-size:24px;font-weight:400;line-height:1;letter-spacing:.02em;color:#fff;white-space:nowrap}
+.topbar .brand-mark::before{content:"KORGANZAN.Ai";display:block!important;font-family:Georgia,"Times New Roman",serif;font-size:27px;font-weight:700;line-height:1;letter-spacing:.005em;color:#fff;white-space:nowrap;text-rendering:geometricPrecision;-webkit-font-smoothing:antialiased}
+.topbar .brand-mark::after{display:none!important;content:none!important}
 .topbar .brand{display:none!important}
-.topbar .top-status{margin-left:auto;max-width:118px}
+.topbar .top-status{display:none!important}
 .consent-page .brand-mark.large{width:min(290px,78vw);height:64px;border:0;border-radius:0;background:var(--korgan-wordmark) left center/contain no-repeat;box-shadow:none;margin:4px 0 8px;overflow:visible}
 .consent-page .brand-mark.large::before,.consent-page .brand-mark.large::after,.consent-page .brand-mark.large svg{display:none!important}
 .hero-orb{background-color:#090b0d;background-image:var(--korgan-wordmark);background-position:center;background-repeat:no-repeat;background-size:88% auto}
 .hero-orb::before,.hero-orb::after,.hero-orb svg{display:none!important}
-@media(max-width:380px){.topbar .brand-mark{width:164px;min-width:164px;height:40px;gap:6px}.topbar .brand-mark::before{font-size:42px}.topbar .brand-mark::after{font-size:21px}.topbar .top-status{max-width:88px;font-size:8px}.app-shell::after{background-size:165px auto;opacity:.024}}
+@media(max-width:380px){.topbar .brand-mark{height:40px}.topbar .brand-mark::before{font-size:25px}.app-shell::after{background-size:165px auto;opacity:.024}}
