@@ -40,7 +40,7 @@ function requireProfessionalRuntime(health, parity) {
     || health?.word_quality_target !== '10/10'
     || health?.preliminary_fallback !== true
     || parity?.status !== 'ok'
-    || parity?.api_version !== '0.9.0'
+    || parity?.api_version !== '1.1.0'
     || parity?.service_outer !== 'ClaimPipelineV2Adapter'
     || parity?.service_claim_mux !== 'ClaimServiceMux'
     || parity?.service_stable !== 'PretrialResponseProductionService'
@@ -48,7 +48,12 @@ function requireProfessionalRuntime(health, parity) {
     || parity?.preliminary_fallback !== true
     || typeof parity?.consultation_limit_enabled !== 'boolean'
     || typeof parity?.document_payments_enabled !== 'boolean'
-    || (parity?.document_payments_enabled && parity?.document_manual_confirmation !== true)
+    || parity?.consultation_ai_receipt_verification !== false
+    || parity?.consultation_ofd_receipt_verification !== true
+    || parity?.document_manual_confirmation !== false
+    || parity?.document_ai_receipt_verification !== false
+    || parity?.document_ofd_receipt_verification !== true
+    || parity?.receipt_input !== 'fiscal_qr_url'
   ) {
     throw new Error('KORGAN professional legal runtime is not ready');
   }
@@ -73,16 +78,72 @@ async function uploadMaterial(caseId, file) {
   return request(`/miniapp/cases/${encodeURIComponent(caseId)}/materials`, { method: 'POST', body });
 }
 
+function normalizeFiscalUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'receipt.kaspi.kz') return '';
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+async function detectFiscalQrFromImage(file) {
+  if (!file || !String(file.type || '').startsWith('image/')) return '';
+  if (typeof window.BarcodeDetector !== 'function') return '';
+  try {
+    const formats = await window.BarcodeDetector.getSupportedFormats?.().catch(() => []);
+    if (Array.isArray(formats) && formats.length && !formats.includes('qr_code')) return '';
+    const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+    const bitmap = await createImageBitmap(file);
+    try {
+      const codes = await detector.detect(bitmap);
+      for (const code of codes || []) {
+        const url = normalizeFiscalUrl(code?.rawValue);
+        if (url) return url;
+      }
+    } finally {
+      bitmap.close?.();
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+async function resolveFiscalQrUrl(file) {
+  const detected = await detectFiscalQrFromImage(file);
+  if (detected) return detected;
+
+  const pasted = window.prompt(
+    'Отсканируйте QR именно на фискальном чеке и вставьте открывшуюся ссылку receipt.kaspi.kz',
+    '',
+  );
+  const normalized = normalizeFiscalUrl(pasted);
+  if (!normalized) {
+    throw new Error('Нужна официальная QR-ссылка фискального чека receipt.kaspi.kz');
+  }
+  return normalized;
+}
+
+async function submitFiscalReceipt(path, file) {
+  const qrUrl = await resolveFiscalQrUrl(file);
+  return request(path, {
+    method: 'POST',
+    body: JSON.stringify({ qr_url: qrUrl }),
+  });
+}
+
 async function uploadConsultationReceipt(orderId, file) {
-  const body = new FormData();
-  body.append('file', file);
-  return request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+  return submitFiscalReceipt(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt`, file);
 }
 
 async function uploadDocumentReceipt(orderId, file) {
-  const body = new FormData();
-  body.append('file', file);
-  return request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+  return requireProfessionalDocument(
+    await submitFiscalReceipt(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, file),
+  );
 }
 
 export const korganApi = {
@@ -98,6 +159,7 @@ export const korganApi = {
     method: 'POST',
     body: JSON.stringify({ message, case_id: caseId || null, language }),
   }),
+  pendingConsultationPayment: () => request('/miniapp/consultation/payment/pending'),
   uploadConsultationReceipt,
   retryPaidConsultation: (orderId) => request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/retry`, {
     method: 'POST',
@@ -137,6 +199,9 @@ export const korganApi = {
     return result?.payment_required ? result : requireProfessionalDocument(result);
   },
   uploadDocumentReceipt,
+  retryPaidDocument: async (orderId) => requireProfessionalDocument(
+    await request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/retry`, { method: 'POST' }),
+  ),
   documentPaymentStatus: (orderId) => request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}`),
   adminDocumentPayments: (status = 'awaiting_admin') => request(`/miniapp/admin/document-payments?status=${encodeURIComponent(status)}`),
   adminDocumentPaymentDecision: (orderId, approved, note = '') => request(`/miniapp/admin/document-payments/${encodeURIComponent(orderId)}/decision`, {
