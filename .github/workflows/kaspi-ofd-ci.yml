@@ -33,8 +33,6 @@ jobs:
         if: ${{ hashFiles('miniapp/package.json') != '' }}
         with:
           node-version: '20'
-          cache: npm
-          cache-dependency-path: miniapp/package-lock.json
       - name: Build Mini App
         if: ${{ hashFiles('miniapp/package.json') != '' }}
         working-directory: miniapp
