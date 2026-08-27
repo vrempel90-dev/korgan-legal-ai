@@ -1,0 +1,232 @@
+name: Patch prepayment OFD tests
+
+on:
+  push:
+    branches:
+      - fix/telegram-consultation-ofd
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/telegram-consultation-ofd
+      - name: Replace legacy AI receipt tests with OFD contract tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('tests/test_prepayment_before_generation.py')
+          source = path.read_text(encoding='utf-8')
+
+          test1 = r'''def test_new_receipt_flow_routes_exact_active_request_for_all_five_kinds(monkeypatch) -> None:
+              settings = Settings(
+                  telegram_bot_token="123456:TEST_TOKEN",
+                  openai_api_key="test-openai",
+                  payments_enabled=True,
+                  kaspi_payment_url="https://pay.kaspi.kz/pay/hk3wdvjz",
+                  kaspi_payment_recipient="OpenCourt (KORGAN)",
+                  document_price_kzt=1000,
+              )
+              calls: list[tuple[int, str, str, int]] = []
+
+              class State:
+                  def __init__(self, data: dict[str, object]) -> None:
+                      self.data = dict(data)
+
+                  async def get_data(self) -> dict[str, object]:
+                      return dict(self.data)
+
+                  async def update_data(self, **kwargs: object) -> None:
+                      self.data.update(kwargs)
+
+              class Message:
+                  def __init__(self, user_id: int) -> None:
+                      self.from_user = SimpleNamespace(id=user_id)
+                      self.answers: list[str] = []
+
+                  async def answer(self, text: str, **_kwargs: object) -> None:
+                      self.answers.append(text)
+
+              async def fetch_receipt(_url: str):
+                  return SimpleNamespace(
+                      receipt_fingerprint="fiscal-hash",
+                      transaction_id="RNM:RRN:FP",
+                      amount_kzt=1000,
+                      seller_bin="",
+                      rnm="123456789012",
+                      fp="456789",
+                  )
+
+              def issues(_receipt, expected_amount: int, **_kwargs) -> list[str]:
+                  assert expected_amount == 1000
+                  return []
+
+              async def reserve(**_kwargs) -> bool:
+                  return True
+
+              async def generate(*, message, state, user_id, transaction_id, kind, language) -> bool:
+                  calls.append((user_id, kind, str((await state.get_data())["request_id"]), transaction_id))
+                  return True
+
+              monkeypatch.setattr(payment_runtime, "get_settings", lambda: settings)
+              monkeypatch.setattr(payment_runtime, "fetch_kaspi_ofd_receipt", fetch_receipt)
+              monkeypatch.setattr(payment_runtime, "fiscal_receipt_issues", issues)
+              monkeypatch.setattr(payment_runtime, "reserve_verified_document_receipt", reserve)
+              monkeypatch.setattr(prepayment_runtime, "run_ai_verified_prepayment_generation", generate)
+
+              kinds = ["claim", "pretrial", "pretrial_response", "response", "contract"]
+              for index, kind in enumerate(kinds, start=1):
+                  user_id = 1000 + index
+                  transaction_id = -(5000 + index)
+                  request_id = f"request-{kind}"
+                  signature = sign_user_payment(settings, user_id, transaction_id, kind, "ru")
+                  state = State({
+                      "mode": "payment_receipt",
+                      "request_id": request_id,
+                      "request_kind": kind,
+                      "prepayment_request_id": request_id,
+                      "prepayment_kind": kind,
+                      "prepayment_transaction_id": transaction_id,
+                      "payment_admin_doc_message_id": transaction_id,
+                      "payment_kind": kind,
+                      "payment_language": "ru",
+                      "payment_signature": signature,
+                      "payment_offer_time": "2026-08-18T10:00:00+05:00",
+                  })
+                  asyncio.run(payment_runtime._verify_and_release_fiscal_url(
+                      Message(user_id),
+                      state,
+                      "https://receipt.kaspi.kz/web/fiscal?f=123456789012&i=456789&s=1000&t=20260818110000",
+                  ))
+
+              assert calls == [
+                  (1001, "claim", "request-claim", -5001),
+                  (1002, "pretrial", "request-pretrial", -5002),
+                  (1003, "pretrial_response", "request-pretrial_response", -5003),
+                  (1004, "response", "request-response", -5004),
+                  (1005, "contract", "request-contract", -5005),
+              ]
+          '''
+
+          test2 = r'''def test_replay_storage_failure_keeps_document_blocked_and_says_do_not_repay(monkeypatch) -> None:
+              settings = Settings(
+                  telegram_bot_token="123456:TEST_TOKEN",
+                  openai_api_key="test-openai",
+                  payments_enabled=True,
+                  kaspi_payment_recipient="OpenCourt (KORGAN)",
+                  document_price_kzt=1000,
+              )
+              user_id = 123
+              transaction_id = -456
+              kind = "claim"
+
+              class State:
+                  data = {
+                      "request_id": "request-1",
+                      "request_kind": kind,
+                      "prepayment_request_id": "request-1",
+                      "prepayment_kind": kind,
+                      "prepayment_transaction_id": transaction_id,
+                      "payment_admin_doc_message_id": transaction_id,
+                      "payment_kind": kind,
+                      "payment_language": "ru",
+                      "payment_signature": sign_user_payment(settings, user_id, transaction_id, kind, "ru"),
+                      "payment_offer_time": "2026-08-18T10:00:00+05:00",
+                  }
+
+                  async def get_data(self):
+                      return dict(self.data)
+
+                  async def update_data(self, **kwargs):
+                      self.data.update(kwargs)
+
+              class Message:
+                  from_user = SimpleNamespace(id=user_id)
+
+                  def __init__(self) -> None:
+                      self.answers: list[str] = []
+
+                  async def answer(self, text: str, **_kwargs: object) -> None:
+                      self.answers.append(text)
+
+              async def fetch_receipt(_url: str):
+                  return SimpleNamespace(
+                      receipt_fingerprint="fiscal-hash-fail",
+                      transaction_id="RNM:RRN:FP-FAIL",
+                      amount_kzt=1000,
+                      seller_bin="",
+                      rnm="123456789012",
+                      fp="456789",
+                  )
+
+              def issues(_receipt, _expected_amount: int, **_kwargs) -> list[str]:
+                  return []
+
+              async def broken_reserve(**_kwargs):
+                  raise RuntimeError("db unavailable")
+
+              generated = {"value": False}
+
+              async def generate(**_kwargs):
+                  generated["value"] = True
+                  return True
+
+              monkeypatch.setattr(payment_runtime, "get_settings", lambda: settings)
+              monkeypatch.setattr(payment_runtime, "fetch_kaspi_ofd_receipt", fetch_receipt)
+              monkeypatch.setattr(payment_runtime, "fiscal_receipt_issues", issues)
+              monkeypatch.setattr(payment_runtime, "reserve_verified_document_receipt", broken_reserve)
+              monkeypatch.setattr(prepayment_runtime, "run_ai_verified_prepayment_generation", generate)
+
+              message = Message()
+              asyncio.run(payment_runtime._verify_and_release_fiscal_url(
+                  message,
+                  State(),
+                  "https://receipt.kaspi.kz/web/fiscal?f=123456789012&i=456789&s=1000&t=20260818110000",
+              ))
+
+              assert generated["value"] is False
+              assert any("Повторно платить не нужно" in text for text in message.answers)
+          '''
+
+          def dedent_block(text: str) -> str:
+              lines = text.splitlines()
+              return '\n'.join(line[10:] if line.startswith('          ') else line for line in lines).strip() + '\n\n'
+
+          replacement1 = dedent_block(test1)
+          replacement2 = dedent_block(test2)
+
+          source, n1 = re.subn(
+              r'def test_new_receipt_flow_routes_exact_active_request_for_all_five_kinds\(monkeypatch\) -> None:\n.*?(?=\ndef test_replay_storage_failure_keeps_document_blocked_and_says_do_not_repay)',
+              replacement1.rstrip(),
+              source,
+              count=1,
+              flags=re.S,
+          )
+          source, n2 = re.subn(
+              r'def test_replay_storage_failure_keeps_document_blocked_and_says_do_not_repay\(monkeypatch\) -> None:\n.*?(?=\ndef test_new_request_clears_all_payment_authorization_fields)',
+              replacement2.rstrip(),
+              source,
+              count=1,
+              flags=re.S,
+          )
+          if n1 != 1 or n2 != 1:
+              raise SystemExit(f'expected one replacement each, got {n1=} {n2=}')
+          path.write_text(source, encoding='utf-8')
+          PY
+      - name: Commit patch if needed
+        run: |
+          if git diff --quiet -- tests/test_prepayment_before_generation.py; then
+            echo 'No patch needed'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tests/test_prepayment_before_generation.py
+          git commit -m 'test: migrate prepayment flow coverage to Kaspi OFD'
+          git push origin HEAD:fix/telegram-consultation-ofd
