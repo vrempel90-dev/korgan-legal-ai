@@ -89,15 +89,13 @@ def register_miniapp_menu() -> None:
             flush=True,
         )
     except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as exc:
-        # Telegram setup is deliberately isolated from the production AI agent
-        # and must never prevent the dedicated Mini App API from starting.
         print(f"TELEGRAM_MINIAPP_MENU_WARNING detail={exc}", flush=True)
 
 
 def main() -> None:
     register_miniapp_menu()
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("korgan.miniapp_api_v4:app", host="0.0.0.0", port=port)
+    uvicorn.run("korgan.miniapp_api_v5:app", host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":
