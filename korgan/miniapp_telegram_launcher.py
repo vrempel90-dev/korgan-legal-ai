@@ -95,7 +95,7 @@ def register_miniapp_menu() -> None:
 def main() -> None:
     register_miniapp_menu()
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("korgan.miniapp_api_v6:app", host="0.0.0.0", port=port)
+    uvicorn.run("korgan.miniapp_api_v7:app", host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":
