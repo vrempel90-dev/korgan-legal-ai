@@ -52,6 +52,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    def model_post_init(self, __context: object) -> None:
+        # Railway already stores KASPI_SELLER_BIN. Keep old branch code working
+        # while the payment layer is migrated to the canonical field name.
+        if not self.kaspi_payment_bin.strip() and self.kaspi_seller_bin.strip():
+            self.kaspi_payment_bin = self.kaspi_seller_bin.strip()
+
     @property
     def legal_domains(self) -> list[str]:
         return [item.strip().lower() for item in self.official_legal_domains.split(",") if item.strip()]
