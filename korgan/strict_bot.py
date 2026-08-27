@@ -116,7 +116,8 @@ async def main() -> None:
 
     bot = LocalizedClientSafeBot(token=settings.telegram_bot_token)
     await configure_telegram_menu(bot)
-    await ensure_telegram_profile_branding(settings)
+    if str(getattr(settings, "database_url", "") or "").strip():
+        await ensure_telegram_profile_branding(settings)
 
     dp = Dispatcher(storage=MemoryStorage())
     language_middleware = LanguageContextMiddleware()
