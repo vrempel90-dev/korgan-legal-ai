@@ -4,7 +4,10 @@ import base64
 import hashlib
 import hmac
 import json
+import re
+import unicodedata
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -59,6 +62,16 @@ _RECEIPT_SCHEMA: dict[str, Any] = {
     ],
     "additionalProperties": False,
 }
+
+_KZ_TZ = timezone(timedelta(hours=5))
+_RECEIPT_DATE_FORMATS = (
+    "%d.%m.%Y %H:%M:%S",
+    "%d.%m.%Y %H:%M",
+    "%d/%m/%Y %H:%M:%S",
+    "%d/%m/%Y %H:%M",
+    "%d-%m-%Y %H:%M:%S",
+    "%d-%m-%Y %H:%M",
+)
 
 
 @dataclass(frozen=True)
@@ -224,7 +237,52 @@ def admin_storage_caption(user_id: int, kind: str, language: str, amount: int) -
     )
 
 
-def receipt_hard_issues(check: ReceiptCheck, expected_amount: int) -> list[str]:
+def _normalize_recipient(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return "".join(ch for ch in normalized if ch.isalnum())
+
+
+def _parse_receipt_datetime(value: str | datetime) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = " ".join(str(value or "").strip().split())
+        if not text:
+            return None
+        iso = text.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(iso)
+        except ValueError:
+            parsed = None
+            for fmt in _RECEIPT_DATE_FORMATS:
+                try:
+                    parsed = datetime.strptime(text, fmt)
+                    break
+                except ValueError:
+                    continue
+            if parsed is None:
+                compact = re.sub(r"\s+", " ", text)
+                for fmt in _RECEIPT_DATE_FORMATS:
+                    try:
+                        parsed = datetime.strptime(compact, fmt)
+                        break
+                    except ValueError:
+                        continue
+                if parsed is None:
+                    return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_KZ_TZ)
+    return parsed.astimezone(timezone.utc)
+
+
+def receipt_hard_issues(
+    check: ReceiptCheck,
+    expected_amount: int,
+    *,
+    expected_recipient: str = "",
+    offered_at: str | datetime | None = None,
+    now: datetime | None = None,
+) -> list[str]:
     """Return blockers for automatic release. Any blocker means fail closed."""
     issues: list[str] = []
     if not check.readable:
@@ -239,6 +297,29 @@ def receipt_hard_issues(check: ReceiptCheck, expected_amount: int) -> list[str]:
         issues.append("на чеке не распознаны дата/время платежа")
     if not check.receipt_or_transaction_id.strip():
         issues.append("на чеке не распознан номер операции/чека")
+
+    if expected_recipient.strip():
+        actual_recipient = _normalize_recipient(check.merchant_or_recipient)
+        configured_recipient = _normalize_recipient(expected_recipient)
+        if not actual_recipient:
+            issues.append("на чеке не распознан получатель платежа")
+        elif actual_recipient != configured_recipient:
+            issues.append("получатель платежа не соответствует KORGAN")
+
+    if offered_at is not None and check.date_time.strip():
+        receipt_time = _parse_receipt_datetime(check.date_time)
+        offer_time = _parse_receipt_datetime(offered_at)
+        if receipt_time is None:
+            issues.append("дата/время платежа не распознаны в допустимом формате")
+        elif offer_time is None:
+            issues.append("не удалось подтвердить время открытия текущей оплаты")
+        else:
+            if receipt_time < offer_time - timedelta(minutes=2):
+                issues.append("платёж выполнен до открытия текущей заявки на оплату")
+            current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+            if receipt_time > current + timedelta(minutes=10):
+                issues.append("дата/время платежа находятся недопустимо в будущем")
+
     if check.suspicious_signals:
         issues.append("AI обнаружил признаки возможного изменения или аномалии чека")
     return issues
