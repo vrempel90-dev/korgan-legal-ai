@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import File, Header, HTTPException, UploadFile
+from fastapi import File, Header, HTTPException, Request, UploadFile
 
 from korgan import miniapp_api_v4 as runtime
-from korgan.consultation_quota import receipt_fingerprint
+from korgan.consultation_quota import ConsultationOrder, get_consultation_order, receipt_fingerprint
+from korgan.miniapp_consultation_payment_parity import (
+    accept_ai_verified_consultation_receipt,
+    get_consultation_order_created_at,
+    get_latest_open_consultation_order,
+)
 from korgan.miniapp_document_payments import (
     DocumentPaymentOrder,
     consume_document_order,
@@ -23,14 +28,15 @@ core = runtime.core
 app = runtime.app
 settings = runtime.settings
 service = runtime.service
-PARITY_REVISION = "2026-08-27.1"
+PARITY_REVISION = "2026-08-27.2"
 _RECEIPT_EXTENSIONS = runtime._RECEIPT_EXTENSIONS
 
-# v5 changes only the Mini App HTTP payment contract. The Telegram AI agent,
-# polling runtime, routers and production branch are not modified by this app.
+# v5 changes only the dedicated Mini App HTTP contract. The Telegram AI agent,
+# polling runtime, routers and its production branch/service are not modified.
 for _path, _method in (
     ("/miniapp/parity", "GET"),
     ("/miniapp/pricing", "GET"),
+    ("/miniapp/consultation/payments/{order_id}/receipt", "POST"),
     ("/miniapp/documents/generate", "POST"),
     ("/miniapp/documents/payments/{order_id}/receipt", "POST"),
     ("/miniapp/documents/payments/{order_id}", "GET"),
@@ -38,6 +44,43 @@ for _path, _method in (
     ("/miniapp/admin/document-payments/{order_id}/decision", "POST"),
 ):
     runtime._drop_route(_path, _method)
+
+
+@app.middleware("http")
+async def serialize_miniapp_user_requests(request: Request, call_next):
+    """Prevent stale encrypted-state snapshots from overwriting newer ones.
+
+    The Mini App API is a separate Railway process from the Telegram agent. A
+    per-user lock is held across each Mini App request, including long AI work,
+    so state load/mutate/save sequences for one identity cannot race each other.
+    """
+    if not request.url.path.startswith("/miniapp/"):
+        return await call_next(request)
+    raw = request.headers.get("x-telegram-init-data", "")
+    if not raw:
+        return await call_next(request)
+    try:
+        identity = core.legacy._identity(raw)
+    except Exception:
+        # The endpoint remains responsible for returning the canonical auth
+        # error. Invalid requests never receive a trusted per-user lock key.
+        return await call_next(request)
+    lock = await core.store.user_lock(identity)
+    async with lock:
+        return await call_next(request)
+
+
+def _consultation_payment_payload(order: ConsultationOrder) -> dict[str, Any]:
+    return {
+        "order_id": order.id,
+        "amount_kzt": order.amount_kzt,
+        "kaspi_url": settings.kaspi_payment_url,
+        "status": order.status,
+        "approval_required": False,
+        "ai_verification": True,
+        "can_retry": order.status == "paid",
+        "receipt_accept": ["PDF", "JPG", "JPEG", "PNG", "WEBP"],
+    }
 
 
 def _document_payment_payload(order: DocumentPaymentOrder) -> dict[str, Any]:
@@ -74,11 +117,11 @@ def _receipt_check_payload(check: Any) -> dict[str, Any]:
 
 def _require_payment_configuration() -> None:
     if not settings.kaspi_payment_url.strip():
-        raise HTTPException(status_code=503, detail="Оплата документов временно недоступна: Kaspi не настроен.")
+        raise HTTPException(status_code=503, detail="Оплата временно недоступна: Kaspi не настроен.")
     if not settings.kaspi_payment_recipient.strip():
         raise HTTPException(
             status_code=503,
-            detail="Оплата документов временно недоступна: получатель KORGAN не настроен. Документ не разблокирован.",
+            detail="Оплата временно недоступна: получатель KORGAN не настроен. Доступ не разблокирован.",
         )
 
 
@@ -141,8 +184,6 @@ async def _generate_verified_order(
         ) from exc
 
     if not await consume_document_order(order.id, user_key=order.user_key):
-        # A duplicate client retry after a completed generation is safe: return
-        # the already stored document instead of charging again or regenerating.
         try:
             existing = await core.get_document(order.case_id, init_data)
         except Exception as exc:
@@ -181,11 +222,12 @@ async def parity() -> dict[str, Any]:
         "consultation_limit_enabled": bool(settings.consultation_limit_enabled),
         "free_consultations_per_day": int(settings.free_consultations_per_day),
         "consultation_price_kzt": int(settings.consultation_price_kzt),
+        "consultation_ai_receipt_verification": True,
         "document_payments_enabled": bool(settings.payments_enabled),
         "document_price_kzt": int(settings.document_price_kzt),
         "document_manual_confirmation": False,
         "document_ai_receipt_verification": True,
-        "document_payment_recipient_configured": bool(settings.kaspi_payment_recipient.strip()),
+        "payment_recipient_configured": bool(settings.kaspi_payment_recipient.strip()),
         "document_types": sorted(core._DOCUMENT_TYPES),
     }
 
@@ -198,12 +240,96 @@ async def pricing(x_telegram_init_data: str = Header(default="")) -> dict[str, A
         "consultation_limit_enabled": bool(settings.consultation_limit_enabled),
         "free_consultations_per_day": int(settings.free_consultations_per_day),
         "consultation_price_kzt": int(settings.consultation_price_kzt),
+        "consultation_ai_receipt_verification": True,
         "document_price_kzt": int(settings.document_price_kzt),
         "document_payments_enabled": bool(settings.payments_enabled),
         "document_manual_confirmation": False,
         "document_ai_receipt_verification": True,
         "kaspi_url": settings.kaspi_payment_url if settings.consultation_limit_enabled or settings.payments_enabled else "",
     }
+
+
+@app.get("/miniapp/consultation/payment/pending")
+async def pending_consultation_payment(
+    x_telegram_init_data: str = Header(default=""),
+) -> dict[str, Any]:
+    identity = core.legacy._identity(x_telegram_init_data)
+    await core.legacy._require_consent(identity)
+    if not settings.consultation_limit_enabled:
+        return {"payment_required": False, "payment": None}
+    order = await get_latest_open_consultation_order(runtime._quota_user_id(identity))
+    if order is None:
+        return {"payment_required": False, "payment": None}
+    return {"payment_required": True, "payment": _consultation_payment_payload(order)}
+
+
+@app.post("/miniapp/consultation/payments/{order_id}/receipt")
+async def consultation_payment_receipt(
+    order_id: int,
+    file: UploadFile = File(...),
+    x_telegram_init_data: str = Header(default=""),
+) -> dict[str, Any]:
+    _require_payment_configuration()
+    identity = core.legacy._identity(x_telegram_init_data)
+    state = await core.legacy._require_consent(identity)
+    user_id = runtime._quota_user_id(identity)
+    order = await get_consultation_order(order_id, user_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Платёжный запрос консультации не найден")
+    if order.status == "paid":
+        return await runtime._answer_paid_order(identity=identity, state=state, order=order)
+    if order.status != "pending":
+        raise HTTPException(status_code=409, detail="Этот платёжный запрос уже обработан или использован")
+
+    filename = (file.filename or "receipt").strip()
+    if core.legacy._extension(filename) not in _RECEIPT_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="Пришлите полный чек как PDF, JPG, JPEG, PNG или WEBP")
+    data = await file.read(core._MAX_UPLOAD_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="Пустой файл")
+    if len(data) > core._MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Файл больше 20 МБ")
+
+    try:
+        check = await ReceiptAnalyzer(settings).analyze(data, filename, file.content_type or "")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Не удалось автоматически проверить чек. Консультация не разблокирована, повторно платить не нужно.",
+        ) from exc
+
+    offered_at = await get_consultation_order_created_at(order.id, user_id=user_id)
+    issues = receipt_hard_issues(
+        check,
+        order.amount_kzt,
+        expected_recipient=settings.kaspi_payment_recipient,
+        offered_at=offered_at,
+    )
+    if issues:
+        raise HTTPException(
+            status_code=422,
+            detail="Чек не прошёл автоматическую AI-проверку: " + "; ".join(issues[:6]),
+        )
+
+    try:
+        accepted = await accept_ai_verified_consultation_receipt(
+            order_id=order.id,
+            user_id=user_id,
+            receipt_hash=receipt_fingerprint(data),
+            transaction_id=check.receipt_or_transaction_id,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Автоматическая проверка оплаты временно недоступна. Консультация остаётся заблокирована. Не платите повторно — загрузите этот же чек позже.",
+        ) from exc
+    if not accepted:
+        raise HTTPException(status_code=409, detail="Этот чек/номер операции уже использовался для другого платёжного запроса")
+
+    paid = await get_consultation_order(order.id, user_id)
+    if paid is None or paid.status != "paid":
+        raise HTTPException(status_code=503, detail="Оплата проверена, но статус не удалось сохранить. Повторно платить не нужно.")
+    return await runtime._answer_paid_order(identity=identity, state=state, order=paid)
 
 
 @app.post("/miniapp/documents/generate")
