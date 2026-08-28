@@ -22,7 +22,7 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
       - name: Compile payment modules
-        run: python -m py_compile korgan/kaspi_ofd.py korgan/payment_runtime.py korgan/consultation_quota_runtime.py korgan/prepayment_auto_payment.py
+        run: python -m py_compile korgan/kaspi_ofd.py korgan/payment_runtime.py korgan/consultation_quota_runtime.py korgan/prepayment_auto_payment.py korgan/payment_operation_lock.py korgan/consultation_paid_delivery_guard.py
       - name: Run OFD and consultation regression tests
         run: >-
           python -m pytest -q
@@ -32,3 +32,4 @@ jobs:
           tests/test_consultation_quota.py
           tests/test_consultation_request_ownership.py
           tests/test_prepayment_before_generation.py
+          tests/test_paid_delivery_idempotency_guard.py
