@@ -1,17 +1,44 @@
-/* KORGAN motion UI enhancer.
-   Presentation only: existing React handlers/API calls are never replaced.
-   Workflow exists only inside the concrete case/payment screen while the real
-   generation request is busy, then it is removed immediately. */
+/* KORGAN document workflow + professional motion layer.
+   Long document generation is handled per case so the rest of the Mini App
+   remains usable. The legal API, routes, payment rules and document pipeline
+   are not replaced. */
+
+import { korganApi } from './korganApi';
 
 const RU = {
-  kicker: 'ПОДГОТОВКА ДОКУМЕНТА', title: 'Юридический workflow',
-  pending: 'Ожидает', active: 'В работе', done: 'Готово',
+  kicker: 'ПОДГОТОВКА ДОКУМЕНТА',
+  title: 'Юридический workflow',
+  pending: 'Ожидает',
+  active: 'В работе',
+  done: 'Готово',
   note: 'Процент ориентировочный. Финальную готовность подтверждает сервер KORGAN после завершения проверок качества.',
+  readyTitle: 'Документ готов',
+  readyText: 'Документ подготовлен и сохранён в исходном деле. Можете открыть и просмотреть результат.',
+  open: 'Открыть',
+  download: 'Скачать DOCX',
+  background: 'Документ готовится в фоне',
+  alreadyRunning: 'Этот документ уже готовится',
+  failedTitle: 'Подготовка не завершена',
+  paymentTitle: 'Требуется оплата',
+  paymentText: 'Откройте дело и продолжите через платёжный экран.',
 };
+
 const KK = {
-  kicker: 'ҚҰЖАТТЫ ДАЙЫНДАУ', title: 'Заңдық workflow',
-  pending: 'Күтуде', active: 'Орындалуда', done: 'Дайын',
+  kicker: 'ҚҰЖАТТЫ ДАЙЫНДАУ',
+  title: 'Заңдық workflow',
+  pending: 'Күтуде',
+  active: 'Орындалуда',
+  done: 'Дайын',
   note: 'Пайыз шамамен көрсетіледі. Соңғы дайындықты KORGAN сервері сапа тексерулері аяқталғаннан кейін растайды.',
+  readyTitle: 'Құжат дайын',
+  readyText: 'Құжат дайындалып, бастапқы істе сақталды. Нәтижені ашып, қарай аласыз.',
+  open: 'Ашу',
+  download: 'DOCX жүктеу',
+  background: 'Құжат фонда дайындалуда',
+  alreadyRunning: 'Бұл құжат қазірдің өзінде дайындалуда',
+  failedTitle: 'Құжатты дайындау аяқталмады',
+  paymentTitle: 'Төлем қажет',
+  paymentText: 'Істі ашып, төлем экраны арқылы жалғастырыңыз.',
 };
 
 const PROFILES = {
@@ -41,13 +68,19 @@ const PROFILES = {
   },
 };
 
-const PERCENTAGES = [12, 32, 54, 74, 88];
-const STEP_DELAYS = [0, 2400, 5200, 8500, 12200];
-let current = null;
-let lastProfile = 'generic';
+const PERCENTAGES = [10, 28, 50, 70, 88];
+const STAGE_AFTER_MS = [0, 15000, 45000, 90000, 150000];
+const jobs = new Map();
+const paymentPassCases = new Set();
+let renderTimer = null;
+let observer = null;
 
-function inferLanguage(text) {
-  return /[ӘәҒғҚқҢңӨөҰұҮүҺһІі]/.test(text || '') ? 'kk' : 'ru';
+function isKazakh(text = '') {
+  return document.documentElement.lang === 'kk' || /[ӘәҒғҚқҢңӨөҰұҮүҺһІі]/.test(text || document.body?.innerText || '');
+}
+
+function copyFor(text = '') {
+  return isKazakh(text) ? KK : RU;
 }
 
 function inferProfile(text) {
@@ -60,19 +93,19 @@ function inferProfile(text) {
   return 'generic';
 }
 
-function stopTimers() {
-  if (!current) return;
-  current.timers.forEach(window.clearTimeout);
-  if (current.watch) window.clearInterval(current.watch);
-  current.timers = [];
-  current.watch = null;
+function currentCasePage() {
+  return Array.from(document.querySelectorAll('main.page')).find((page) => page.querySelector('.status-card')) || null;
 }
 
-function clearCurrent({ remove = false } = {}) {
-  if (!current) return;
-  if (remove) current.panel?.remove();
-  stopTimers();
-  current = null;
+function caseIdForPage(page) {
+  const shell = page?.closest('.app-shell');
+  const value = (shell?.querySelector('.subbar strong')?.textContent || '').trim();
+  const match = value.match(/KOR-[A-Z0-9]+/i);
+  return match ? match[0].toUpperCase() : '';
+}
+
+function headingForPage(page) {
+  return (page?.querySelector('.analysis-card .card-head h2')?.textContent || '').trim();
 }
 
 function createElement(tag, className, text) {
@@ -82,115 +115,362 @@ function createElement(tag, className, text) {
   return node;
 }
 
-function buildPanel(profileKey, language) {
-  const copy = language === 'kk' ? KK : RU;
-  const profile = PROFILES[profileKey] || PROFILES.generic;
-  const steps = profile[language] || profile.ru;
+function haptic(kind = 'success') {
+  try {
+    const api = window.Telegram?.WebApp?.HapticFeedback;
+    if (kind === 'success') api?.notificationOccurred?.('success');
+    else if (kind === 'error') api?.notificationOccurred?.('error');
+    else api?.impactOccurred?.('light');
+  } catch {}
+}
+
+function stageFor(job) {
+  const elapsed = Math.max(0, Date.now() - job.startedAt);
+  let stage = 0;
+  STAGE_AFTER_MS.forEach((threshold, index) => {
+    if (elapsed >= threshold) stage = index;
+  });
+  return Math.min(stage, 4);
+}
+
+function buildProgress(job) {
+  const copy = job.copy;
+  const profile = PROFILES[job.profile] || PROFILES.generic;
+  const steps = profile[job.language] || profile.ru;
   const panel = createElement('section', 'korgan-document-progress');
+  panel.dataset.caseId = job.caseId;
   panel.setAttribute('aria-live', 'polite');
-  panel.setAttribute('aria-label', copy.title);
 
   const head = createElement('div', 'korgan-progress-head');
   const headCopy = createElement('div');
   headCopy.append(createElement('span', 'korgan-progress-kicker', copy.kicker));
   headCopy.append(createElement('div', 'korgan-progress-title', copy.title));
-  const percent = createElement('div', 'korgan-progress-percent', '≈ 12%');
+  const percent = createElement('div', 'korgan-progress-percent', '≈ 10%');
   head.append(headCopy, percent);
 
   const track = createElement('div', 'korgan-progress-track');
-  const bar = createElement('div', 'korgan-progress-bar');
-  track.append(bar);
+  track.append(createElement('div', 'korgan-progress-bar'));
 
-  const stepList = createElement('div', 'korgan-progress-steps');
-  const rows = steps.map((name, index) => {
+  const list = createElement('div', 'korgan-progress-steps');
+  steps.forEach((name, index) => {
     const row = createElement('div', 'korgan-progress-step');
-    const number = createElement('div', 'korgan-progress-index', String(index + 1));
-    const label = createElement('div', 'korgan-progress-name', name);
-    const state = createElement('div', 'korgan-progress-state', copy.pending);
-    row.append(number, label, state);
-    stepList.append(row);
-    return { row, state };
+    row.dataset.step = String(index);
+    row.append(
+      createElement('div', 'korgan-progress-index', String(index + 1)),
+      createElement('div', 'korgan-progress-name', name),
+      createElement('div', 'korgan-progress-state', copy.pending),
+    );
+    list.append(row);
   });
 
-  const note = createElement('div', 'korgan-progress-note', copy.note);
-  panel.append(head, track, stepList, note);
-  return { panel, percent, bar, rows, copy };
+  panel.append(head, track, list, createElement('div', 'korgan-progress-note', copy.note));
+  return panel;
 }
 
-function renderStage(stage) {
-  if (!current) return;
-  const capped = Math.max(0, Math.min(stage, current.rows.length - 1));
-  current.percent.textContent = `≈ ${PERCENTAGES[capped]}%`;
-  current.bar.style.width = `${PERCENTAGES[capped]}%`;
-  current.rows.forEach(({ row, state }, index) => {
-    row.classList.toggle('is-done', index < capped);
-    row.classList.toggle('is-active', index === capped);
-    state.textContent = index < capped ? current.copy.done : index === capped ? current.copy.active : current.copy.pending;
+function updateProgress(panel, job) {
+  const stage = stageFor(job);
+  const percent = PERCENTAGES[stage];
+  const percentNode = panel.querySelector('.korgan-progress-percent');
+  const bar = panel.querySelector('.korgan-progress-bar');
+  if (percentNode) percentNode.textContent = `≈ ${percent}%`;
+  if (bar) bar.style.width = `${percent}%`;
+  panel.querySelectorAll('.korgan-progress-step').forEach((row, index) => {
+    row.classList.toggle('is-done', index < stage);
+    row.classList.toggle('is-active', index === stage);
+    const state = row.querySelector('.korgan-progress-state');
+    if (state) state.textContent = index < stage ? job.copy.done : index === stage ? job.copy.active : job.copy.pending;
   });
 }
 
-function validContext(item) {
-  if (!item?.page?.isConnected || !item?.panel?.isConnected) return false;
-  if (item.kind === 'case') return Boolean(item.page.querySelector('.status-card'));
-  if (item.kind === 'payment') return item.page.classList.contains('payment-page');
-  return false;
+function downloadBase64(base64, filename) {
+  if (!base64) return;
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename || 'KORGAN_document.docx';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1200);
 }
 
-function findGenerationButton(page, kind) {
-  if (!page?.isConnected) return null;
-  if (kind === 'case') return page.querySelector('.status-card') ? page.querySelector('button.primary.wide') : null;
-  if (kind === 'payment' && page.classList.contains('payment-page')) {
-    return Array.from(page.querySelectorAll('button.primary.wide')).find(button => /оплаченный документ|төленген құжат/i.test(button.textContent || '')) || null;
+async function downloadJob(job) {
+  try {
+    let result = job.result;
+    if (!result?.document_base64) result = await korganApi.getDocument(job.caseId);
+    downloadBase64(result?.document_base64, result?.filename);
+  } catch {
+    showToast({ title: job.copy.failedTitle, text: job.caseId, tone: 'error' });
   }
-  return null;
 }
 
-function startProgress(page, anchor, kind) {
-  clearCurrent({ remove: true });
+function buildReadyCard(job, page) {
+  const existingNativeDownload = Array.from(page.querySelectorAll('button')).some((button) => /скачать.*docx|дайын.*docx|docx.*жүктеу/i.test(button.textContent || ''));
+  const card = createElement('section', 'korgan-inline-ready-card');
+  card.dataset.caseId = job.caseId;
+  const mark = createElement('div', 'korgan-inline-ready-mark', '✓');
+  const text = createElement('div', 'korgan-inline-ready-copy');
+  text.append(createElement('strong', '', job.copy.readyTitle));
+  text.append(createElement('span', '', job.title || job.caseId));
+  card.append(mark, text);
+  if (!existingNativeDownload) {
+    const button = createElement('button', 'korgan-inline-ready-action', job.copy.download);
+    button.type = 'button';
+    button.addEventListener('click', () => downloadJob(job));
+    card.append(button);
+  }
+  return card;
+}
 
-  const language = inferLanguage(page.textContent || '');
-  const documentHeading = kind === 'case'
-    ? (page.querySelector('.analysis-card .card-head h2')?.textContent || '')
-    : '';
-  const inferred = kind === 'case' ? inferProfile(documentHeading) : lastProfile;
-  const profileKey = inferred || 'generic';
-  if (profileKey !== 'generic') lastProfile = profileKey;
+function renderVisibleCase() {
+  const page = currentCasePage();
+  if (!page) return;
+  const caseId = caseIdForPage(page);
+  if (!caseId) return;
+  const job = jobs.get(caseId);
+  const generationButton = Array.from(page.querySelectorAll('button.primary.wide')).find((button) => !/создать/i.test(button.textContent || '')) || null;
 
-  const ui = buildPanel(profileKey, language);
-  anchor.parentNode?.insertBefore(ui.panel, anchor);
-  current = { ...ui, page, kind, startedAt: Date.now(), timers: [], watch: null };
-
-  STEP_DELAYS.forEach((delay, index) => {
-    current.timers.push(window.setTimeout(() => renderStage(index), delay));
+  page.querySelectorAll('.korgan-document-progress, .korgan-inline-ready-card').forEach((node) => {
+    if (!job || node.dataset.caseId !== caseId || (job.status === 'running' && node.classList.contains('korgan-inline-ready-card')) || (job.status !== 'running' && node.classList.contains('korgan-document-progress'))) node.remove();
   });
 
-  current.watch = window.setInterval(() => {
-    if (!current) return;
-    if (!validContext(current)) {
-      clearCurrent({ remove: true });
-      return;
+  if (!job) return;
+
+  if (job.status === 'running') {
+    let panel = page.querySelector(`.korgan-document-progress[data-case-id="${caseId}"]`);
+    if (!panel && generationButton) {
+      panel = buildProgress(job);
+      generationButton.parentNode?.insertBefore(panel, generationButton);
     }
-    const liveButton = findGenerationButton(current.page, current.kind);
-    if (Date.now() - current.startedAt > 900 && liveButton && !liveButton.disabled && !liveButton.querySelector('.spin')) {
-      clearCurrent({ remove: true });
+    if (panel) updateProgress(panel, job);
+    if (generationButton) {
+      generationButton.classList.add('korgan-background-running');
+      generationButton.setAttribute('aria-label', job.copy.background);
     }
-  }, 250);
+    return;
+  }
+
+  if (generationButton) generationButton.classList.remove('korgan-background-running');
+  if (job.status === 'ready' && !page.querySelector(`.korgan-inline-ready-card[data-case-id="${caseId}"]`) && generationButton) {
+    generationButton.parentNode?.insertBefore(buildReadyCard(job, page), generationButton);
+  }
 }
 
-document.addEventListener('click', event => {
+function toastStack() {
+  let stack = document.querySelector('.korgan-toast-stack');
+  if (stack) return stack;
+  stack = createElement('div', 'korgan-toast-stack');
+  stack.setAttribute('aria-live', 'polite');
+  document.body.append(stack);
+  return stack;
+}
+
+function showToast({ title, text = '', action = '', onAction = null, tone = 'ready', persistent = false }) {
+  const card = createElement('div', `korgan-doc-toast ${tone}`);
+  const icon = createElement('div', 'korgan-toast-icon', tone === 'error' ? '!' : tone === 'payment' ? '₸' : '✓');
+  const copy = createElement('div', 'korgan-toast-copy');
+  copy.append(createElement('strong', '', title));
+  if (text) copy.append(createElement('span', '', text));
+  card.append(icon, copy);
+  if (action && onAction) {
+    const button = createElement('button', 'korgan-toast-action', action);
+    button.type = 'button';
+    button.addEventListener('click', async () => {
+      await onAction();
+      card.classList.add('is-leaving');
+      window.setTimeout(() => card.remove(), 180);
+    });
+    card.append(button);
+  }
+  toastStack().prepend(card);
+  while (toastStack().children.length > 3) toastStack().lastElementChild?.remove();
+  if (!persistent) {
+    window.setTimeout(() => {
+      if (!card.isConnected) return;
+      card.classList.add('is-leaving');
+      window.setTimeout(() => card.remove(), 180);
+    }, 11000);
+  }
+  return card;
+}
+
+function waitFor(check, timeout = 4500) {
+  const started = Date.now();
+  return new Promise((resolve) => {
+    const tick = () => {
+      const value = check();
+      if (value) return resolve(value);
+      if (Date.now() - started >= timeout) return resolve(null);
+      window.setTimeout(tick, 80);
+    };
+    tick();
+  });
+}
+
+async function openCaseById(caseId) {
+  const current = currentCasePage();
+  if (current && caseIdForPage(current) === caseId) {
+    renderVisibleCase();
+    current.querySelector('.korgan-inline-ready-card, .status-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  const homeButton = document.querySelector('.bottom-nav button:nth-child(1)');
+  if (homeButton instanceof HTMLButtonElement) homeButton.click();
+
+  const casesCard = await waitFor(() => Array.from(document.querySelectorAll('.action-card')).find((button) => /мои дела|менің істерім/i.test(button.textContent || '')));
+  if (!(casesCard instanceof HTMLElement)) return;
+  casesCard.click();
+
+  const caseButton = await waitFor(() => Array.from(document.querySelectorAll('.case-list-item')).find((button) => (button.textContent || '').includes(caseId)));
+  if (!(caseButton instanceof HTMLElement)) return;
+  caseButton.click();
+
+  await waitFor(() => {
+    const page = currentCasePage();
+    return page && caseIdForPage(page) === caseId ? page : null;
+  });
+  renderVisibleCase();
+}
+
+function notifyReady(job) {
+  haptic('success');
+  showToast({
+    title: job.copy.readyTitle,
+    text: job.copy.readyText,
+    action: job.copy.open,
+    onAction: () => openCaseById(job.caseId),
+    tone: 'ready',
+    persistent: true,
+  });
+}
+
+function startBackgroundJob({ caseId, documentType = 'claim', language = 'ru', title = '', sourcePage = null }) {
+  const existing = jobs.get(caseId);
+  const copy = language === 'kk' ? KK : RU;
+  if (existing?.status === 'running') {
+    haptic('light');
+    showToast({ title: copy.alreadyRunning, text: title || caseId, tone: 'info' });
+    return existing.promise;
+  }
+
+  const job = {
+    caseId,
+    documentType,
+    language,
+    title: title || caseId,
+    profile: inferProfile(title),
+    copy,
+    startedAt: Date.now(),
+    status: 'running',
+    result: null,
+    error: null,
+    promise: null,
+  };
+  jobs.set(caseId, job);
+  haptic('light');
+  renderVisibleCase();
+
+  job.promise = korganApi.generateDocument(caseId, documentType, language)
+    .then((result) => {
+      if (result?.payment_required) {
+        jobs.delete(caseId);
+        paymentPassCases.add(caseId);
+        showToast({ title: copy.paymentTitle, text: copy.paymentText, action: copy.open, onAction: () => openCaseById(caseId), tone: 'payment', persistent: true });
+        return result;
+      }
+      job.status = 'ready';
+      job.result = result;
+      job.finishedAt = Date.now();
+      if (result?.title) job.title = result.title;
+      renderVisibleCase();
+      notifyReady(job);
+      return result;
+    })
+    .catch((error) => {
+      job.status = 'error';
+      job.error = error;
+      renderVisibleCase();
+      haptic('error');
+      showToast({ title: copy.failedTitle, text: error?.message || caseId, action: copy.open, onAction: () => openCaseById(caseId), tone: 'error' });
+      throw error;
+    });
+
+  // The promise intentionally continues after navigation. Avoid an unhandled
+  // rejection when the user has already left the originating screen.
+  job.promise.catch(() => {});
+  return job.promise;
+}
+
+async function startPaidBackgroundJob(page) {
+  const copy = copyFor(page.textContent || '');
+  const orderText = page.querySelector('.section-kicker')?.textContent || '';
+  const match = orderText.match(/#(\d+)/);
+  if (!match) return;
+  try {
+    const status = await korganApi.documentPaymentStatus(match[1]);
+    const payment = status?.payment;
+    if (!payment?.case_id) throw new Error(copy.failedTitle);
+    const language = isKazakh(page.textContent || '') ? 'kk' : 'ru';
+    startBackgroundJob({
+      caseId: String(payment.case_id).toUpperCase(),
+      documentType: payment.document_type || 'claim',
+      language,
+      title: payment.document_type || String(payment.case_id),
+      sourcePage: page,
+    });
+    const back = page.closest('.app-shell')?.querySelector('.subbar .icon-btn');
+    if (back instanceof HTMLButtonElement) back.click();
+  } catch (error) {
+    showToast({ title: copy.failedTitle, text: error?.message || '', tone: 'error' });
+  }
+}
+
+function handleGenerationClick(event) {
   const target = event.target instanceof Element ? event.target : null;
   const button = target?.closest('button.primary.wide');
-  if (!button || button.disabled) return;
+  if (!(button instanceof HTMLButtonElement) || button.disabled) return;
   const page = button.closest('main.page');
   if (!page) return;
 
-  const caseGeneration = Boolean(page.querySelector('.status-card'));
-  const paidGeneration = page.classList.contains('payment-page') && /оплаченный документ|төленген құжат/i.test(button.textContent || '');
-  if (!caseGeneration && !paidGeneration) return;
-  startProgress(page, button, caseGeneration ? 'case' : 'payment');
-}, true);
+  if (page.classList.contains('payment-page') && /оплаченный документ|төленген құжат/i.test(button.textContent || '')) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    startPaidBackgroundJob(page);
+    return;
+  }
 
-const cleanupObserver = new MutationObserver(() => {
-  if (current && !validContext(current)) clearCurrent({ remove: true });
-});
-cleanupObserver.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+  if (!page.querySelector('.status-card')) return;
+  const caseId = caseIdForPage(page);
+  if (!caseId) return;
+
+  // When payment is enabled the existing React payment flow remains the owner
+  // of the first click. After approval, paid generation is handled above.
+  if (/₸/.test(button.textContent || '') || paymentPassCases.has(caseId)) return;
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const heading = headingForPage(page);
+  const language = isKazakh(page.textContent || '') ? 'kk' : 'ru';
+  startBackgroundJob({
+    caseId,
+    documentType: inferProfile(heading),
+    language,
+    title: heading,
+    sourcePage: page,
+  });
+}
+
+function start() {
+  document.addEventListener('click', handleGenerationClick, true);
+  renderTimer = window.setInterval(renderVisibleCase, 600);
+  observer = new MutationObserver(() => renderVisibleCase());
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  renderVisibleCase();
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
+else start();
