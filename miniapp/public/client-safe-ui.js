@@ -56,6 +56,19 @@
     });
   }
 
+  function normalizeBottomDock() {
+    document.querySelectorAll('.bottom-nav').forEach((nav) => {
+      nav.style.setProperty('grid-template-columns', 'repeat(2, minmax(0, 1fr))', 'important');
+      const buttons = Array.from(nav.children).filter((node) => node instanceof HTMLButtonElement);
+      buttons.forEach((button, index) => {
+        const visible = index === 0 || index === 4;
+        button.style.setProperty('display', visible ? 'grid' : 'none', 'important');
+        button.setAttribute('aria-hidden', visible ? 'false' : 'true');
+        if (!visible) button.tabIndex = -1;
+      });
+    });
+  }
+
   function sanitizeAiMessages() {
     document.querySelectorAll('.bubble.ai, .bubble.ai\\ error').forEach((bubble) => {
       const raw = (bubble.textContent || '').trim();
@@ -91,6 +104,7 @@
   function applyClientSafeUi() {
     replaceStaticCopy();
     hideInternalArchitecture();
+    normalizeBottomDock();
     sanitizeAiMessages();
     friendlyMaterialNames();
   }
