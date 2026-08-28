@@ -167,7 +167,7 @@ def _download_pinned_intermediate(url: str, expected_sha256: str) -> str:
     with _open_allowlisted(
         request,
         timeout=30,
-        context=ssl.create_default_context(),
+        context=_trusted_context(),
         allow_url=_is_allowed_pinned_ca_url,
     ) as response:
         final_url = response.geturl()
@@ -186,8 +186,34 @@ def _download_pinned_intermediate(url: str, expected_sha256: str) -> str:
     return pem
 
 
+def _trusted_context() -> ssl.SSLContext:
+    """Контекст TLS с максимально полным набором корневых сертификатов.
+
+    Системное хранилище образа проверяет api.telegram.org и api.openai.com,
+    но цепочку adilet.zan.kz — не всегда. В логах это выглядит как
+
+        CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate
+
+    и заканчивается тем, что корпус норм не загружается вообще. А без
+    корпуса гейт цитат не подтверждает ни одной статьи и не выпускает ни
+    одного документа.
+
+    Проверка TLS при этом НЕ ослабляется: certifi лишь добавляет корни,
+    verify_mode остаётся CERT_REQUIRED, а check_hostname — True. Если
+    certifi недоступен, поведение прежнее: системное хранилище. Явной
+    зависимости в requirements не требуется, certifi приходит с openai.
+    """
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        LOGGER.warning("KORGAN certifi недоступен, используется системное хранилище сертификатов")
+        return ssl.create_default_context()
+
+
 def _adilet_context_with_pinned_intermediates() -> ssl.SSLContext:
-    context = ssl.create_default_context()
+    context = _trusted_context()
     loaded = 0
     for url, fingerprint in _PINNED_INTERMEDIATES:
         try:
@@ -248,7 +274,7 @@ def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
     )
     candidates = [url, parsed._replace(netloc=alt_host).geturl()]
 
-    standard = ssl.create_default_context()
+    standard = _trusted_context()
     errors: list[str] = []
     for candidate in candidates:
         result = _read_adilet_with_retries(
@@ -335,7 +361,7 @@ def _read_zan_pdf(act_id: str, *, timeout: int = 90) -> tuple[bytes, str]:
     try:
         return _read_zan_pdf_with_context(
             act_id,
-            context=ssl.create_default_context(),
+            context=_trusted_context(),
             timeout=timeout,
         )
     except Exception as exc:
