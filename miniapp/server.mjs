@@ -9,7 +9,7 @@ const mime = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
+  '.json': 'application/json',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -27,10 +27,14 @@ function sendFile(req, res, filePath) {
 
     const ext = path.extname(filePath).toLowerCase();
     const isAsset = filePath.includes(`${path.sep}assets${path.sep}`);
+    const cacheControl = isAsset
+      ? 'public, max-age=31536000, immutable'
+      : 'no-store, no-cache, must-revalidate, max-age=0';
     res.writeHead(200, {
       'Content-Type': mime[ext] || 'application/octet-stream',
       'Content-Length': stat.size,
-      'Cache-Control': isAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'Cache-Control': cacheControl,
+      ...(isAsset ? {} : { Pragma: 'no-cache', Expires: '0' }),
       'X-Content-Type-Options': 'nosniff',
     });
 
