@@ -1,14 +1,17 @@
-/* Native bottom navigation: Home / Cases / AI-lawyer / Profile.
-   Help route remains available inside the Mini App; it is only removed from the persistent dock. */
+/* Persistent dock is intentionally minimal: Home / Profile only.
+   Cases and AI-lawyer remain available from the Home screen and routes are untouched.
+   Help remains available inside the Mini App, but is not shown in the dock. */
 .bottom-nav {
-  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
 }
 
-/* 4 = Help. Keep AI-lawyer visible as the third tab. */
-.bottom-nav button:nth-child(3) {
+.bottom-nav button:nth-child(1),
+.bottom-nav button:nth-child(5) {
   display: grid !important;
 }
 
+.bottom-nav button:nth-child(2),
+.bottom-nav button:nth-child(3),
 .bottom-nav button:nth-child(4) {
   display: none !important;
 }
