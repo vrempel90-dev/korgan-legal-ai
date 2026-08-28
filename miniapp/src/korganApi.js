@@ -67,6 +67,48 @@ function requireProfessionalDocument(payload) {
   return payload;
 }
 
+const sleep = ms => new Promise(resolve => window.setTimeout(resolve, ms));
+
+async function recoverGeneratedDocument(caseId, timeoutMs = 6 * 60 * 1000) {
+  const encodedId = encodeURIComponent(caseId);
+  const deadline = Date.now() + timeoutMs;
+  let lastNetworkError = null;
+
+  while (Date.now() < deadline) {
+    try {
+      const detail = await request(`/miniapp/cases/${encodedId}`);
+      const item = detail?.case || {};
+      if (item.has_document) {
+        return requireProfessionalDocument(await request(`/miniapp/cases/${encodedId}/document`));
+      }
+      if (item.status === 'quality_blocked') {
+        const issues = [...(item.quality_issues || []), ...(item.verification_notes || [])]
+          .map(value => String(value || '').trim())
+          .filter(Boolean)
+          .filter((value, index, values) => values.indexOf(value) === index)
+          .slice(0, 4);
+        const error = new Error(
+          issues.length
+            ? `Документ не прошёл финальную проверку: ${issues.join('; ')}`
+            : 'Документ не прошёл финальную профессиональную проверку.',
+        );
+        error.status = 422;
+        throw error;
+      }
+      lastNetworkError = null;
+    } catch (error) {
+      if (error?.status === 422 || error?.status === 401 || error?.status === 403 || error?.status === 404) throw error;
+      lastNetworkError = error;
+    }
+    await sleep(3500);
+  }
+
+  if (lastNetworkError) throw lastNetworkError;
+  const error = new Error('Подготовка документа занимает больше обычного. Откройте дело через несколько минут — готовый DOCX сохранится в нём автоматически.');
+  error.status = 504;
+  throw error;
+}
+
 async function uploadMaterial(caseId, file) {
   const body = new FormData();
   body.append('file', file);
@@ -130,11 +172,17 @@ export const korganApi = {
     return results;
   },
   generateDocument: async (caseId, documentType = 'claim', language = 'ru') => {
-    const result = await request('/miniapp/documents/generate', {
-      method: 'POST',
-      body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
-    });
-    return result?.payment_required ? result : requireProfessionalDocument(result);
+    try {
+      const result = await request('/miniapp/documents/generate', {
+        method: 'POST',
+        body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
+      });
+      return result?.payment_required ? result : requireProfessionalDocument(result);
+    } catch (error) {
+      const recoverable = !error?.status || error?.status === 409 || error?.status === 499;
+      if (!recoverable) throw error;
+      return recoverGeneratedDocument(caseId);
+    }
   },
   uploadDocumentReceipt,
   documentPaymentStatus: (orderId) => request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}`),
