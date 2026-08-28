@@ -17,12 +17,25 @@ compiled into prefix terms, and the index declares matching prefix lengths.
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "corpus.sqlite3"
+# Куда класть корпус. По умолчанию — рядом с кодом, но контейнер эфемерный:
+# при каждом рестарте корпус собирался с adilet заново, и если adilet в этот
+# момент недоступен (а он периодически отдаёт таймауты), сервис поднимался
+# ВООБЩЕ без норм. Дальше гейт цитат не мог подтвердить ни одну статью и не
+# выпускал ни одного документа — до следующей удачной загрузки.
+#
+# KORGAN_CORPUS_DB позволяет положить базу на постоянный том. Тогда неудачная
+# сверка оставляет предыдущий корпус в силе, как и обещает лог «existing
+# corpus/web search remains active», а не обнуляет его.
+DEFAULT_DB_PATH = Path(
+    os.getenv("KORGAN_CORPUS_DB")
+    or (Path(__file__).resolve().parent.parent / "data" / "corpus.sqlite3")
+)
 
 # Acts KORGAN is allowed to load. Keys double as the act half of article_id.
 ACT_GK_GENERAL = "GK_RK_OBSHAYA"
