@@ -68,6 +68,7 @@ function requireProfessionalDocument(payload) {
 }
 
 const sleep = ms => new Promise(resolve => window.setTimeout(resolve, ms));
+const pendingForever = () => new Promise(() => {});
 
 async function recoverGeneratedDocument(caseId, timeoutMs = 6 * 60 * 1000) {
   const encodedId = encodeURIComponent(caseId);
@@ -172,17 +173,23 @@ export const korganApi = {
     return results;
   },
   generateDocument: async (caseId, documentType = 'claim', language = 'ru') => {
-    try {
-      const result = await request('/miniapp/documents/generate', {
-        method: 'POST',
-        body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
+    const generation = request('/miniapp/documents/generate', {
+      method: 'POST',
+      body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
+    })
+      .then(result => (result?.payment_required ? result : requireProfessionalDocument(result)))
+      .catch(error => {
+        const recoverable = !error?.status || error?.status === 409 || error?.status === 499;
+        if (!recoverable) throw error;
+        return pendingForever();
       });
-      return result?.payment_required ? result : requireProfessionalDocument(result);
-    } catch (error) {
-      const recoverable = !error?.status || error?.status === 409 || error?.status === 499;
-      if (!recoverable) throw error;
+
+    const polling = (async () => {
+      await sleep(1500);
       return recoverGeneratedDocument(caseId);
-    }
+    })();
+
+    return Promise.race([generation, polling]);
   },
   uploadDocumentReceipt,
   documentPaymentStatus: (orderId) => request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}`),
