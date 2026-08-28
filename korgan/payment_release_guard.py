@@ -17,22 +17,26 @@ def can_release_paid_document(
     kind: str,
     receipt_submitted: bool,
     receipt_precheck_passed: bool,
-    admin_confirmed: bool,
+    ofd_verified: bool = False,
+    ai_verified: bool = False,
+    admin_confirmed: bool = False,
 ) -> ReleaseDecision:
-    """Single fail-closed rule for paid legal document delivery/generation.
+    """Fail closed until a trusted payment verifier has accepted the receipt.
 
-    Payment confirmation is never equivalent to an unguarded document release.
-    For every paid KORGAN document the client must submit a receipt, the automated
-    receipt pre-check must pass, and an administrator must confirm the actual
-    payment before either a held legacy document can be released or a new paid
-    generation can be started.
+    The production path is deterministic Kaspi OFD verification from the fiscal
+    receipt QR. ``ai_verified`` and ``admin_confirmed`` remain only for already
+    open legacy transactions created before the OFD verifier deployment.
     """
     if kind not in PAID_DOCUMENT_KINDS:
         return ReleaseDecision(False, "unsupported_paid_document_kind")
     if not receipt_submitted:
         return ReleaseDecision(False, "receipt_required")
     if not receipt_precheck_passed:
-        return ReleaseDecision(False, "receipt_precheck_required")
-    if not admin_confirmed:
-        return ReleaseDecision(False, "admin_confirmation_required")
-    return ReleaseDecision(True, "payment_confirmed")
+        return ReleaseDecision(False, "receipt_verification_required")
+    if not (ofd_verified or ai_verified or admin_confirmed):
+        return ReleaseDecision(False, "payment_verification_required")
+    if ofd_verified:
+        return ReleaseDecision(True, "payment_kaspi_ofd_verified")
+    if ai_verified:
+        return ReleaseDecision(True, "payment_ai_verified")
+    return ReleaseDecision(True, "payment_legacy_admin_confirmed")
