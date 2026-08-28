@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
-
-import pytest
 
 from korgan.config import Settings
 from korgan import consultation_quota as quota
@@ -182,19 +181,22 @@ class _IdempotentPool:
         return _AsyncContext(self.connection)
 
 
-@pytest.mark.asyncio
-async def test_same_pending_consultation_reuses_order_without_second_insert(monkeypatch) -> None:
+def test_same_pending_consultation_reuses_order_without_second_insert(monkeypatch) -> None:
     connection = _IdempotentConnection()
     monkeypatch.setattr(quota, "_POOL", _IdempotentPool(connection))
-    order = await quota.create_consultation_order(
-        user_id=12345,
-        chat_id=12345,
-        question="Один и тот же вопрос",
-        case_context="контекст",
-        language="ru",
-        amount_kzt=1000,
-    )
-    assert order.id == 77
-    assert order.status == "pending"
-    assert connection.advisory_lock_calls == 1
-    assert connection.insert_calls == 0
+
+    async def scenario() -> None:
+        order = await quota.create_consultation_order(
+            user_id=12345,
+            chat_id=12345,
+            question="Один и тот же вопрос",
+            case_context="контекст",
+            language="ru",
+            amount_kzt=1000,
+        )
+        assert order.id == 77
+        assert order.status == "pending"
+        assert connection.advisory_lock_calls == 1
+        assert connection.insert_calls == 0
+
+    asyncio.run(scenario())
