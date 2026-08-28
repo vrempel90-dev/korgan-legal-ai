@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from korgan.config import Settings
+from korgan import consultation_quota as quota
 from korgan.consultation_quota import (
     almaty_today,
     consultation_payment_markup,
@@ -53,7 +56,8 @@ def test_consultation_payment_offer_is_5_free_then_1000_and_url_hidden() -> None
     assert "1 000 ₸" in text
     assert "pay.kaspi.kz" not in text
     assert "вопрос сохранён" in text.lower()
-    assert "автоматической AI-проверки" in text
+    assert "Kaspi ОФД" in text
+    assert "AI не принимает решение об оплате" in text
 
     markup = consultation_payment_markup(settings, user_id=12345, order_id=77, language="ru")
     pay_button = markup.inline_keyboard[0][0]
@@ -79,11 +83,11 @@ def test_consultation_payment_callback_is_signed_to_user_and_order() -> None:
     assert not verify_consultation_signature(settings, signature, 12345, 78)
 
 
-def test_valid_consultation_receipt_passes_strict_ai_policy() -> None:
+def test_valid_legacy_consultation_receipt_helper_stays_fail_closed() -> None:
     assert strict_consultation_receipt_issues(_valid_receipt(), 1000) == []
 
 
-def test_consultation_receipt_rejects_wrong_amount_failed_or_suspicious() -> None:
+def test_legacy_receipt_helper_rejects_wrong_amount_failed_or_suspicious() -> None:
     check = _valid_receipt(
         payment_successful=False,
         amount_kzt=900,
@@ -92,7 +96,7 @@ def test_consultation_receipt_rejects_wrong_amount_failed_or_suspicious() -> Non
     issues = strict_consultation_receipt_issues(check, 1000)
     assert any("успешный платёж" in item for item in issues)
     assert any("900 ₸ вместо 1000 ₸" in item for item in issues)
-    assert any("редактирования" in item for item in issues)
+    assert any("suspicious" in item for item in issues)
 
 
 def test_consultation_receipt_requires_identifying_fields() -> None:
@@ -113,7 +117,6 @@ def test_receipt_fingerprint_blocks_same_bytes_by_design() -> None:
 
 
 def test_daily_limit_uses_kazakhstan_calendar_day() -> None:
-    # 18 Aug 20:30 UTC is already 19 Aug 01:30 in Kazakhstan (UTC+5).
     now = datetime(2026, 8, 18, 20, 30, tzinfo=timezone.utc)
     assert almaty_today(now).isoformat() == "2026-08-19"
 
@@ -124,6 +127,74 @@ def test_kazakh_consultation_offer_has_same_limit_and_price() -> None:
     assert "5" in text
     assert "1 000 ₸" in text
     assert "pay.kaspi.kz" not in text
+    assert "Kaspi ОФД" in text
     markup = consultation_payment_markup(settings, 12345, 77, "kk")
     assert markup.inline_keyboard[0][0].url == settings.kaspi_payment_url
     assert markup.inline_keyboard[1][0].text == "✅ Төледім"
+
+
+class _AsyncContext:
+    def __init__(self, value=None):
+        self.value = value
+
+    async def __aenter__(self):
+        return self.value if self.value is not None else self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _IdempotentConnection:
+    def __init__(self):
+        self.existing = {
+            "id": 77,
+            "user_id": 12345,
+            "chat_id": 12345,
+            "question": "Один и тот же вопрос",
+            "case_context": "контекст",
+            "language": "ru",
+            "amount_kzt": 1000,
+            "status": "pending",
+        }
+        self.insert_calls = 0
+        self.advisory_lock_calls = 0
+
+    def transaction(self):
+        return _AsyncContext()
+
+    async def execute(self, query, *args):
+        if "pg_advisory_xact_lock" in query:
+            self.advisory_lock_calls += 1
+        return "SELECT 1"
+
+    async def fetchrow(self, query, *args):
+        if "INSERT INTO consultation_payment_orders" in query:
+            self.insert_calls += 1
+            raise AssertionError("idempotent retry must not insert a second pending order")
+        return dict(self.existing)
+
+
+class _IdempotentPool:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def acquire(self):
+        return _AsyncContext(self.connection)
+
+
+@pytest.mark.asyncio
+async def test_same_pending_consultation_reuses_order_without_second_insert(monkeypatch) -> None:
+    connection = _IdempotentConnection()
+    monkeypatch.setattr(quota, "_POOL", _IdempotentPool(connection))
+    order = await quota.create_consultation_order(
+        user_id=12345,
+        chat_id=12345,
+        question="Один и тот же вопрос",
+        case_context="контекст",
+        language="ru",
+        amount_kzt=1000,
+    )
+    assert order.id == 77
+    assert order.status == "pending"
+    assert connection.advisory_lock_calls == 1
+    assert connection.insert_calls == 0
