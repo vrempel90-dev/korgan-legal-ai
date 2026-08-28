@@ -34,7 +34,7 @@ body:has(.workspace-home),
   overflow-x:hidden!important;
   overscroll-behavior-y:contain!important;
   -webkit-overflow-scrolling:touch!important;
-  padding-bottom:18px!important;
+  padding-bottom:16px!important;
   scrollbar-width:none!important;
 }
 
@@ -49,7 +49,7 @@ body:has(.workspace-home),
   bottom:auto!important;
   transform:none!important;
   width:100%!important;
-  flex:0 0 calc(66px + env(safe-area-inset-bottom))!important;
+  flex:0 0 calc(72px + env(safe-area-inset-bottom))!important;
   z-index:40!important;
 }
 
