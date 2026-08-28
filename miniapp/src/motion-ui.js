@@ -1,44 +1,22 @@
 /* KORGAN document workflow + professional motion layer.
-   Long document generation is handled per case so the rest of the Mini App
-   remains usable. The legal API, routes, payment rules and document pipeline
-   are not replaced. */
+   Background document generation is isolated per case. UI work is event-driven
+   so Telegram WebView is not forced to rescan the page continuously. */
 
 import { korganApi } from './korganApi';
 
 const RU = {
-  kicker: 'ПОДГОТОВКА ДОКУМЕНТА',
-  title: 'Юридический workflow',
-  pending: 'Ожидает',
-  active: 'В работе',
-  done: 'Готово',
+  kicker: 'ПОДГОТОВКА ДОКУМЕНТА', title: 'Юридический workflow', pending: 'Ожидает', active: 'В работе', done: 'Готово',
   note: 'Процент ориентировочный. Финальную готовность подтверждает сервер KORGAN после завершения проверок качества.',
-  readyTitle: 'Документ готов',
-  readyText: 'Документ подготовлен и сохранён в исходном деле. Можете открыть и просмотреть результат.',
-  open: 'Открыть',
-  download: 'Скачать DOCX',
-  background: 'Документ готовится в фоне',
-  alreadyRunning: 'Этот документ уже готовится',
-  failedTitle: 'Подготовка не завершена',
-  paymentTitle: 'Требуется оплата',
-  paymentText: 'Откройте дело и продолжите через платёжный экран.',
+  readyTitle: 'Документ готов', readyText: 'Документ подготовлен и сохранён в исходном деле. Можете открыть и просмотреть результат.',
+  open: 'Открыть', download: 'Скачать DOCX', background: 'Документ готовится в фоне', alreadyRunning: 'Этот документ уже готовится',
+  failedTitle: 'Подготовка не завершена', paymentTitle: 'Требуется оплата', paymentText: 'Откройте дело и продолжите через платёжный экран.',
 };
-
 const KK = {
-  kicker: 'ҚҰЖАТТЫ ДАЙЫНДАУ',
-  title: 'Заңдық workflow',
-  pending: 'Күтуде',
-  active: 'Орындалуда',
-  done: 'Дайын',
+  kicker: 'ҚҰЖАТТЫ ДАЙЫНДАУ', title: 'Заңдық workflow', pending: 'Күтуде', active: 'Орындалуда', done: 'Дайын',
   note: 'Пайыз шамамен көрсетіледі. Соңғы дайындықты KORGAN сервері сапа тексерулері аяқталғаннан кейін растайды.',
-  readyTitle: 'Құжат дайын',
-  readyText: 'Құжат дайындалып, бастапқы істе сақталды. Нәтижені ашып, қарай аласыз.',
-  open: 'Ашу',
-  download: 'DOCX жүктеу',
-  background: 'Құжат фонда дайындалуда',
-  alreadyRunning: 'Бұл құжат қазірдің өзінде дайындалуда',
-  failedTitle: 'Құжатты дайындау аяқталмады',
-  paymentTitle: 'Төлем қажет',
-  paymentText: 'Істі ашып, төлем экраны арқылы жалғастырыңыз.',
+  readyTitle: 'Құжат дайын', readyText: 'Құжат дайындалып, бастапқы істе сақталды. Нәтижені ашып, қарай аласыз.',
+  open: 'Ашу', download: 'DOCX жүктеу', background: 'Құжат фонда дайындалуда', alreadyRunning: 'Бұл құжат қазірдің өзінде дайындалуда',
+  failedTitle: 'Құжатты дайындау аяқталмады', paymentTitle: 'Төлем қажет', paymentText: 'Істі ашып, төлем экраны арқылы жалғастырыңыз.',
 };
 
 const PROFILES = {
@@ -70,18 +48,28 @@ const PROFILES = {
 
 const PERCENTAGES = [10, 28, 50, 70, 88];
 const STAGE_AFTER_MS = [0, 15000, 45000, 90000, 150000];
+const POLL_MS = 8000;
+const JOB_TIMEOUT_MS = 6 * 60 * 1000;
 const jobs = new Map();
 const paymentPassCases = new Set();
-let renderTimer = null;
 let observer = null;
+let renderScheduled = false;
+
+function storedLanguage() {
+  try {
+    const raw = localStorage.getItem('korgan-miniapp-state-v1');
+    const state = raw ? JSON.parse(raw) : null;
+    return state?.language === 'kk' ? 'kk' : 'ru';
+  } catch {
+    return 'ru';
+  }
+}
 
 function isKazakh(text = '') {
-  return document.documentElement.lang === 'kk' || /[ӘәҒғҚқҢңӨөҰұҮүҺһІі]/.test(text || document.body?.innerText || '');
+  if (/[ӘәҒғҚқҢңӨөҰұҮүҺһІі]/.test(String(text || ''))) return true;
+  return document.documentElement.lang === 'kk' || storedLanguage() === 'kk';
 }
-
-function copyFor(text = '') {
-  return isKazakh(text) ? KK : RU;
-}
+function copyFor(text = '') { return isKazakh(text) ? KK : RU; }
 
 function inferProfile(text) {
   const value = String(text || '').toLowerCase();
@@ -96,25 +84,18 @@ function inferProfile(text) {
 function currentCasePage() {
   return Array.from(document.querySelectorAll('main.page')).find((page) => page.querySelector('.status-card')) || null;
 }
-
 function caseIdForPage(page) {
-  const shell = page?.closest('.app-shell');
-  const value = (shell?.querySelector('.subbar strong')?.textContent || '').trim();
+  const value = (page?.closest('.app-shell')?.querySelector('.subbar strong')?.textContent || '').trim();
   const match = value.match(/KOR-[A-Z0-9]+/i);
   return match ? match[0].toUpperCase() : '';
 }
-
-function headingForPage(page) {
-  return (page?.querySelector('.analysis-card .card-head h2')?.textContent || '').trim();
-}
-
+function headingForPage(page) { return (page?.querySelector('.analysis-card .card-head h2')?.textContent || '').trim(); }
 function createElement(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (typeof text === 'string') node.textContent = text;
   return node;
 }
-
 function haptic(kind = 'success') {
   try {
     const api = window.Telegram?.WebApp?.HapticFeedback;
@@ -127,43 +108,31 @@ function haptic(kind = 'success') {
 function stageFor(job) {
   const elapsed = Math.max(0, Date.now() - job.startedAt);
   let stage = 0;
-  STAGE_AFTER_MS.forEach((threshold, index) => {
-    if (elapsed >= threshold) stage = index;
-  });
+  STAGE_AFTER_MS.forEach((threshold, index) => { if (elapsed >= threshold) stage = index; });
   return Math.min(stage, 4);
 }
 
 function buildProgress(job) {
-  const copy = job.copy;
   const profile = PROFILES[job.profile] || PROFILES.generic;
   const steps = profile[job.language] || profile.ru;
   const panel = createElement('section', 'korgan-document-progress');
   panel.dataset.caseId = job.caseId;
   panel.setAttribute('aria-live', 'polite');
-
   const head = createElement('div', 'korgan-progress-head');
   const headCopy = createElement('div');
-  headCopy.append(createElement('span', 'korgan-progress-kicker', copy.kicker));
-  headCopy.append(createElement('div', 'korgan-progress-title', copy.title));
-  const percent = createElement('div', 'korgan-progress-percent', '≈ 10%');
-  head.append(headCopy, percent);
-
+  headCopy.append(createElement('span', 'korgan-progress-kicker', job.copy.kicker));
+  headCopy.append(createElement('div', 'korgan-progress-title', job.copy.title));
+  head.append(headCopy, createElement('div', 'korgan-progress-percent', '≈ 10%'));
   const track = createElement('div', 'korgan-progress-track');
   track.append(createElement('div', 'korgan-progress-bar'));
-
   const list = createElement('div', 'korgan-progress-steps');
   steps.forEach((name, index) => {
     const row = createElement('div', 'korgan-progress-step');
     row.dataset.step = String(index);
-    row.append(
-      createElement('div', 'korgan-progress-index', String(index + 1)),
-      createElement('div', 'korgan-progress-name', name),
-      createElement('div', 'korgan-progress-state', copy.pending),
-    );
+    row.append(createElement('div', 'korgan-progress-index', String(index + 1)), createElement('div', 'korgan-progress-name', name), createElement('div', 'korgan-progress-state', job.copy.pending));
     list.append(row);
   });
-
-  panel.append(head, track, list, createElement('div', 'korgan-progress-note', copy.note));
+  panel.append(head, track, list, createElement('div', 'korgan-progress-note', job.copy.note));
   return panel;
 }
 
@@ -172,13 +141,16 @@ function updateProgress(panel, job) {
   const percent = PERCENTAGES[stage];
   const percentNode = panel.querySelector('.korgan-progress-percent');
   const bar = panel.querySelector('.korgan-progress-bar');
-  if (percentNode) percentNode.textContent = `≈ ${percent}%`;
-  if (bar) bar.style.width = `${percent}%`;
+  if (percentNode && percentNode.textContent !== `≈ ${percent}%`) percentNode.textContent = `≈ ${percent}%`;
+  if (bar && bar.style.width !== `${percent}%`) bar.style.width = `${percent}%`;
   panel.querySelectorAll('.korgan-progress-step').forEach((row, index) => {
-    row.classList.toggle('is-done', index < stage);
-    row.classList.toggle('is-active', index === stage);
+    const done = index < stage;
+    const active = index === stage;
+    row.classList.toggle('is-done', done);
+    row.classList.toggle('is-active', active);
     const state = row.querySelector('.korgan-progress-state');
-    if (state) state.textContent = index < stage ? job.copy.done : index === stage ? job.copy.active : job.copy.pending;
+    const text = done ? job.copy.done : active ? job.copy.active : job.copy.pending;
+    if (state && state.textContent !== text) state.textContent = text;
   });
 }
 
@@ -213,8 +185,7 @@ function buildReadyCard(job, page) {
   card.dataset.caseId = job.caseId;
   const mark = createElement('div', 'korgan-inline-ready-mark', '✓');
   const text = createElement('div', 'korgan-inline-ready-copy');
-  text.append(createElement('strong', '', job.copy.readyTitle));
-  text.append(createElement('span', '', job.title || job.caseId));
+  text.append(createElement('strong', '', job.copy.readyTitle), createElement('span', '', job.title || job.caseId));
   card.append(mark, text);
   if (!existingNativeDownload) {
     const button = createElement('button', 'korgan-inline-ready-action', job.copy.download);
@@ -234,9 +205,9 @@ function renderVisibleCase() {
   const generationButton = Array.from(page.querySelectorAll('button.primary.wide')).find((button) => !/создать/i.test(button.textContent || '')) || null;
 
   page.querySelectorAll('.korgan-document-progress, .korgan-inline-ready-card').forEach((node) => {
-    if (!job || node.dataset.caseId !== caseId || (job.status === 'running' && node.classList.contains('korgan-inline-ready-card')) || (job.status !== 'running' && node.classList.contains('korgan-document-progress'))) node.remove();
+    const remove = !job || node.dataset.caseId !== caseId || (job.status === 'running' && node.classList.contains('korgan-inline-ready-card')) || (job.status !== 'running' && node.classList.contains('korgan-document-progress'));
+    if (remove) node.remove();
   });
-
   if (!job) return;
 
   if (job.status === 'running') {
@@ -248,7 +219,7 @@ function renderVisibleCase() {
     if (panel) updateProgress(panel, job);
     if (generationButton) {
       generationButton.classList.add('korgan-background-running');
-      generationButton.setAttribute('aria-label', job.copy.background);
+      if (generationButton.getAttribute('aria-label') !== job.copy.background) generationButton.setAttribute('aria-label', job.copy.background);
     }
     return;
   }
@@ -257,6 +228,15 @@ function renderVisibleCase() {
   if (job.status === 'ready' && !page.querySelector(`.korgan-inline-ready-card[data-case-id="${caseId}"]`) && generationButton) {
     generationButton.parentNode?.insertBefore(buildReadyCard(job, page), generationButton);
   }
+}
+
+function scheduleRender() {
+  if (renderScheduled) return;
+  renderScheduled = true;
+  window.requestAnimationFrame(() => {
+    renderScheduled = false;
+    renderVisibleCase();
+  });
 }
 
 function toastStack() {
@@ -285,15 +265,14 @@ function showToast({ title, text = '', action = '', onAction = null, tone = 'rea
     });
     card.append(button);
   }
-  toastStack().prepend(card);
-  while (toastStack().children.length > 3) toastStack().lastElementChild?.remove();
-  if (!persistent) {
-    window.setTimeout(() => {
-      if (!card.isConnected) return;
-      card.classList.add('is-leaving');
-      window.setTimeout(() => card.remove(), 180);
-    }, 11000);
-  }
+  const stack = toastStack();
+  stack.prepend(card);
+  while (stack.children.length > 3) stack.lastElementChild?.remove();
+  if (!persistent) window.setTimeout(() => {
+    if (!card.isConnected) return;
+    card.classList.add('is-leaving');
+    window.setTimeout(() => card.remove(), 180);
+  }, 11000);
   return card;
 }
 
@@ -304,7 +283,7 @@ function waitFor(check, timeout = 4500) {
       const value = check();
       if (value) return resolve(value);
       if (Date.now() - started >= timeout) return resolve(null);
-      window.setTimeout(tick, 80);
+      window.setTimeout(tick, 100);
     };
     tick();
   });
@@ -313,42 +292,99 @@ function waitFor(check, timeout = 4500) {
 async function openCaseById(caseId) {
   const current = currentCasePage();
   if (current && caseIdForPage(current) === caseId) {
-    renderVisibleCase();
+    scheduleRender();
     current.querySelector('.korgan-inline-ready-card, .status-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
   }
-
   const homeButton = document.querySelector('.bottom-nav button:nth-child(1)');
   if (homeButton instanceof HTMLButtonElement) homeButton.click();
-
   const casesCard = await waitFor(() => Array.from(document.querySelectorAll('.action-card')).find((button) => /мои дела|менің істерім/i.test(button.textContent || '')));
   if (!(casesCard instanceof HTMLElement)) return;
   casesCard.click();
-
   const caseButton = await waitFor(() => Array.from(document.querySelectorAll('.case-list-item')).find((button) => (button.textContent || '').includes(caseId)));
   if (!(caseButton instanceof HTMLElement)) return;
   caseButton.click();
-
   await waitFor(() => {
     const page = currentCasePage();
     return page && caseIdForPage(page) === caseId ? page : null;
   });
-  renderVisibleCase();
+  scheduleRender();
 }
 
 function notifyReady(job) {
   haptic('success');
-  showToast({
-    title: job.copy.readyTitle,
-    text: job.copy.readyText,
-    action: job.copy.open,
-    onAction: () => openCaseById(job.caseId),
-    tone: 'ready',
-    persistent: true,
-  });
+  showToast({ title: job.copy.readyTitle, text: job.copy.readyText, action: job.copy.open, onAction: () => openCaseById(job.caseId), tone: 'ready', persistent: true });
 }
 
-function startBackgroundJob({ caseId, documentType = 'claim', language = 'ru', title = '', sourcePage = null }) {
+function stopJobTimers(job) {
+  if (job.pollTimer) window.clearTimeout(job.pollTimer);
+  if (job.progressTimer) window.clearInterval(job.progressTimer);
+  job.pollTimer = null;
+  job.progressTimer = null;
+}
+
+function finishReady(job, result) {
+  if (job.status !== 'running') return;
+  stopJobTimers(job);
+  job.status = 'ready';
+  job.result = result;
+  job.finishedAt = Date.now();
+  if (result?.title) job.title = result.title;
+  scheduleRender();
+  notifyReady(job);
+}
+
+function finishError(job, error) {
+  if (job.status !== 'running') return;
+  stopJobTimers(job);
+  job.status = 'error';
+  job.error = error;
+  scheduleRender();
+  haptic('error');
+  showToast({ title: job.copy.failedTitle, text: error?.message || job.caseId, action: job.copy.open, onAction: () => openCaseById(job.caseId), tone: 'error' });
+}
+
+function finishPayment(job, result) {
+  if (job.status !== 'running') return;
+  stopJobTimers(job);
+  jobs.delete(job.caseId);
+  paymentPassCases.add(job.caseId);
+  showToast({ title: job.copy.paymentTitle, text: job.copy.paymentText, action: job.copy.open, onAction: () => openCaseById(job.caseId), tone: 'payment', persistent: true });
+  scheduleRender();
+  return result;
+}
+
+function shouldWaitForServer(error) {
+  const status = Number(error?.status || 0);
+  return !status || status === 408 || status === 429 || status === 499 || status >= 500;
+}
+
+function scheduleDocumentPoll(job, delay = POLL_MS) {
+  if (job.status !== 'running') return;
+  job.pollTimer = window.setTimeout(async () => {
+    if (job.status !== 'running') return;
+    if (Date.now() - job.startedAt >= JOB_TIMEOUT_MS) {
+      finishError(job, job.transportError || new Error(job.copy.failedTitle));
+      return;
+    }
+    try {
+      const result = await korganApi.getDocument(job.caseId);
+      if (result?.document_base64) {
+        finishReady(job, result);
+        return;
+      }
+    } catch (error) {
+      if (Number(error?.status || 0) !== 404 && !shouldWaitForServer(error)) {
+        finishError(job, error);
+        return;
+      }
+    }
+    scheduleRender();
+    scheduleDocumentPoll(job, POLL_MS);
+  }, delay);
+}
+
+function startBackgroundJob({ caseId, documentType = 'claim', language = 'ru', title = '' }) {
   const existing = jobs.get(caseId);
   const copy = language === 'kk' ? KK : RU;
   if (existing?.status === 'running') {
@@ -358,49 +394,34 @@ function startBackgroundJob({ caseId, documentType = 'claim', language = 'ru', t
   }
 
   const job = {
-    caseId,
-    documentType,
-    language,
-    title: title || caseId,
-    profile: inferProfile(title),
-    copy,
-    startedAt: Date.now(),
-    status: 'running',
-    result: null,
-    error: null,
-    promise: null,
+    caseId, documentType, language, title: title || caseId, profile: inferProfile(title), copy,
+    startedAt: Date.now(), status: 'running', result: null, error: null, transportError: null,
+    promise: null, pollTimer: null, progressTimer: null,
   };
   jobs.set(caseId, job);
   haptic('light');
-  renderVisibleCase();
+  scheduleRender();
+  job.progressTimer = window.setInterval(scheduleRender, 5000);
+  scheduleDocumentPoll(job, 10000);
 
   job.promise = korganApi.generateDocument(caseId, documentType, language)
     .then((result) => {
-      if (result?.payment_required) {
-        jobs.delete(caseId);
-        paymentPassCases.add(caseId);
-        showToast({ title: copy.paymentTitle, text: copy.paymentText, action: copy.open, onAction: () => openCaseById(caseId), tone: 'payment', persistent: true });
-        return result;
-      }
-      job.status = 'ready';
-      job.result = result;
-      job.finishedAt = Date.now();
-      if (result?.title) job.title = result.title;
-      renderVisibleCase();
-      notifyReady(job);
+      if (job.status !== 'running') return result;
+      if (result?.payment_required) return finishPayment(job, result);
+      if (result?.document_base64 || result?.status === 'document_ready') finishReady(job, result);
       return result;
     })
     .catch((error) => {
-      job.status = 'error';
-      job.error = error;
-      renderVisibleCase();
-      haptic('error');
-      showToast({ title: copy.failedTitle, text: error?.message || caseId, action: copy.open, onAction: () => openCaseById(caseId), tone: 'error' });
-      throw error;
+      if (job.status !== 'running') return undefined;
+      if (shouldWaitForServer(error)) {
+        job.transportError = error;
+        scheduleRender();
+        return undefined;
+      }
+      finishError(job, error);
+      return undefined;
     });
 
-  // The promise intentionally continues after navigation. Avoid an unhandled
-  // rejection when the user has already left the originating screen.
   job.promise.catch(() => {});
   return job.promise;
 }
@@ -415,13 +436,7 @@ async function startPaidBackgroundJob(page) {
     const payment = status?.payment;
     if (!payment?.case_id) throw new Error(copy.failedTitle);
     const language = isKazakh(page.textContent || '') ? 'kk' : 'ru';
-    startBackgroundJob({
-      caseId: String(payment.case_id).toUpperCase(),
-      documentType: payment.document_type || 'claim',
-      language,
-      title: payment.document_type || String(payment.case_id),
-      sourcePage: page,
-    });
+    startBackgroundJob({ caseId: String(payment.case_id).toUpperCase(), documentType: payment.document_type || 'claim', language, title: payment.document_type || String(payment.case_id) });
     const back = page.closest('.app-shell')?.querySelector('.subbar .icon-btn');
     if (back instanceof HTMLButtonElement) back.click();
   } catch (error) {
@@ -442,34 +457,24 @@ function handleGenerationClick(event) {
     startPaidBackgroundJob(page);
     return;
   }
-
   if (!page.querySelector('.status-card')) return;
   const caseId = caseIdForPage(page);
   if (!caseId) return;
-
-  // When payment is enabled the existing React payment flow remains the owner
-  // of the first click. After approval, paid generation is handled above.
   if (/₸/.test(button.textContent || '') || paymentPassCases.has(caseId)) return;
 
   event.preventDefault();
   event.stopImmediatePropagation();
   const heading = headingForPage(page);
   const language = isKazakh(page.textContent || '') ? 'kk' : 'ru';
-  startBackgroundJob({
-    caseId,
-    documentType: inferProfile(heading),
-    language,
-    title: heading,
-    sourcePage: page,
-  });
+  startBackgroundJob({ caseId, documentType: inferProfile(heading), language, title: heading });
 }
 
 function start() {
   document.addEventListener('click', handleGenerationClick, true);
-  renderTimer = window.setInterval(renderVisibleCase, 600);
-  observer = new MutationObserver(() => renderVisibleCase());
-  observer.observe(document.documentElement, { childList: true, subtree: true });
-  renderVisibleCase();
+  observer = new MutationObserver(scheduleRender);
+  const root = document.getElementById('root') || document.body;
+  observer.observe(root, { childList: true, subtree: true });
+  scheduleRender();
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
