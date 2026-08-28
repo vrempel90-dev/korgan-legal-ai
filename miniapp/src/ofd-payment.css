@@ -1,0 +1,35 @@
+.receipt-url-box {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.receipt-url-box input {
+  width: 100%;
+  min-height: 52px;
+  box-sizing: border-box;
+  padding: 0 14px;
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 14px;
+  background: #0B0F14;
+  color: #F3F0E9;
+  font: inherit;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.receipt-url-box input::placeholder {
+  color: rgba(243,240,233,.46);
+}
+
+.receipt-url-box input:focus {
+  border-color: rgba(201,162,39,.72);
+  box-shadow: 0 0 0 3px rgba(201,162,39,.10);
+}
+
+.ofd-note {
+  margin-top: 10px;
+  color: rgba(243,240,233,.68);
+  font-size: 13px;
+  line-height: 1.45;
+}
