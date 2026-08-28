@@ -1,4 +1,22 @@
-/* Final two-tab dock geometry: Home / Profile only. */
+/* Final two-tab dock geometry: Home / Profile only.
+   This file is loaded last on purpose so later visual layers cannot re-enable
+   Cases / AI-lawyer / Help in the persistent dock. Routes remain available
+   from the application screens. */
+.bottom-nav{
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+}
+
+.bottom-nav button:nth-child(1),
+.bottom-nav button:nth-child(5){
+  display:grid!important;
+}
+
+.bottom-nav button:nth-child(2),
+.bottom-nav button:nth-child(3),
+.bottom-nav button:nth-child(4){
+  display:none!important;
+}
+
 .bottom-nav::before{
   width:calc((100% - 16px)/2)!important;
 }
