@@ -12,6 +12,7 @@ from openai import AsyncOpenAI
 
 from korgan.config import Settings
 from korgan.legal_types import ClaimDraft, ExtractedDocument, LegalResearch, VerificationStatus
+from korgan.pro_claim_sections import extend_claim_schema as _extend_claim_schema
 
 LOGGER = logging.getLogger(__name__)
 
@@ -68,6 +69,12 @@ _CLAIM_SCHEMA: dict[str, Any] = {
     "required": ["title", "court", "claimant", "defendant", "price_of_claim", "facts", "legal_basis", "requests", "attachments", "verification_notes"],
     "additionalProperties": False,
 }
+
+# Профессиональные разделы: подсудность, расчёт, досудебный порядок, примирение,
+# исковая давность, снятие возражений ответчика, ходатайства. Добавляются здесь,
+# в единственном определении схемы, поэтому все двенадцать вызывающих модулей
+# получают их автоматически.
+_extend_claim_schema(_CLAIM_SCHEMA)
 
 _VALIDATION_SCHEMA: dict[str, Any] = {
     "type": "object",

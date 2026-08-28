@@ -92,18 +92,47 @@ def exemplar_body_blocks(draft: Any, *, kk: bool) -> list[Block]:
     requests = _clean_list(list(draft.requests))
     attachments = _clean_list(list(draft.attachments))
 
+    # Профессиональные разделы. Как и правовое обоснование выше, они вводятся
+    # прозаическим маркером, а не визуальным заголовком: традиционное
+    # процессуальное письмо не размечается подзаголовками.
+    calculation = [text for text in (_clean_narrative_line(x) for x in getattr(draft, "calculation", [])) if text]
+    procedural = [
+        text
+        for text in (
+            _clean_narrative_line(getattr(draft, "jurisdiction_reason", "")),
+            _clean_narrative_line(getattr(draft, "pretrial_compliance", "")),
+            _clean_narrative_line(getattr(draft, "reconciliation_measures", "")),
+            _clean_narrative_line(getattr(draft, "limitation_period", "")),
+        )
+        if text
+    ]
+    defenses = [text for text in (_clean_narrative_line(x) for x in getattr(draft, "anticipated_defenses", [])) if text]
+    motions = _clean_list(list(getattr(draft, "motions", [])))
+
     blocks: list[Block] = [Prose(fact) for fact in facts]
-    if legal_basis:
-        # This prose marker satisfies the golden substance check without creating
-        # a visual AI-style heading; concrete verified provisions must follow it.
-        blocks.append(Prose("Правовое обоснование заявленных требований составляют следующие применимые нормы законодательства Республики Казахстан."))
-        blocks.extend(Prose(basis) for basis in legal_basis)
+    if calculation:
+        blocks.append(Prose("Расчёт взыскиваемых сумм:"))
+        blocks.extend(Prose(line) for line in calculation)
     if draft.late_interest:
         late = _clean_narrative_line(draft.late_interest)
         if late:
             blocks.append(Prose(late))
+    if legal_basis or procedural:
+        # This prose marker satisfies the golden substance check without creating
+        # a visual AI-style heading; concrete verified provisions must follow it.
+        blocks.append(Prose("Правовое обоснование заявленных требований составляют следующие применимые нормы законодательства Республики Казахстан."))
+        blocks.extend(Prose(basis) for basis in legal_basis)
+        # Подсудность, досудебный порядок, меры к примирению и исковая давность
+        # — часть правового обоснования, а не отдельная справка для клиента.
+        blocks.extend(Prose(text) for text in procedural)
+    if defenses:
+        blocks.append(Prose("Возможные возражения ответчика и ответ на них:"))
+        blocks.extend(Prose(text) for text in defenses)
     blocks.append(Prose("На основании вышеизложенного ПРОШУ СУД:"))
     blocks.append(AutoNumberedList(requests))
+    if motions:
+        blocks.append(Prose("Ходатайства:"))
+        blocks.append(AutoNumberedList(motions, restart=True))
     blocks.append(Prose("Приложения:"))
     blocks.append(AutoNumberedList(attachments, restart=True))
     return blocks

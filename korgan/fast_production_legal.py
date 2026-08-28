@@ -15,6 +15,7 @@ from korgan.repaired_production_legal import (
     _CONSULT_RESEARCH_SCHEMA,
     _is_adilet_url,
 )
+from korgan.pro_document_quality import output_limit_for, reasoning_for
 from korgan.verified_openai import (
     _VERIFIED_RESEARCH_SCHEMA,
     _actual_response_urls,
@@ -75,8 +76,9 @@ class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
             "prompt_cache_key": f"korgan:{schema_name}:v2",
         }
 
-        if model == "gpt-5.1" or model.startswith("gpt-5.1-"):
-            kwargs["reasoning"] = {"effort": "none"}
+        reasoning = reasoning_for(schema_name, model)
+        if reasoning is not None:
+            kwargs["reasoning"] = reasoning
 
         output_limits = {
             "korgan_consult_research": 1600,
@@ -84,7 +86,7 @@ class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
             "korgan_court_ready_validation": 1400,
         }
         if schema_name in output_limits:
-            kwargs["max_output_tokens"] = output_limits[schema_name]
+            kwargs["max_output_tokens"] = output_limit_for(schema_name, output_limits[schema_name])
 
         if tools:
             kwargs["tools"] = tools
