@@ -5,6 +5,7 @@ on:
     branches:
       - feat/kaspi-ofd-fiscal-qr-agent
       - fix/telegram-consultation-ofd
+      - hardening/payment-agent-20260828
   pull_request:
     branches:
       - feature/openai-docs-claims
@@ -20,6 +21,8 @@ jobs:
           cache: pip
       - name: Install Python dependencies
         run: pip install -r requirements.txt
+      - name: Compile payment modules
+        run: python -m py_compile korgan/kaspi_ofd.py korgan/payment_runtime.py korgan/consultation_quota_runtime.py korgan/prepayment_auto_payment.py
       - name: Run OFD and consultation regression tests
         run: >-
           python -m pytest -q
@@ -28,3 +31,4 @@ jobs:
           tests/test_consultation_ofd_runtime.py
           tests/test_consultation_quota.py
           tests/test_consultation_request_ownership.py
+          tests/test_prepayment_before_generation.py
