@@ -122,28 +122,19 @@ def test_new_receipt_flow_routes_exact_active_request_for_all_five_kinds(monkeyp
         async def answer(self, text: str, **_kwargs: object) -> None:
             self.answers.append(text)
 
-    class Analyzer:
-        def __init__(self, _settings: Settings) -> None:
-            pass
+    async def fetch_receipt(_url: str):
+        return SimpleNamespace(
+            receipt_fingerprint="fiscal-hash",
+            transaction_id="RNM:RRN:FP",
+            amount_kzt=1000,
+            seller_bin="",
+            rnm="123456789012",
+            fp="456789",
+        )
 
-        async def analyze(self, _raw: bytes, _filename: str, _mime: str) -> ReceiptCheck:
-            return ReceiptCheck(
-                readable=True,
-                looks_like_kaspi=True,
-                payment_successful=True,
-                amount_kzt=1000,
-                date_time="18.08.2026 11:00",
-                merchant_or_recipient="OpenCourt (KORGAN)",
-                payer="Client",
-                receipt_or_transaction_id="TX-123",
-                rnm="123",
-                fp="456",
-                suspicious_signals=(),
-                notes=(),
-            )
-
-    async def receipt_bytes(_message) -> tuple[bytes, str, str]:
-        return b"receipt", "receipt.jpg", "image/jpeg"
+    def issues(_receipt, expected_amount: int, **_kwargs) -> list[str]:
+        assert expected_amount == 1000
+        return []
 
     async def reserve(**_kwargs) -> bool:
         return True
@@ -153,8 +144,8 @@ def test_new_receipt_flow_routes_exact_active_request_for_all_five_kinds(monkeyp
         return True
 
     monkeypatch.setattr(payment_runtime, "get_settings", lambda: settings)
-    monkeypatch.setattr(payment_runtime, "ReceiptAnalyzer", Analyzer)
-    monkeypatch.setattr(payment_runtime, "_receipt_bytes", receipt_bytes)
+    monkeypatch.setattr(payment_runtime, "fetch_kaspi_ofd_receipt", fetch_receipt)
+    monkeypatch.setattr(payment_runtime, "fiscal_receipt_issues", issues)
     monkeypatch.setattr(payment_runtime, "reserve_verified_document_receipt", reserve)
     monkeypatch.setattr(prepayment_runtime, "run_ai_verified_prepayment_generation", generate)
 
@@ -177,7 +168,11 @@ def test_new_receipt_flow_routes_exact_active_request_for_all_five_kinds(monkeyp
             "payment_signature": signature,
             "payment_offer_time": "2026-08-18T10:00:00+05:00",
         })
-        asyncio.run(payment_runtime.payment_receipt_received(Message(user_id), state))
+        asyncio.run(payment_runtime._verify_and_release_fiscal_url(
+            Message(user_id),
+            state,
+            "https://receipt.kaspi.kz/web/fiscal?f=123456789012&i=456789&s=1000&t=20260818110000",
+        ))
 
     assert calls == [
         (1001, "claim", "request-claim", -5001),
@@ -229,18 +224,18 @@ def test_replay_storage_failure_keeps_document_blocked_and_says_do_not_repay(mon
         async def answer(self, text: str, **_kwargs: object) -> None:
             self.answers.append(text)
 
-    class Analyzer:
-        def __init__(self, _settings) -> None:
-            pass
+    async def fetch_receipt(_url: str):
+        return SimpleNamespace(
+            receipt_fingerprint="fiscal-hash-fail",
+            transaction_id="RNM:RRN:FP-FAIL",
+            amount_kzt=1000,
+            seller_bin="",
+            rnm="123456789012",
+            fp="456789",
+        )
 
-        async def analyze(self, *_args) -> ReceiptCheck:
-            return ReceiptCheck(
-                True, True, True, 1000, "18.08.2026 11:00", "OpenCourt (KORGAN)",
-                "Client", "TX-FAIL", "", "", (), (),
-            )
-
-    async def receipt_bytes(_message):
-        return b"receipt", "receipt.jpg", "image/jpeg"
+    def issues(_receipt, _expected_amount: int, **_kwargs) -> list[str]:
+        return []
 
     async def broken_reserve(**_kwargs):
         raise RuntimeError("db unavailable")
@@ -252,13 +247,17 @@ def test_replay_storage_failure_keeps_document_blocked_and_says_do_not_repay(mon
         return True
 
     monkeypatch.setattr(payment_runtime, "get_settings", lambda: settings)
-    monkeypatch.setattr(payment_runtime, "ReceiptAnalyzer", Analyzer)
-    monkeypatch.setattr(payment_runtime, "_receipt_bytes", receipt_bytes)
+    monkeypatch.setattr(payment_runtime, "fetch_kaspi_ofd_receipt", fetch_receipt)
+    monkeypatch.setattr(payment_runtime, "fiscal_receipt_issues", issues)
     monkeypatch.setattr(payment_runtime, "reserve_verified_document_receipt", broken_reserve)
     monkeypatch.setattr(prepayment_runtime, "run_ai_verified_prepayment_generation", generate)
 
     message = Message()
-    asyncio.run(payment_runtime.payment_receipt_received(message, State()))
+    asyncio.run(payment_runtime._verify_and_release_fiscal_url(
+        message,
+        State(),
+        "https://receipt.kaspi.kz/web/fiscal?f=123456789012&i=456789&s=1000&t=20260818110000",
+    ))
 
     assert generated["value"] is False
     assert any("Повторно платить не нужно" in text for text in message.answers)

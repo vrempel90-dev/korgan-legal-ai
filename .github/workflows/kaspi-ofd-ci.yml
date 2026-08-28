@@ -1,0 +1,35 @@
+name: Kaspi OFD payment CI
+
+on:
+  push:
+    branches:
+      - feat/kaspi-ofd-fiscal-qr-agent
+      - fix/telegram-consultation-ofd
+      - hardening/payment-agent-20260828
+  pull_request:
+    branches:
+      - feature/openai-docs-claims
+
+jobs:
+  kaspi-ofd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Compile payment modules
+        run: python -m py_compile korgan/kaspi_ofd.py korgan/payment_runtime.py korgan/consultation_quota_runtime.py korgan/prepayment_auto_payment.py korgan/payment_operation_lock.py korgan/consultation_paid_delivery_guard.py
+      - name: Run OFD and consultation regression tests
+        run: >-
+          python -m pytest -q
+          tests/test_kaspi_ofd.py
+          tests/test_payment_release_guard.py
+          tests/test_consultation_ofd_runtime.py
+          tests/test_consultation_quota.py
+          tests/test_consultation_request_ownership.py
+          tests/test_prepayment_before_generation.py
+          tests/test_paid_delivery_idempotency_guard.py

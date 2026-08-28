@@ -10,14 +10,14 @@ from aiogram.types import CallbackQuery, Message
 
 from korgan.admin import is_admin
 from korgan.config import get_settings
-from korgan.document_receipt_replay_guard import receipt_fingerprint, reserve_verified_document_receipt
-from korgan.localized_transport import _document_caption_with_review, _document_review_markup
-from korgan.payment import (
-    ReceiptAnalyzer,
-    receipt_hard_issues,
-    verify_admin_action,
-    verify_user_payment,
+from korgan.document_receipt_replay_guard import reserve_verified_document_receipt
+from korgan.kaspi_ofd import (
+    KaspiOFDVerificationError,
+    fetch_kaspi_ofd_receipt,
+    fiscal_receipt_issues,
 )
+from korgan.localized_transport import _document_caption_with_review, _document_review_markup
+from korgan.payment import verify_admin_action, verify_user_payment
 from korgan.payment_release_guard import can_release_paid_document
 
 LOGGER = logging.getLogger(__name__)
@@ -58,6 +58,11 @@ def _parse_admin_callback(data: str) -> tuple[str, int, int, str, str, str] | No
 
 
 async def _receipt_bytes(message: Message) -> tuple[bytes, str, str] | None:
+    """Legacy file loader kept only for older paid-consultation compatibility.
+
+    Document payment verification does not call this helper and remains strictly
+    Kaspi OFD fiscal-QR based.
+    """
     if message.photo:
         item = message.photo[-1]
         file_id = item.file_id
@@ -82,6 +87,20 @@ async def _receipt_bytes(message: Message) -> tuple[bytes, str, str] | None:
     return output.getvalue(), filename, mime
 
 
+def _fiscal_qr_instruction(language: str) -> str:
+    if language == "kk":
+        return (
+            "🔎 Фискалдық чектегі QR-кодты телефон камерасымен сканерлеңіз. "
+            "Ашылған receipt.kaspi.kz сілтемесін осы чатқа жіберіңіз.\n\n"
+            "Фото, скриншот немесе PDF төлемді растамайды: KORGAN төлемді тікелей Kaspi ОФД деректері бойынша тексереді."
+        )
+    return (
+        "🔎 Отсканируйте QR-код именно на фискальном чеке камерой телефона. "
+        "Отправьте сюда открывшуюся ссылку receipt.kaspi.kz.\n\n"
+        "Фото, скриншот или PDF не подтверждают оплату: KORGAN проверяет платёж напрямую по данным Kaspi ОФД."
+    )
+
+
 @router.message(F.text.in_({"💰 Цены", "💰 Бағалар"}))
 async def payment_prices(message: Message, state: FSMContext) -> None:
     settings = get_settings()
@@ -96,7 +115,7 @@ async def payment_prices(message: Message, state: FSMContext) -> None:
             "• Сотқа дейінгі талап\n"
             "• Талапқа пікір\n"
             "• Шарт\n\n"
-            "💳 Төлем Kaspi арқылы жүргізіледі. Word-файл KORGAN AI чекті тексергеннен кейін ғана дайындалып/беріледі.\n\n"
+            "💳 Төлем Kaspi арқылы жүргізіледі. Word-файл фискалдық чектің QR-сілтемесі Kaspi ОФД арқылы тексерілгеннен кейін ғана дайындалады/беріледі.\n\n"
             "👨‍⚖️ Дайын құжатты кәсіби заңгердің тексеруі — бөлек ақылы қызмет."
         )
     else:
@@ -107,7 +126,7 @@ async def payment_prices(message: Message, state: FSMContext) -> None:
             "• Досудебная претензия\n"
             "• Отзыв на иск\n"
             "• Договор\n\n"
-            "💳 Оплата через Kaspi. Word-файл готовится/выдаётся только после автоматической проверки чека KORGAN AI.\n\n"
+            "💳 Оплата через Kaspi. Word-файл готовится/выдаётся только после проверки QR фискального чека через Kaspi ОФД.\n\n"
             "👨‍⚖️ Проверка готового документа профессиональным юристом — отдельная платная услуга."
         )
     await message.answer(text)
@@ -120,9 +139,9 @@ async def payment_proof_requested(callback: CallbackQuery, state: FSMContext) ->
     if parsed is None or callback.from_user is None:
         await callback.answer("Некорректный запрос.", show_alert=True)
         return
-    admin_doc_message_id, kind, language, signature = parsed
+    transaction_id, kind, language, signature = parsed
     user_id = callback.from_user.id
-    if not verify_user_payment(settings, signature, user_id, admin_doc_message_id, kind, language):
+    if not verify_user_payment(settings, signature, user_id, transaction_id, kind, language):
         LOGGER.warning("PAYMENT_USER_SIGNATURE_REJECTED user=%s", user_id)
         await callback.answer("Запрос устарел. Сформируйте документ заново.", show_alert=True)
         return
@@ -131,7 +150,7 @@ async def payment_proof_requested(callback: CallbackQuery, state: FSMContext) ->
     offer_time = offer_date.isoformat() if offer_date is not None else ""
     await state.update_data(
         mode="payment_receipt",
-        payment_admin_doc_message_id=admin_doc_message_id,
+        payment_admin_doc_message_id=transaction_id,
         payment_kind=kind,
         payment_language=language,
         payment_signature=signature,
@@ -139,29 +158,10 @@ async def payment_proof_requested(callback: CallbackQuery, state: FSMContext) ->
     )
     await callback.answer()
     if callback.message:
-        text = (
-            "📎 Төлем чегін толық түрде фото немесе PDF ретінде жіберіңіз. Сома, күн/уақыт, операция нөмірі және төлем мәртебесі көрінуі керек. AI тексеруі сәтті болса, құжат автоматты түрде іске қосылады."
-            if language == "kk"
-            else
-            "📎 Пришлите полный чек оплаты фото или PDF. Должны быть видны сумма, дата/время, номер операции и успешный статус платежа. Если AI-проверка пройдена, документ запустится автоматически."
-        )
-        await callback.message.answer(text)
+        await callback.message.answer(_fiscal_qr_instruction(language))
 
 
-@router.message(PaymentReceiptTextFilter())
-async def payment_receipt_text(message: Message, state: FSMContext) -> None:
-    language = str((await state.get_data()).get("payment_language", "ru"))
-    await message.answer(
-        "📎 Чектің өзін фото, JPG/PNG/WEBP немесе PDF түрінде жіберіңіз."
-        if language == "kk"
-        else
-        "📎 Пришлите сам чек как фото, JPG/PNG/WEBP или PDF."
-    )
-
-
-@router.message(PaymentReceiptFilter())
-async def payment_receipt_received(message: Message, state: FSMContext) -> None:
-    """AI-verifies a receipt and immediately releases/starts the paid document."""
+async def _verify_and_release_fiscal_url(message: Message, state: FSMContext, receipt_url: str) -> None:
     settings = get_settings()
     data = await state.get_data()
     user_id = message.from_user.id if message.from_user else None
@@ -169,68 +169,72 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
         return
 
     try:
-        transaction_id = int(data.get("payment_admin_doc_message_id"))
+        payment_transaction_id = int(data.get("payment_admin_doc_message_id"))
     except (TypeError, ValueError):
         await state.update_data(mode="main")
         await message.answer("Платёжная сессия устарела. Нажмите «✅ Я оплатил» под карточкой оплаты ещё раз.")
         return
+
     kind = str(data.get("payment_kind") or "")
     language = str(data.get("payment_language") or "ru")
     signature = str(data.get("payment_signature") or "")
-    if not verify_user_payment(settings, signature, user_id, transaction_id, kind, language):
+    if not verify_user_payment(settings, signature, user_id, payment_transaction_id, kind, language):
         await state.update_data(mode="main")
         await message.answer("Платёжная сессия устарела. Нажмите «✅ Я оплатил» ещё раз.")
         return
 
     offer_time = str(data.get("payment_offer_time") or "").strip()
     expected_recipient = settings.kaspi_payment_recipient.strip()
-    if not offer_time or not expected_recipient:
+    expected_bin = settings.kaspi_payment_bin.strip()
+    if not offer_time or not (expected_bin or expected_recipient):
         LOGGER.critical(
-            "PAYMENT_VERIFICATION_CONTEXT_MISSING user=%s kind=%s offer_time=%s recipient=%s",
+            "PAYMENT_OFD_CONTEXT_MISSING user=%s kind=%s offer_time=%s recipient=%s bin=%s",
             user_id,
             kind,
             bool(offer_time),
             bool(expected_recipient),
+            bool(expected_bin),
         )
         await message.answer(
-            "⚠️ Автоматическая проверка оплаты временно недоступна. Документ остаётся заблокирован. Повторно платить не нужно — нажмите «✅ Я оплатил» на карточке оплаты и отправьте чек ещё раз."
+            "⚠️ Проверка Kaspi ОФД временно недоступна из-за конфигурации. Документ остаётся заблокирован. Повторно платить не нужно."
             if language != "kk"
             else
-            "⚠️ Төлемді автоматты тексеру уақытша қолжетімсіз. Құжат бұғатталған күйде қалады. Қайта төлеу қажет емес — төлем карточкасындағы «✅ Төледім» түймесін басып, чекті қайта жіберіңіз."
+            "⚠️ Kaspi ОФД тексеруі баптауға байланысты уақытша қолжетімсіз. Құжат бұғатталған күйде қалады. Қайта төлеу қажет емес."
         )
         return
-
-    payload = await _receipt_bytes(message)
-    if payload is None:
-        await message.answer("Не удалось прочитать файл. Пришлите полный чек как фото, JPG/PNG/WEBP или PDF.")
-        return
-    raw, filename, mime = payload
 
     try:
-        check = await ReceiptAnalyzer(settings).analyze(raw, filename, mime)
-    except Exception:
-        LOGGER.exception("PAYMENT_RECEIPT_AI_FAILED user=%s", user_id)
+        receipt = await fetch_kaspi_ofd_receipt(receipt_url)
+    except KaspiOFDVerificationError as exc:
+        LOGGER.warning("PAYMENT_OFD_URL_REJECTED user=%s kind=%s reason=%s", user_id, kind, str(exc)[:160])
         await message.answer(
-            "⚠️ Сейчас не удалось выполнить обязательную AI-проверку чека. Документ остаётся заблокирован. Повторно платить не нужно; отправьте чек ещё раз позже."
+            f"❌ Фискальный чек не подтверждён: {exc}.\n\n{_fiscal_qr_instruction(language)}"
             if language != "kk"
-            else
-            "⚠️ Қазір чекті міндетті AI-тексеру орындалмады. Құжат бұғатталған күйде қалады. Қайта төлеу қажет емес; чекті кейін қайта жіберіңіз."
+            else f"❌ Фискалдық чек расталмады: {exc}.\n\n{_fiscal_qr_instruction(language)}"
+        )
+        return
+    except Exception:
+        LOGGER.exception("PAYMENT_OFD_FETCH_FAILED user=%s kind=%s", user_id, kind)
+        await message.answer(
+            "⚠️ Kaspi ОФД сейчас недоступен. Документ остаётся заблокирован. Повторно платить не нужно — отправьте ту же QR-ссылку позже."
+            if language != "kk"
+            else "⚠️ Kaspi ОФД қазір қолжетімсіз. Құжат бұғатталған күйде қалады. Қайта төлеу қажет емес — сол QR-сілтемені кейін жіберіңіз."
         )
         return
 
-    hard_issues = receipt_hard_issues(
-        check,
+    issues = fiscal_receipt_issues(
+        receipt,
         settings.document_price_kzt,
         expected_recipient=expected_recipient,
+        expected_bin=expected_bin,
         offered_at=offer_time,
     )
-    if hard_issues:
-        LOGGER.warning("PAYMENT_AI_REJECTED user=%s kind=%s issues=%s", user_id, kind, hard_issues[:6])
+    if issues:
+        LOGGER.warning("PAYMENT_OFD_REJECTED user=%s kind=%s issues=%s", user_id, kind, issues[:6])
         await message.answer(
-            ("❌ Чек не прошёл автоматическую проверку:\n• " + "\n• ".join(hard_issues[:6]) + "\n\nДокумент не запущен и не выдан. Пришлите полный корректный чек.")
+            ("❌ Фискальный чек не прошёл проверку Kaspi ОФД:\n• " + "\n• ".join(issues[:6]) + "\n\nДокумент не запущен и не выдан.")
             if language != "kk"
-            else
-            ("❌ Чек автоматты тексеруден өтпеді:\n• " + "\n• ".join(hard_issues[:6]) + "\n\nҚұжат іске қосылған жоқ және берілген жоқ. Толық дұрыс чекті жіберіңіз.")
+            else ("❌ Фискалдық чек Kaspi ОФД тексеруінен өтпеді:\n• " + "\n• ".join(issues[:6]) + "\n\nҚұжат іске қосылған жоқ және берілген жоқ.")
         )
         return
 
@@ -238,80 +242,79 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
         kind=kind,
         receipt_submitted=True,
         receipt_precheck_passed=True,
-        ai_verified=True,
+        ofd_verified=True,
     )
     if not release_guard.allowed:
-        LOGGER.critical("PAYMENT_AI_RELEASE_GUARD_BLOCKED user=%s kind=%s reason=%s", user_id, kind, release_guard.reason)
+        LOGGER.critical("PAYMENT_OFD_RELEASE_GUARD_BLOCKED user=%s kind=%s reason=%s", user_id, kind, release_guard.reason)
         await message.answer("Документ не выдан: защищённая проверка оплаты не завершена.")
         return
 
-    request_id = str(data.get("prepayment_request_id") or data.get("request_id") or f"legacy:{transaction_id}")
+    request_id = str(data.get("prepayment_request_id") or data.get("request_id") or f"legacy:{payment_transaction_id}")
     try:
         reserved = await reserve_verified_document_receipt(
-            receipt_hash=receipt_fingerprint(raw),
-            transaction_id=check.receipt_or_transaction_id,
+            receipt_hash=receipt.receipt_fingerprint,
+            transaction_id=receipt.transaction_id,
             user_id=user_id,
             request_id=request_id,
             document_kind=kind,
         )
     except Exception:
         LOGGER.exception(
-            "PAYMENT_RECEIPT_REPLAY_GUARD_FAILED user=%s kind=%s transaction=%s",
+            "PAYMENT_OFD_REPLAY_GUARD_FAILED user=%s kind=%s transaction=%s",
             user_id,
             kind,
-            transaction_id,
+            payment_transaction_id,
         )
         await message.answer(
-            "⚠️ Не удалось безопасно проверить уникальность чека. Документ остаётся заблокирован. Повторно платить не нужно — отправьте этот же чек ещё раз позже."
+            "⚠️ Не удалось безопасно проверить уникальность фискального чека. Документ остаётся заблокирован. Повторно платить не нужно — отправьте эту же QR-ссылку позже."
             if language != "kk"
-            else
-            "⚠️ Чектің бірегейлігін қауіпсіз тексеру мүмкін болмады. Құжат бұғатталған күйде қалады. Қайта төлеу қажет емес — осы чекті кейін қайта жіберіңіз."
+            else "⚠️ Фискалдық чектің бірегейлігін қауіпсіз тексеру мүмкін болмады. Құжат бұғатталған күйде қалады. Қайта төлеу қажет емес — сол QR-сілтемені кейін жіберіңіз."
         )
         return
     if not reserved:
         LOGGER.warning(
-            "PAYMENT_RECEIPT_REPLAY_BLOCKED user=%s kind=%s transaction=%s receipt_id=%s",
+            "PAYMENT_OFD_REPLAY_BLOCKED user=%s kind=%s transaction=%s receipt_id=%s",
             user_id,
             kind,
-            transaction_id,
-            check.receipt_or_transaction_id[:80],
+            payment_transaction_id,
+            receipt.transaction_id[:120],
         )
         await message.answer(
-            "❌ Этот чек или номер операции уже использовался для другой выдачи. Документ не запущен."
+            "❌ Этот фискальный чек уже использовался для другой выдачи. Документ не запущен."
             if language != "kk"
-            else
-            "❌ Бұл чек немесе операция нөмірі басқа құжат үшін бұрын қолданылған. Құжат іске қосылған жоқ."
+            else "❌ Бұл фискалдық чек басқа құжат үшін бұрын қолданылған. Құжат іске қосылған жоқ."
         )
         return
 
     LOGGER.info(
-        "PAYMENT_AI_VERIFIED user=%s kind=%s transaction=%s receipt_id=%s amount=%s recipient=%s",
+        "PAYMENT_KASPI_OFD_VERIFIED user=%s kind=%s payment_transaction=%s fiscal_transaction=%s amount=%s seller_bin=%s rnm=%s fp=%s",
         user_id,
         kind,
-        transaction_id,
-        check.receipt_or_transaction_id[:80],
-        check.amount_kzt,
-        check.merchant_or_recipient[:80],
+        payment_transaction_id,
+        receipt.transaction_id[:120],
+        receipt.amount_kzt,
+        receipt.seller_bin,
+        receipt.rnm[:80],
+        receipt.fp[:80],
     )
 
-    if transaction_id < 0:
+    if payment_transaction_id < 0:
         from korgan.prepayment_runtime import run_ai_verified_prepayment_generation
 
         started = await run_ai_verified_prepayment_generation(
             message=message,
             state=state,
             user_id=user_id,
-            transaction_id=transaction_id,
+            transaction_id=payment_transaction_id,
             kind=kind,
             language=language,
         )
         if not started:
             await state.update_data(mode="payment_receipt")
             await message.answer(
-                "⚠️ Чек уже безопасно закреплён за этой заявкой, но документ не удалось запустить. Повторно платить не нужно — отправьте этот же чек ещё раз."
+                "⚠️ Фискальный чек уже закреплён за этой заявкой, но документ не удалось запустить. Повторно платить не нужно — отправьте ту же QR-ссылку ещё раз."
                 if language != "kk"
-                else
-                "⚠️ Чек осы өтінімге қауіпсіз бекітілді, бірақ құжатты іске қосу мүмкін болмады. Қайта төлеу қажет емес — осы чекті қайта жіберіңіз."
+                else "⚠️ Фискалдық чек осы өтінімге бекітілді, бірақ құжатты іске қосу мүмкін болмады. Қайта төлеу қажет емес — сол QR-сілтемені қайта жіберіңіз."
             )
         return
 
@@ -319,35 +322,51 @@ async def payment_receipt_received(message: Message, state: FSMContext) -> None:
     if storage_admin_id is None:
         LOGGER.error("PAYMENT_LEGACY_STORAGE_MISSING user=%s kind=%s", user_id, kind)
         await state.update_data(mode="payment_receipt")
-        await message.answer("Оплата проверена, но старый сохранённый документ недоступен. Обратитесь в техподдержку; повторно платить не нужно.")
+        await message.answer("Оплата проверена через Kaspi ОФД, но старый сохранённый документ недоступен. Обратитесь в техподдержку; повторно платить не нужно.")
         return
     try:
         await message.bot.copy_message(
             chat_id=user_id,
             from_chat_id=storage_admin_id,
-            message_id=transaction_id,
+            message_id=payment_transaction_id,
             caption=_document_caption_with_review(kind, language),
             reply_markup=_document_review_markup(kind, language),
         )
     except Exception:
-        LOGGER.exception("PAYMENT_LEGACY_AUTO_RELEASE_FAILED user=%s doc_msg=%s", user_id, transaction_id)
+        LOGGER.exception("PAYMENT_LEGACY_OFD_RELEASE_FAILED user=%s doc_msg=%s", user_id, payment_transaction_id)
         await state.update_data(mode="payment_receipt")
-        await message.answer("Оплата проверена, но старый документ не удалось выдать. Повторно платить не нужно; отправьте этот же чек ещё раз или обратитесь в техподдержку.")
+        await message.answer("Оплата проверена через Kaspi ОФД, но старый документ не удалось выдать. Повторно платить не нужно; отправьте ту же QR-ссылку ещё раз или обратитесь в техподдержку.")
         return
 
     await state.update_data(mode="main")
-    LOGGER.info("PAYMENT_AI_VERIFIED_LEGACY_RELEASE user=%s kind=%s transaction=%s", user_id, kind, transaction_id)
+    LOGGER.info("PAYMENT_KASPI_OFD_LEGACY_RELEASE user=%s kind=%s transaction=%s", user_id, kind, payment_transaction_id)
     await message.answer(
-        "✅ KORGAN AI проверил чек. Оплата принята, Word-файл выдан выше."
+        "✅ Kaspi ОФД подтвердил фискальный чек. Оплата принята, Word-файл выдан выше."
         if language != "kk"
-        else
-        "✅ KORGAN AI чекті тексерді. Төлем қабылданды, Word-файл жоғарыда берілді."
+        else "✅ Kaspi ОФД фискалдық чекті растады. Төлем қабылданды, Word-файл жоғарыда берілді."
     )
+
+
+@router.message(PaymentReceiptTextFilter())
+async def payment_receipt_text(message: Message, state: FSMContext) -> None:
+    text = str(message.text or "").strip()
+    if "receipt.kaspi.kz" not in text.casefold():
+        language = str((await state.get_data()).get("payment_language", "ru"))
+        await message.answer(_fiscal_qr_instruction(language))
+        return
+    await _verify_and_release_fiscal_url(message, state, text)
+
+
+@router.message(PaymentReceiptFilter())
+async def payment_receipt_received(message: Message, state: FSMContext) -> None:
+    """Images/PDFs never decide payment; the fiscal QR URL is authoritative."""
+    language = str((await state.get_data()).get("payment_language", "ru"))
+    await message.answer(_fiscal_qr_instruction(language))
 
 
 @router.callback_query(F.data.startswith("pay:ok:") | F.data.startswith("pay:no:"))
 async def admin_payment_decision(callback: CallbackQuery) -> None:
-    """Legacy recovery for admin cards sent before automatic verification deploy."""
+    """Legacy recovery for admin cards sent before automatic OFD verification."""
     parsed = _parse_admin_callback(callback.data or "")
     settings = get_settings()
     admin_id = callback.from_user.id if callback.from_user else None
