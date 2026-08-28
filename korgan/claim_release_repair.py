@@ -9,6 +9,7 @@ from korgan.fast_v2_production_legal import _deterministic_pre_qa
 from korgan.late_interest_hotfix import _apply_verified_article_353, _today_kz
 from korgan.legal_types import ClaimDraft, LegalResearch
 from korgan.openai_legal import _CLAIM_SCHEMA
+from korgan.pro_claim_sections import pro_payload
 
 LOGGER = logging.getLogger(__name__)
 _PATCHED = False
@@ -41,6 +42,7 @@ def _claim_payload(draft: ClaimDraft) -> dict[str, Any]:
         "requests": list(draft.requests),
         "attachments": list(draft.attachments),
         "verification_notes": list(draft.verification_notes),
+        **pro_payload(draft),
     }
 
 

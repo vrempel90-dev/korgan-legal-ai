@@ -9,6 +9,7 @@ from korgan.instant_claim_runtime import InstantClaimProductionService
 from korgan.late_interest_hotfix import _apply_verified_article_353, _today_kz
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.openai_legal import _CLAIM_SCHEMA
+from korgan.pro_claim_sections import pro_payload
 
 LOGGER = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class QualityClaimProductionService(InstantClaimProductionService):
             "requests": draft.requests,
             "attachments": draft.attachments,
             "verification_notes": draft.verification_notes,
+            **pro_payload(draft),
         }
         prompt = (
             "Доработай судебный проект иска KORGAN до внутреннего качества не ниже 8.5/10. "

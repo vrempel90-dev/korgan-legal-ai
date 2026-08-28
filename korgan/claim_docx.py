@@ -13,6 +13,7 @@ from korgan.i18n import KK
 from korgan.language_context import current_language
 from korgan.legal_calc import NEEDS_CALCULATION_MARKER
 from korgan.legal_types import ClaimDraft, VerificationStatus
+from korgan.pro_claim_sections import pro_text
 
 
 DRAFT_NOTICE = (
@@ -83,6 +84,9 @@ def _document_status(draft: ClaimDraft) -> str:
             *draft.legal_basis,
             *draft.requests,
             *draft.attachments,
+            # Маркер «требует уточнения» в расчёте или ходатайстве — такой же
+            # признак предварительного проекта, как и в фактах.
+            *pro_text(draft),
         ]
     ).upper()
     if (
@@ -121,15 +125,56 @@ def _kk_line(value: str) -> str:
 
 
 def _body_blocks(draft: ClaimDraft, *, kk: bool) -> list[Block]:
+    """Разделы иска в порядке, в котором их читает суд.
+
+    Профессиональные разделы (расчёт, подсудность, досудебный порядок,
+    примирение, исковая давность, снятие возражений, ходатайства) печатаются
+    только при наличии материала: пустой раздел хуже отсутствующего.
+    """
     blocks: list[Block] = [Prose(fact) for fact in draft.facts]
-    if draft.legal_basis:
-        blocks.append(Heading("Құқықтық негіздеме" if kk else "Правовое обоснование"))
-        blocks.extend(Prose(basis) for basis in draft.legal_basis)
+
+    if draft.calculation:
+        blocks.append(Heading("Өндіріп алынатын сомалардың есебі" if kk else "Расчёт взыскиваемых сумм"))
+        blocks.extend(Prose(_kk_line(line) if kk else line) for line in draft.calculation if line.strip())
+
     if draft.late_interest:
         blocks.append(Heading("ҚР АК 353-бабы бойынша есеп" if kk else "Расчёт неустойки по статье 353 ГК РК"))
         blocks.append(Prose(_kk_line(draft.late_interest) if kk else draft.late_interest))
+
+    procedural = [
+        value.strip()
+        for value in (
+            draft.jurisdiction_reason,
+            draft.pretrial_compliance,
+            draft.reconciliation_measures,
+            draft.limitation_period,
+        )
+        if value and value.strip()
+    ]
+    if draft.legal_basis or procedural:
+        blocks.append(Heading("Құқықтық негіздеме" if kk else "Правовое обоснование"))
+        blocks.extend(Prose(basis) for basis in draft.legal_basis)
+        blocks.extend(Prose(_kk_line(value) if kk else value) for value in procedural)
+
+    defenses = [item.strip() for item in draft.anticipated_defenses if item and item.strip()]
+    if defenses:
+        blocks.append(
+            Heading(
+                "Жауапкердің ықтимал қарсылықтары және оларға жауап"
+                if kk
+                else "Возражения ответчика и ответ на них"
+            )
+        )
+        blocks.extend(Prose(item) for item in defenses)
+
     blocks.append(Heading("Жоғарыда баяндалғандардың негізінде СОТТАН СҰРАЙМЫН:" if kk else "На основании изложенного ПРОШУ СУД:"))
     blocks.append(AutoNumberedList(list(draft.requests)))
+
+    motions = [item.strip() for item in draft.motions if item and item.strip()]
+    if motions:
+        blocks.append(Heading("Өтінішхаттар:" if kk else "Ходатайства:"))
+        blocks.append(AutoNumberedList(motions, restart=True))
+
     blocks.append(Heading("Қосымшалар:" if kk else "Приложения:"))
     blocks.append(AutoNumberedList(list(draft.attachments), restart=True))
     return blocks
