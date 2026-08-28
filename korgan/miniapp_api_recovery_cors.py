@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from fastapi.middleware.cors import CORSMiddleware
 
-from korgan.miniapp_api_v5 import app
+from korgan.miniapp_api_ofd import app
 
-# Recovery-only outer CORS layer. It preserves the production API and payment
-# implementation while allowing the two KORGAN Mini App hosts used during
-# incident recovery. Wildcard request headers are intentional here because
-# Telegram WebView preflight may add browser-managed headers beyond the two
-# application headers used by korganApi.js.
+# Recovery outer CORS layer. Keep the already-working Mini App origins and
+# browser-managed Telegram WebView headers unchanged while the payment layer is
+# hardened underneath it.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
