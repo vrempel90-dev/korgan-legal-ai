@@ -59,3 +59,22 @@
 @media(hover:hover){.workspace-actions .action-card:not(.personal-lawyer-card):hover,.recent-case:hover{background:rgba(255,255,255,.03)!important}}
 .workspace-actions .action-card:not(.personal-lawyer-card):active,.recent-case:active{background:rgba(201,162,39,.07)!important}
 @media(max-width:599px){.workspace-home{padding-left:16px!important;padding-right:16px!important}.workspace-panel{padding:16px;border-radius:16px}}
+
+/* Final persistent dock: exactly Home / Profile, equal geometry. */
+.bottom-nav{
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:8px!important;
+  padding-left:14px!important;
+  padding-right:14px!important;
+}
+.bottom-nav button:nth-child(2),
+.bottom-nav button:nth-child(3),
+.bottom-nav button:nth-child(4){display:none!important}
+.bottom-nav button:nth-child(1),
+.bottom-nav button:nth-child(5){
+  display:grid!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:none!important;
+  justify-self:stretch!important;
+}
