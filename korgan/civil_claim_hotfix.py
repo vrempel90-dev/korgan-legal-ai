@@ -11,6 +11,7 @@ from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.local_corpus_runtime import research_case_from_local_corpus
 from korgan.robust_production_legal import ProductionOpenAILegalService as _RobustService
 from korgan.verified_openai import _actual_response_urls
+from korgan.pro_document_quality import output_limit_for, reasoning_for
 
 LOGGER = logging.getLogger(__name__)
 
@@ -137,8 +138,9 @@ class ProductionOpenAILegalService(_RobustService):
             "prompt_cache_key": "korgan:korgan_verified_legal_research:v5",
             "max_output_tokens": 3600,
         }
-        if model == "gpt-5.1" or model.startswith("gpt-5.1-"):
-            kwargs["reasoning"] = {"effort": "none"}
+        reasoning = reasoning_for(schema_name, model)
+        if reasoning is not None:
+            kwargs["reasoning"] = reasoning
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "required"

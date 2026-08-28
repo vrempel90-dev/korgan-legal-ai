@@ -16,6 +16,7 @@ from korgan.fast_v2_production_legal import ProductionOpenAILegalService as _Fas
 from korgan.legal_routing import ClaimProfile, detect_claim_profile, detect_contract_profile
 from korgan.legal_types import ContractDraft, LegalResearch, VerificationStatus
 from korgan.openai_legal import _VALIDATION_SCHEMA
+from korgan.pro_document_quality import output_limit_for, reasoning_for
 from korgan.provision_check import paraphrase_defects, verified_claim_line
 from korgan.verified_openai import (
     _VERIFIED_RESEARCH_SCHEMA,
@@ -179,8 +180,11 @@ class ProductionOpenAILegalService(_FastV2):
             "prompt_cache_key": f"korgan:{schema_name}:v4",
         }
 
-        if model == "gpt-5.1" or model.startswith("gpt-5.1-"):
-            kwargs["reasoning"] = {"effort": "none"}
+        # Служебные вызовы остаются без рассуждения, составление документа его
+        # получает. Различие описано в korgan.pro_document_quality.
+        reasoning = reasoning_for(schema_name, model)
+        if reasoning is not None:
+            kwargs["reasoning"] = reasoning
 
         # Normal path stays compact. Only a genuinely truncated JSON retries.
         output_limits = {
@@ -195,7 +199,9 @@ class ProductionOpenAILegalService(_FastV2):
             "korgan_contract_repair": 5200,
         }
         if schema_name in output_limits:
-            kwargs["max_output_tokens"] = output_limits[schema_name]
+            # Схемы составления получают расширенный лимит: иск и договор в
+            # прежние 4300/5200 токенов не помещались и обрывались.
+            kwargs["max_output_tokens"] = output_limit_for(schema_name, output_limits[schema_name])
 
         if tools:
             kwargs["tools"] = tools
@@ -236,7 +242,14 @@ class ProductionOpenAILegalService(_FastV2):
                     len(response.output_text or ""),
                 )
             retry_kwargs = dict(kwargs)
-            retry_kwargs["max_output_tokens"] = 6200 if "contract" in schema_name else 4800
+            # Повторная попытка обязана быть просторнее первой, иначе она
+            # обрывается на том же месте. Для схем составления считаем от их
+            # собственного расширенного лимита.
+            base_retry = 6200 if "contract" in schema_name else 4800
+            retry_kwargs["max_output_tokens"] = max(
+                base_retry,
+                int((output_limit_for(schema_name, base_retry) or base_retry) * 1.4),
+            )
             retry_started = time.perf_counter()
             response = await self.client.responses.create(**retry_kwargs)
             retry_elapsed = time.perf_counter() - retry_started

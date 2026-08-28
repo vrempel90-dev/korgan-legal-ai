@@ -14,6 +14,7 @@ from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.provision_check import paraphrase_defects, verified_claim_line
 from korgan.response_types import ResponseToClaimDraft
 from korgan.verified_openai import _VERIFIED_RESEARCH_SCHEMA, _actual_response_urls, _canonical_url
+from korgan.pro_document_quality import output_limit_for, reasoning_for
 
 LOGGER = logging.getLogger(__name__)
 
@@ -116,6 +117,9 @@ class ProductionOpenAILegalService(_ContractSafeService):
         tools: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], Any]:
         last_error: Exception | None = None
+        # Отзыв на иск — документ составления: если для его схемы задан
+        # расширенный лимит, он поднимает и первую, и повторную попытку.
+        max_tokens = output_limit_for(schema_name, max_tokens) or max_tokens
         for attempt, limit in enumerate((max_tokens, max_tokens + 3000), start=1):
             kwargs: dict[str, Any] = {
                 "model": self.settings.openai_model,
@@ -127,8 +131,9 @@ class ProductionOpenAILegalService(_ContractSafeService):
                 "prompt_cache_key": f"korgan:{schema_name}:response-v2",
             }
             model = self.settings.openai_model
-            if model == "gpt-5.1" or model.startswith("gpt-5.1-"):
-                kwargs["reasoning"] = {"effort": "none"}
+            reasoning = reasoning_for(schema_name, model)
+            if reasoning is not None:
+                kwargs["reasoning"] = reasoning
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "required"
