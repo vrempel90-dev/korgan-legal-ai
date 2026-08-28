@@ -41,13 +41,28 @@ _PERIOD_RE = re.compile(
     r"(?:по|дейін)\s*\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)",
     re.IGNORECASE,
 )
-_EXPLICIT_PENALTY_AMOUNT_RE = re.compile(
-    r"(?:неустойк\w*|пен[яию]\b|штраф\w*|тұрақсыздық\s+айыб\w*|өсімпұл\w*|айыппұл\w*)"
-    r"[\s:,-]{0,16}\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸)|"
-    r"\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸)[\s:,-]{0,16}"
+_PENALTY_WORD_RE = re.compile(
     r"(?:неустойк\w*|пен[яию]\b|штраф\w*|тұрақсыздық\s+айыб\w*|өсімпұл\w*|айыппұл\w*)",
     re.IGNORECASE,
 )
+# Сумма цифрами, возможно с расшифровкой прописью: «112 000 (сто двенадцать тысяч) тенге».
+_PENALTY_SUM_RE = re.compile(
+    r"\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:\([^)]{0,80}\)\s*)?(?:тенге|теңге|тг\b|₸)",
+    re.IGNORECASE,
+)
+# «в размере», «в сумме» — сумма присуждаемой неустойки.
+_AWARD_CUE_RE = re.compile(
+    r"(?:в\s+размере|в\s+сумме|на\s+сумму|размер\w*\s+которой|мөлшерінде|сомасында)",
+    re.IGNORECASE,
+)
+# «исходя из суммы договора» — это база начисления, а не размер неустойки.
+_BASE_CUE_RE = re.compile(
+    r"(?:исходя\s+из|от\s+сумм\w*|от\s+цен\w*|от\s+стоимост\w*|"
+    r"сумм\w*\s+договор\w*|цен\w*\s+договор\w*|стоимост\w*\s+договор\w*|"
+    r"шарт\w*\s+сомас\w*)",
+    re.IGNORECASE,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"[.;]")
 
 _PAID_IN_FULL_RE = re.compile(
     r"(?:оплат\w*|уплат\w*|внес\w*)[^\n]{0,90}(?:полностью|в\s+полном\s+объ[её]ме|всю\s+сумм\w*)|"
@@ -143,10 +158,40 @@ def _explicit_intent(text: str, term_re: Pattern[str]) -> bool:
     return False
 
 
+def _explicit_penalty_amount(text: str) -> bool:
+    """Найдена ли в тексте сумма, заявленная ИМЕННО как размер неустойки.
+
+    Раньше слово и сумма должны были стоять в 16 символах друг от друга. Это
+    пропускало черновое «неустойку 112 000 тенге» и резало профессиональное
+    «неустойку за нарушение срока сдачи работ в размере 112 000 (сто двенадцать
+    тысяч) тенге» — гейт наказывал за качество формулировки.
+
+    Зазор расширен, но не безоговорочно: «неустойку, исходя из суммы договора
+    1 200 000 тенге» по-прежнему НЕ считается указанием размера, потому что
+    названа база начисления, а не присуждаемая сумма.
+    """
+    for sentence in _SENTENCE_SPLIT_RE.split(text or ""):
+        for word in _PENALTY_WORD_RE.finditer(sentence):
+            for amount in _PENALTY_SUM_RE.finditer(sentence):
+                if amount.start() >= word.end():
+                    gap = sentence[word.end():amount.start()]
+                else:
+                    gap = sentence[amount.end():word.start()]
+                    if amount.end() > word.start():
+                        continue
+                if len(gap) > 140:
+                    continue
+                if _BASE_CUE_RE.search(gap):
+                    continue
+                if len(gap) <= 16 or _AWARD_CUE_RE.search(gap):
+                    return True
+    return False
+
+
 def _has_complete_penalty_calculation(text: str) -> bool:
     """Accept only an explicit penalty amount or a rate + money base + period."""
     value = text or ""
-    if _EXPLICIT_PENALTY_AMOUNT_RE.search(value):
+    if _explicit_penalty_amount(value):
         return True
     return bool(_RATE_RE.search(value) and _AMOUNT_RE.search(value) and _PERIOD_RE.search(value))
 
