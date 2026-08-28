@@ -185,3 +185,39 @@ def test_draft_effort_is_tuned_for_one_to_two_minutes():
     assert reasoning_for("korgan_fast_professional_claim", "gpt-5.1") == {"effort": "low"}
     # Служебные вызовы по-прежнему без рассуждения — там оно ничего не даёт.
     assert reasoning_for("korgan_verified_legal_research", "gpt-5.1") == {"effort": "none"}
+
+
+# ---------------------------------------------------------------------------
+# 5. Корпус должен переживать перезапуск контейнера
+# ---------------------------------------------------------------------------
+
+
+def test_corpus_path_is_configurable(monkeypatch, tmp_path):
+    """Корпус можно положить на постоянный том вместо эфемерного контейнера.
+
+    Без этого каждый рестарт собирал корпус с adilet заново, и неудачная
+    загрузка оставляла сервис вообще без норм — а значит без документов.
+    """
+    import importlib
+
+    monkeypatch.setenv("KORGAN_CORPUS_DB", str(tmp_path / "persistent" / "corpus.sqlite3"))
+    module = importlib.reload(importlib.import_module("korgan.legal.corpus"))
+    try:
+        assert module.DEFAULT_DB_PATH == tmp_path / "persistent" / "corpus.sqlite3"
+        # Каталог тома может быть пустым: корпус обязан создать его сам.
+        with module.LegalCorpus(module.DEFAULT_DB_PATH) as corpus:
+            corpus.create_schema()
+            assert corpus.count() == 0
+        assert module.DEFAULT_DB_PATH.exists()
+    finally:
+        monkeypatch.delenv("KORGAN_CORPUS_DB", raising=False)
+        importlib.reload(module)
+
+
+def test_corpus_path_defaults_to_the_repository_location(monkeypatch):
+    import importlib
+
+    monkeypatch.delenv("KORGAN_CORPUS_DB", raising=False)
+    module = importlib.reload(importlib.import_module("korgan.legal.corpus"))
+    assert module.DEFAULT_DB_PATH.name == "corpus.sqlite3"
+    assert module.DEFAULT_DB_PATH.parent.name == "data"
