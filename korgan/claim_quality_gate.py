@@ -52,10 +52,18 @@ _CLAIM_AMOUNT_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 _NONCLAIMED_AMOUNT_CONTEXT_RE = re.compile(
-    r"(?:частичн\w*\s+оплат\w*|оплатил\w*|оплачено|уплачено|погашено|внесено|"
+    # Суммы, которые иск обязан назвать, но не требует ко взысканию: цена
+    # договора, внесённый аванс, произведённые платежи и возвраты. Словарь
+    # намеренно широкий: пропущенная формулировка здесь означает не мягкую
+    # деградацию, а жёсткую блокировку выпуска готового иска.
+    r"(?:частичн\w*\s+(?:оплат\w*|возврат\w*|погашен\w*)|оплатил\w*|оплачено|уплачено|"
+    r"погашено|погасил\w*|внесено|вн[её]с\w*|перечислил\w*|перечислен\w*|перев[её]л\w*|"
+    r"верну[лв]\w*|возвратил\w*|возврат\w*|задат\w*|предоплат\w*|аванс\w*|"
     r"зач[её]т\w*|зачтено|цена\s+договор\w*|стоимост\w*\s+договор\w*|"
-    r"общ\w*\s+стоимост\w*|аванс\w*\s+(?:уплачен\w*|внес[её]н\w*)|"
-    r"ішінара\s+төлен\w*|төленді|есепке\s+жатқыз\w*|шарт\w*\s+бағас\w*)",
+    r"цена\s+(?:работ\w*|услуг\w*|товар\w*)|стоимост\w*\s+(?:работ\w*|услуг\w*|товар\w*|ремонт\w*)|"
+    r"общ\w*\s+(?:стоимост\w*|цен\w*|сумм\w*\s+договор\w*)|"
+    r"ішінара\s+төлен\w*|төленді|төледі|аударыл\w*|қайтарыл\w*|қайтард\w*|"
+    r"есепке\s+жатқыз\w*|шарт\w*\s+бағас\w*|алдын\s+ала\s+төл\w*)",
     re.IGNORECASE,
 )
 _UNRESOLVED_AMOUNT_RE = re.compile(r"\[ТРЕБУЕТ\s+(?:ПРОВЕРКИ|РАСЧ[ЕЁ]ТА)[^\]]*\]", re.IGNORECASE)
@@ -173,18 +181,24 @@ def check_amount_consistency(draft: ClaimDraft) -> list[str]:
                     .replace(",", " ")
                 )
 
-    for field_name, values in (("facts", draft.facts), ("attachments", draft.attachments)):
-        for line in values or []:
-            text = str(line)
-            for match in _MONEY_RE.finditer(text):
-                amount = parse_amount_kzt(match.group(0))
-                if amount is None or _source_amount_is_exempt(text, match.start(), match.end()):
-                    continue
-                if amount not in target_amounts:
-                    errors.append(
-                        f"Сумма {amount:,} тенге из {field_name} отсутствует одновременно в петитуме и цене иска."
-                        .replace(",", " ")
-                    )
+    # Только facts. Приложение — это НАЗВАНИЕ документа-доказательства
+    # («Чек Kaspi на 1 600 000 тенге», «Платёжное поручение № 117 на 5 000 000
+    # тенге»), а не утверждение о том, что истец требует эту сумму. Оно не
+    # может противоречить петитуму — противоречие живёт в обосновании.
+    # Пока приложения участвовали в сверке, любой иск с чеком на сумму, не
+    # равную требованию, получал AMOUNT_MISMATCH, а он делает ready=False
+    # независимо от оценки: готовый иск не выпускался вообще.
+    for line in draft.facts or []:
+        text = str(line)
+        for match in _MONEY_RE.finditer(text):
+            amount = parse_amount_kzt(match.group(0))
+            if amount is None or _source_amount_is_exempt(text, match.start(), match.end()):
+                continue
+            if amount not in target_amounts:
+                errors.append(
+                    f"Сумма {amount:,} тенге из facts отсутствует одновременно в петитуме и цене иска."
+                    .replace(",", " ")
+                )
 
     property_total = 0
     has_property_amount = False
