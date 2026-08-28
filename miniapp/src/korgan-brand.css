@@ -8,8 +8,10 @@
 .topbar .brand-mark::after{content:"| KORGAN";display:block!important;position:static;width:auto;height:auto;background:none;box-shadow:none;font-family:Georgia,"Times New Roman",serif;font-size:24px;font-weight:400;line-height:1;letter-spacing:.02em;color:#fff;white-space:nowrap}
 .topbar .brand{display:none!important}
 .topbar .top-status{margin-left:auto;max-width:118px}
-.consent-page .brand-mark.large{width:min(290px,78vw);height:64px;border:0;border-radius:0;background:var(--korgan-wordmark) left center/contain no-repeat;box-shadow:none;margin:4px 0 8px;overflow:visible}
-.consent-page .brand-mark.large::before,.consent-page .brand-mark.large::after,.consent-page .brand-mark.large svg{display:none!important}
+.consent-page .brand-mark.large{width:min(340px,88vw);height:92px;border:0;border-radius:0;background:none;box-shadow:none;margin:0 0 10px;overflow:visible;display:flex;align-items:center;gap:14px;color:#fff}
+.consent-page .brand-mark.large svg{display:none!important}
+.consent-page .brand-mark.large::before{content:"K";display:block!important;position:static;font-family:Georgia,"Times New Roman",serif;font-size:88px;font-weight:400;line-height:.82;letter-spacing:-.09em;color:#fff;transform:scaleY(1.12);transform-origin:center;background:none;box-shadow:none;width:auto;height:auto}
+.consent-page .brand-mark.large::after{content:"| KORGAN";display:block!important;position:static;font-family:Georgia,"Times New Roman",serif;font-size:46px;font-weight:400;line-height:1;letter-spacing:.015em;color:#fff;white-space:nowrap;background:none;box-shadow:none;width:auto;height:auto}
 .hero-orb{background-color:#090b0d;background-image:var(--korgan-wordmark);background-position:center;background-repeat:no-repeat;background-size:88% auto}
 .hero-orb::before,.hero-orb::after,.hero-orb svg{display:none!important}
-@media(max-width:380px){.topbar .brand-mark{width:164px;min-width:164px;height:40px;gap:6px}.topbar .brand-mark::before{font-size:42px}.topbar .brand-mark::after{font-size:21px}.topbar .top-status{max-width:88px;font-size:8px}.app-shell::after{background-size:165px auto;opacity:.024}}
+@media(max-width:380px){.topbar .brand-mark{width:164px;min-width:164px;height:40px;gap:6px}.topbar .brand-mark::before{font-size:42px}.topbar .brand-mark::after{font-size:21px}.topbar .top-status{max-width:88px;font-size:8px}.consent-page .brand-mark.large{width:min(300px,88vw);height:80px;gap:10px}.consent-page .brand-mark.large::before{font-size:74px}.consent-page .brand-mark.large::after{font-size:38px}.app-shell::after{background-size:165px auto;opacity:.024}}
