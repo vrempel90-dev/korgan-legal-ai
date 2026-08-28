@@ -69,6 +69,50 @@
     });
   }
 
+  function generationInProgress() {
+    const panel = document.querySelector('.korgan-document-progress');
+    return Boolean(panel && panel.isConnected);
+  }
+
+  function keepReadyDocumentInsideCase() {
+    const readyPage = document.querySelector('main.ready-page');
+    if (!readyPage || readyPage.dataset.korganReturnToCase === '1') return;
+    const shell = readyPage.closest('.app-shell');
+    const backButton = shell?.querySelector('.subbar .icon-btn');
+    if (!(backButton instanceof HTMLButtonElement)) return;
+
+    readyPage.dataset.korganReturnToCase = '1';
+    window.setTimeout(() => {
+      if (readyPage.isConnected) backButton.click();
+    }, 0);
+  }
+
+  function showDocumentInsideCase() {
+    document.querySelectorAll('main.page').forEach((page) => {
+      if (!page.querySelector('.status-card')) return;
+      const buttons = Array.from(page.querySelectorAll('button.secondary.wide'));
+      const download = buttons.find((button) => /скачать.*документ|скачать.*docx|дайын.*құжат|құжат.*жүктеу/i.test(button.textContent || ''));
+      if (!download) return;
+
+      if (!page.querySelector('.korgan-inline-document-ready')) {
+        const note = document.createElement('div');
+        note.className = 'success-note korgan-inline-document-ready';
+        note.textContent = isKazakh()
+          ? 'Құжат дайын және осы істе сақталды.'
+          : 'Документ готов и сохранён в этом деле.';
+        download.parentNode?.insertBefore(note, download);
+      }
+
+      const spans = Array.from(download.querySelectorAll('span'));
+      if (spans.length) {
+        spans[spans.length - 1].textContent = isKazakh() ? 'DOCX жүктеу' : 'Скачать DOCX';
+      } else {
+        const textNodes = Array.from(download.childNodes).filter((node) => node.nodeType === Node.TEXT_NODE);
+        if (textNodes.length) textNodes[textNodes.length - 1].textContent = isKazakh() ? ' DOCX жүктеу' : ' Скачать DOCX';
+      }
+    });
+  }
+
   function sanitizeAiMessages() {
     document.querySelectorAll('.bubble.ai, .bubble.ai\\ error').forEach((bubble) => {
       const raw = (bubble.textContent || '').trim();
@@ -105,6 +149,8 @@
     replaceStaticCopy();
     hideInternalArchitecture();
     normalizeBottomDock();
+    keepReadyDocumentInsideCase();
+    showDocumentInsideCase();
     sanitizeAiMessages();
     friendlyMaterialNames();
   }
@@ -113,6 +159,16 @@
 
   function start() {
     applyClientSafeUi();
+
+    document.addEventListener('click', (event) => {
+      if (!generationInProgress()) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const navigation = target?.closest('.bottom-nav button, .subbar .icon-btn, .case-list-item');
+      if (!navigation) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
+
     observer.observe(document.documentElement, { childList: true, subtree: true });
   }
 
