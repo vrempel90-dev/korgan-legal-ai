@@ -14,6 +14,7 @@ from korgan.contract_repair_state import (
 from korgan.late_interest_hotfix import ProductionOpenAILegalService as _BaseProductionOpenAILegalService
 from korgan.legal_types import ContractDraft, LegalResearch
 from korgan.verified_openai import _actual_response_urls
+from korgan.pro_document_quality import reasoning_for
 
 LOGGER = logging.getLogger(__name__)
 
@@ -90,8 +91,9 @@ class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
                 "prompt_cache_key": f"korgan:{schema_name}:contract-complete-v1",
                 "max_output_tokens": max_tokens,
             }
-            if model == "gpt-5.1" or model.startswith("gpt-5.1-"):
-                kwargs["reasoning"] = {"effort": "none"}
+            reasoning = reasoning_for(schema_name, model)
+            if reasoning is not None:
+                kwargs["reasoning"] = reasoning
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "required"
