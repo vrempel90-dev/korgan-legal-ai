@@ -236,3 +236,89 @@ def test_tls_context_uses_a_full_root_store_without_weakening_verification():
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
     assert len(context.get_ca_certs()) > 50
+
+
+# ---------------------------------------------------------------------------
+# 6. Частичная загрузка корпуса лучше, чем никакой
+# ---------------------------------------------------------------------------
+
+
+def _fake_loader(good_acts, provisions_per_act=10):
+    """Загрузчик, который умеет только перечисленные акты."""
+
+    def loader(corpus, act_id):
+        if act_id not in good_acts:
+            raise RuntimeError(f"Both official sources failed for {act_id}")
+        corpus.upsert_act(
+            act_id=act_id,
+            adilet_id="X",
+            title_ru=act_id,
+            url=f"https://adilet.zan.kz/rus/docs/{act_id}",
+            edition_date="2026-07-01",
+            loaded_at="2026-08-28",
+        )
+        for n in range(provisions_per_act):
+            corpus.upsert_provision(
+                act_id=act_id,
+                article_no=str(100 + n),
+                item_no=None,
+                heading="h",
+                body="Текст нормы достаточной длины для проверки целостности корпуса и цитат.",
+                edition_date="2026-07-01",
+                url=f"https://adilet.zan.kz/rus/docs/{act_id}",
+                sort_key=n,
+            )
+        return provisions_per_act, "adilet", f"https://adilet.zan.kz/rus/docs/{act_id}"
+
+    return loader
+
+
+def test_partial_refresh_is_published_instead_of_nothing(monkeypatch, tmp_path):
+    """Один недоступный акт не должен оставлять сервис вообще без норм."""
+    from korgan.legal import corpus_refresh as refresh
+    from korgan.legal.corpus import KNOWN_ACTS, LegalCorpus
+
+    good = sorted(KNOWN_ACTS)[:-1]
+    monkeypatch.setattr(refresh, "_load_from_official_sources", _fake_loader(set(good)))
+
+    target = tmp_path / "corpus.sqlite3"
+    total = refresh.refresh_corpus_once(target)
+
+    assert total == 10 * len(good)
+    with LegalCorpus(target) as corpus:
+        assert corpus.count() == total
+
+
+def test_complete_failure_keeps_the_existing_corpus(monkeypatch, tmp_path):
+    from korgan.legal import corpus_refresh as refresh
+    from korgan.legal.corpus import KNOWN_ACTS, LegalCorpus
+
+    target = tmp_path / "corpus.sqlite3"
+    monkeypatch.setattr(refresh, "_load_from_official_sources", _fake_loader(set(KNOWN_ACTS)))
+    refresh.refresh_corpus_once(target)
+    before = LegalCorpus(target).count()
+
+    monkeypatch.setattr(refresh, "_load_from_official_sources", _fake_loader(set()))
+    with pytest.raises(RuntimeError):
+        refresh.refresh_corpus_once(target)
+
+    with LegalCorpus(target) as corpus:
+        assert corpus.count() == before, "неудачная сверка не должна обнулять корпус"
+
+
+def test_partial_refresh_never_replaces_a_richer_corpus(monkeypatch, tmp_path):
+    """Полный корпус нельзя обменивать на урезанный."""
+    from korgan.legal import corpus_refresh as refresh
+    from korgan.legal.corpus import KNOWN_ACTS, LegalCorpus
+
+    target = tmp_path / "corpus.sqlite3"
+    monkeypatch.setattr(refresh, "_load_from_official_sources", _fake_loader(set(KNOWN_ACTS)))
+    refresh.refresh_corpus_once(target)
+    before = LegalCorpus(target).count()
+
+    monkeypatch.setattr(refresh, "_load_from_official_sources", _fake_loader({sorted(KNOWN_ACTS)[0]}))
+    with pytest.raises(RuntimeError):
+        refresh.refresh_corpus_once(target)
+
+    with LegalCorpus(target) as corpus:
+        assert corpus.count() == before
