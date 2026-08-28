@@ -19,6 +19,7 @@ from korgan.client_document_runtime_guidance import install_client_document_runt
 from korgan.client_safe_ui import install_client_safe_runtime
 from korgan.config import get_settings
 from korgan.consultation_local_corpus_bridge import install_local_first_consultation
+from korgan.consultation_paid_delivery_guard import install_consultation_paid_delivery_guard
 from korgan.consultation_quota import close_consultation_store, init_consultation_store
 from korgan.consultation_quota_bridge import install_consultation_quota_bridge
 from korgan.consultation_quota_runtime import router as consultation_quota_router
@@ -86,6 +87,7 @@ install_payment_delivery_bridge()
 install_upload_followup_guard()
 install_request_race_guard()
 install_consultation_quota_bridge()
+install_consultation_paid_delivery_guard()
 
 from korgan.universal_claim_runtime import router as universal_claim_router  # noqa: E402
 from korgan.universal_document_runtime import router as universal_document_router  # noqa: E402
@@ -130,8 +132,8 @@ async def main() -> None:
     dp.include_router(safety_router)
     dp.include_router(document_menu_entry_router)
     # Legacy callbacks stay first only for already-issued old payment cards.
-    # New negative-id transactions proceed from receipt AI verification directly
-    # to paid generation; no administrator action is part of the normal flow.
+    # New payment requests proceed only after deterministic Kaspi OFD fiscal
+    # receipt verification; no administrator action is part of the normal flow.
     dp.include_router(prepayment_router)
     dp.include_router(payment_router)
     dp.include_router(contact_router)
@@ -151,7 +153,7 @@ async def main() -> None:
 
     corpus_task = start_corpus_refresh_task()
     LOGGER.info(
-        "Starting KORGAN: local-corpus-first research/consultation + guarded web fallback + claim progress + hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + strict receipt AI verification + durable receipt anti-replay + automatic paid generation=%s + manual payment confirmation=False + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: local-corpus-first research/consultation + guarded web fallback + claim progress + hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + deterministic Kaspi OFD fiscal receipt verification + durable receipt anti-replay + paid-delivery idempotency + automatic paid generation=%s + manual payment confirmation=False + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
