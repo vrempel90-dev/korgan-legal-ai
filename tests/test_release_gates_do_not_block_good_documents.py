@@ -221,3 +221,18 @@ def test_corpus_path_defaults_to_the_repository_location(monkeypatch):
     module = importlib.reload(importlib.import_module("korgan.legal.corpus"))
     assert module.DEFAULT_DB_PATH.name == "corpus.sqlite3"
     assert module.DEFAULT_DB_PATH.parent.name == "data"
+
+
+def test_tls_context_uses_a_full_root_store_without_weakening_verification():
+    """Корпус не должен падать из-за нехватки корней в системном хранилище.
+
+    В логах прода это выглядело как CERTIFICATE_VERIFY_FAILED на adilet и
+    заканчивалось тем, что норм нет вообще, а значит нет и документов.
+    """
+    from korgan.legal.corpus_refresh import _trusted_context
+    import ssl
+
+    context = _trusted_context()
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    assert len(context.get_ca_certs()) > 50
