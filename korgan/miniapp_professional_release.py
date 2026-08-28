@@ -9,6 +9,11 @@ LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 
 
+def professional_release_allowed(result: dict[str, Any]) -> bool:
+    """Only a fully verified filing-ready result may expose a Word document."""
+    return bool(result.get("filing_ready")) and str(result.get("release_status") or "") == "verified"
+
+
 def _issue_list(result: dict[str, Any]) -> list[str]:
     values: list[str] = []
     for key in ("quality_issues", "verification_notes"):
@@ -57,7 +62,7 @@ def install_miniapp_professional_release_gate() -> None:
 
     async def guarded_generate_document(payload: Any, x_telegram_init_data: str = "") -> dict[str, Any]:
         result = await original(payload, x_telegram_init_data)
-        if bool(result.get("filing_ready")) and str(result.get("release_status") or "") == "verified":
+        if professional_release_allowed(result):
             return result
 
         issues = _issue_list(result)
