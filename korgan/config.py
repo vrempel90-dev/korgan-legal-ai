@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     payments_enabled: bool = False
     kaspi_payment_url: str = ""
     kaspi_payment_recipient: str = "OpenCourt (KORGAN)"
+    # Fiscal merchant identity used by the deterministic receipt.kaspi.kz gate.
+    # KASPI_SELLER_BIN is authoritative when configured. KASPI_RNM is retained
+    # for diagnostics/additional validation and never weakens BIN/recipient checks.
+    kaspi_seller_bin: str = ""
+    kaspi_rnm: str = ""
     document_price_kzt: int = 1000
 
     # Consultation quota/payment gate. Kept separately from document payments so
@@ -49,6 +54,14 @@ class Settings(BaseSettings):
     @property
     def legal_domains(self) -> list[str]:
         return [item.strip().lower() for item in self.official_legal_domains.split(",") if item.strip()]
+
+    @property
+    def payment_seller_bin(self) -> str:
+        return self.kaspi_seller_bin.strip()
+
+    @property
+    def payment_rnm(self) -> str:
+        return self.kaspi_rnm.strip()
 
     @property
     def admin_ids(self) -> set[int]:
