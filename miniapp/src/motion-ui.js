@@ -1,25 +1,16 @@
 /* KORGAN motion UI enhancer.
-   This file never intercepts or replaces React handlers/API calls.
-   It only observes the existing document-generation button and renders an
-   approximate workflow indicator while the real server request is running. */
+   Presentation only: existing React handlers/API calls are never replaced.
+   Workflow exists only inside the concrete case/payment screen while the real
+   generation request is busy, then it is removed immediately. */
 
 const RU = {
-  kicker: 'ПОДГОТОВКА ДОКУМЕНТА',
-  title: 'Юридический workflow',
-  pending: 'Ожидает',
-  active: 'В работе',
-  done: 'Готово',
-  stopped: 'Остановлено',
+  kicker: 'ПОДГОТОВКА ДОКУМЕНТА', title: 'Юридический workflow',
+  pending: 'Ожидает', active: 'В работе', done: 'Готово',
   note: 'Процент ориентировочный. Финальную готовность подтверждает сервер KORGAN после завершения проверок качества.',
 };
-
 const KK = {
-  kicker: 'ҚҰЖАТТЫ ДАЙЫНДАУ',
-  title: 'Заңдық workflow',
-  pending: 'Күтуде',
-  active: 'Орындалуда',
-  done: 'Дайын',
-  stopped: 'Тоқтатылды',
+  kicker: 'ҚҰЖАТТЫ ДАЙЫНДАУ', title: 'Заңдық workflow',
+  pending: 'Күтуде', active: 'Орындалуда', done: 'Дайын',
   note: 'Пайыз шамамен көрсетіледі. Соңғы дайындықты KORGAN сервері сапа тексерулері аяқталғаннан кейін растайды.',
 };
 
@@ -61,11 +52,11 @@ function inferLanguage(text) {
 
 function inferProfile(text) {
   const value = String(text || '').toLowerCase();
+  if (value.includes('исковое заявление') || value.includes('талап қою арызы')) return 'claim';
+  if (value.includes('договор') || value.includes('шарт')) return 'contract';
+  if (value.includes('отзыв на иск') || value.includes('талапқа пікір')) return 'response';
   if (value.includes('ответ на претензию') || value.includes('сотқа дейінгі талапқа жауап')) return 'pretrial_response';
   if (value.includes('досудебная претензия') || value.includes('сотқа дейінгі талап')) return 'pretrial';
-  if (value.includes('отзыв на иск') || value.includes('талапқа пікір')) return 'response';
-  if (value.includes('договор') || value.includes('шарт')) return 'contract';
-  if (value.includes('исковое заявление') || value.includes('талап қою арызы')) return 'claim';
   return 'generic';
 }
 
@@ -77,7 +68,9 @@ function stopTimers() {
   current.watch = null;
 }
 
-function clearCurrent() {
+function clearCurrent({ remove = false } = {}) {
+  if (!current) return;
+  if (remove) current.panel?.remove();
   stopTimers();
   current = null;
 }
@@ -93,7 +86,6 @@ function buildPanel(profileKey, language) {
   const copy = language === 'kk' ? KK : RU;
   const profile = PROFILES[profileKey] || PROFILES.generic;
   const steps = profile[language] || profile.ru;
-
   const panel = createElement('section', 'korgan-document-progress');
   panel.setAttribute('aria-live', 'polite');
   panel.setAttribute('aria-label', copy.title);
@@ -122,7 +114,6 @@ function buildPanel(profileKey, language) {
 
   const note = createElement('div', 'korgan-progress-note', copy.note);
   panel.append(head, track, stepList, note);
-
   return { panel, percent, bar, rows, copy };
 }
 
@@ -138,56 +129,52 @@ function renderStage(stage) {
   });
 }
 
-function markStopped() {
-  if (!current || !current.panel.isConnected) return;
-  stopTimers();
-  current.panel.classList.add('is-stopped');
-  const active = current.rows.find(({ row }) => row.classList.contains('is-active'));
-  if (active) active.state.textContent = current.copy.stopped;
+function validContext(item) {
+  if (!item?.page?.isConnected || !item?.panel?.isConnected) return false;
+  if (item.kind === 'case') return Boolean(item.page.querySelector('.status-card'));
+  if (item.kind === 'payment') return item.page.classList.contains('payment-page');
+  return false;
 }
 
-function findGenerationButton(page) {
+function findGenerationButton(page, kind) {
   if (!page?.isConnected) return null;
-  if (page.querySelector('.status-card')) return page.querySelector('button.primary.wide');
-  if (page.classList.contains('payment-page')) {
+  if (kind === 'case') return page.querySelector('.status-card') ? page.querySelector('button.primary.wide') : null;
+  if (kind === 'payment' && page.classList.contains('payment-page')) {
     return Array.from(page.querySelectorAll('button.primary.wide')).find(button => /оплаченный документ|төленген құжат/i.test(button.textContent || '')) || null;
   }
   return null;
 }
 
-function startProgress(page, anchor) {
-  if (!page || !anchor) return;
-  if (current) {
-    current.panel?.remove();
-    clearCurrent();
-  }
+function startProgress(page, anchor, kind) {
+  clearCurrent({ remove: true });
 
-  const pageText = page.textContent || '';
-  const language = inferLanguage(pageText);
-  const inferred = page.querySelector('.status-card') ? inferProfile(pageText) : lastProfile;
+  const language = inferLanguage(page.textContent || '');
+  const documentHeading = kind === 'case'
+    ? (page.querySelector('.analysis-card .card-head h2')?.textContent || '')
+    : '';
+  const inferred = kind === 'case' ? inferProfile(documentHeading) : lastProfile;
   const profileKey = inferred || 'generic';
   if (profileKey !== 'generic') lastProfile = profileKey;
 
   const ui = buildPanel(profileKey, language);
   anchor.parentNode?.insertBefore(ui.panel, anchor);
-  current = { ...ui, page, startedAt: Date.now(), timers: [], watch: null };
+  current = { ...ui, page, kind, startedAt: Date.now(), timers: [], watch: null };
 
   STEP_DELAYS.forEach((delay, index) => {
-    const timer = window.setTimeout(() => renderStage(index), delay);
-    current.timers.push(timer);
+    current.timers.push(window.setTimeout(() => renderStage(index), delay));
   });
 
   current.watch = window.setInterval(() => {
     if (!current) return;
-    if (!current.page.isConnected || !current.panel.isConnected) {
-      clearCurrent();
+    if (!validContext(current)) {
+      clearCurrent({ remove: true });
       return;
     }
-    const liveButton = findGenerationButton(current.page);
+    const liveButton = findGenerationButton(current.page, current.kind);
     if (Date.now() - current.startedAt > 900 && liveButton && !liveButton.disabled && !liveButton.querySelector('.spin')) {
-      markStopped();
+      clearCurrent({ remove: true });
     }
-  }, 300);
+  }, 250);
 }
 
 document.addEventListener('click', event => {
@@ -200,11 +187,10 @@ document.addEventListener('click', event => {
   const caseGeneration = Boolean(page.querySelector('.status-card'));
   const paidGeneration = page.classList.contains('payment-page') && /оплаченный документ|төленген құжат/i.test(button.textContent || '');
   if (!caseGeneration && !paidGeneration) return;
-
-  startProgress(page, button);
+  startProgress(page, button, caseGeneration ? 'case' : 'payment');
 }, true);
 
 const cleanupObserver = new MutationObserver(() => {
-  if (current && (!current.page.isConnected || !current.panel.isConnected)) clearCurrent();
+  if (current && !validContext(current)) clearCurrent({ remove: true });
 });
-cleanupObserver.observe(document.documentElement, { childList: true, subtree: true });
+cleanupObserver.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
