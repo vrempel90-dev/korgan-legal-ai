@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from korgan import miniapp_api_v4
+from korgan.miniapp_professional_release import professional_release_allowed
 
 
 def _routes(path: str, method: str):
@@ -36,6 +37,13 @@ def test_document_payment_and_manual_admin_routes_exist() -> None:
     assert len(_routes("/miniapp/documents/payments/{order_id}", "GET")) == 1
     assert len(_routes("/miniapp/admin/document-payments", "GET")) == 1
     assert len(_routes("/miniapp/admin/document-payments/{order_id}/decision", "POST")) == 1
+
+
+def test_professional_release_is_fail_closed() -> None:
+    assert professional_release_allowed({"filing_ready": True, "release_status": "verified"}) is True
+    assert professional_release_allowed({"filing_ready": False, "release_status": "preliminary"}) is False
+    assert professional_release_allowed({"filing_ready": True, "release_status": "preliminary"}) is False
+    assert professional_release_allowed({"filing_ready": False, "release_status": "verified"}) is False
 
 
 def test_business_parity_probe_matches_runtime_settings() -> None:
