@@ -33,4 +33,18 @@ def test_paid_document_releases_or_generates_only_after_all_payment_checks() -> 
             admin_confirmed=True,
         )
         assert decision.allowed
-        assert decision.reason == "payment_confirmed"
+        # Причина выпуска стала различать способ подтверждения оплаты:
+        # детерминированная проверка Kaspi ОФД — основной путь, проверка ИИ и
+        # подтверждение администратором остались только для транзакций,
+        # открытых до появления ОФД-верификатора. Здесь сценарий именно
+        # легаси-подтверждения, поэтому и причина соответствующая.
+        assert decision.reason == "payment_legacy_admin_confirmed"
+
+        ofd = can_release_paid_document(
+            kind=kind,
+            receipt_submitted=True,
+            receipt_precheck_passed=True,
+            ofd_verified=True,
+        )
+        assert ofd.allowed
+        assert ofd.reason == "payment_kaspi_ofd_verified", "основной путь — фискальный чек Kaspi"
