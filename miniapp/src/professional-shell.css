@@ -15,3 +15,40 @@ html,body,#root{background:var(--pro-bg)!important;color:var(--pro-text)!importa
 @media(max-width:599px){.home-page{padding-top:7px!important;padding-bottom:calc(80px + env(safe-area-inset-bottom))!important}.hero{padding:15px 6px 13px!important}.hero h1{font-size:29px!important}.hero p{font-size:11.8px!important}.action-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.action-card:not(.personal-lawyer-card){min-height:112px!important;grid-template-columns:39px minmax(0,1fr)!important;column-gap:10px!important;padding:11px!important}.action-card:not(.personal-lawyer-card) .action-icon{width:39px!important;height:39px!important}.action-card:not(.personal-lawyer-card) h2{font-size:14px!important}.action-card:not(.personal-lawyer-card) p{font-size:9.3px!important}.personal-lawyer-card{min-height:84px!important}}
 @media(max-width:365px){.hero h1{font-size:27px!important}.quick-stats{gap:6px!important}.action-grid{gap:6px!important}.action-card:not(.personal-lawyer-card){min-height:108px!important;grid-template-columns:36px minmax(0,1fr)!important;column-gap:8px!important;padding:10px!important}.action-card:not(.personal-lawyer-card) .action-icon{width:36px!important;height:36px!important}.action-card:not(.personal-lawyer-card) h2{font-size:13px!important}.action-card:not(.personal-lawyer-card) p{font-size:8.8px!important}}
 @media(min-width:600px) and (max-width:899px){.bottom-nav{width:min(760px,100%)!important}.action-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}@media(min-width:900px){.bottom-nav{width:min(1180px,calc(100vw - 48px))!important}.action-grid{grid-template-columns:repeat(4,minmax(0,1fr))!important}.personal-lawyer-card{grid-column:1/-1!important}}
+
+/* Visual polish v4: presentation only. Brand selectors intentionally untouched. */
+:root{
+  --pro-bg:#0B0F14;
+  --pro-bg-2:#0F141A;
+  --pro-card:#11161D;
+  --pro-card-2:#151B22;
+  --pro-line:rgba(255,255,255,.06);
+  --pro-line-soft:rgba(255,255,255,.04);
+  --pro-gold:#C9A227;
+  --pro-gold-hi:#C9A227;
+  --ui-card-radius:16px;
+  --ui-card-shadow:0 8px 24px rgba(0,0,0,.24);
+  --ui-transition:180ms ease;
+}
+html,body,#root{background:#0B0F14!important}
+body,.app-shell{background:#0B0F14!important}
+.topbar,.subbar{padding-left:16px!important;padding-right:16px!important;background:rgba(11,15,20,.96)!important;border-bottom-color:rgba(255,255,255,.06)!important}
+.home-page,.page{padding-left:16px!important;padding-right:16px!important}
+.list-card,.analysis-card,.status-card,.profile-card,.case-list-item,.settings-card,.privacy-card,.payment-card{background:#11161D!important;border:1px solid rgba(255,255,255,.06)!important;border-radius:var(--ui-card-radius)!important;box-shadow:var(--ui-card-shadow)!important}
+.search,.case-input,.composer input{background:#0F141A!important;border-color:rgba(255,255,255,.06)!important;color:#f0eee9!important}
+.search:focus-within,.case-input:focus,.composer input:focus{border-color:#C9A227!important;box-shadow:0 0 0 3px rgba(201,162,39,.10)!important}
+.primary{background:#C9A227!important;color:#0B0F14!important}
+.secondary{background:#11161D!important;border-color:rgba(255,255,255,.06)!important;color:#e6e2dc!important}
+.section-kicker,.eyebrow,.list-kicker,.workspace-kicker{color:#C9A227!important}
+.bottom-nav{height:calc(72px + env(safe-area-inset-bottom))!important;padding:8px 8px max(8px,env(safe-area-inset-bottom))!important;background:#0B0F14!important;border-top-color:rgba(255,255,255,.06)!important;box-shadow:0 -8px 24px rgba(0,0,0,.28)!important}
+.bottom-nav button{min-width:44px!important;min-height:48px!important;border-radius:12px!important;font-size:9px!important}
+.bottom-nav button.active{color:#C9A227!important;background:rgba(201,162,39,.12)!important;box-shadow:inset 0 2px 0 #C9A227!important}
+.composer{bottom:calc(72px + env(safe-area-inset-bottom))!important;background:rgba(11,15,20,.97)!important;border-top-color:rgba(255,255,255,.06)!important}
+button,.primary,.secondary,.lawyer-btn,.list-row,.case-list-item,.action-card,.workspace-link,.language-switch button,.source-list a{transition:background-color var(--ui-transition),border-color var(--ui-transition),color var(--ui-transition),opacity var(--ui-transition),transform var(--ui-transition),filter var(--ui-transition)!important;-webkit-tap-highlight-color:transparent}
+button,.workspace-link,.language-switch button,.source-list a{min-height:44px}
+.icon-btn{min-width:44px!important;min-height:44px!important}
+button:active:not(:disabled),.workspace-link:active{transform:scale(.985)}
+button:disabled,.secondary:has(input:disabled){opacity:.45!important;cursor:not-allowed!important}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid #C9A227!important;outline-offset:2px!important}
+.spin{animation-duration:300ms!important}
+@media(hover:hover){.primary:hover:not(:disabled){filter:brightness(1.06)}.secondary:hover:not(:disabled),.list-row:hover,.case-list-item:hover{border-color:rgba(201,162,39,.28)!important}.bottom-nav button:hover:not(.active){background:rgba(255,255,255,.025)!important}}
