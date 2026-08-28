@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable
 
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.openai_legal import _CLAIM_SCHEMA
+from korgan.pro_claim_sections import pro_payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,6 +302,7 @@ def install_claim_exemplar_architecture() -> None:
             "title": draft.title, "court": draft.court, "claimant": draft.claimant, "defendant": draft.defendant,
             "price_of_claim": draft.price_of_claim, "facts": draft.facts, "legal_basis": draft.legal_basis,
             "requests": draft.requests, "attachments": draft.attachments, "verification_notes": draft.verification_notes,
+            **pro_payload(draft),
         }
         payload = await self._quality_repair(
             schema_name="korgan_exemplar_architecture_repair", schema=_CLAIM_SCHEMA, case_context=enriched,
