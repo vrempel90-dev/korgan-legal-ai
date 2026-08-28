@@ -69,11 +69,6 @@
     });
   }
 
-  function generationInProgress() {
-    const panel = document.querySelector('.korgan-document-progress');
-    return Boolean(panel && panel.isConnected);
-  }
-
   function keepReadyDocumentInsideCase() {
     const readyPage = document.querySelector('main.ready-page');
     if (!readyPage || readyPage.dataset.korganReturnToCase === '1') return;
@@ -159,16 +154,8 @@
 
   function start() {
     applyClientSafeUi();
-
-    document.addEventListener('click', (event) => {
-      if (!generationInProgress()) return;
-      const target = event.target instanceof Element ? event.target : null;
-      const navigation = target?.closest('.bottom-nav button, .subbar .icon-btn, .case-list-item');
-      if (!navigation) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }, true);
-
+    // Background document generation is intentionally non-blocking. Navigation
+    // remains available while another case is being prepared.
     observer.observe(document.documentElement, { childList: true, subtree: true });
   }
 
