@@ -237,3 +237,74 @@ def test_tls_context_uses_a_full_root_store_without_weakening_verification():
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
     assert len(context.get_ca_certs()) > 50
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 7. Преамбула договора: оборот речи не должен решать судьбу документа
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "preamble",
+    [
+        # «в дальнейшем» — формулировка из шаблона KORGAN
+        "ТОО «Астана Диджитал», БИН 190240012345, в лице директора, действующего на основании "
+        "устава, именуемое в дальнейшем «Заказчик», с одной стороны, и ИП Ким А.В., ИИН 880712300456, "
+        "действующий на основании свидетельства, именуемый в дальнейшем «Исполнитель», с другой "
+        "стороны, заключили настоящий договор о нижеследующем.",
+        # «далее» — столь же принятая формулировка, раньше блокировалась
+        "ТОО «Астана Диджитал», БИН 190240012345, в лице директора, действующего на основании "
+        "устава, именуемое далее Заказчик, с одной стороны, и ИП Ким А.В., ИИН 880712300456, "
+        "действующий на основании свидетельства, именуемый далее Исполнитель, с другой стороны, "
+        "заключили настоящий договор о нижеследующем.",
+    ],
+)
+def test_both_role_designations_are_accepted(preamble):
+    from korgan.contract_preamble import preamble_defects
+
+    assert preamble_defects([preamble]) == []
+
+
+def test_contract_between_two_individuals_is_not_blocked():
+    """Гражданин подписывает договор сам: у него нет «в лице» и «на основании».
+
+    Требовать эти обороты от договора аренды квартиры, займа или продажи
+    автомобиля между физическими лицами — значит блокировать целую категорию
+    договоров за отсутствие того, чего в них не бывает.
+    """
+    from korgan.contract_preamble import preamble_defects
+
+    preamble = (
+        "Иванов Иван Иванович, ИИН 800101300111, именуемый далее Арендодатель, с одной стороны, "
+        "и Петров Пётр Петрович, ИИН 850202300222, именуемый далее Арендатор, с другой стороны, "
+        "заключили настоящий договор о нижеследующем."
+    )
+    assert preamble_defects([preamble]) == []
+
+
+def test_organisation_still_needs_a_signatory_and_authority():
+    """Для организации подписант и основание полномочий по-прежнему обязательны."""
+    from korgan.contract_preamble import preamble_defects
+
+    preamble = (
+        "ТОО «Астана Диджитал», БИН 190240012345, именуемое далее Заказчик, с одной стороны, и "
+        "ИП Ким А.В., именуемый далее Исполнитель, с другой стороны, заключили настоящий договор."
+    )
+    defects = preamble_defects([preamble])
+    assert any("основание полномочий" in d for d in defects)
+    assert any("подписывающее договор" in d for d in defects)
+
+
+def test_preamble_without_party_roles_is_still_blocked():
+    from korgan.contract_preamble import preamble_defects
+
+    assert preamble_defects(["Стороны заключили настоящий договор о нижеследующем."])
+
+
+def test_generated_placeholder_preamble_passes_its_own_check():
+    """Шаблон-заглушка обязан проходить проверку, иначе экспорт зациклится."""
+    from korgan.contract_preamble import placeholder_preamble, preamble_defects
+
+    text = placeholder_preamble(["ТОО «А», БИН 1"], ["ИП Б, ИИН 2"])
+    assert preamble_defects([text]) == []
