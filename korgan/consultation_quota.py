@@ -163,11 +163,41 @@ async def create_consultation_order(
     language: str,
     amount_kzt: int,
 ) -> ConsultationOrder:
+    """Create or reuse one pending paid-consultation order for the same scope.
+
+    A per-user PostgreSQL advisory transaction lock prevents two fast/retried
+    requests from creating parallel orders. Repeating the exact same question
+    returns the existing pending order; changing the question/context cancels the
+    old pending order and opens exactly one new one.
+    """
     pool = _require_pool()
     async with pool.acquire() as connection:
         async with connection.transaction():
+            await connection.execute("SELECT pg_advisory_xact_lock($1)", int(user_id))
+            existing = await connection.fetchrow(
+                """
+                SELECT id, user_id, chat_id, question, case_context, language, amount_kzt, status
+                FROM consultation_payment_orders
+                WHERE user_id=$1 AND status='pending'
+                ORDER BY id DESC
+                LIMIT 1
+                FOR UPDATE
+                """,
+                user_id,
+            )
+            if existing is not None:
+                same_scope = (
+                    int(existing["chat_id"]) == int(chat_id)
+                    and str(existing["question"]) == str(question)
+                    and str(existing["case_context"] or "") == str(case_context or "")
+                    and str(existing["language"] or "ru") == str(language or "ru")
+                    and int(existing["amount_kzt"]) == int(amount_kzt)
+                )
+                if same_scope:
+                    return _order_from_row(existing)
+
             await connection.execute(
-                "UPDATE consultation_payment_orders SET status = 'cancelled' WHERE user_id = $1 AND status = 'pending'",
+                "UPDATE consultation_payment_orders SET status='cancelled' WHERE user_id=$1 AND status='pending'",
                 user_id,
             )
             row = await connection.fetchrow(
@@ -296,15 +326,17 @@ def consultation_payment_text(language: str, free_limit: int, amount_kzt: int) -
             "⚖️ Бүгінгі тегін кеңес лимиті аяқталды\n\n"
             f"Бүгін {free_limit} тегін кеңестің {free_limit}-і пайдаланылды.\n"
             f"Келесі бір кеңес — {amount} ₸.\n\n"
-            "Сұрағыңыз сақталды. Kaspi арқылы төлеңіз, содан кейін «✅ Төледім» түймесін басып, толық чекті жіберіңіз.\n\n"
-            "Чек AI арқылы автоматты тексеруден өткеннен кейін осы сұрақ бірден өңделеді."
+            "Сұрағыңыз сақталды. Kaspi арқылы төлеңіз, «✅ Төледім» түймесін басып, "
+            "фискалдық чектегі QR-кодты сканерлеңіз және receipt.kaspi.kz сілтемесін жіберіңіз.\n\n"
+            "KORGAN төлемді Kaspi ОФД деректері бойынша тексереді. AI төлем туралы шешім қабылдамайды."
         )
     return (
         "⚖️ Бесплатный лимит консультаций на сегодня исчерпан\n\n"
         f"Использовано: {free_limit} из {free_limit} бесплатных консультаций.\n"
         f"Следующая одна консультация — {amount} ₸.\n\n"
-        "Ваш вопрос сохранён. Оплатите через Kaspi, затем нажмите «✅ Я оплатил» и пришлите полный чек.\n\n"
-        "После успешной автоматической AI-проверки чека этот вопрос будет обработан сразу."
+        "Ваш вопрос сохранён. Оплатите через Kaspi, нажмите «✅ Я оплатил», отсканируйте QR "
+        "на фискальном чеке и пришлите ссылку receipt.kaspi.kz.\n\n"
+        "KORGAN проверяет оплату по данным Kaspi ОФД. AI не принимает решение об оплате."
     )
 
 
@@ -327,6 +359,7 @@ def retry_markup(settings: Settings, user_id: int, order_id: int, language: str)
 
 
 def strict_consultation_receipt_issues(check: ReceiptCheck, expected_amount: int) -> list[str]:
+    """Legacy-only compatibility helper. New payment flows use Kaspi OFD."""
     issues = list(receipt_hard_issues(check, expected_amount))
     if not check.date_time.strip():
         issues.append("на чеке не распознаны дата и время")
@@ -335,5 +368,5 @@ def strict_consultation_receipt_issues(check: ReceiptCheck, expected_amount: int
     if not check.receipt_or_transaction_id.strip() and not check.fp.strip():
         issues.append("не распознан номер операции/чека или ФП")
     if check.suspicious_signals:
-        issues.append("AI обнаружил признаки возможного редактирования или аномалии")
+        issues.append("legacy receipt contains suspicious signals")
     return issues
