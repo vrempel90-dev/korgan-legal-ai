@@ -10,6 +10,11 @@ from korgan.prepayment_auto_payment import install_adminless_automatic_prepaymen
 install_adminless_automatic_prepayment()
 
 from korgan.strict_bot import main  # noqa: E402
+from korgan.claim_release_fail_closed import install_fail_closed_claim_release  # noqa: E402
+
+# strict_bot installs all legacy/professional runtime wrappers during import.
+# Install this last so no later hotfix can re-enable PRELIMINARY claim delivery.
+install_fail_closed_claim_release()
 
 
 if __name__ == "__main__":
