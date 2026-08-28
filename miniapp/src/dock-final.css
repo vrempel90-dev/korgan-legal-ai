@@ -1,0 +1,10 @@
+/* Final two-tab dock geometry: Home / Profile only. */
+.bottom-nav::before{
+  width:calc((100% - 16px)/2)!important;
+}
+.bottom-nav:has(button:nth-child(1).active)::before{
+  transform:translateX(0)!important;
+}
+.bottom-nav:has(button:nth-child(5).active)::before{
+  transform:translateX(100%)!important;
+}
