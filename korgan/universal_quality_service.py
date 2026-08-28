@@ -14,6 +14,7 @@ from korgan.openai_legal import _CLAIM_SCHEMA
 from korgan.response_legal import _RESPONSE_DRAFT_SCHEMA
 from korgan.response_types import ResponseToClaimDraft
 from korgan.robust_production_legal import _CONTRACT_SCHEMA
+from korgan.pro_claim_sections import pro_payload
 
 LOGGER = logging.getLogger(__name__)
 
@@ -106,6 +107,7 @@ class UniversalQualityProductionService(InstantClaimProductionService):
             "requests": draft.requests,
             "attachments": draft.attachments,
             "verification_notes": draft.verification_notes,
+            **pro_payload(draft),
         }
         payload = await self._quality_repair(
             schema_name="korgan_universal_quality_claim",

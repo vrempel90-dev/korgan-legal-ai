@@ -7,6 +7,7 @@ from typing import Any
 from korgan.claim_quality_hotfix import ProductionClaimService
 from korgan.legal_types import ClaimDraft, ExtractedDocument, LegalResearch, VerificationStatus
 from korgan.openai_legal import OpenAILegalService, _CLAIM_SCHEMA, _EXTRACT_SCHEMA
+from korgan.pro_claim_sections import pro_payload
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
@@ -28,6 +29,7 @@ def _claim_payload(draft: ClaimDraft) -> dict[str, Any]:
         "requests": list(draft.requests),
         "attachments": list(draft.attachments),
         "verification_notes": list(draft.verification_notes),
+        **pro_payload(draft),
     }
 
 

@@ -14,6 +14,7 @@ from korgan.provision_check import paraphrase_defects, verified_claim_line
 from korgan.robust_production_legal import _is_adilet_source, _is_court_source
 from korgan.universal_quality_service import UniversalQualityProductionService, _quality_note
 from korgan.verified_openai import _actual_response_urls, _canonical_url
+from korgan.pro_claim_sections import pro_payload
 
 LOGGER = logging.getLogger(__name__)
 
@@ -308,6 +309,7 @@ class ProfessionalRKProductionService(UniversalQualityProductionService):
             "requests": draft.requests,
             "attachments": draft.attachments,
             "verification_notes": draft.verification_notes,
+            **pro_payload(draft),
         }
         payload = await self._quality_repair(
             schema_name="korgan_professional_claim_repair",
