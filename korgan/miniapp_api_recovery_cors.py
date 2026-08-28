@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi.middleware.cors import CORSMiddleware
 
-from korgan.miniapp_api_ofd import app
+from korgan.miniapp_api_ofd_upload import app
 
 # Recovery outer CORS layer. Keep the already-working Mini App origins and
 # browser-managed Telegram WebView headers unchanged while the payment layer is
