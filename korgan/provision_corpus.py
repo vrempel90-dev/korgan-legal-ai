@@ -112,8 +112,25 @@ def corpus_checked_on() -> str:
 
 
 def lookup(act: str, article: str, part: str = "") -> ProvisionRecord | None:
+    """Найти норму: сначала ручной реестр, затем загруженный корпус НПА.
+
+    Ручной реестр `provisions.json` имеет приоритет: он существует именно для
+    того, чтобы оператор мог перекрыть автоматическую загрузку исправленной
+    редакцией. Но он маленький, а полный корпус живёт в SQLite и грузится с
+    adilet при каждом старте. Пока сюда не был подключён второй источник,
+    любая статья, кроме записей из JSON, считалась неподтверждённой и
+    блокировала выпуск любого документа — см. korgan.corpus_bridge.
+    """
     records, _ = _load()
-    return records.get(provision_key(act, article, part))
+    record = records.get(provision_key(act, article, part))
+    if record is not None:
+        return record
+
+    # Импорт внутри функции: corpus_bridge импортирует ProvisionRecord отсюда,
+    # и модульный импорт создал бы цикл.
+    from korgan.corpus_bridge import lookup_in_local_corpus
+
+    return lookup_in_local_corpus(act, article, part)
 
 
 def all_records() -> list[ProvisionRecord]:
