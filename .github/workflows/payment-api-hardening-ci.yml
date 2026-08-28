@@ -28,12 +28,18 @@ jobs:
           korgan/fiscal_qr_extract.py
           korgan/miniapp_api_ofd.py
           korgan/miniapp_api_ofd_upload.py
+          korgan/payment_operation_lock.py
+          korgan/miniapp_payment_idempotency.py
           korgan/miniapp_api_recovery_cors.py
           korgan/consultation_quota.py
       - name: Import complete ASGI stack
         run: python -c "from korgan.miniapp_api_recovery_cors import app; assert app is not None; print(len(app.routes))"
-      - name: Run deterministic OFD tests
-        run: python -m pytest -q tests/test_kaspi_ofd.py tests/test_consultation_quota.py
+      - name: Run deterministic OFD and idempotency tests
+        run: >-
+          python -m pytest -q
+          tests/test_kaspi_ofd.py
+          tests/test_consultation_quota.py
+          tests/test_miniapp_payment_idempotency.py
       - name: Run Mini App smoke regressions
         run: >-
           python -m pytest -q
