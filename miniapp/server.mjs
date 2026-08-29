@@ -82,6 +82,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Telegram's Main Mini App can keep opening the cached root URL even after
+  // setChatMenuButton changes. Force the first root navigation through a tiny
+  // bridge that calls web_app_ready. The bridge then returns with ?launch=...
+  // so the real SPA is served without creating a redirect loop.
+  if (pathname === '/' && !url.searchParams.has('launch')) {
+    res.writeHead(302, {
+      Location: '/launch.html',
+      'Cache-Control': 'no-store, max-age=0, must-revalidate',
+    });
+    res.end();
+    return;
+  }
+
   const requested = path.resolve(root, `.${pathname}`);
   if (requested.startsWith(root) && sendFile(req, res, requested)) return;
 
