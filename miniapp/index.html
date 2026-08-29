@@ -11,9 +11,10 @@
       html, body, #root { margin: 0; min-height: 100%; background: #0B0F14; color: #F3F0E9; }
       html, body { min-height: 100vh; }
     </style>
+    <link rel="preload" as="image" href="/__korgan_boot?stage=parser-preload&v=telegram-passive-1" />
     <script>
       (function () {
-        var bootVersion = 'telegram-boot-4';
+        var bootVersion = 'telegram-passive-1';
 
         function bootPing(stage, detail) {
           try {
@@ -26,7 +27,7 @@
         }
 
         window.__KORGAN_BOOT_PING__ = bootPing;
-        bootPing('html-script', 'readyState=' + document.readyState);
+        bootPing('html-script-passive', 'readyState=' + document.readyState);
 
         window.addEventListener('error', function (event) {
           var message = event && (event.message || (event.error && event.error.message)) || 'window-error';
@@ -43,65 +44,26 @@
           var params = new URLSearchParams(queryText);
           var initData = params.get('tgWebAppData') || '';
           if (initData) window.__KORGAN_TG_INIT_DATA__ = initData;
-          bootPing('telegram-params', 'init=' + (initData ? '1' : '0') + ',platform=' + (params.get('tgWebAppPlatform') || ''));
+          bootPing('telegram-params-passive', 'init=' + (initData ? '1' : '0') + ',platform=' + (params.get('tgWebAppPlatform') || ''));
         } catch (error) {
           bootPing('telegram-params-error', error && error.message ? error.message : String(error));
         }
 
-        function postTelegramEvent(eventType, eventData) {
-          var payload = typeof eventData === 'undefined' ? '' : eventData;
-          try {
-            if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
-              window.TelegramWebviewProxy.postEvent(eventType, JSON.stringify(payload));
-              return 'proxy';
-            }
-          } catch (error) {
-            bootPing('telegram-proxy-error', error && error.message ? error.message : String(error));
-          }
-          try {
-            if (window.external && typeof window.external.notify === 'function') {
-              window.external.notify(JSON.stringify({ eventType: eventType, eventData: payload }));
-              return 'external';
-            }
-          } catch (error) {
-            bootPing('telegram-external-error', error && error.message ? error.message : String(error));
-          }
-          try {
-            if (window.parent && window.parent !== window) {
-              window.parent.postMessage(JSON.stringify({ eventType: eventType, eventData: payload }), '*');
-              return 'iframe';
-            }
-          } catch (error) {
-            bootPing('telegram-iframe-error', error && error.message ? error.message : String(error));
-          }
-          return 'none';
-        }
-
-        function signalTelegramReady(stage) {
-          var via = postTelegramEvent('web_app_ready');
-          bootPing(stage || 'telegram-ready', 'via=' + via);
-          return via;
-        }
-
-        signalTelegramReady('telegram-ready-immediate');
-        [50, 150, 350, 700, 1200, 2000].forEach(function (delay) {
-          setTimeout(function () { signalTelegramReady('telegram-ready-' + delay); }, delay);
-        });
-
+        // Do not call TelegramWebviewProxy/web_app_ready during initial parsing.
+        // Telegram clients are required to remove their loading placeholder when
+        // the page itself finishes loading, even if web_app_ready is not emitted.
         window.addEventListener('DOMContentLoaded', function () {
-          bootPing('dom-content-loaded', 'root=' + Boolean(document.getElementById('root')));
-          signalTelegramReady('telegram-ready-dom');
+          bootPing('dom-content-loaded-passive', 'root=' + Boolean(document.getElementById('root')));
         }, { once: true });
 
         window.addEventListener('load', function () {
           var root = document.getElementById('root');
-          bootPing('window-load', 'children=' + (root ? root.childElementCount : -1));
-          signalTelegramReady('telegram-ready-load');
+          bootPing('window-load-passive', 'children=' + (root ? root.childElementCount : -1));
         }, { once: true });
 
         setTimeout(function () {
           var root = document.getElementById('root');
-          bootPing('post-1500ms', 'children=' + (root ? root.childElementCount : -1));
+          bootPing('post-1500ms-passive', 'children=' + (root ? root.childElementCount : -1));
         }, 1500);
       })();
     </script>
@@ -129,6 +91,6 @@
     <script type="module" src="/src/main.jsx"></script>
     <script type="module" src="/src/home-scroll-fix.js"></script>
     <script type="module" src="/src/motion-ui.js"></script>
-    <script src="/client-safe-ui.js?v=telegram-boot-4"></script>
+    <script src="/client-safe-ui.js?v=telegram-passive-1"></script>
   </body>
 </html>
