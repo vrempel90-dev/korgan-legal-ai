@@ -15,7 +15,8 @@ async function request(path, options = {}) {
     ...(options.headers || {}),
   };
 
-  if (tg?.initData) headers['X-Telegram-Init-Data'] = tg.initData;
+  const initData = tg?.initData || window.__KORGAN_TG_INIT_DATA__ || '';
+  if (initData) headers['X-Telegram-Init-Data'] = initData;
 
   const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
   const contentType = response.headers.get('content-type') || '';
