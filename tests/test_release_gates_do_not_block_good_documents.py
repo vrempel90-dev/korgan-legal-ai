@@ -392,3 +392,87 @@ def test_generated_placeholder_preamble_passes_its_own_check():
 
     text = placeholder_preamble(["ТОО «А», БИН 1"], ["ИП Б, ИИН 2"])
     assert preamble_defects([text]) == []
+
+
+# ---------------------------------------------------------------------------
+# 8. Пользователь всегда получает результат
+# ---------------------------------------------------------------------------
+
+
+def test_verification_notes_are_advice_not_a_blocker():
+    """Пометка «проверить перед подачей» — продукт работы, а не её дефект.
+
+    Пока она была жёстким блокером, выпуск был невозможен в принципе: у
+    любого реального дела такая пометка есть, а hard blocker обнуляет ready
+    независимо от оценки.
+    """
+    from korgan.document_quality import _common_hygiene
+
+    blockers: list[str] = []
+    issues: list[str] = []
+    _common_hygiene(
+        "claim",
+        ["Обычный текст документа без дефектов."],
+        blockers,
+        issues,
+        verified_claims=[],
+        verification_notes=["FILING_ACTION: указать банковские реквизиты истца перед подачей."],
+    )
+    assert blockers == [], "подсказка юристу не должна блокировать выпуск"
+    assert any("проверке перед подачей" in i for i in issues)
+
+
+def test_real_defects_still_block():
+    """Ослабление не должно пропускать незаполненные поля и служебный текст."""
+    from korgan.document_quality import _common_hygiene
+
+    blockers: list[str] = []
+    issues: list[str] = []
+    _common_hygiene(
+        "claim",
+        ["Взыскать [ТРЕБУЕТ УТОЧНЕНИЯ: сумма] тенге."],
+        blockers,
+        issues,
+        verified_claims=[],
+        verification_notes=[],
+    )
+    assert any("незаполненные" in b for b in blockers)
+
+
+def test_blocked_document_is_translated_into_user_tasks():
+    """Клиент должен видеть задачи, а не внутренние формулировки гейтов."""
+    from korgan.miniapp_preliminary_delivery import humanize
+
+    todo = humanize([
+        "не определена госпошлина или подтвержденная льгота",
+        "есть правовая ссылка, не прошедшая source-bound/corpus проверку",
+        "FILING_ACTION: указать банковские реквизиты истца-юридического лица перед подачей иска.",
+    ])
+    assert todo
+    joined = " ".join(todo).lower()
+    assert "source-bound" not in joined and "corpus" not in joined
+    assert "filing_action" not in joined
+    assert any("пошлин" in t for t in todo)
+
+
+def test_preliminary_delivery_is_on_by_default_and_switchable(monkeypatch):
+    from korgan.miniapp_preliminary_delivery import FLAG_ENV, preliminary_delivery_enabled
+
+    monkeypatch.delenv(FLAG_ENV, raising=False)
+    assert preliminary_delivery_enabled() is True
+    monkeypatch.setenv(FLAG_ENV, "off")
+    assert preliminary_delivery_enabled() is False
+
+
+def test_marking_preliminary_does_not_claim_filing_ready():
+    from korgan.miniapp_preliminary_delivery import mark_preliminary
+
+    result = mark_preliminary(
+        {"document_base64": "...", "quality_score": 8.4, "filing_ready": True},
+        ["не определена госпошлина или подтвержденная льгота"],
+        "KOR-TEST",
+    )
+    assert result["filing_ready"] is False
+    assert result["release_status"] == "preliminary"
+    assert result["document_base64"], "документ должен остаться у пользователя"
+    assert result["todo_before_filing"]

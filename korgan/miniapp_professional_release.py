@@ -5,6 +5,11 @@ from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException
 
+from korgan.miniapp_preliminary_delivery import (
+    mark_preliminary,
+    preliminary_delivery_enabled,
+)
+
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 
@@ -66,6 +71,15 @@ def install_miniapp_professional_release_gate() -> None:
             return result
 
         issues = _issue_list(result)
+
+        # Отдавать оплатившему пользователю пустоту хуже, чем отдать честно
+        # помеченный черновик: документ уже написан, доработан и несёт штамп
+        # PRELIMINARY DRAFT вместе с подвалом «перед подачей проверьте…».
+        # Часть «блокеров» — вообще не дефекты, а подсказки юристу.
+        # Выключается переменной KORGAN_PRELIMINARY_DELIVERY=off.
+        if preliminary_delivery_enabled():
+            return mark_preliminary(result, issues, str(getattr(payload, "case_id", "")))
+
         await _purge_unreleased_document(core, payload, x_telegram_init_data, result)
         detail = (
             "KORGAN не выпустил Word: документ не прошёл финальную профессиональную проверку. "
@@ -83,4 +97,7 @@ def install_miniapp_professional_release_gate() -> None:
 
     core.generate_document = guarded_generate_document  # type: ignore[assignment]
     _INSTALLED = True
-    LOGGER.info("Installed Mini App professional release gate: preliminary Word delivery disabled")
+    LOGGER.info(
+        "Installed Mini App professional release gate: preliminary delivery=%s",
+        "on" if preliminary_delivery_enabled() else "off",
+    )
