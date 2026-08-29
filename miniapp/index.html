@@ -20,41 +20,62 @@
           if (initData) window.__KORGAN_TG_INIT_DATA__ = initData;
         } catch (_) {}
 
-        function signalTelegramReady() {
+        function postTelegramEvent(eventType, eventData) {
+          var payload = typeof eventData === 'undefined' ? '' : eventData;
           try {
             if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
-              window.TelegramWebviewProxy.postEvent('web_app_ready', '{}');
+              window.TelegramWebviewProxy.postEvent(eventType, JSON.stringify(payload));
               return true;
             }
           } catch (_) {}
           try {
             if (window.external && typeof window.external.notify === 'function') {
-              window.external.notify(JSON.stringify(['web_app_ready', {}]));
+              window.external.notify(JSON.stringify({ eventType: eventType, eventData: payload }));
               return true;
             }
           } catch (_) {}
           try {
             if (window.parent && window.parent !== window) {
-              window.parent.postMessage(JSON.stringify({ eventType: 'web_app_ready', eventData: {} }), '*');
+              window.parent.postMessage(JSON.stringify({ eventType: eventType, eventData: payload }), '*');
               return true;
             }
           } catch (_) {}
           return false;
         }
 
-        signalTelegramReady();
-        [50, 150, 350, 700, 1200, 2000].forEach(function (delay) {
-          setTimeout(signalTelegramReady, delay);
-        });
-        window.addEventListener('DOMContentLoaded', signalTelegramReady, { once: true });
-        window.addEventListener('load', signalTelegramReady, { once: true });
+        function signalTelegramReady() {
+          return postTelegramEvent('web_app_ready');
+        }
 
-        window.__korganTelegramSdkReady = function () {
+        function finishTelegramSdkInit() {
           signalTelegramReady();
           try { window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.ready(); } catch (_) {}
           try { window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.expand(); } catch (_) {}
           try { window.dispatchEvent(new Event('korgan:telegram-ready')); } catch (_) {}
-        };
+        }
+
+        function loadTelegramSdkAfterPageLoad() {
+          if (document.getElementById('korgan-telegram-sdk')) return;
+          var script = document.createElement('script');
+          script.id = 'korgan-telegram-sdk';
+          script.async = true;
+          script.src = 'https://telegram.org/js/telegram-web-app.js?63&korgan=postload-1';
+          script.onload = finishTelegramSdkInit;
+          script.onerror = signalTelegramReady;
+          document.head.appendChild(script);
+        }
+
+        signalTelegramReady();
+        [50, 150, 350, 700, 1200, 2000, 3500, 5000].forEach(function (delay) {
+          setTimeout(signalTelegramReady, delay);
+        });
+        window.addEventListener('DOMContentLoaded', signalTelegramReady, { once: true });
+        window.addEventListener('load', function () {
+          signalTelegramReady();
+          setTimeout(loadTelegramSdkAfterPageLoad, 0);
+        }, { once: true });
+
+        window.__korganTelegramSdkReady = finishTelegramSdkInit;
       })();
     </script>
     <link rel="stylesheet" href="/src/professional.css" />
@@ -74,7 +95,6 @@
     <link rel="stylesheet" href="/src/dock-final.css" />
     <link rel="stylesheet" href="/src/ui-motion-final.css" />
     <link rel="stylesheet" href="/src/mobile-performance.css" />
-    <script async src="https://telegram.org/js/telegram-web-app.js?63" onload="window.__korganTelegramSdkReady && window.__korganTelegramSdkReady()"></script>
     <script defer src="/payment-auto-ui.js"></script>
   </head>
   <body>
@@ -82,6 +102,6 @@
     <script type="module" src="/src/main.jsx"></script>
     <script type="module" src="/src/home-scroll-fix.js"></script>
     <script type="module" src="/src/motion-ui.js"></script>
-    <script src="/client-safe-ui.js?v=telegram-ready-staging-1"></script>
+    <script src="/client-safe-ui.js?v=telegram-postload-staging-1"></script>
   </body>
 </html>
