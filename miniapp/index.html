@@ -34,8 +34,6 @@
           readySent = true;
           bootPing('react-mounted', 'children=' + root.childElementCount);
 
-          // The Android native bridge is intentionally invoked only after React
-          // has mounted, so it can never block parsing or prevent the UI render.
           setTimeout(function () {
             try {
               if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.ready === 'function') {
@@ -129,6 +127,7 @@
     <link rel="stylesheet" href="/src/mobile-performance.css" />
     <link rel="stylesheet" href="/src/ux-polish-v2.css" />
     <link rel="stylesheet" href="/src/professional-mobile-v8.css" />
+    <link rel="stylesheet" href="/src/professional-mobile-v11.css" />
     <script defer src="/payment-auto-ui.js"></script>
   </head>
   <body>
