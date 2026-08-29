@@ -6,6 +6,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from korgan.admin_report import send_admin_report
 from korgan.config import Settings, get_settings
 
 LOGGER = logging.getLogger(__name__)
@@ -35,8 +36,8 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
             [_button("📄 Документы", "documents"), _button("⚖️ Обращения", "lawyer_requests")],
             [_button("📚 Legal RAG", "rag"), _button("🤖 AI", "ai")],
             [_button("🚨 Контроль", "quality"), _button("📊 Аналитика", "analytics")],
-            [_button("💰 Расходы", "costs"), _button("⚙️ Настройки", "settings")],
-            [_button("🔐 Безопасность", "security")],
+            [_button("📨 Отчёт", "report"), _button("💰 Расходы", "costs")],
+            [_button("⚙️ Настройки", "settings"), _button("🔐 Безопасность", "security")],
             [_button("🔄 Обновить", "home"), _button("✖️ Закрыть", "close")],
         ]
     )
@@ -61,6 +62,7 @@ def admin_home_text(settings: Settings) -> str:
         "Telegram: 🟢 бот работает\n"
         f"OpenAI: {_configured(settings.openai_api_key)}\n"
         f"Модель: {settings.openai_model}\n"
+        f"Отчёты: {'🟢 настроены' if settings.admin_report_id is not None else '🔴 не настроены'}\n"
         "Fail-closed: 🔒 не изменяется из админки\n\n"
         "Выберите раздел:"
     )
@@ -77,13 +79,11 @@ def admin_page(action: str, settings: Settings) -> tuple[str, InlineKeyboardMark
         ),
         "consultations": (
             "💬 КОНСУЛЬТАЦИИ\n\n"
-            "Просмотр истории консультаций не включён: текущие пользовательские сессии хранятся в памяти процесса.\n\n"
-            "При подключении постоянного хранилища здесь будут очереди: активные, NEEDS_VERIFICATION, ошибки AI и низкие оценки."
+            "Просмотр полной истории консультаций не включён. Дневной отчёт использует только реальные агрегаты из PostgreSQL: использование квоты и оплаченные консультации."
         ),
         "documents": (
             "📄 ДОКУМЕНТЫ\n\n"
-            "Генерация исков работает в основном контуре KORGAN. Админ-реестр документов пока не сохраняется постоянно.\n\n"
-            "План раздела: VERIFIED / NEEDS_VERIFICATION / ошибки рендера / передано юристу."
+            "Генерация работает в основном контуре KORGAN. Дневной отчёт считает только подтверждённые Kaspi ОФД оплаты Agent и завершённые оплаченные документы Mini App."
         ),
         "lawyer_requests": (
             "⚖️ ОБРАЩЕНИЯ К ЮРИСТУ\n\n"
@@ -112,8 +112,8 @@ def admin_page(action: str, settings: Settings) -> tuple[str, InlineKeyboardMark
         ),
         "analytics": (
             "📊 АНАЛИТИКА\n\n"
-            "Постоянная аналитика пока не подключена, поэтому значения пользователей, консультаций и документов не выдумываются.\n\n"
-            "После добавления PostgreSQL здесь появятся сутки / 7 дней / 30 дней и конверсия в живого юриста."
+            "Доступна подтверждаемая дневная сводка из PostgreSQL. Нажмите «📨 Отчёт» в админ-меню, чтобы отправить её на отдельный Telegram ID получателя.\n\n"
+            "Полная продуктовая аналитика, графики и экспорт остаются отдельным этапом."
         ),
         "costs": (
             "💰 РАСХОДЫ AI\n\n"
@@ -125,12 +125,15 @@ def admin_page(action: str, settings: Settings) -> tuple[str, InlineKeyboardMark
             f"Макс. документов в деле: {settings.max_case_documents}\n"
             f"Макс. текста дела: {settings.max_case_text_chars} символов\n"
             f"Официальные домены: {domains}\n"
-            f"Администраторов настроено: {len(settings.admin_ids)}\n\n"
-            "Секреты и критические политики изменяются только через защищённые переменные окружения Railway."
+            f"Администраторов настроено: {len(settings.admin_ids)}\n"
+            f"Получатель отчётов: {'настроен' if settings.admin_report_id is not None else 'не настроен'}\n"
+            f"Автоотчёт: {settings.admin_report_hour_almaty:02d}:00 по Алматы\n\n"
+            "ADMIN_REPORT_TELEGRAM_ID не предоставляет доступ к /admin. Секреты и критические политики изменяются только через защищённые переменные окружения Railway."
         ),
         "security": (
             "🔐 БЕЗОПАСНОСТЬ\n\n"
             "• Вход только по Telegram user ID из ADMIN_TELEGRAM_IDS.\n"
+            "• ADMIN_REPORT_TELEGRAM_ID — только адрес доставки отчёта и не даёт прав администратора.\n"
             "• Проверка выполняется и для /admin, и для каждого callback.\n"
             "• При пустом/ошибочном списке доступ закрывается для всех (fail-closed).\n"
             "• API-ключи никогда не выводятся в чат.\n"
@@ -172,6 +175,27 @@ async def admin_callback(callback: CallbackQuery) -> None:
         await callback.answer()
         if callback.message:
             await callback.message.delete()
+        return
+
+    if action == "report":
+        if settings.admin_report_id is None:
+            await callback.answer("Получатель отчёта не настроен.", show_alert=True)
+            return
+        try:
+            sent = await send_admin_report(callback.bot, settings)
+        except Exception:
+            LOGGER.exception("ADMIN_REPORT_MANUAL_SEND_FAILED requested_by=%s", user_id)
+            await callback.answer("Не удалось отправить отчёт. Проверьте Telegram ID и доступ бота к чату.", show_alert=True)
+            return
+        if not sent:
+            await callback.answer("Получатель отчёта не настроен.", show_alert=True)
+            return
+        await callback.answer("Отчёт отправлен.")
+        if callback.message:
+            await callback.message.edit_text(
+                "📨 ОТЧЁТ\n\nДневная сводка отправлена на настроенный Telegram ID получателя.",
+                reply_markup=admin_back_keyboard(),
+            )
         return
 
     if action == "home":
