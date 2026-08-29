@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     max_case_documents: int = 12
     max_case_text_chars: int = 60000
     admin_telegram_ids: str = ""
+    # Report delivery is intentionally separate from administrator privileges.
+    # A report recipient does NOT become an /admin user.
+    admin_report_telegram_id: str = ""
+    admin_report_hour_almaty: int = 21
 
     # Cost-control target. This does not weaken source-bound research, drafting,
     # validation or release gates; it prevents accidental opt-in to extra model
@@ -78,6 +82,17 @@ class Settings(BaseSettings):
             if value:
                 result.add(int(value))
         return result
+
+    @property
+    def admin_report_id(self) -> int | None:
+        value = self.admin_report_telegram_id.strip()
+        if not value:
+            return None
+        try:
+            chat_id = int(value)
+        except ValueError:
+            return None
+        return chat_id if chat_id > 0 else None
 
 
 @lru_cache(maxsize=1)
