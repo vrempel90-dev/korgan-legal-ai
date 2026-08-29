@@ -4,6 +4,10 @@ The Telegram Android WebView does not reliably honor blob URL + <a download>.
 This module issues short-lived HMAC-signed HTTPS links so Telegram.WebApp.downloadFile
 can use the client's native file-download flow. A separate HTML preview keeps legal
 documents inside KORGAN infrastructure and avoids third-party document viewers.
+
+The module owns an isolated APIRouter. Importing it must never import or mutate the
+payment/runtime app; the recovery composition layer includes this router only after
+the already-tested Mini App payment stack has been constructed.
 """
 
 from __future__ import annotations
@@ -19,11 +23,12 @@ from typing import Any
 from urllib.parse import quote
 
 from docx import Document
-from fastapi import Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 from korgan.config import get_settings
-from korgan.miniapp_payment_idempotency import app
+
+router = APIRouter()
 
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _LINK_TTL_SECONDS = 180
@@ -111,6 +116,8 @@ def _external_base(request: Request) -> str:
 
 
 async def _case_for_identity(user_id: str, case_id: str) -> dict[str, Any]:
+    # Deliberately lazy: the router module stays import-isolated from the Mini App
+    # runtime and therefore cannot perturb route identity/order during test collection.
     from korgan import miniapp_api_v2 as core
 
     state = await core.legacy._require_consent(user_id)
@@ -167,7 +174,7 @@ def _render_docx_html(payload: bytes, title: str = "Документ KORGAN") ->
 </head><body><main class=\"shell\"><div class=\"brand\"><i>✓</i>KORGAN</div><article class=\"paper\">{body}</article><div class=\"note\">Защищённый просмотр. Ссылка действует ограниченное время и не передаёт документ сторонним сервисам.</div></main></body></html>"""
 
 
-@app.post("/miniapp/cases/{case_id}/document/access")
+@router.post("/miniapp/cases/{case_id}/document/access")
 async def create_document_access(
     case_id: str,
     request: Request,
@@ -192,7 +199,7 @@ async def create_document_access(
     }
 
 
-@app.get("/miniapp/document/download")
+@router.get("/miniapp/document/download")
 async def download_document(token: str) -> Response:
     user_id, case_id = _read_token(token, _secret())
     case = await _case_for_identity(user_id, case_id)
@@ -211,7 +218,7 @@ async def download_document(token: str) -> Response:
     )
 
 
-@app.get("/miniapp/document/preview")
+@router.get("/miniapp/document/preview")
 async def preview_document(token: str) -> HTMLResponse:
     user_id, case_id = _read_token(token, _secret())
     case = await _case_for_identity(user_id, case_id)
