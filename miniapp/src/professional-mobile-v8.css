@@ -201,3 +201,228 @@ body:has(.native-home),
   .native-service-grid .action-copy p,
   .native-service-grid .personal-lawyer-copy p{font-size:9.8px!important}
 }
+
+/* -------------------------------------------------------------------------
+   v9 visual polish: adaptive screen fill + animated navigation.
+   No routes, handlers, API calls, payment logic or document logic changed. */
+
+:root{
+  --korgan-v9-ease:cubic-bezier(.22,.86,.28,1);
+  --korgan-v9-header:68px;
+}
+
+/* Home becomes a composed full-height workspace instead of a short card list
+   followed by an empty branded canvas. */
+.app-shell:has(.native-home)>.native-home,
+.app-shell:has(.native-home)>.workspace-home{
+  min-height:calc(100dvh - var(--korgan-v9-header) - var(--korgan-v8-nav) - env(safe-area-inset-bottom))!important;
+  display:flex!important;
+  flex-direction:column!important;
+  gap:0!important;
+}
+
+.app-shell:has(.native-home) .native-service-hub,
+.app-shell:has(.native-home) .workspace-actions{
+  flex:1 1 auto!important;
+  display:flex!important;
+  flex-direction:column!important;
+}
+
+.app-shell:has(.native-home) .native-service-grid{
+  flex:1 1 auto!important;
+  grid-auto-rows:minmax(128px,1fr)!important;
+  align-content:stretch!important;
+}
+
+/* Keep Help visible and balance the last row instead of leaving a one-card hole. */
+.native-service-grid>.native-help-card,
+.native-service-grid>.action-card:has(.action-icon.help){
+  display:grid!important;
+  grid-column:1/-1!important;
+  min-height:92px!important;
+  grid-template-columns:48px minmax(0,1fr)!important;
+  grid-template-rows:1fr!important;
+  align-items:center!important;
+  align-content:center!important;
+}
+.native-service-grid>.native-help-card>.action-icon,
+.native-service-grid>.action-card:has(.action-icon.help)>.action-icon{
+  grid-column:1!important;
+  grid-row:1!important;
+  align-self:center!important;
+}
+.native-service-grid>.native-help-card>.action-copy,
+.native-service-grid>.action-card:has(.action-icon.help)>.action-copy{
+  grid-column:2!important;
+  grid-row:1!important;
+  align-self:center!important;
+}
+
+/* Professional motion: cards arrive as a menu, then remain calm. */
+.native-service-grid .action-card,
+.native-service-grid .personal-lawyer-card,
+.action-grid .action-card{
+  position:relative!important;
+  isolation:isolate!important;
+  transform-origin:50% 65%!important;
+  animation:korgan-v9-card-in 360ms var(--korgan-v9-ease) both!important;
+}
+.native-service-grid .action-card:nth-child(1),
+.action-grid .action-card:nth-child(1){animation-delay:20ms!important}
+.native-service-grid .action-card:nth-child(2),
+.action-grid .action-card:nth-child(2){animation-delay:70ms!important}
+.native-service-grid .action-card:nth-child(3),
+.action-grid .action-card:nth-child(3){animation-delay:120ms!important}
+.native-service-grid .action-card:nth-child(4),
+.action-grid .action-card:nth-child(4){animation-delay:170ms!important}
+.native-service-grid .action-card:nth-child(5),
+.action-grid .action-card:nth-child(5){animation-delay:220ms!important}
+
+.native-service-grid .action-card::before,
+.action-grid .action-card::before{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  inset:-1px;
+  border-radius:inherit;
+  pointer-events:none;
+  background:linear-gradient(110deg,transparent 25%,rgba(255,255,255,.055) 47%,rgba(201,162,39,.08) 52%,transparent 72%);
+  transform:translateX(-135%);
+  animation:korgan-v9-card-sheen 820ms var(--korgan-v9-ease) both;
+}
+.native-service-grid .action-card:nth-child(1)::before,.action-grid .action-card:nth-child(1)::before{animation-delay:120ms}
+.native-service-grid .action-card:nth-child(2)::before,.action-grid .action-card:nth-child(2)::before{animation-delay:180ms}
+.native-service-grid .action-card:nth-child(3)::before,.action-grid .action-card:nth-child(3)::before{animation-delay:240ms}
+.native-service-grid .action-card:nth-child(4)::before,.action-grid .action-card:nth-child(4)::before{animation-delay:300ms}
+.native-service-grid .action-card:nth-child(5)::before,.action-grid .action-card:nth-child(5)::before{animation-delay:360ms}
+
+.native-service-grid .action-icon,
+.native-service-grid .personal-lawyer-icon,
+.action-grid .action-icon{
+  animation:korgan-v9-icon-settle 520ms var(--korgan-v9-ease) both!important;
+}
+
+@keyframes korgan-v9-card-in{
+  from{opacity:0;transform:translateY(14px) scale(.975)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+@keyframes korgan-v9-card-sheen{
+  from{transform:translateX(-135%);opacity:0}
+  25%{opacity:1}
+  to{transform:translateX(135%);opacity:0}
+}
+@keyframes korgan-v9-icon-settle{
+  0%{opacity:.35;transform:translateY(5px) scale(.92)}
+  70%{opacity:1;transform:translateY(-1px) scale(1.035)}
+  100%{opacity:1;transform:translateY(0) scale(1)}
+}
+
+/* Sliding active pill: the bottom menu now visibly animates between sections. */
+.app-shell>.bottom-nav{
+  --korgan-nav-index:0;
+  isolation:isolate!important;
+  overflow:hidden!important;
+}
+.app-shell>.bottom-nav::before{
+  content:"";
+  position:absolute;
+  z-index:0;
+  top:6px;
+  left:8px;
+  width:calc((100% - 16px)/4);
+  height:56px;
+  border-radius:15px;
+  border:1px solid rgba(201,162,39,.22);
+  background:linear-gradient(145deg,rgba(201,162,39,.115),rgba(201,162,39,.055));
+  box-shadow:inset 0 1px rgba(255,255,255,.02),0 8px 24px rgba(0,0,0,.16);
+  transform:translateX(calc(var(--korgan-nav-index) * 100%));
+  transition:transform 340ms var(--korgan-v9-ease),opacity 180ms ease!important;
+  pointer-events:none;
+}
+.app-shell>.bottom-nav:has(>button:nth-child(1).active){--korgan-nav-index:0}
+.app-shell>.bottom-nav:has(>button:nth-child(2).active){--korgan-nav-index:1}
+.app-shell>.bottom-nav:has(>button:nth-child(3).active){--korgan-nav-index:2}
+.app-shell>.bottom-nav:has(>button:nth-child(5).active){--korgan-nav-index:3}
+
+.app-shell>.bottom-nav button{
+  position:relative!important;
+  z-index:1!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  transition:color 220ms ease,transform 220ms var(--korgan-v9-ease)!important;
+}
+.app-shell>.bottom-nav button.active{
+  color:#D6B64C!important;
+  background:transparent!important;
+  box-shadow:none!important;
+}
+.app-shell>.bottom-nav button.active svg{
+  animation:korgan-v9-nav-pop 320ms var(--korgan-v9-ease) both!important;
+  filter:drop-shadow(0 0 8px rgba(201,162,39,.28))!important;
+}
+@keyframes korgan-v9-nav-pop{
+  0%{transform:translateY(2px) scale(.9)}
+  65%{transform:translateY(-1px) scale(1.08)}
+  100%{transform:translateY(0) scale(1)}
+}
+
+/* Profile: convert the large dead tail below the destructive action into a
+   quiet trust footer that expands only when the viewport has spare height. */
+main.page:has(> .profile-card){
+  min-height:calc(100dvh - var(--korgan-v9-header) - var(--korgan-v8-nav) - env(safe-area-inset-bottom))!important;
+  display:flex!important;
+  flex-direction:column!important;
+}
+main.page:has(> .profile-card)::after{
+  content:"KORGAN LEGAL AI\A SECURE WORKSPACE";
+  white-space:pre-line;
+  flex:1 1 120px;
+  min-height:120px;
+  margin-top:14px;
+  display:grid;
+  place-items:center;
+  text-align:center;
+  border:1px solid rgba(255,255,255,.055);
+  border-radius:20px;
+  color:rgba(201,162,39,.42);
+  font-size:9px;
+  line-height:1.8;
+  font-weight:750;
+  letter-spacing:.18em;
+  background:
+    radial-gradient(circle at 50% 0,rgba(201,162,39,.065),transparent 46%),
+    linear-gradient(160deg,rgba(18,25,33,.7),rgba(10,14,19,.54));
+  box-shadow:inset 0 1px rgba(255,255,255,.015);
+}
+
+/* Other short dock pages should end as a deliberate workspace, not as a tall
+   unstructured hole. The min-height is content-aware and does not clip long pages. */
+.app-shell:has(>.bottom-nav)>.page:not(:has(> .profile-card)){
+  min-height:calc(100dvh - var(--korgan-v9-header) - var(--korgan-v8-nav) - env(safe-area-inset-bottom))!important;
+}
+
+@media(max-width:370px){
+  .app-shell:has(.native-home) .native-service-grid{
+    grid-auto-rows:minmax(116px,1fr)!important;
+  }
+  .native-service-grid>.native-help-card,
+  .native-service-grid>.action-card:has(.action-icon.help){min-height:84px!important}
+  main.page:has(> .profile-card)::after{min-height:96px;flex-basis:96px}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .native-service-grid .action-card,
+  .native-service-grid .personal-lawyer-card,
+  .action-grid .action-card,
+  .native-service-grid .action-card::before,
+  .action-grid .action-card::before,
+  .native-service-grid .action-icon,
+  .native-service-grid .personal-lawyer-icon,
+  .action-grid .action-icon,
+  .app-shell>.bottom-nav button.active svg{
+    animation:none!important;
+  }
+  .app-shell>.bottom-nav::before{
+    transition:none!important;
+  }
+}
