@@ -1,6 +1,15 @@
 (() => {
   'use strict';
 
+  function ensureV10Styles() {
+    if (document.querySelector('link[data-korgan-mobile-v10]')) return;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = '/src/professional-mobile-v10.css';
+    link.dataset.korganMobileV10 = '1';
+    document.head.appendChild(link);
+  }
+
   function normalizeDock() {
     document.querySelectorAll('.bottom-nav').forEach((nav) => {
       const buttons = Array.from(nav.children).filter((node) => node instanceof HTMLButtonElement);
@@ -21,20 +30,17 @@
   function normalizeHome() {
     const home = document.querySelector('.native-home');
     if (!home) return;
-    home.style.setProperty('height', 'auto', 'important');
-    home.style.setProperty('max-height', 'none', 'important');
-    home.style.setProperty('overflow', 'visible', 'important');
 
     const hub = home.querySelector('.native-service-hub');
     const grid = home.querySelector('.native-service-grid');
     [hub, grid].filter(Boolean).forEach((node) => {
-      node.style.setProperty('height', 'auto', 'important');
       node.style.setProperty('max-height', 'none', 'important');
       node.style.setProperty('overflow', 'visible', 'important');
     });
   }
 
   function apply() {
+    ensureV10Styles();
     normalizeDock();
     normalizeHome();
   }
