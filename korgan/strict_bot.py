@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 
 from aiogram import Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import MenuButtonDefault
+from aiogram.types import MenuButtonDefault, MenuButtonWebApp, WebAppInfo
 
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
@@ -104,6 +105,16 @@ LOGGER = logging.getLogger(__name__)
 
 async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
     await bot.delete_my_commands()
+    miniapp_url = str(os.getenv("MINIAPP_PUBLIC_URL", "") or "").strip()
+    if miniapp_url:
+        menu_text = str(os.getenv("TELEGRAM_MINIAPP_MENU_TEXT", "KORGAN") or "KORGAN").strip() or "KORGAN"
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text=menu_text,
+                web_app=WebAppInfo(url=miniapp_url),
+            )
+        )
+        return
     await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
 
 
