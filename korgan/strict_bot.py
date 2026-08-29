@@ -11,6 +11,7 @@ from aiogram.types import MenuButtonDefault, MenuButtonWebApp, WebAppInfo
 
 from korgan import bot as base_bot
 from korgan.admin import router as admin_router
+from korgan.admin_report import start_admin_report_task
 from korgan.claim_generation_progress import install_claim_generation_progress
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter, claim_pipeline_v2_mode
 from korgan.claim_quality_hotfix import install_runtime_hotfix
@@ -163,15 +164,21 @@ async def main() -> None:
     dp.include_router(base_bot.router)
 
     corpus_task = start_corpus_refresh_task()
+    admin_report_task = start_admin_report_task(bot, settings)
     LOGGER.info(
-        "Starting KORGAN: local-corpus-first research/consultation + guarded web fallback + claim progress + hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + deterministic Kaspi OFD fiscal receipt verification + durable receipt anti-replay + paid-delivery idempotency + automatic paid generation=%s + manual payment confirmation=False + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: local-corpus-first research/consultation + guarded web fallback + claim progress + hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + source-bound consultations + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + deterministic Kaspi OFD fiscal receipt verification + durable receipt anti-replay + paid-delivery idempotency + automatic paid generation=%s + manual payment confirmation=False + consultation limit=%s + claim pipeline v2=%s + admin daily report=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
+        settings.admin_report_id is not None,
     )
     try:
         await dp.start_polling(bot)
     finally:
+        if admin_report_task is not None:
+            admin_report_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await admin_report_task
         if corpus_task is not None:
             corpus_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
