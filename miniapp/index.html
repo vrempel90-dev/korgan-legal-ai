@@ -3,14 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0B0F14" />
+    <meta name="theme-color" content="#090b0d" />
     <meta name="color-scheme" content="dark" />
     <meta name="description" content="KORGAN Legal AI — ваш AI Юрист в Республике Казахстан" />
     <title>KORGAN Legal AI</title>
-    <style>
-      html, body, #root { margin: 0; min-height: 100%; background: #0B0F14; color: #F3F0E9; }
-      html, body { min-height: 100vh; }
-    </style>
     <script>
       (function () {
         try {
@@ -53,7 +49,6 @@
           signalTelegramReady();
           try { window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.ready(); } catch (_) {}
           try { window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.expand(); } catch (_) {}
-          try { window.dispatchEvent(new Event('korgan:telegram-ready')); } catch (_) {}
         };
       })();
     </script>
@@ -64,24 +59,13 @@
     <link rel="stylesheet" href="/src/ux-cleanup.css" />
     <link rel="stylesheet" href="/src/nav-cleanup.css" />
     <link rel="stylesheet" href="/src/korgan-brand.css" />
-    <link rel="stylesheet" href="/src/professional-shell.css" />
-    <link rel="stylesheet" href="/src/app-dashboard.css" />
-    <link rel="stylesheet" href="/src/viewport-shell.css" />
-    <link rel="stylesheet" href="/src/premium-app-v2.css" />
-    <link rel="stylesheet" href="/src/native-home-v3.css" />
-    <link rel="stylesheet" href="/src/profile-native-v4.css" />
-    <link rel="stylesheet" href="/src/motion-ui.css" />
-    <link rel="stylesheet" href="/src/dock-final.css" />
-    <link rel="stylesheet" href="/src/ui-motion-final.css" />
-    <link rel="stylesheet" href="/src/mobile-performance.css" />
     <script async src="https://telegram.org/js/telegram-web-app.js?63" onload="window.__korganTelegramSdkReady && window.__korganTelegramSdkReady()"></script>
-    <script defer src="/payment-auto-ui.js"></script>
+    <script src="/payment-auto-ui.js"></script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
-    <script type="module" src="/src/home-scroll-fix.js"></script>
-    <script type="module" src="/src/motion-ui.js"></script>
-    <script src="/client-safe-ui.js?v=latest-safe-recovery-2"></script>
+    <script type="module" src="/src/personal-lawyer.js"></script>
+    <script src="/client-safe-ui.js?v=restore-1700-nonblocking-2"></script>
   </body>
 </html>

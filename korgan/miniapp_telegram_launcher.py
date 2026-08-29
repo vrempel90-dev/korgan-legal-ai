@@ -8,8 +8,6 @@ import urllib.request
 
 import uvicorn
 
-from korgan.miniapp_professional_release import install_miniapp_professional_release_gate
-
 
 def _telegram_api(token: str, method: str, payload: dict[str, object] | None = None) -> dict[str, object]:
     url = f"https://api.telegram.org/bot{token}/{method}"
@@ -98,7 +96,6 @@ def register_miniapp_menu() -> None:
 
 def main() -> None:
     register_miniapp_menu()
-    install_miniapp_professional_release_gate()
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("korgan.miniapp_api_v5:app", host="0.0.0.0", port=port)
 
