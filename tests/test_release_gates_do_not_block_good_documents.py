@@ -307,21 +307,30 @@ def test_complete_failure_keeps_the_existing_corpus(monkeypatch, tmp_path):
 
 
 def test_partial_refresh_never_replaces_a_richer_corpus(monkeypatch, tmp_path):
-    """Полный корпус нельзя обменивать на урезанный."""
+    """Полный корпус нельзя обменивать на урезанный.
+
+    Раньше это обеспечивалось отказом от подмены целиком. Теперь недоступный
+    акт переносится из живого корпуса поштучно: сборка проходит, а гарантия
+    остаётся прежней и становится строже — сверяется не только сумма норм, но
+    и состав по каждому акту. Общая сумма как критерий ненадёжна: рост одного
+    акта в новой редакции способен замаскировать полное исчезновение другого.
+    """
     from korgan.legal import corpus_refresh as refresh
     from korgan.legal.corpus import KNOWN_ACTS, LegalCorpus
 
     target = tmp_path / "corpus.sqlite3"
     monkeypatch.setattr(refresh, "_load_from_official_sources", _fake_loader(set(KNOWN_ACTS)))
     refresh.refresh_corpus_once(target)
-    before = LegalCorpus(target).count()
+    with LegalCorpus(target) as corpus:
+        before = corpus.count()
+        before_by_act = {act_id: corpus.count(act_id) for act_id in KNOWN_ACTS}
 
     monkeypatch.setattr(refresh, "_load_from_official_sources", _fake_loader({sorted(KNOWN_ACTS)[0]}))
-    with pytest.raises(RuntimeError):
-        refresh.refresh_corpus_once(target)
+    refresh.refresh_corpus_once(target)
 
     with LegalCorpus(target) as corpus:
         assert corpus.count() == before
+        assert {act_id: corpus.count(act_id) for act_id in KNOWN_ACTS} == before_by_act
 
 
 # ---------------------------------------------------------------------------
