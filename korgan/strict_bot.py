@@ -170,7 +170,7 @@ async def main() -> None:
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
-        settings.admin_report_id is not None,
+        getattr(settings, "admin_report_id", None) is not None,
     )
     try:
         await dp.start_polling(bot)
