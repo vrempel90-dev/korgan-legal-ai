@@ -4,10 +4,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from korgan.miniapp_payment_idempotency import app
 
-# Регистрирует POST /miniapp/cases/{case_id}/document/telegram.
-# Импорт ради побочного эффекта: встроенный браузер Telegram блокирует
-# обычное сохранение файла, поэтому документ уходит ботом в чат.
+# Registers secure Mini App document delivery/access routes as side effects.
+# - /document/telegram remains the reliable fallback for Telegram WebView.
+# - /document/access issues short-lived signed links used by native downloadFile
+#   and the protected first-party document preview.
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
+from korgan import miniapp_document_access as _miniapp_document_access  # noqa: F401
 
 # Recovery outer CORS layer. Keep the already-working Mini App origins and
 # browser-managed Telegram WebView headers unchanged while the payment layer is
