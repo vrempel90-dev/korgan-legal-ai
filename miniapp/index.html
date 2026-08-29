@@ -7,6 +7,34 @@
     <meta name="color-scheme" content="dark" />
     <meta name="description" content="KORGAN Legal AI — ваш AI Юрист в Республике Казахстан" />
     <title>KORGAN Legal AI</title>
+    <style>
+      html, body, #root { margin: 0; min-height: 100%; background: #0B0F14; color: #F3F0E9; }
+      html, body { min-height: 100vh; }
+    </style>
+    <script>
+      (function () {
+        try {
+          var raw = String(location.hash || '').replace(/^#/, '');
+          var query = raw.indexOf('?') >= 0 ? raw.slice(raw.indexOf('?') + 1) : raw;
+          var initData = new URLSearchParams(query).get('tgWebAppData') || '';
+          if (initData) window.__KORGAN_TG_INIT_DATA__ = initData;
+        } catch (_) {}
+
+        try {
+          if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
+            window.TelegramWebviewProxy.postEvent('web_app_ready', '{}');
+          } else if (window.external && typeof window.external.notify === 'function') {
+            window.external.notify(JSON.stringify({ eventType: 'web_app_ready', eventData: {} }));
+          }
+        } catch (_) {}
+
+        window.__korganTelegramSdkReady = function () {
+          try { window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.ready(); } catch (_) {}
+          try { window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.expand(); } catch (_) {}
+          try { window.dispatchEvent(new Event('korgan:telegram-ready')); } catch (_) {}
+        };
+      })();
+    </script>
     <link rel="stylesheet" href="/src/professional.css" />
     <link rel="stylesheet" href="/src/personal-lawyer.css" />
     <link rel="stylesheet" href="/src/korgan-site-typography.css" />
@@ -24,14 +52,14 @@
     <link rel="stylesheet" href="/src/dock-final.css" />
     <link rel="stylesheet" href="/src/ui-motion-final.css" />
     <link rel="stylesheet" href="/src/mobile-performance.css" />
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="/payment-auto-ui.js"></script>
+    <script async src="https://telegram.org/js/telegram-web-app.js?63" onload="window.__korganTelegramSdkReady && window.__korganTelegramSdkReady()"></script>
+    <script defer src="/payment-auto-ui.js"></script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
     <script type="module" src="/src/home-scroll-fix.js"></script>
     <script type="module" src="/src/motion-ui.js"></script>
-    <script src="/client-safe-ui.js?v=performance-v3"></script>
+    <script src="/client-safe-ui.js?v=performance-v4"></script>
   </body>
 </html>
