@@ -1,3 +1,5 @@
+import { trackAcquisitionEvent } from './qr-analytics.js';
+
 const API_BASE = import.meta.env.VITE_KORGAN_API_BASE || '';
 
 const LEGACY_UPLOAD_ONLY_DESCRIPTIONS = new Set([
@@ -71,6 +73,15 @@ function requireProfessionalDocument(payload) {
 const sleep = ms => new Promise(resolve => window.setTimeout(resolve, ms));
 const pendingForever = () => new Promise(() => {});
 
+function paymentAnalyticsOnce(kind, orderId) {
+  const key = `korgan:payment-analytics:${kind}:${String(orderId)}`;
+  try {
+    if (window.sessionStorage?.getItem(key) === '1') return;
+    window.sessionStorage?.setItem(key, '1');
+  } catch {}
+  void trackAcquisitionEvent('payment_confirmed');
+}
+
 async function recoverGeneratedDocument(caseId, timeoutMs = 6 * 60 * 1000) {
   const encodedId = encodeURIComponent(caseId);
   const deadline = Date.now() + timeoutMs;
@@ -120,13 +131,17 @@ async function uploadMaterial(caseId, file) {
 async function uploadConsultationReceipt(orderId, file) {
   const body = new FormData();
   body.append('file', file);
-  return request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+  const result = await request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+  paymentAnalyticsOnce('consultation', orderId);
+  return result;
 }
 
 async function uploadDocumentReceipt(orderId, file) {
   const body = new FormData();
   body.append('file', file);
-  return request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+  const result = await request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+  paymentAnalyticsOnce('document', orderId);
+  return result;
 }
 
 export const korganApi = {
