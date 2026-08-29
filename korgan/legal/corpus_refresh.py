@@ -149,7 +149,7 @@ def _download_pinned_intermediate(url: str, expected_sha256: str) -> str:
     with _open_allowlisted(
         request,
         timeout=30,
-        context=ssl.create_default_context(),
+        context=_trusted_context(),
         allow_url=_is_allowed_pinned_ca_url,
     ) as response:
         final_url = response.geturl()
@@ -168,8 +168,35 @@ def _download_pinned_intermediate(url: str, expected_sha256: str) -> str:
     return pem
 
 
+def _trusted_context() -> ssl.SSLContext:
+    """Контекст TLS с максимально полным набором корневых сертификатов.
+
+    Системное хранилище образа Railway проверяет api.telegram.org и
+    api.openai.com, но цепочку adilet.zan.kz — не всегда: в логах это
+    выглядит как
+
+        CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate
+
+    и заканчивается тем, что корпус норм не грузится, а без корпуса гейт
+    цитат не выпускает ни одного документа. Набор certifi обновляется
+    вместе с пакетом и содержит корни, которых в образе может не быть.
+
+    Проверка TLS при этом НЕ ослабляется: certifi лишь добавляет корни,
+    verify_mode и проверка имени хоста остаются по умолчанию. Если certifi
+    недоступен, поведение прежнее — системное хранилище, поэтому явной
+    зависимости в requirements не требуется (certifi приходит с openai).
+    """
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        LOGGER.warning("KORGAN certifi недоступен, используется системное хранилище сертификатов")
+        return ssl.create_default_context()
+
+
 def _adilet_context_with_pinned_intermediates() -> ssl.SSLContext:
-    context = ssl.create_default_context()
+    context = _trusted_context()
     loaded = 0
     for url, fingerprint in _PINNED_INTERMEDIATES:
         try:
@@ -196,7 +223,7 @@ def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
     )
     candidates = [url, parsed._replace(netloc=alt_host).geturl()]
 
-    standard = ssl.create_default_context()
+    standard = _trusted_context()
     errors: list[str] = []
     for candidate in candidates:
         try:
@@ -238,7 +265,7 @@ def _read_zan_pdf(act_id: str, *, timeout: int = 90) -> tuple[bytes, str]:
     with _open_allowlisted(
         request,
         timeout=timeout,
-        context=ssl.create_default_context(),
+        context=_trusted_context(),
         allow_url=allow_url,
     ) as response:
         final_url = response.geturl()
@@ -380,8 +407,38 @@ def _load_from_official_sources(corpus: LegalCorpus, act_id: str) -> tuple[int, 
         ) from zan_exc
 
 
+def _existing_provision_count(target: Path) -> int:
+    """Сколько норм в уже лежащем корпусе. Ошибка чтения = считаем пустым."""
+    if not target.exists():
+        return 0
+    try:
+        with LegalCorpus(target) as corpus:
+            return corpus.count()
+    except Exception:
+        LOGGER.warning("KORGAN не удалось прочитать существующий корпус %s", target)
+        return 0
+
+
 def refresh_corpus_once(path: Path | str = DEFAULT_DB_PATH) -> int:
-    """Build a complete verified corpus and atomically swap it into place."""
+    """Собрать корпус и подменить им живой.
+
+    Раньше подмена происходила только если загрузились ВСЕ акты, иначе
+    временная база удалялась. На свежем контейнере это означало отсутствие
+    корпуса целиком из-за одного недоступного акта — а adilet отдаёт
+    таймауты регулярно. Без корпуса гейт цитат не подтверждает ни одной
+    статьи и не выпускает ни одного документа.
+
+    Теперь частичная загрузка сохраняется. Это безопасно: каждая норма несёт
+    свой акт, источник и дату редакции, а проверка ссылки отвечает только
+    «нашлась / не нашлась». Недостающий акт означает, что его статьи
+    остаются неподтверждёнными — ровно то же, что при пустом корпусе, но
+    только для этого акта, а не для всех.
+
+    Две границы сохранены:
+    * ни один акт не загрузился — живой корпус не трогаем;
+    * частичная сборка беднее уже лежащей — тоже не трогаем, чтобы
+      неудачная сверка не обменяла полный корпус на урезанный.
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(target.name + ".refreshing")
@@ -389,11 +446,22 @@ def refresh_corpus_once(path: Path | str = DEFAULT_DB_PATH) -> int:
 
     total = 0
     loaded_acts = 0
+    failures: list[str] = []
     source_counts = {"adilet": 0, "zan": 0}
     try:
         with LegalCorpus(temporary) as corpus:
             for act_id in sorted(KNOWN_ACTS):
-                loaded, source_kind, source_url = _load_from_official_sources(corpus, act_id)
+                try:
+                    loaded, source_kind, source_url = _load_from_official_sources(corpus, act_id)
+                except Exception as exc:
+                    failures.append(act_id)
+                    LOGGER.warning(
+                        "KORGAN corpus refresh act=%s НЕ загружен: %s: %s; остальные акты продолжаем",
+                        act_id,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    continue
                 total += loaded
                 loaded_acts += 1
                 source_counts[source_kind] += 1
@@ -405,20 +473,37 @@ def refresh_corpus_once(path: Path | str = DEFAULT_DB_PATH) -> int:
                     source_url,
                 )
 
-            if loaded_acts != len(KNOWN_ACTS) or total <= 0:
+            if total <= 0:
                 raise RuntimeError(
-                    f"Incomplete corpus refresh: acts={loaded_acts}/{len(KNOWN_ACTS)}, provisions={total}"
+                    f"Ни один акт не загружен: acts=0/{len(KNOWN_ACTS)}; живой корпус сохранён"
+                )
+
+            existing = _existing_provision_count(target)
+            if failures and existing > total:
+                raise RuntimeError(
+                    f"Частичная сборка ({total} норм, актов {loaded_acts}/{len(KNOWN_ACTS)}) "
+                    f"беднее существующего корпуса ({existing} норм); живой корпус сохранён"
                 )
 
         os.replace(temporary, target)
-        LOGGER.info(
-            "KORGAN corpus refresh SUCCESS acts=%d provisions=%d adilet=%d zan=%d path=%s",
-            loaded_acts,
-            total,
-            source_counts["adilet"],
-            source_counts["zan"],
-            target,
-        )
+        if failures:
+            LOGGER.warning(
+                "KORGAN corpus refresh PARTIAL acts=%d/%d provisions=%d не загружены=%s path=%s",
+                loaded_acts,
+                len(KNOWN_ACTS),
+                total,
+                ",".join(failures),
+                target,
+            )
+        else:
+            LOGGER.info(
+                "KORGAN corpus refresh SUCCESS acts=%d provisions=%d adilet=%d zan=%d path=%s",
+                loaded_acts,
+                total,
+                source_counts["adilet"],
+                source_counts["zan"],
+                target,
+            )
         return total
     except Exception:
         temporary.unlink(missing_ok=True)

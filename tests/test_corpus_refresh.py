@@ -58,7 +58,10 @@ def test_failed_both_official_sources_keeps_previous_database(
         lambda act_id, timeout=90: (_ for _ in ()).throw(RuntimeError("zan unavailable")),
     )
 
-    with pytest.raises(RuntimeError, match="Both official sources failed"):
+    # Сообщение изменилось: сбой отдельного акта теперь не прерывает сборку,
+    # а копится, и итоговая ошибка говорит, что не загрузился НИ ОДИН акт.
+    # Охраняемое поведение то же — живой корпус остаётся нетронутым.
+    with pytest.raises(RuntimeError, match="Ни один акт не загружен"):
         refresh_corpus_once(target)
 
     assert target.read_bytes() == b"previous-corpus"

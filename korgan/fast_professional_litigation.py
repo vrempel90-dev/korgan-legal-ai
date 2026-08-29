@@ -19,6 +19,7 @@ from korgan.provision_check import paraphrase_defects, verified_claim_line
 from korgan.robust_production_legal import _is_adilet_source, _is_court_source
 from korgan.senior_claim_preflight import deterministic_claim_preflight
 from korgan.verified_openai import _actual_response_urls, _canonical_url
+from korgan.pro_claim_sections import PRO_CLAIM_PROMPT, pro_payload
 
 LOGGER = logging.getLogger(__name__)
 
@@ -195,6 +196,7 @@ class FastProfessionalLitigationService(ProfessionalRKProductionService):
             f"ПРОФЕССИОНАЛЬНАЯ КАРТА:\n{strategy}\n\n"
             f"VERIFIED:\n{verified}\n\n"
             f"UNVERIFIED/РИСКИ:\n{unverified}"
+            + PRO_CLAIM_PROMPT
         )
 
         payload, _ = await self._structured_response(
@@ -238,6 +240,7 @@ class FastProfessionalLitigationService(ProfessionalRKProductionService):
             "requests": draft.requests,
             "attachments": draft.attachments,
             "verification_notes": draft.verification_notes,
+            **pro_payload(draft),
         }
         repaired_payload = await self._quality_repair(
             schema_name="korgan_fast_professional_repair",

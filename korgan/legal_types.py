@@ -84,6 +84,18 @@ class ClaimDraft:
     # source-bound research has confirmed the provision.
     late_interest: str = ""
 
+    # Профессиональные разделы иска — см. korgan.pro_claim_sections.
+    # Значения по умолчанию оставлены пустыми намеренно: старые сохранённые
+    # черновики и тесты, построенные без этих полей, продолжают работать, а
+    # экспортёр просто не печатает раздел, для которого нет материала.
+    jurisdiction_reason: str = ""
+    calculation: list[str] = field(default_factory=list)
+    pretrial_compliance: str = ""
+    reconciliation_measures: str = ""
+    limitation_period: str = ""
+    anticipated_defenses: list[str] = field(default_factory=list)
+    motions: list[str] = field(default_factory=list)
+
 
 @dataclass(slots=True)
 class ArgumentClause:

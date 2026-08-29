@@ -74,6 +74,40 @@ def _present(pattern: str, text: str) -> bool:
     return re.search(pattern, text) is not None
 
 
+_FACT_APPLICATION_RE = re.compile(
+    r"(?:обстоятельств\w*\s*\d|"                     # «(обстоятельство 4)»
+    r"\bистц?\w*\b|\bответчик\w*\b|\bстороны?\b|\bсторон\w*\b|"
+    r"договор\w*\s*№|\bп\.\s*\d|\bпункт\w*\s+\d|"
+    r"\d{1,2}\s+(?:январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)\w*|"
+    r"\d{2}\.\d{2}\.\d{4}|"
+    r"\d[\d\s ]*(?:тенге|теңге|₸))",
+    re.IGNORECASE,
+)
+
+
+def _norm_claim_only(statement: str) -> str:
+    """Оставить только предложения, описывающие содержание нормы.
+
+    Строка правового обоснования состоит из двух разных утверждений:
+
+        «Неустойкой признаётся определённая договором денежная сумма…»   ← о норме
+        «…её размер согласован сторонами в пункте 6.3 (обстоятельство 6)» ← о деле
+
+    Сверять с текстом нормы имеет смысл только первое. Второе называет
+    обстоятельства дела, и любое его слово неизбежно отсутствует в тексте
+    закона.
+
+    Если по этому признаку не осталось ни одного предложения, возвращается
+    исходное утверждение целиком: лучше лишняя проверка, чем пропущенная.
+    """
+    text = str(statement or "")
+    sentences = [part.strip() for part in re.split(r"(?<=[.;])\s+", text) if part.strip()]
+    norm_sentences = [part for part in sentences if not _FACT_APPLICATION_RE.search(part)]
+    if not norm_sentences:
+        return text
+    return " ".join(norm_sentences)
+
+
 def paraphrase_defects(statement: str, provision_text: str) -> list[str]:
     """Compare a paraphrase against the provision's own words.
 
@@ -99,8 +133,16 @@ def paraphrase_defects(statement: str, provision_text: str) -> list[str]:
                 f"пересказ обобщает узкое условие нормы: {explanation}, но в формулировке это ограничение отсутствует"
             )
 
+    # Якоря ищут выдуманное требование закона, поэтому сверяются только с той
+    # частью утверждения, которая говорит О НОРМЕ. Предложение, применяющее
+    # норму к делу, обязано называть обстоятельства — срок по договору,
+    # возврат аванса, отказ ответчика, — и раньше каждое такое слово читалось
+    # как «пересказ вводит требование, которого нет в тексте нормы».
+    # Профессионально составленный документ блокировался именно за то, что
+    # связывает норму с фактом; см. _norm_claim_only.
+    norm_claim = _norm_claim_only(statement)
     for pattern, label in _SUBSTANTIVE_ANCHORS:
-        if _present(pattern, claim) and not _present(pattern, provision):
+        if _present(pattern, norm_claim) and not _present(pattern, provision):
             defects.append(
                 f"пересказ вводит требование «{label}», которого нет в тексте нормы"
             )

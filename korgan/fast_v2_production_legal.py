@@ -18,6 +18,7 @@ from korgan.production_legal import (
     _apply_state_duty,
     _hard_quality_issues,
 )
+from korgan.pro_claim_sections import PRO_CLAIM_PROMPT
 from korgan.repaired_production_legal import (
     _has_state_duty_payment_proof,
     _prepare_draft_for_validation,
@@ -228,6 +229,7 @@ class ProductionOpenAILegalService(_FastBase):
             f"МАТЕРИАЛЫ:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
             f"VERIFIED:\n{verified_block}\n\n"
             f"НЕ ПОДТВЕРЖДЕНО (только для verification_notes):\n{unverified_block}"
+            + PRO_CLAIM_PROMPT
         )
 
         payload, _ = await self._structured_response(
