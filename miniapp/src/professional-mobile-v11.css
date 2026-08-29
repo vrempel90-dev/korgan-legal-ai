@@ -1,0 +1,218 @@
+/* KORGAN mobile app dashboard v11.
+   Final production layout for Telegram Mini App home/profile.
+   UI only: no API, payment, document or agent behaviour changes. */
+
+:root{
+  --korgan-v11-nav:72px;
+  --korgan-v11-topbar:68px;
+  --korgan-v11-gap:10px;
+  --korgan-v11-ease:cubic-bezier(.22,.86,.28,1);
+}
+
+/* One real app viewport: header + dashboard + persistent navigation. */
+body:has(.native-home),
+#root:has(.native-home){
+  height:100dvh!important;
+  min-height:100dvh!important;
+  max-height:100dvh!important;
+  overflow:hidden!important;
+}
+
+.app-shell:has(.native-home){
+  height:100dvh!important;
+  min-height:100dvh!important;
+  max-height:100dvh!important;
+  display:flex!important;
+  flex-direction:column!important;
+  overflow:hidden!important;
+  padding-bottom:0!important;
+}
+
+.app-shell:has(.native-home)>.topbar{
+  position:relative!important;
+  flex:0 0 var(--korgan-v11-topbar)!important;
+  height:var(--korgan-v11-topbar)!important;
+}
+
+.app-shell:has(.native-home)>.native-home,
+.app-shell:has(.native-home)>.workspace-home{
+  flex:1 1 auto!important;
+  min-height:0!important;
+  height:auto!important;
+  max-height:none!important;
+  display:flex!important;
+  flex-direction:column!important;
+  overflow:hidden!important;
+  padding:10px 14px calc(var(--korgan-v11-nav) + 10px + env(safe-area-inset-bottom))!important;
+}
+
+/* Compact product header, not a landing-page hero. */
+.app-shell:has(.native-home) .native-home-intro{
+  flex:0 0 auto!important;
+  padding:4px 42px 12px!important;
+}
+.app-shell:has(.native-home) .native-home-intro h1{
+  margin:0 auto 6px!important;
+  max-width:320px!important;
+  font-size:22px!important;
+  line-height:1.1!important;
+  font-weight:680!important;
+  letter-spacing:-.035em!important;
+}
+.app-shell:has(.native-home) .native-home-intro p{
+  margin:0 auto!important;
+  max-width:310px!important;
+  font-size:11px!important;
+  line-height:1.35!important;
+}
+.app-shell:has(.native-home) .native-home-status{
+  top:2px!important;
+  right:0!important;
+  width:34px!important;
+  height:34px!important;
+  border-radius:12px!important;
+}
+
+/* Dashboard fills the remaining viewport with exactly four primary actions. */
+.app-shell:has(.native-home) .native-service-hub{
+  flex:1 1 auto!important;
+  min-height:0!important;
+  display:flex!important;
+  flex-direction:column!important;
+  overflow:hidden!important;
+}
+
+.app-shell:has(.native-home) .native-service-grid,
+.app-shell:has(.native-home) .workspace-actions{
+  flex:1 1 auto!important;
+  min-height:0!important;
+  height:100%!important;
+  max-height:none!important;
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  grid-template-rows:repeat(2,minmax(0,1fr))!important;
+  grid-auto-flow:row!important;
+  grid-auto-rows:unset!important;
+  gap:var(--korgan-v11-gap)!important;
+  align-items:stretch!important;
+  align-content:stretch!important;
+  overflow:hidden!important;
+}
+
+/* Help is available elsewhere; Home is a four-action dashboard. */
+.app-shell:has(.native-home) .native-service-grid>.native-help-card,
+.app-shell:has(.native-home) .native-service-grid>.action-card:has(.action-icon.help){
+  display:none!important;
+}
+
+/* Neutralise older responsive rules that made the dashboard one long column. */
+.app-shell:has(.native-home) .native-service-grid>.action-card:not(.native-help-card),
+.app-shell:has(.native-home) .native-service-grid>.personal-lawyer-card{
+  grid-column:auto!important;
+  grid-row:auto!important;
+  width:100%!important;
+  height:100%!important;
+  min-width:0!important;
+  min-height:0!important;
+  max-height:none!important;
+  margin:0!important;
+  padding:14px!important;
+  display:grid!important;
+  grid-template-columns:1fr!important;
+  grid-template-rows:auto 1fr!important;
+  gap:12px!important;
+  align-content:stretch!important;
+  overflow:hidden!important;
+  border-radius:18px!important;
+}
+
+.app-shell:has(.native-home) .native-service-grid .action-card>.action-icon,
+.app-shell:has(.native-home) .native-service-grid .personal-lawyer-icon{
+  grid-column:1!important;
+  grid-row:1!important;
+  width:42px!important;
+  height:42px!important;
+  margin:0!important;
+  border-radius:13px!important;
+}
+
+.app-shell:has(.native-home) .native-service-grid .action-copy,
+.app-shell:has(.native-home) .native-service-grid .personal-lawyer-copy{
+  grid-column:1!important;
+  grid-row:2!important;
+  align-self:end!important;
+  min-width:0!important;
+}
+.app-shell:has(.native-home) .native-service-grid .action-copy h2,
+.app-shell:has(.native-home) .native-service-grid .personal-lawyer-copy h2{
+  margin:0 0 5px!important;
+  font-size:14px!important;
+  line-height:1.18!important;
+  font-weight:680!important;
+}
+.app-shell:has(.native-home) .native-service-grid .action-copy p,
+.app-shell:has(.native-home) .native-service-grid .personal-lawyer-copy p{
+  margin:0!important;
+  display:-webkit-box!important;
+  -webkit-box-orient:vertical!important;
+  -webkit-line-clamp:2!important;
+  overflow:hidden!important;
+  font-size:10.5px!important;
+  line-height:1.35!important;
+}
+
+/* Keep the existing motion, but make interaction feel like native tiles. */
+.app-shell:has(.native-home) .native-service-grid>.action-card:not(.native-help-card){
+  transition:transform 180ms var(--korgan-v11-ease),border-color 180ms ease,box-shadow 180ms ease!important;
+}
+.app-shell:has(.native-home) .native-service-grid>.action-card:not(.native-help-card):active{
+  transform:scale(.975)!important;
+}
+
+/* Profile must finish at the destructive action; never manufacture filler. */
+main.page:has(> .profile-card)::after{
+  content:none!important;
+  display:none!important;
+}
+main.page:has(> .profile-card){
+  min-height:0!important;
+  height:auto!important;
+}
+
+/* On genuinely short WebViews we allow a compact scroll instead of clipping. */
+@media(max-height:700px){
+  .app-shell:has(.native-home)>.native-home,
+  .app-shell:has(.native-home)>.workspace-home{
+    overflow-y:auto!important;
+  }
+  .app-shell:has(.native-home) .native-service-grid,
+  .app-shell:has(.native-home) .workspace-actions{
+    flex:0 0 auto!important;
+    height:auto!important;
+    grid-template-rows:repeat(2,126px)!important;
+    overflow:visible!important;
+  }
+}
+
+@media(max-width:370px){
+  .app-shell:has(.native-home)>.native-home,
+  .app-shell:has(.native-home)>.workspace-home{
+    padding-left:11px!important;
+    padding-right:11px!important;
+  }
+  .app-shell:has(.native-home) .native-service-grid,
+  .app-shell:has(.native-home) .workspace-actions{
+    gap:8px!important;
+  }
+  .app-shell:has(.native-home) .native-service-grid>.action-card:not(.native-help-card),
+  .app-shell:has(.native-home) .native-service-grid>.personal-lawyer-card{
+    padding:12px!important;
+  }
+  .app-shell:has(.native-home) .native-home-intro h1{font-size:20px!important}
+  .app-shell:has(.native-home) .native-service-grid .action-copy h2{font-size:13px!important}
+  .app-shell:has(.native-home) .native-service-grid .action-copy p{font-size:9.8px!important}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .app-shell:has(.native-home) .native-service-grid>*{animation:none!important;transition:none!important}
+}
