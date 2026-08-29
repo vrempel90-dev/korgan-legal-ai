@@ -77,6 +77,107 @@ function notify(message, error = false) {
   } catch {}
 }
 
+function downloadPlatform() {
+  const platform = String(window.Telegram?.WebApp?.platform || '').toLowerCase();
+  const ua = String(navigator.userAgent || '').toLowerCase();
+  if (platform === 'ios' || /iphone|ipad|ipod/.test(ua)) return 'ios';
+  if (platform === 'android' || /android/.test(ua)) return 'android';
+  return 'other';
+}
+
+function removeDownloadGuide() {
+  document.querySelector('.korgan-download-guide-v1')?.remove();
+}
+
+function showDownloadGuide(filename = 'KORGAN.docx') {
+  try {
+    removeDownloadGuide();
+    const kk = isKazakh();
+    const platform = downloadPlatform();
+    const guide = document.createElement('section');
+    guide.className = 'korgan-download-guide-v1';
+    guide.setAttribute('role', 'dialog');
+    guide.setAttribute('aria-modal', 'false');
+
+    const title = kk ? 'Құжатты қайдан табуға болады' : 'Где найти документ';
+    let device = kk ? 'Құрылғы' : 'Устройство';
+    let instruction = kk
+      ? 'Жүктелген файлды құрылғыңыздың «Файлдар» немесе «Жүктеулер» бөлімінен табуға болады.'
+      : 'Скачанный файл можно найти в приложении «Файлы» или в разделе «Загрузки».';
+
+    if (platform === 'android') {
+      device = 'Android';
+      instruction = kk
+        ? '«Файлдар» → «Жүктеулер». Егер файл көрінбесе, «Құжаттар» немесе «Telegram» бумасын тексеріңіз.'
+        : 'Откройте «Файлы» → «Загрузки». Если файла нет, проверьте «Документы» или папку «Telegram».';
+    } else if (platform === 'ios') {
+      device = 'iPhone';
+      instruction = kk
+        ? '«Файлдар» → «Соңғылар». Егер файл көрінбесе: «Шолу» → «iCloud Drive» немесе «Менің iPhone-ымда» → «Жүктеулер».'
+        : 'Откройте «Файлы» → «Недавние». Если файла нет: «Обзор» → «iCloud Drive» или «На iPhone» → «Загрузки».';
+    }
+
+    const safeName = document.createElement('span');
+    safeName.className = 'korgan-download-guide-file';
+    safeName.textContent = filename || 'KORGAN.docx';
+
+    guide.innerHTML = `
+      <div class="korgan-download-guide-head">
+        <div>
+          <small>${device}</small>
+          <strong>${title}</strong>
+        </div>
+        <button type="button" class="korgan-download-guide-close" aria-label="${kk ? 'Жабу' : 'Закрыть'}">×</button>
+      </div>
+      <p class="korgan-download-guide-text"></p>
+      <div class="korgan-download-guide-file-wrap"><span class="korgan-download-guide-doc">DOCX</span></div>
+    `;
+    guide.querySelector('.korgan-download-guide-text').textContent = instruction;
+    guide.querySelector('.korgan-download-guide-file-wrap').appendChild(safeName);
+    guide.querySelector('.korgan-download-guide-close').addEventListener('click', removeDownloadGuide);
+
+    Object.assign(guide.style, {
+      position: 'fixed',
+      left: '14px',
+      right: '14px',
+      bottom: 'calc(18px + env(safe-area-inset-bottom))',
+      zIndex: '2147483646',
+      maxWidth: '520px',
+      margin: '0 auto',
+      padding: '15px',
+      borderRadius: '18px',
+      border: '1px solid rgba(212,174,43,.22)',
+      background: 'rgba(13,18,24,.98)',
+      color: '#F3F0E9',
+      boxShadow: '0 22px 58px rgba(0,0,0,.46)',
+      backdropFilter: 'blur(18px)'
+    });
+
+    const head = guide.querySelector('.korgan-download-guide-head');
+    Object.assign(head.style, { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' });
+    const headText = head.querySelector('div');
+    Object.assign(headText.style, { display: 'flex', flexDirection: 'column', gap: '3px', minWidth: '0' });
+    const small = head.querySelector('small');
+    Object.assign(small.style, { color: '#D4AE2B', fontSize: '10px', fontWeight: '800', letterSpacing: '.1em', textTransform: 'uppercase' });
+    const strong = head.querySelector('strong');
+    Object.assign(strong.style, { fontSize: '15px', lineHeight: '1.25' });
+    const close = guide.querySelector('.korgan-download-guide-close');
+    Object.assign(close.style, { width: '32px', height: '32px', borderRadius: '10px', border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.04)', color: '#AEB6BF', fontSize: '22px', lineHeight: '1', cursor: 'pointer' });
+    const text = guide.querySelector('.korgan-download-guide-text');
+    Object.assign(text.style, { margin: '11px 0 12px', color: '#AAB3BC', fontSize: '12.5px', lineHeight: '1.48' });
+    const fileWrap = guide.querySelector('.korgan-download-guide-file-wrap');
+    Object.assign(fileWrap.style, { display: 'flex', alignItems: 'center', gap: '8px', minWidth: '0' });
+    const doc = guide.querySelector('.korgan-download-guide-doc');
+    Object.assign(doc.style, { flex: '0 0 auto', padding: '5px 7px', borderRadius: '8px', background: 'rgba(78,208,160,.09)', border: '1px solid rgba(78,208,160,.16)', color: '#6ED7AD', fontSize: '9px', fontWeight: '800', letterSpacing: '.08em' });
+    Object.assign(safeName.style, { minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#D8DDE2', fontSize: '11px' });
+
+    document.body.appendChild(guide);
+    window.setTimeout(() => {
+      if (guide.isConnected) guide.remove();
+    }, 14000);
+  } catch {}
+}
+
 function requestNativeDownload(access) {
   const payload = { url: access.download_url, file_name: access.filename || 'KORGAN.docx' };
 
@@ -164,13 +265,15 @@ async function download(button) {
     const nativeStarted = await requestNativeDownload(access);
     if (nativeStarted) {
       ping('native-started', caseId);
-      notify(isKazakh() ? 'DOCX жүктеу басталды' : 'Скачивание DOCX началось');
+      notify(isKazakh() ? 'Құжат жүктелуде' : 'Документ скачивается');
+      showDownloadGuide(access.filename);
       return;
     }
 
     if (directDownload(access.download_url)) {
       ping('direct-started', caseId);
-      notify(isKazakh() ? 'DOCX жүктеу басталды' : 'Скачивание DOCX началось');
+      notify(isKazakh() ? 'Құжат жүктелуде' : 'Документ скачивается');
+      showDownloadGuide(access.filename);
       return;
     }
 
@@ -188,7 +291,7 @@ function onClick(event) {
   const button = event.target?.closest?.('button');
   if (!button || !isDownloadButton(button)) return;
 
-  // Own the download before legacy v3/v2 handlers can fall back to Telegram sendDocument.
+  // Own the download before legacy handlers can fall back to Telegram sendDocument.
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation();
