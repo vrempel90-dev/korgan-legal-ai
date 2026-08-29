@@ -1,0 +1,203 @@
+/* KORGAN professional mobile structure v8.
+   Final structural overrides: no clipped home, no floating two-item dock. */
+
+:root{
+  --korgan-v8-nav:72px;
+  --korgan-v8-panel:#10171f;
+  --korgan-v8-border:rgba(255,255,255,.075);
+  --korgan-v8-muted:#8d97a2;
+}
+
+html,body,#root{
+  min-height:100%!important;
+}
+
+/* The previous viewport shell locked the home to one 100dvh clipping window.
+   Let Telegram/WebView scroll normal document content instead. */
+body:has(.native-home),
+#root:has(.native-home){
+  height:auto!important;
+  min-height:100dvh!important;
+  max-height:none!important;
+  overflow-x:hidden!important;
+  overflow-y:auto!important;
+  overscroll-behavior-y:auto!important;
+}
+
+.app-shell:has(.native-home){
+  display:block!important;
+  height:auto!important;
+  min-height:100dvh!important;
+  max-height:none!important;
+  overflow:visible!important;
+  padding-bottom:calc(var(--korgan-v8-nav) + env(safe-area-inset-bottom))!important;
+}
+
+.app-shell:has(.native-home)>.topbar{
+  position:relative!important;
+  width:100%!important;
+  box-sizing:border-box!important;
+}
+
+.app-shell:has(.native-home)>.native-home,
+.app-shell:has(.native-home)>.workspace-home{
+  display:block!important;
+  width:100%!important;
+  height:auto!important;
+  min-height:0!important;
+  max-height:none!important;
+  overflow:visible!important;
+  box-sizing:border-box!important;
+  padding:16px 16px 22px!important;
+}
+
+.native-home-intro{
+  padding:8px 44px 20px!important;
+}
+.native-home-intro h1{
+  max-width:330px!important;
+  margin:0 auto 8px!important;
+  font-size:24px!important;
+  line-height:1.12!important;
+  font-weight:650!important;
+  letter-spacing:-.035em!important;
+}
+.native-home-intro p{
+  max-width:330px!important;
+  font-size:12px!important;
+  line-height:1.45!important;
+  color:var(--korgan-v8-muted)!important;
+}
+.native-home-status{
+  top:6px!important;
+  right:2px!important;
+  width:38px!important;
+  height:38px!important;
+  border-radius:13px!important;
+}
+
+.native-service-hub,
+.native-service-grid,
+.workspace-actions{
+  width:100%!important;
+  height:auto!important;
+  min-height:0!important;
+  max-height:none!important;
+  overflow:visible!important;
+}
+
+.native-service-grid{
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:12px!important;
+  align-items:stretch!important;
+  align-content:start!important;
+}
+
+/* Four core tasks on Home. Help remains reachable from the app navigation/profile. */
+.native-service-grid>.native-help-card{
+  display:none!important;
+}
+
+.native-service-grid .action-card,
+.native-service-grid .personal-lawyer-card{
+  min-height:128px!important;
+  height:auto!important;
+  max-height:none!important;
+  padding:16px!important;
+  border-radius:20px!important;
+  overflow:visible!important;
+  background:linear-gradient(155deg,#141c25,#0f151c)!important;
+  border:1px solid var(--korgan-v8-border)!important;
+  box-shadow:0 10px 28px rgba(0,0,0,.20),inset 0 1px rgba(255,255,255,.018)!important;
+}
+.native-service-grid .action-card>.action-icon,
+.native-service-grid .personal-lawyer-icon{
+  width:44px!important;
+  height:44px!important;
+  border-radius:14px!important;
+}
+.native-service-grid .action-card>.action-icon svg{
+  width:23px!important;
+  height:23px!important;
+}
+.native-service-grid .action-copy h2,
+.native-service-grid .personal-lawyer-copy h2{
+  margin:0 0 6px!important;
+  font-size:14px!important;
+  line-height:1.2!important;
+  font-weight:650!important;
+  letter-spacing:-.012em!important;
+}
+.native-service-grid .action-copy p,
+.native-service-grid .personal-lawyer-copy p{
+  display:block!important;
+  overflow:visible!important;
+  -webkit-line-clamp:unset!important;
+  margin:0!important;
+  font-size:10.5px!important;
+  line-height:1.38!important;
+  color:var(--korgan-v8-muted)!important;
+}
+
+/* Native app dock: four primary destinations, edge-to-edge, stable safe area. */
+.app-shell>.bottom-nav,
+.app-shell:has(.native-home)>.bottom-nav{
+  position:fixed!important;
+  left:0!important;
+  right:0!important;
+  bottom:0!important;
+  transform:none!important;
+  width:100%!important;
+  max-width:none!important;
+  height:calc(var(--korgan-v8-nav) + env(safe-area-inset-bottom))!important;
+  min-height:var(--korgan-v8-nav)!important;
+  padding:6px 8px max(6px,env(safe-area-inset-bottom))!important;
+  box-sizing:border-box!important;
+  border:0!important;
+  border-top:1px solid rgba(255,255,255,.075)!important;
+  border-radius:0!important;
+  background:rgba(8,12,17,.965)!important;
+  box-shadow:0 -12px 32px rgba(0,0,0,.26)!important;
+  backdrop-filter:blur(20px)!important;
+  -webkit-backdrop-filter:blur(20px)!important;
+  z-index:100!important;
+}
+.app-shell>.bottom-nav button{
+  min-width:0!important;
+  min-height:56px!important;
+  padding:5px 4px!important;
+  border-radius:14px!important;
+  gap:3px!important;
+  font-size:10px!important;
+  line-height:1.1!important;
+}
+.app-shell>.bottom-nav button span{
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  max-width:100%!important;
+}
+.app-shell>.bottom-nav button.active{
+  background:rgba(201,162,39,.10)!important;
+  box-shadow:inset 0 0 0 1px rgba(201,162,39,.20)!important;
+}
+
+/* Pages with a dock must never end underneath it. */
+.app-shell:has(>.bottom-nav)>.page{
+  padding-bottom:calc(var(--korgan-v8-nav) + 28px + env(safe-area-inset-bottom))!important;
+}
+
+@media(max-width:370px){
+  .app-shell:has(.native-home)>.native-home,
+  .app-shell:has(.native-home)>.workspace-home{padding-left:12px!important;padding-right:12px!important}
+  .native-home-intro{padding-left:40px!important;padding-right:40px!important}
+  .native-home-intro h1{font-size:22px!important}
+  .native-service-grid{gap:9px!important}
+  .native-service-grid .action-card,
+  .native-service-grid .personal-lawyer-card{min-height:120px!important;padding:13px!important}
+  .native-service-grid .action-copy h2,
+  .native-service-grid .personal-lawyer-copy h2{font-size:13px!important}
+  .native-service-grid .action-copy p,
+  .native-service-grid .personal-lawyer-copy p{font-size:9.8px!important}
+}
