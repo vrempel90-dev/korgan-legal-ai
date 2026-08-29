@@ -34,6 +34,18 @@ body:has(.native-home),
   height:var(--korgan-v11-topbar)!important;
 }
 
+/* Home brand is the only topbar focal point and is geometrically centered. */
+.app-shell:has(.native-home)>.topbar .brand-mark{
+  position:absolute!important;
+  left:50%!important;
+  top:50%!important;
+  margin:0!important;
+  transform:translate(-50%,-50%)!important;
+}
+.app-shell:has(.native-home)>.topbar .top-status{
+  display:none!important;
+}
+
 .app-shell:has(.native-home)>.native-home,
 .app-shell:has(.native-home)>.workspace-home{
   flex:1 1 auto!important;
@@ -46,27 +58,20 @@ body:has(.native-home),
   padding:10px 14px calc(var(--korgan-v11-nav) + 10px + env(safe-area-inset-bottom))!important;
 }
 
-/* Compact product header, not a landing-page hero. */
+/* Home has no marketing headline. Keep only the compact connection indicator. */
 .app-shell:has(.native-home) .native-home-intro{
-  flex:0 0 auto!important;
-  padding:4px 42px 12px!important;
+  position:relative!important;
+  flex:0 0 34px!important;
+  min-height:34px!important;
+  height:34px!important;
+  padding:0 0 8px!important;
 }
-.app-shell:has(.native-home) .native-home-intro h1{
-  margin:0 auto 6px!important;
-  max-width:320px!important;
-  font-size:22px!important;
-  line-height:1.1!important;
-  font-weight:680!important;
-  letter-spacing:-.035em!important;
-}
+.app-shell:has(.native-home) .native-home-intro h1,
 .app-shell:has(.native-home) .native-home-intro p{
-  margin:0 auto!important;
-  max-width:310px!important;
-  font-size:11px!important;
-  line-height:1.35!important;
+  display:none!important;
 }
 .app-shell:has(.native-home) .native-home-status{
-  top:2px!important;
+  top:0!important;
   right:0!important;
   width:34px!important;
   height:34px!important;
@@ -161,6 +166,21 @@ body:has(.native-home),
   line-height:1.35!important;
 }
 
+/* Consultation owns the product statement; there is deliberately no small subtitle. */
+.chat-page>.chat-product-title{
+  flex:0 0 auto!important;
+  padding:12px 18px 6px!important;
+  text-align:center!important;
+}
+.chat-page>.chat-product-title h1{
+  margin:0!important;
+  font-size:22px!important;
+  line-height:1.12!important;
+  font-weight:700!important;
+  letter-spacing:-.035em!important;
+  color:#f3f0e9!important;
+}
+
 /* Keep the existing motion, but make interaction feel like native tiles. */
 .app-shell:has(.native-home) .native-service-grid>.action-card:not(.native-help-card){
   transition:transform 180ms var(--korgan-v11-ease),border-color 180ms ease,box-shadow 180ms ease!important;
@@ -208,9 +228,9 @@ main.page:has(> .profile-card){
   .app-shell:has(.native-home) .native-service-grid>.personal-lawyer-card{
     padding:12px!important;
   }
-  .app-shell:has(.native-home) .native-home-intro h1{font-size:20px!important}
   .app-shell:has(.native-home) .native-service-grid .action-copy h2{font-size:13px!important}
   .app-shell:has(.native-home) .native-service-grid .action-copy p{font-size:9.8px!important}
+  .chat-page>.chat-product-title h1{font-size:20px!important}
 }
 
 @media(prefers-reduced-motion:reduce){
