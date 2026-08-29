@@ -12,6 +12,7 @@ app.add_middleware(
     allow_origins=[
         "https://korgan-miniapp-staging-production.up.railway.app",
         "https://korgan-miniapp-web-recovery-1600-production.up.railway.app",
+        "https://korgan-miniapp-live-clean-production.up.railway.app",
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
