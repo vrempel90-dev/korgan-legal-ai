@@ -1,0 +1,529 @@
+/* KORGAN native premium application shell.
+   The K | KORGAN wordmark/logo selectors are intentionally excluded. */
+
+:root{
+  --native-bg:#0B0F14;
+  --native-panel:#10161D;
+  --native-panel-2:#131B24;
+  --native-panel-3:#0E141B;
+  --native-border:rgba(255,255,255,.07);
+  --native-border-strong:rgba(255,255,255,.11);
+  --native-text:#F5F3EE;
+  --native-muted:#929BA5;
+  --native-muted-2:#68737E;
+  --native-gold:#C9A227;
+  --native-gold-soft:rgba(201,162,39,.12);
+  --native-green:#50CFA0;
+  --native-green-soft:rgba(80,207,160,.12);
+  --native-radius:16px;
+  --native-shadow:0 10px 28px rgba(0,0,0,.22);
+  --native-transition:180ms ease;
+}
+
+html,body,#root{background:var(--native-bg)!important}
+body{color:var(--native-text)!important}
+.app-shell{background:var(--native-bg)!important;box-shadow:none!important}
+.app-shell::before{display:none!important}
+
+/* Native screen chrome. Home topbar / KORGAN wordmark is deliberately untouched. */
+.subbar{
+  height:56px!important;
+  min-height:56px!important;
+  display:grid!important;
+  grid-template-columns:44px minmax(0,1fr) 44px!important;
+  gap:8px!important;
+  padding:0 12px!important;
+  background:rgba(11,15,20,.97)!important;
+  border-bottom:1px solid var(--native-border)!important;
+  backdrop-filter:blur(18px)!important;
+}
+.subbar strong{
+  min-width:0;
+  text-align:center!important;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:15px!important;
+  line-height:1.2!important;
+  color:var(--native-text)!important;
+}
+.header-spacer{width:44px!important}
+.icon-btn{
+  width:44px!important;
+  height:44px!important;
+  border:0!important;
+  border-radius:13px!important;
+  background:transparent!important;
+  color:#C8D0D7!important;
+  transition:background-color var(--native-transition),color var(--native-transition),transform var(--native-transition)!important;
+}
+.icon-btn:active{background:rgba(255,255,255,.05)!important}
+
+.page{
+  padding-left:16px!important;
+  padding-right:16px!important;
+  padding-top:16px!important;
+  padding-bottom:calc(92px + env(safe-area-inset-bottom))!important;
+}
+
+/* HOME: app dashboard instead of landing page. */
+.home-page.workspace-home{
+  padding:14px 16px 20px!important;
+}
+.workspace-head{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) 38px!important;
+  align-items:center!important;
+  gap:12px!important;
+  margin:0 0 14px!important;
+  padding:0 2px!important;
+}
+.workspace-head-copy{min-width:0!important}
+.workspace-head-copy>.workspace-kicker{display:none!important}
+.workspace-head h1{
+  margin:0 0 5px!important;
+  font-size:27px!important;
+  line-height:1.12!important;
+  font-weight:600!important;
+  letter-spacing:-.025em!important;
+  color:var(--native-text)!important;
+}
+.workspace-head p{
+  margin:0!important;
+  max-width:360px!important;
+  color:var(--native-muted)!important;
+  font-size:12px!important;
+  line-height:1.4!important;
+}
+.workspace-health{
+  width:38px!important;
+  height:38px!important;
+  min-width:38px!important;
+  padding:0!important;
+  display:grid!important;
+  place-items:center!important;
+  border-radius:13px!important;
+  background:var(--native-panel)!important;
+  border:1px solid var(--native-border)!important;
+}
+.workspace-health strong{display:none!important}
+.workspace-health span{width:9px!important;height:9px!important;margin:0!important}
+.workspace-health.ok{background:rgba(80,207,160,.07)!important;border-color:rgba(80,207,160,.18)!important}
+.workspace-health.ok span{background:var(--native-green)!important;box-shadow:0 0 11px rgba(80,207,160,.55)!important}
+
+.workspace-strip{
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:10px!important;
+  margin:0 0 18px!important;
+}
+.workspace-strip>div{
+  min-width:0!important;
+  min-height:64px!important;
+  display:grid!important;
+  grid-template-columns:30px minmax(0,1fr)!important;
+  grid-template-rows:auto auto!important;
+  align-content:center!important;
+  column-gap:9px!important;
+  padding:10px 12px!important;
+  border-radius:15px!important;
+  border:1px solid var(--native-border)!important;
+  background:var(--native-panel)!important;
+  box-shadow:none!important;
+}
+.workspace-strip svg{
+  grid-row:1/3!important;
+  align-self:center!important;
+  width:21px!important;
+  height:21px!important;
+  color:var(--native-gold)!important;
+}
+.workspace-strip span{
+  min-width:0!important;
+  color:var(--native-muted)!important;
+  font-size:10px!important;
+  line-height:1.25!important;
+}
+.workspace-strip strong{
+  color:var(--native-text)!important;
+  font-size:15px!important;
+  line-height:1.2!important;
+}
+
+.workspace-panel{
+  margin:0 0 20px!important;
+  padding:0!important;
+  border:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+}
+.workspace-section-head{
+  align-items:center!important;
+  gap:10px!important;
+  margin:0 2px 11px!important;
+}
+.workspace-section-head .workspace-kicker{
+  color:var(--native-gold)!important;
+  font-size:8px!important;
+  line-height:1!important;
+  letter-spacing:.14em!important;
+}
+.workspace-section-head h2{
+  margin:4px 0 0!important;
+  font-size:18px!important;
+  line-height:1.2!important;
+  font-weight:600!important;
+  color:var(--native-text)!important;
+}
+.workspace-section-head small{display:none!important}
+.workspace-link{
+  min-width:44px!important;
+  min-height:44px!important;
+  padding:0 8px!important;
+  border-radius:12px!important;
+  color:var(--native-gold)!important;
+  font-size:11px!important;
+}
+
+.workspace-actions{
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:11px!important;
+  overflow:visible!important;
+  border:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+}
+.workspace-actions .action-card:not(.personal-lawyer-card){
+  min-width:0!important;
+  min-height:128px!important;
+  display:grid!important;
+  grid-template-columns:48px minmax(0,1fr)!important;
+  grid-template-rows:48px auto!important;
+  align-content:start!important;
+  align-items:start!important;
+  gap:10px 8px!important;
+  padding:14px!important;
+  border:1px solid var(--native-border)!important;
+  border-radius:var(--native-radius)!important;
+  background:linear-gradient(155deg,var(--native-panel-2),var(--native-panel))!important;
+  box-shadow:var(--native-shadow)!important;
+  text-align:left!important;
+  overflow:hidden!important;
+}
+.workspace-actions .action-card:not(.personal-lawyer-card)::after{display:none!important}
+.workspace-actions .action-card:not(.personal-lawyer-card)>.action-icon{
+  grid-column:1!important;
+  grid-row:1!important;
+  width:46px!important;
+  height:46px!important;
+  margin:0!important;
+  border-radius:14px!important;
+}
+.workspace-actions .action-card:not(.personal-lawyer-card)>.action-icon svg{width:23px!important;height:23px!important}
+.workspace-actions .action-card:not(.personal-lawyer-card)>.action-copy{
+  grid-column:1/3!important;
+  grid-row:2!important;
+  min-width:0!important;
+}
+.workspace-actions .action-card:not(.personal-lawyer-card)>.action-copy h2{
+  margin:0 0 5px!important;
+  font-size:14px!important;
+  line-height:1.2!important;
+  font-weight:600!important;
+  color:var(--native-text)!important;
+}
+.workspace-actions .action-card:not(.personal-lawyer-card)>.action-copy p{
+  display:-webkit-box!important;
+  -webkit-line-clamp:2!important;
+  -webkit-box-orient:vertical!important;
+  overflow:hidden!important;
+  margin:0!important;
+  color:var(--native-muted)!important;
+  font-size:10.5px!important;
+  line-height:1.35!important;
+}
+.workspace-actions .action-card:not(.personal-lawyer-card)>svg{display:none!important}
+.action-icon.consult{color:#70D9B6!important;background:rgba(24,94,72,.22)!important;border-color:rgba(80,207,160,.24)!important}
+.action-icon.document{color:#D9B55D!important;background:rgba(108,79,17,.18)!important;border-color:rgba(201,162,39,.25)!important}
+.action-icon.case{color:#CFD6DC!important;background:rgba(255,255,255,.035)!important;border-color:rgba(255,255,255,.10)!important}
+.action-icon.review{color:#D5B45F!important;background:rgba(93,72,23,.18)!important;border-color:rgba(201,162,39,.20)!important}
+
+/* Personal counsel stays functionally identical, but becomes a native CTA card. */
+.workspace-actions .personal-lawyer-card{
+  grid-column:1/-1!important;
+  min-height:92px!important;
+  display:grid!important;
+  grid-template-columns:46px minmax(0,1fr)!important;
+  grid-template-rows:auto!important;
+  gap:12px!important;
+  align-items:center!important;
+  margin:0!important;
+  padding:14px!important;
+  border:1px solid rgba(80,207,160,.17)!important;
+  border-radius:var(--native-radius)!important;
+  background:linear-gradient(145deg,rgba(18,42,35,.76),var(--native-panel))!important;
+  box-shadow:var(--native-shadow)!important;
+}
+.workspace-actions .personal-lawyer-icon{
+  width:46px!important;
+  height:46px!important;
+  border-radius:14px!important;
+  background:var(--native-green-soft)!important;
+  border:1px solid rgba(80,207,160,.18)!important;
+}
+.workspace-actions .personal-lawyer-copy{min-width:0!important}
+.workspace-actions .personal-lawyer-copy .section-kicker{display:none!important}
+.workspace-actions .personal-lawyer-card h2{margin:0 0 5px!important;font-size:14px!important;line-height:1.2!important}
+.workspace-actions .personal-lawyer-card p{
+  display:-webkit-box!important;
+  -webkit-line-clamp:2!important;
+  -webkit-box-orient:vertical!important;
+  overflow:hidden!important;
+  margin:0!important;
+  color:var(--native-muted)!important;
+  font-size:10.5px!important;
+  line-height:1.35!important;
+}
+.workspace-actions .personal-lawyer-arrow{display:none!important}
+
+.recent-panel{margin-top:2px!important;margin-bottom:0!important}
+.recent-list{
+  overflow:hidden!important;
+  border:1px solid var(--native-border)!important;
+  border-radius:var(--native-radius)!important;
+  background:var(--native-panel)!important;
+  box-shadow:none!important;
+}
+.recent-case{
+  min-height:68px!important;
+  grid-template-columns:42px minmax(0,1fr) 20px!important;
+  gap:10px!important;
+  padding:10px 12px!important;
+  border-bottom:1px solid var(--native-border)!important;
+  background:transparent!important;
+}
+.recent-case-icon{width:40px!important;height:40px!important;border-radius:12px!important}
+.recent-case strong{font-size:13px!important;line-height:1.25!important}
+.recent-case small{font-size:10px!important;line-height:1.3!important}
+.workspace-empty{
+  padding:15px!important;
+  border:1px solid var(--native-border)!important;
+  border-radius:var(--native-radius)!important;
+  background:var(--native-panel)!important;
+}
+
+/* Documents, cases, profile: native application surfaces. */
+.search{
+  min-height:50px!important;
+  border:1px solid var(--native-border)!important;
+  border-radius:14px!important;
+  background:var(--native-panel)!important;
+}
+.search input{padding:13px 0!important;font-size:13px!important}
+.price-note{
+  margin-top:10px!important;
+  border-radius:13px!important;
+  border:1px solid rgba(201,162,39,.18)!important;
+  background:var(--native-gold-soft)!important;
+  color:#D8BC70!important;
+}
+.list-kicker{margin-top:16px!important;color:var(--native-gold)!important}
+.list-card,.analysis-card,.status-card,.profile-card,.case-list-item,.settings-card,.privacy-card,.payment-card{
+  border:1px solid var(--native-border)!important;
+  border-radius:var(--native-radius)!important;
+  background:var(--native-panel)!important;
+  box-shadow:var(--native-shadow)!important;
+}
+.list-card{overflow:hidden!important;margin-top:10px!important}
+.list-row{
+  min-height:72px!important;
+  padding:12px!important;
+  grid-template-columns:44px minmax(0,1fr) 20px!important;
+  gap:11px!important;
+  border-bottom:1px solid var(--native-border)!important;
+}
+.list-row small{font-size:10.5px!important;line-height:1.35!important;color:var(--native-muted)!important}
+.row-icon{width:42px!important;height:42px!important;border-radius:13px!important;color:var(--native-gold)!important;background:var(--native-gold-soft)!important;border-color:rgba(201,162,39,.18)!important}
+
+.creation-page{gap:12px!important}
+.big-title{padding-top:2px!important}
+.big-title h1{
+  margin:7px 0!important;
+  font-size:25px!important;
+  line-height:1.15!important;
+  font-weight:600!important;
+  color:var(--native-text)!important;
+}
+.big-title p{font-size:12px!important;line-height:1.45!important;color:var(--native-muted)!important}
+.case-input{
+  min-height:190px!important;
+  padding:15px!important;
+  border:1px solid var(--native-border)!important;
+  border-radius:var(--native-radius)!important;
+  background:var(--native-panel)!important;
+  font-size:13px!important;
+  line-height:1.5!important;
+}
+.case-input:focus{border-color:rgba(201,162,39,.55)!important;box-shadow:0 0 0 3px rgba(201,162,39,.09)!important}
+.primary,.secondary,.lawyer-btn{
+  min-height:50px!important;
+  border-radius:14px!important;
+  transition:background-color var(--native-transition),border-color var(--native-transition),filter var(--native-transition),transform var(--native-transition)!important;
+}
+.primary{background:var(--native-gold)!important;color:#0B0F14!important;box-shadow:0 8px 20px rgba(201,162,39,.12)!important}
+.secondary{background:var(--native-panel)!important;border-color:var(--native-border)!important;color:#E8E5DF!important}
+.analysis-card,.status-card,.profile-card,.settings-card{margin-top:12px!important}
+
+/* Chat closer to a premium messenger screen. */
+.chat-shell{background:var(--native-bg)!important}
+.chat-page{
+  min-height:calc(100dvh - 56px)!important;
+  padding:10px 12px calc(158px + env(safe-area-inset-bottom))!important;
+  background:var(--native-bg)!important;
+}
+.connection-note{font-size:10px!important;color:var(--native-muted)!important}
+.quota-note{
+  margin-top:9px!important;
+  border-radius:999px!important;
+  background:var(--native-green-soft)!important;
+  color:#8DDBBF!important;
+}
+.messages{gap:11px!important;margin-top:14px!important}
+.message-wrap{max-width:88%!important}
+.bubble{
+  padding:12px 14px!important;
+  border-radius:17px!important;
+  font-size:13px!important;
+  line-height:1.45!important;
+}
+.bubble.ai{
+  border:1px solid var(--native-border)!important;
+  background:var(--native-panel-2)!important;
+  color:#ECEAE5!important;
+  box-shadow:none!important;
+  border-bottom-left-radius:6px!important;
+}
+.bubble.user{
+  border:1px solid rgba(201,162,39,.25)!important;
+  background:rgba(201,162,39,.14)!important;
+  color:#F8F1DC!important;
+  border-bottom-right-radius:6px!important;
+}
+.source-list{border-color:var(--native-border)!important;background:var(--native-panel)!important}
+.composer{
+  bottom:calc(72px + env(safe-area-inset-bottom))!important;
+  padding:9px 12px 10px!important;
+  border-top:1px solid var(--native-border)!important;
+  background:rgba(11,15,20,.98)!important;
+  backdrop-filter:blur(18px)!important;
+}
+.composer input{
+  min-height:48px!important;
+  padding:12px 14px!important;
+  border:1px solid var(--native-border)!important;
+  border-radius:16px!important;
+  background:var(--native-panel)!important;
+  color:var(--native-text)!important;
+}
+.composer input:focus{border-color:rgba(201,162,39,.48)!important}
+.composer button{
+  width:48px!important;
+  min-width:48px!important;
+  height:48px!important;
+  border-radius:15px!important;
+  background:var(--native-gold)!important;
+  color:#0B0F14!important;
+  box-shadow:none!important;
+}
+
+/* Bottom dock: four meaningful app destinations. Help remains available as a route, not deleted. */
+.bottom-nav{
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  height:calc(72px + env(safe-area-inset-bottom))!important;
+  padding:6px 8px max(6px,env(safe-area-inset-bottom))!important;
+  background:rgba(9,13,18,.98)!important;
+  border-top:1px solid var(--native-border)!important;
+  box-shadow:0 -8px 24px rgba(0,0,0,.22)!important;
+  backdrop-filter:blur(18px)!important;
+}
+.bottom-nav button{
+  position:relative!important;
+  min-width:44px!important;
+  min-height:52px!important;
+  margin:0 2px!important;
+  border-radius:13px!important;
+  background:transparent!important;
+  color:#77818A!important;
+  font-size:9px!important;
+  transition:background-color var(--native-transition),color var(--native-transition),transform var(--native-transition)!important;
+}
+.bottom-nav button svg{width:21px!important;height:21px!important}
+.bottom-nav button.active{
+  background:rgba(201,162,39,.08)!important;
+  color:var(--native-gold)!important;
+  box-shadow:none!important;
+}
+.bottom-nav button.active::before{
+  content:"";
+  position:absolute;
+  top:2px;
+  left:50%;
+  width:22px;
+  height:2px;
+  border-radius:999px;
+  transform:translateX(-50%);
+  background:var(--native-gold);
+}
+.bottom-nav button.active svg{filter:none!important}
+.bottom-nav button:nth-child(3){display:grid!important}
+.bottom-nav button:nth-child(4){display:none!important}
+
+/* Home uses the existing viewport architecture, but with the new dock height. */
+.app-shell:has(.workspace-home)>.workspace-home{padding-bottom:20px!important}
+.app-shell:has(.workspace-home)>.bottom-nav{
+  position:relative!important;
+  left:auto!important;
+  right:auto!important;
+  bottom:auto!important;
+  transform:none!important;
+  width:100%!important;
+  flex:0 0 calc(72px + env(safe-area-inset-bottom))!important;
+}
+
+button,a,input,textarea,.action-card,.recent-case,.list-row,.case-list-item{
+  -webkit-tap-highlight-color:transparent;
+}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{
+  outline:2px solid var(--native-gold)!important;
+  outline-offset:2px!important;
+}
+button:disabled{opacity:.45!important}
+
+@media(hover:hover){
+  .workspace-actions .action-card:not(.personal-lawyer-card):hover,
+  .workspace-actions .personal-lawyer-card:hover,
+  .recent-case:hover,
+  .list-row:hover,
+  .case-list-item:hover{
+    border-color:rgba(201,162,39,.24)!important;
+    filter:brightness(1.035);
+  }
+  .bottom-nav button:hover:not(.active){background:rgba(255,255,255,.025)!important}
+}
+
+@media(max-width:365px){
+  .home-page.workspace-home{padding-left:12px!important;padding-right:12px!important}
+  .workspace-head h1{font-size:24px!important}
+  .workspace-head p{font-size:11px!important}
+  .workspace-actions{gap:9px!important}
+  .workspace-actions .action-card:not(.personal-lawyer-card){min-height:122px!important;padding:12px!important}
+  .workspace-actions .action-card:not(.personal-lawyer-card)>.action-copy h2{font-size:13px!important}
+  .workspace-actions .action-card:not(.personal-lawyer-card)>.action-copy p{font-size:9.7px!important}
+  .page{padding-left:12px!important;padding-right:12px!important}
+}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}
+}
