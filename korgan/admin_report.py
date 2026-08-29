@@ -30,6 +30,26 @@ class AdminReportMetrics:
     database_ok: bool = True
 
 
+def _report_chat_id(settings: object) -> int | None:
+    """Resolve report destination without assuming a concrete Settings class.
+
+    Some startup/compatibility tests intentionally inject a minimal settings-like
+    object. Missing report configuration must behave exactly like a disabled
+    optional feature rather than crashing the legal agent startup path.
+    """
+    try:
+        value = getattr(settings, "admin_report_id", None)
+    except Exception:
+        return None
+    if value is None:
+        return None
+    try:
+        chat_id = int(value)
+    except (TypeError, ValueError):
+        return None
+    return chat_id if chat_id > 0 else None
+
+
 async def _table_exists(connection: asyncpg.Connection, table: str) -> bool:
     return bool(await connection.fetchval("SELECT to_regclass($1)", f"public.{table}"))
 
@@ -56,7 +76,7 @@ async def collect_admin_report_metrics(
         "miniapp_document_revenue_kzt": 0,
         "database_ok": True,
     }
-    if not settings.database_url.strip():
+    if not str(getattr(settings, "database_url", "") or "").strip():
         values["database_ok"] = False
         return AdminReportMetrics(**values)
 
@@ -178,7 +198,7 @@ async def build_admin_report(settings: Settings, *, now: datetime | None = None)
 
 
 async def send_admin_report(bot: Bot, settings: Settings, *, now: datetime | None = None) -> bool:
-    chat_id = settings.admin_report_id
+    chat_id = _report_chat_id(settings)
     if chat_id is None:
         LOGGER.info("ADMIN_REPORT_SKIPPED recipient_not_configured")
         return False
@@ -200,7 +220,7 @@ def next_admin_report_at(now: datetime, hour: int) -> datetime:
 async def _admin_report_loop(bot: Bot, settings: Settings) -> None:
     while True:
         now = datetime.now(ALMATY_TZ)
-        target = next_admin_report_at(now, settings.admin_report_hour_almaty)
+        target = next_admin_report_at(now, int(getattr(settings, "admin_report_hour_almaty", 21)))
         delay = max(1.0, (target - now).total_seconds())
         LOGGER.info("ADMIN_REPORT_NEXT at=%s", target.isoformat())
         await asyncio.sleep(delay)
@@ -214,7 +234,7 @@ async def _admin_report_loop(bot: Bot, settings: Settings) -> None:
 
 
 def start_admin_report_task(bot: Bot, settings: Settings) -> asyncio.Task[None] | None:
-    if settings.admin_report_id is None:
+    if _report_chat_id(settings) is None:
         LOGGER.info("ADMIN_REPORT_DISABLED recipient_not_configured")
         return None
     return asyncio.create_task(_admin_report_loop(bot, settings), name="korgan-admin-report")
