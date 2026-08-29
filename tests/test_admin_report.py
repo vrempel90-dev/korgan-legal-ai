@@ -63,7 +63,8 @@ def test_report_contains_only_real_aggregate_labels_and_revenue() -> None:
     assert "Бесплатных использовано: 4" in report
     assert "подтверждено оплат через Kaspi ОФД: 2" in report
     assert "Mini App: оплаченных документов завершено: 3" in report
-    assert "Подтверждённая выручка: 6 000 ₸" in report
+    assert "Подтверждённая выручка по сохранённым суммам: 4 000 ₸" in report
+    assert "legacy anti-replay хранит факт оплаты без суммы" in report
     assert settings.telegram_bot_token not in report
     assert settings.openai_api_key not in report
 
