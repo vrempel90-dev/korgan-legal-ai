@@ -115,6 +115,10 @@ export const korganApi = {
     });
   },
   getCase: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}`),
+  sendDocumentToTelegram: (caseId) => request(
+    `/miniapp/cases/${encodeURIComponent(caseId)}/document/telegram`,
+    { method: 'POST' },
+  ),
   getDocument: async (caseId) => requireProfessionalDocument(
     await request(`/miniapp/cases/${encodeURIComponent(caseId)}/document`),
   ),
