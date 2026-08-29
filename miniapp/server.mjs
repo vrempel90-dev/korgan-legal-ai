@@ -82,19 +82,9 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Telegram Android can stall before parsing the target document after an
-  // HTTP redirect from the configured Mini App root. Serve the tiny launch
-  // bridge directly as the root response instead. This keeps the original
-  // URL/hash (including tgWebAppData) intact and lets the bridge release the
-  // native loading overlay before navigating to the full app.
   const userAgent = String(req.headers['user-agent'] || '');
-  const isTelegramWebView = /Telegram/i.test(userAgent);
-  if (pathname === '/' && isTelegramWebView && !url.searchParams.has('launch')) {
-    console.log(`KORGAN_BOOT stage=server-root-launch ua=${userAgent.slice(0, 240)}`);
-    if (sendFile(req, res, path.join(root, 'launch.html'))) return;
-    res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('Mini App launch bridge is unavailable');
-    return;
+  if (pathname === '/' && /Telegram/i.test(userAgent)) {
+    console.log(`KORGAN_BOOT stage=server-root-index ua=${userAgent.slice(0, 240)}`);
   }
 
   const requested = path.resolve(root, `.${pathname}`);
