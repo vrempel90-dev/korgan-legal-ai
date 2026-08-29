@@ -11,10 +11,11 @@
       html, body, #root { margin: 0; min-height: 100%; background: #0B0F14; color: #F3F0E9; }
       html, body { min-height: 100vh; }
     </style>
-    <link rel="preload" as="image" href="/__korgan_boot?stage=parser-preload&v=telegram-passive-1" />
+    <link rel="preload" as="image" href="/__korgan_boot?stage=parser-preload&v=telegram-postmount-ready-1" />
     <script>
       (function () {
-        var bootVersion = 'telegram-passive-1';
+        var bootVersion = 'telegram-postmount-ready-1';
+        var readySent = false;
 
         function bootPing(stage, detail) {
           try {
@@ -26,8 +27,37 @@
           } catch (_) {}
         }
 
+        function releaseTelegramOverlay() {
+          if (readySent) return;
+          var root = document.getElementById('root');
+          if (!root || root.childElementCount < 1) return;
+          readySent = true;
+          bootPing('react-mounted', 'children=' + root.childElementCount);
+
+          // The Android native bridge is intentionally invoked only after React
+          // has mounted, so it can never block parsing or prevent the UI render.
+          setTimeout(function () {
+            try {
+              if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.ready === 'function') {
+                window.Telegram.WebApp.ready();
+                bootPing('telegram-ready-sdk-postmount', 'ok');
+                return;
+              }
+              if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
+                bootPing('telegram-ready-proxy-before', 'postmount');
+                window.TelegramWebviewProxy.postEvent('web_app_ready', JSON.stringify(''));
+                bootPing('telegram-ready-proxy-after', 'postmount');
+                return;
+              }
+              bootPing('telegram-ready-unavailable', 'postmount');
+            } catch (error) {
+              bootPing('telegram-ready-error', error && error.message ? error.message : String(error));
+            }
+          }, 0);
+        }
+
         window.__KORGAN_BOOT_PING__ = bootPing;
-        bootPing('html-script-passive', 'readyState=' + document.readyState);
+        bootPing('html-script-postmount', 'readyState=' + document.readyState);
 
         window.addEventListener('error', function (event) {
           var message = event && (event.message || (event.error && event.error.message)) || 'window-error';
@@ -44,26 +74,39 @@
           var params = new URLSearchParams(queryText);
           var initData = params.get('tgWebAppData') || '';
           if (initData) window.__KORGAN_TG_INIT_DATA__ = initData;
-          bootPing('telegram-params-passive', 'init=' + (initData ? '1' : '0') + ',platform=' + (params.get('tgWebAppPlatform') || ''));
+          bootPing('telegram-params-postmount', 'init=' + (initData ? '1' : '0') + ',platform=' + (params.get('tgWebAppPlatform') || ''));
         } catch (error) {
           bootPing('telegram-params-error', error && error.message ? error.message : String(error));
         }
 
-        // Do not call TelegramWebviewProxy/web_app_ready during initial parsing.
-        // Telegram clients are required to remove their loading placeholder when
-        // the page itself finishes loading, even if web_app_ready is not emitted.
         window.addEventListener('DOMContentLoaded', function () {
-          bootPing('dom-content-loaded-passive', 'root=' + Boolean(document.getElementById('root')));
+          bootPing('dom-content-loaded-postmount', 'root=' + Boolean(document.getElementById('root')));
+          var root = document.getElementById('root');
+          if (!root) return;
+          if (root.childElementCount > 0) releaseTelegramOverlay();
+          var observer = new MutationObserver(function () {
+            if (root.childElementCount > 0) {
+              observer.disconnect();
+              releaseTelegramOverlay();
+            }
+          });
+          observer.observe(root, { childList: true });
+          setTimeout(function () {
+            observer.disconnect();
+            releaseTelegramOverlay();
+          }, 5000);
         }, { once: true });
 
         window.addEventListener('load', function () {
           var root = document.getElementById('root');
-          bootPing('window-load-passive', 'children=' + (root ? root.childElementCount : -1));
+          bootPing('window-load-postmount', 'children=' + (root ? root.childElementCount : -1));
+          releaseTelegramOverlay();
         }, { once: true });
 
         setTimeout(function () {
           var root = document.getElementById('root');
-          bootPing('post-1500ms-passive', 'children=' + (root ? root.childElementCount : -1));
+          bootPing('post-1500ms-postmount', 'children=' + (root ? root.childElementCount : -1));
+          releaseTelegramOverlay();
         }, 1500);
       })();
     </script>
@@ -91,6 +134,6 @@
     <script type="module" src="/src/main.jsx"></script>
     <script type="module" src="/src/home-scroll-fix.js"></script>
     <script type="module" src="/src/motion-ui.js"></script>
-    <script src="/client-safe-ui.js?v=telegram-passive-1"></script>
+    <script src="/client-safe-ui.js?v=telegram-postmount-ready-1"></script>
   </body>
 </html>
