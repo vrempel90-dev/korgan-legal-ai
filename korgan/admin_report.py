@@ -29,10 +29,6 @@ class AdminReportMetrics:
     miniapp_document_revenue_kzt: int = 0
     database_ok: bool = True
 
-    @property
-    def document_revenue_kzt(self) -> int:
-        return self.agent_document_payments * 0 + self.miniapp_document_revenue_kzt
-
 
 async def _table_exists(connection: asyncpg.Connection, table: str) -> bool:
     return bool(await connection.fetchval("SELECT to_regclass($1)", f"public.{table}"))
@@ -146,9 +142,8 @@ def format_admin_report(
     now: datetime | None = None,
 ) -> str:
     current = (now or datetime.now(ALMATY_TZ)).astimezone(ALMATY_TZ)
-    agent_document_revenue = metrics.agent_document_payments * int(settings.document_price_kzt)
-    document_revenue = agent_document_revenue + metrics.miniapp_document_revenue_kzt
-    total_revenue = document_revenue + metrics.consultation_revenue_kzt
+    exact_document_revenue = metrics.miniapp_document_revenue_kzt
+    exact_total_revenue = exact_document_revenue + metrics.consultation_revenue_kzt
 
     lines = [
         "📊 KORGAN — ДНЕВНОЙ ОТЧЁТ",
@@ -165,11 +160,12 @@ def format_admin_report(
         "📄 Документы",
         f"• Agent: подтверждено оплат через Kaspi ОФД: {metrics.agent_document_payments}",
         f"• Agent: плательщиков: {metrics.agent_document_users}",
+        "• Agent: сумма не включена в выручку — legacy anti-replay хранит факт оплаты без суммы",
         f"• Mini App: оплаченных документов завершено: {metrics.miniapp_documents}",
         f"• Mini App: клиентов: {metrics.miniapp_document_users}",
-        f"• Выручка документов: {_money(document_revenue)}",
+        f"• Выручка Mini App документов: {_money(exact_document_revenue)}",
         "",
-        f"💰 Подтверждённая выручка: {_money(total_revenue)}",
+        f"💰 Подтверждённая выручка по сохранённым суммам: {_money(exact_total_revenue)}",
     ]
     if not metrics.database_ok:
         lines.extend(["", "⚠️ Часть данных Postgres недоступна; отчёт неполный."])
