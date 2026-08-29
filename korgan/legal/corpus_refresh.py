@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import http.client
 import logging
 import os
 import re
+import socket
 import ssl
+import time
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime
@@ -56,6 +59,30 @@ _PINNED_INTERMEDIATES: tuple[tuple[str, str], ...] = (
 )
 _PINNED_CA_URLS = frozenset(url for url, _ in _PINNED_INTERMEDIATES)
 _EDITION_RE = re.compile(r"Дата\s+редакции\s+(\d{2}\.\d{2}\.\d{4})", re.IGNORECASE)
+
+# Обрыв соединения на середине ответа. Не ошибка запроса и не отказ сервера —
+# adilet регулярно закрывает соединение раньше, чем дослал документ:
+#
+#     act=ZPP_RK ... + pinned CA: IncompleteRead: IncompleteRead(44742 bytes read)
+#
+# Остальные пять актов в том же прогоне и через тот же контекст TLS грузятся,
+# поэтому повторная попытка — правильный ответ, а вот принять недочитанный
+# текст закона нельзя ни при каких условиях: это молча превратит половину
+# акта в «весь акт».
+_TRANSIENT_READ_ERRORS: tuple[type[BaseException], ...] = (
+    http.client.IncompleteRead,
+    http.client.RemoteDisconnected,
+    ConnectionResetError,
+    socket.timeout,
+    TimeoutError,
+)
+_FETCH_ATTEMPTS = 3
+_RETRY_PAUSE_SECONDS = 2.0
+
+# Насколько акт может «похудеть» за одну сверку. Отмена отдельных статей — это
+# единицы процентов; потеря более трети статей означает не поправку, а
+# недочитанный или подменённый документ.
+_MIN_ACT_RETENTION = 0.65
 
 
 class _AllowlistedRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -211,6 +238,44 @@ def _adilet_context_with_pinned_intermediates() -> ssl.SSLContext:
     return context
 
 
+def _read_with_retry(
+    url: str,
+    *,
+    context: ssl.SSLContext,
+    act_id: str,
+    timeout: int,
+    label: str,
+) -> tuple[str, str]:
+    """Прочитать акт, переспрашивая при обрыве соединения.
+
+    Повтор делается ТОЛЬКО на транзиентных обрывах. Отказ TLS, отклонённый
+    редирект и неверный адрес — состояния устойчивые, их повтор не лечит, и
+    попытка тратится впустую. Усечённый ответ никогда не принимается как
+    текст акта: если все попытки оборвались, акт считается незагруженным и
+    переносится из живого корпуса (см. _carry_over_act).
+    """
+    last: BaseException | None = None
+    for attempt in range(1, _FETCH_ATTEMPTS + 1):
+        try:
+            return _read_https(url, context=context, act_id=act_id, timeout=timeout)
+        except _TRANSIENT_READ_ERRORS as exc:
+            last = exc
+            LOGGER.warning(
+                "KORGAN Adilet оборвал ответ act=%s попытка=%d/%d %s: %s: %s",
+                act_id,
+                attempt,
+                _FETCH_ATTEMPTS,
+                label,
+                type(exc).__name__,
+                exc,
+            )
+            if attempt < _FETCH_ATTEMPTS:
+                time.sleep(_RETRY_PAUSE_SECONDS * attempt)
+    raise RuntimeError(
+        f"обрыв ответа {_FETCH_ATTEMPTS} раз подряд: {type(last).__name__}: {last}"
+    )
+
+
 def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
     """Fetch one expected Adilet act with verified TLS and bound redirects."""
     act_id = _act_id_for_adilet_url(url)
@@ -227,11 +292,12 @@ def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
     errors: list[str] = []
     for candidate in candidates:
         try:
-            return _read_https(
+            return _read_with_retry(
                 candidate,
                 context=standard,
                 act_id=act_id,
                 timeout=timeout,
+                label=candidate,
             )
         except Exception as exc:
             errors.append(f"{candidate}: {type(exc).__name__}: {exc}")
@@ -239,11 +305,12 @@ def fetch_adilet(url: str, timeout: int = 60) -> tuple[str, str]:
     supplemented = _adilet_context_with_pinned_intermediates()
     for candidate in candidates:
         try:
-            return _read_https(
+            return _read_with_retry(
                 candidate,
                 context=supplemented,
                 act_id=act_id,
                 timeout=timeout,
+                label=f"{candidate} + pinned CA",
             )
         except Exception as exc:
             errors.append(f"{candidate} + pinned CA: {type(exc).__name__}: {exc}")
@@ -407,6 +474,86 @@ def _load_from_official_sources(corpus: LegalCorpus, act_id: str) -> tuple[int, 
         ) from zan_exc
 
 
+def _act_provision_count(target: Path, act_id: str) -> int:
+    """Сколько норм этого акта лежит в живом корпусе."""
+    if not target.exists():
+        return 0
+    try:
+        with LegalCorpus(target) as corpus:
+            return corpus.count(act_id)
+    except Exception:
+        return 0
+
+
+def _carry_over_act(corpus: LegalCorpus, act_id: str, source: Path) -> int:
+    """Перенести акт из живого корпуса в собираемый.
+
+    Зачем
+    -----
+    Проверка «частичная сборка беднее существующей» считает нормы ЦЕЛИКОМ, по
+    всему корпусу. Этого мало. Если ЗПП РК не загрузился (−186 норм), а ГК РК
+    в новой редакции прибавил 200, сумма растёт, подмена проходит — и закон о
+    защите прав потребителей молча исчезает из корпуса. Сегодня она сработала
+    только потому, что арифметика случайно сошлась: 5441 против 5627.
+
+    Последствие исчезновения не абстрактное: гейт цитат отвечает «нашлась /
+    не нашлась», и без акта ни одна ссылка на него не подтверждается. Каждый
+    потребительский иск после этого выходит «предварительным проектом» — при
+    том, что написан он правильно.
+
+    Что делает
+    ----------
+    Недоступный акт не пропускается, а переносится из живого корпуса как есть,
+    вместе с прежними url и edition_date. Ссылка остаётся подтверждённой, а
+    дата редакции в документе честно показывает, на какую версию он опирается.
+    Это строго лучше двух других вариантов: потерять акт или принять
+    недочитанный текст.
+    """
+    if not source.exists():
+        return 0
+    try:
+        with LegalCorpus(source) as live:
+            act_row = live.connection.execute(
+                "SELECT act_id, adilet_id, title_ru, url, edition_date, loaded_at "
+                "FROM acts WHERE act_id = ?",
+                (act_id,),
+            ).fetchone()
+            if act_row is None:
+                return 0
+            rows = live.connection.execute(
+                "SELECT article_no, item_no, heading, body, edition_date, url, sort_key "
+                "FROM provisions WHERE act_id = ? ORDER BY sort_key",
+                (act_id,),
+            ).fetchall()
+    except Exception:
+        LOGGER.warning("KORGAN не удалось перенести акт %s из живого корпуса", act_id)
+        return 0
+
+    if not rows:
+        return 0
+
+    corpus.upsert_act(
+        act_id=act_row["act_id"],
+        adilet_id=act_row["adilet_id"],
+        title_ru=act_row["title_ru"],
+        url=act_row["url"],
+        edition_date=act_row["edition_date"],
+        loaded_at=act_row["loaded_at"],
+    )
+    for row in rows:
+        corpus.upsert_provision(
+            act_id=act_id,
+            article_no=row["article_no"],
+            item_no=row["item_no"],
+            heading=row["heading"],
+            body=row["body"],
+            edition_date=row["edition_date"],
+            url=row["url"],
+            sort_key=row["sort_key"],
+        )
+    return len(rows)
+
+
 def _existing_provision_count(target: Path) -> int:
     """Сколько норм в уже лежащем корпусе. Ошибка чтения = считаем пустым."""
     if not target.exists():
@@ -434,10 +581,17 @@ def refresh_corpus_once(path: Path | str = DEFAULT_DB_PATH) -> int:
     остаются неподтверждёнными — ровно то же, что при пустом корпусе, но
     только для этого акта, а не для всех.
 
-    Две границы сохранены:
-    * ни один акт не загрузился — живой корпус не трогаем;
+    Недостающий акт при этом не теряется: если он уже есть в живом корпусе,
+    он переносится в новую сборку как есть (см. _carry_over_act). Иначе
+    достаточно одного удачного дня у соседнего акта, чтобы сумма выросла,
+    подмена прошла и недоступный акт исчез навсегда.
+
+    Три границы сохранены:
+    * ни один акт не загрузился заново — живой корпус не трогаем;
     * частичная сборка беднее уже лежащей — тоже не трогаем, чтобы
-      неудачная сверка не обменяла полный корпус на урезанный.
+      неудачная сверка не обменяла полный корпус на урезанный;
+    * отдельный акт похудел больше чем на треть — считаем это усечением
+      ответа, а не поправкой, и берём его прежнюю редакцию.
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -447,20 +601,44 @@ def refresh_corpus_once(path: Path | str = DEFAULT_DB_PATH) -> int:
     total = 0
     loaded_acts = 0
     failures: list[str] = []
+    carried: list[str] = []
     source_counts = {"adilet": 0, "zan": 0}
     try:
         with LegalCorpus(temporary) as corpus:
             for act_id in sorted(KNOWN_ACTS):
+                live_count = _act_provision_count(target, act_id)
                 try:
                     loaded, source_kind, source_url = _load_from_official_sources(corpus, act_id)
+                    # Акт, внезапно похудевший на треть, — это не поправка, а
+                    # недочитанный документ. Такой «успех» опаснее отказа:
+                    # ссылки на выпавшие статьи перестанут подтверждаться, а в
+                    # логах будет стоять SUCCESS.
+                    if live_count and loaded < live_count * _MIN_ACT_RETENTION:
+                        raise RuntimeError(
+                            f"акт усечён: {loaded} норм против {live_count} в живом корпусе"
+                        )
                 except Exception as exc:
                     failures.append(act_id)
-                    LOGGER.warning(
-                        "KORGAN corpus refresh act=%s НЕ загружен: %s: %s; остальные акты продолжаем",
-                        act_id,
-                        type(exc).__name__,
-                        exc,
-                    )
+                    corpus.clear_act(act_id)
+                    rescued = _carry_over_act(corpus, act_id, target)
+                    if rescued:
+                        total += rescued
+                        carried.append(act_id)
+                        LOGGER.warning(
+                            "KORGAN corpus refresh act=%s источник недоступен (%s: %s); "
+                            "перенесён из живого корпуса provisions=%d",
+                            act_id,
+                            type(exc).__name__,
+                            exc,
+                            rescued,
+                        )
+                    else:
+                        LOGGER.warning(
+                            "KORGAN corpus refresh act=%s НЕ загружен: %s: %s; остальные акты продолжаем",
+                            act_id,
+                            type(exc).__name__,
+                            exc,
+                        )
                     continue
                 total += loaded
                 loaded_acts += 1
@@ -473,7 +651,7 @@ def refresh_corpus_once(path: Path | str = DEFAULT_DB_PATH) -> int:
                     source_url,
                 )
 
-            if total <= 0:
+            if loaded_acts <= 0:
                 raise RuntimeError(
                     f"Ни один акт не загружен: acts=0/{len(KNOWN_ACTS)}; живой корпус сохранён"
                 )
@@ -487,12 +665,15 @@ def refresh_corpus_once(path: Path | str = DEFAULT_DB_PATH) -> int:
 
         os.replace(temporary, target)
         if failures:
+            lost = [act_id for act_id in failures if act_id not in carried]
             LOGGER.warning(
-                "KORGAN corpus refresh PARTIAL acts=%d/%d provisions=%d не загружены=%s path=%s",
+                "KORGAN corpus refresh PARTIAL acts=%d/%d provisions=%d "
+                "перенесены из живого корпуса=%s потеряны=%s path=%s",
                 loaded_acts,
                 len(KNOWN_ACTS),
                 total,
-                ",".join(failures),
+                ",".join(carried) or "нет",
+                ",".join(lost) or "нет",
                 target,
             )
         else:
