@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const root = path.resolve(process.cwd(), 'dist');
 const port = Number(process.env.PORT || 4173);
+const telegramMiniAppUrl = 'https://t.me/KORGANLEGALAI_BOT?startapp=qr';
 
 const mime = {
   '.html': 'text/html; charset=utf-8',
@@ -66,6 +67,16 @@ const server = http.createServer((req, res) => {
   } catch {
     res.writeHead(400);
     res.end('Bad Request');
+    return;
+  }
+
+  if (pathname === '/app' || pathname === '/go' || pathname === '/start') {
+    res.writeHead(302, {
+      Location: telegramMiniAppUrl,
+      'Cache-Control': 'no-store, max-age=0',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.end();
     return;
   }
 
