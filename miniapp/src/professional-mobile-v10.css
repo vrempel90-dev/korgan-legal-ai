@@ -1,0 +1,125 @@
+/* KORGAN professional mobile structure v10.
+   Viewport geometry only: fill Home to the persistent dock and remove the
+   decorative Profile footer. No API/payment/document behavior is changed. */
+
+:root{
+  --korgan-v10-topbar:68px;
+  --korgan-v10-nav:72px;
+}
+
+/* Home owns exactly one Telegram WebView viewport. Scrolling happens inside
+   the content pane, so there is no dead canvas between the last action and
+   the persistent navigation. */
+body:has(.native-home),
+#root:has(.native-home){
+  height:100dvh!important;
+  min-height:100dvh!important;
+  max-height:100dvh!important;
+  overflow:hidden!important;
+}
+
+.app-shell:has(.native-home){
+  height:100dvh!important;
+  min-height:100dvh!important;
+  max-height:100dvh!important;
+  display:flex!important;
+  flex-direction:column!important;
+  overflow:hidden!important;
+  padding-bottom:0!important;
+}
+
+.app-shell:has(.native-home)>.topbar{
+  flex:0 0 var(--korgan-v10-topbar)!important;
+  height:var(--korgan-v10-topbar)!important;
+  position:relative!important;
+}
+
+.app-shell:has(.native-home)>.native-home,
+.app-shell:has(.native-home)>.workspace-home{
+  flex:1 1 auto!important;
+  height:auto!important;
+  min-height:0!important;
+  max-height:none!important;
+  display:flex!important;
+  flex-direction:column!important;
+  overflow-x:hidden!important;
+  overflow-y:auto!important;
+  -webkit-overflow-scrolling:touch!important;
+  padding:14px 16px calc(var(--korgan-v10-nav) + 14px + env(safe-area-inset-bottom))!important;
+  scrollbar-width:none!important;
+}
+.app-shell:has(.native-home)>.native-home::-webkit-scrollbar,
+.app-shell:has(.native-home)>.workspace-home::-webkit-scrollbar{
+  display:none!important;
+}
+
+.app-shell:has(.native-home) .native-home-intro{
+  flex:0 0 auto!important;
+  padding-top:6px!important;
+  padding-bottom:14px!important;
+}
+
+.app-shell:has(.native-home) .native-service-hub,
+.app-shell:has(.native-home) .workspace-actions{
+  flex:1 0 auto!important;
+  min-height:0!important;
+  display:flex!important;
+  flex-direction:column!important;
+}
+
+/* Five actions = two paired rows + one full-width Help row. The rows stretch
+   to consume spare viewport height instead of leaving a large empty tail. */
+.app-shell:has(.native-home) .native-service-grid{
+  flex:1 0 auto!important;
+  min-height:calc(100dvh - var(--korgan-v10-topbar) - var(--korgan-v10-nav) - 122px - env(safe-area-inset-bottom))!important;
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  grid-template-rows:repeat(2,minmax(138px,1fr)) minmax(96px,.68fr)!important;
+  grid-auto-rows:unset!important;
+  align-content:stretch!important;
+  gap:12px!important;
+}
+
+.app-shell:has(.native-home) .native-service-grid>.action-card,
+.app-shell:has(.native-home) .native-service-grid>.personal-lawyer-card{
+  height:100%!important;
+  min-height:0!important;
+}
+
+.app-shell:has(.native-home) .native-service-grid>.native-help-card,
+.app-shell:has(.native-home) .native-service-grid>.action-card:has(.action-icon.help){
+  grid-column:1/-1!important;
+  min-height:96px!important;
+  height:100%!important;
+}
+
+/* The previous release added a decorative trust tile below the destructive
+   Profile action. The product should end cleanly there, so remove it. */
+main.page:has(> .profile-card)::after{
+  content:none!important;
+  display:none!important;
+  min-height:0!important;
+  flex:none!important;
+  margin:0!important;
+  border:0!important;
+  background:none!important;
+}
+
+@media(max-height:760px){
+  .app-shell:has(.native-home) .native-home-intro{
+    padding-bottom:10px!important;
+  }
+  .app-shell:has(.native-home) .native-service-grid{
+    min-height:520px!important;
+    grid-template-rows:repeat(2,minmax(124px,1fr)) minmax(88px,.65fr)!important;
+    gap:9px!important;
+  }
+}
+
+@media(max-width:370px){
+  .app-shell:has(.native-home)>.native-home,
+  .app-shell:has(.native-home)>.workspace-home{
+    padding-left:12px!important;
+    padding-right:12px!important;
+  }
+}
