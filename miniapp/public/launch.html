@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0B0F14" />
+  <title>KORGAN</title>
+  <style>
+    html,body{margin:0;width:100%;height:100%;background:#0B0F14;color:#F3F0E9;font-family:Arial,sans-serif}
+    body{display:grid;place-items:center}
+    .k{font-size:22px;font-weight:700;letter-spacing:.08em}
+  </style>
+  <script>
+    (function () {
+      var target = '/?launch=bridge-1' + (location.hash || '');
+
+      function ping(stage) {
+        try {
+          var img = new Image();
+          img.src = '/__korgan_boot?stage=' + encodeURIComponent(stage) + '&v=launch-bridge-1&t=' + Date.now();
+        } catch (_) {}
+      }
+
+      function postReady() {
+        var sent = false;
+        try {
+          if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
+            window.TelegramWebviewProxy.postEvent('web_app_ready', JSON.stringify(''));
+            sent = true;
+          }
+        } catch (_) {}
+        try {
+          if (!sent && window.external && typeof window.external.notify === 'function') {
+            window.external.notify(JSON.stringify({ eventType: 'web_app_ready', eventData: '' }));
+            sent = true;
+          }
+        } catch (_) {}
+        try {
+          if (!sent && window.parent && window.parent !== window) {
+            window.parent.postMessage(JSON.stringify({ eventType: 'web_app_ready', eventData: '' }), '*');
+            sent = true;
+          }
+        } catch (_) {}
+        ping(sent ? 'launch-ready-sent' : 'launch-ready-no-bridge');
+      }
+
+      ping('launch-script');
+      postReady();
+      setTimeout(postReady, 50);
+      setTimeout(postReady, 150);
+      setTimeout(postReady, 300);
+      setTimeout(function () {
+        ping('launch-redirect');
+        location.replace(target);
+      }, 650);
+    })();
+  </script>
+</head>
+<body>
+  <div class="k">KORGAN</div>
+  <img alt="" src="/__korgan_boot?stage=launch-parser&v=launch-bridge-1" style="display:none" />
+</body>
+</html>
