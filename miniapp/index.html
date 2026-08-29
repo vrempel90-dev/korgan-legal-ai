@@ -13,69 +13,96 @@
     </style>
     <script>
       (function () {
+        var bootVersion = 'telegram-boot-4';
+
+        function bootPing(stage, detail) {
+          try {
+            var query = '?stage=' + encodeURIComponent(stage)
+              + '&detail=' + encodeURIComponent(String(detail || ''))
+              + '&v=' + encodeURIComponent(bootVersion)
+              + '&t=' + Date.now();
+            fetch('/__korgan_boot' + query, { method: 'GET', cache: 'no-store', keepalive: true }).catch(function () {});
+          } catch (_) {}
+        }
+
+        window.__KORGAN_BOOT_PING__ = bootPing;
+        bootPing('html-script', 'readyState=' + document.readyState);
+
+        window.addEventListener('error', function (event) {
+          var message = event && (event.message || (event.error && event.error.message)) || 'window-error';
+          bootPing('window-error', message);
+        });
+        window.addEventListener('unhandledrejection', function (event) {
+          var reason = event && event.reason;
+          bootPing('unhandled-rejection', reason && reason.message ? reason.message : String(reason || 'unknown'));
+        });
+
         try {
           var raw = String(location.hash || '').replace(/^#/, '');
-          var query = raw.indexOf('?') >= 0 ? raw.slice(raw.indexOf('?') + 1) : raw;
-          var initData = new URLSearchParams(query).get('tgWebAppData') || '';
+          var queryText = raw.indexOf('?') >= 0 ? raw.slice(raw.indexOf('?') + 1) : raw;
+          var params = new URLSearchParams(queryText);
+          var initData = params.get('tgWebAppData') || '';
           if (initData) window.__KORGAN_TG_INIT_DATA__ = initData;
-        } catch (_) {}
+          bootPing('telegram-params', 'init=' + (initData ? '1' : '0') + ',platform=' + (params.get('tgWebAppPlatform') || ''));
+        } catch (error) {
+          bootPing('telegram-params-error', error && error.message ? error.message : String(error));
+        }
 
         function postTelegramEvent(eventType, eventData) {
           var payload = typeof eventData === 'undefined' ? '' : eventData;
           try {
             if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
               window.TelegramWebviewProxy.postEvent(eventType, JSON.stringify(payload));
-              return true;
+              return 'proxy';
             }
-          } catch (_) {}
+          } catch (error) {
+            bootPing('telegram-proxy-error', error && error.message ? error.message : String(error));
+          }
           try {
             if (window.external && typeof window.external.notify === 'function') {
               window.external.notify(JSON.stringify({ eventType: eventType, eventData: payload }));
-              return true;
+              return 'external';
             }
-          } catch (_) {}
+          } catch (error) {
+            bootPing('telegram-external-error', error && error.message ? error.message : String(error));
+          }
           try {
             if (window.parent && window.parent !== window) {
               window.parent.postMessage(JSON.stringify({ eventType: eventType, eventData: payload }), '*');
-              return true;
+              return 'iframe';
             }
-          } catch (_) {}
-          return false;
+          } catch (error) {
+            bootPing('telegram-iframe-error', error && error.message ? error.message : String(error));
+          }
+          return 'none';
         }
 
-        function signalTelegramReady() {
-          return postTelegramEvent('web_app_ready');
+        function signalTelegramReady(stage) {
+          var via = postTelegramEvent('web_app_ready');
+          bootPing(stage || 'telegram-ready', 'via=' + via);
+          return via;
         }
 
-        function finishTelegramSdkInit() {
-          signalTelegramReady();
-          try { window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.ready(); } catch (_) {}
-          try { window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.expand(); } catch (_) {}
-          try { window.dispatchEvent(new Event('korgan:telegram-ready')); } catch (_) {}
-        }
-
-        function loadTelegramSdkAfterPageLoad() {
-          if (document.getElementById('korgan-telegram-sdk')) return;
-          var script = document.createElement('script');
-          script.id = 'korgan-telegram-sdk';
-          script.async = true;
-          script.src = 'https://telegram.org/js/telegram-web-app.js?63&korgan=postload-1';
-          script.onload = finishTelegramSdkInit;
-          script.onerror = signalTelegramReady;
-          document.head.appendChild(script);
-        }
-
-        signalTelegramReady();
-        [50, 150, 350, 700, 1200, 2000, 3500, 5000].forEach(function (delay) {
-          setTimeout(signalTelegramReady, delay);
+        signalTelegramReady('telegram-ready-immediate');
+        [50, 150, 350, 700, 1200, 2000].forEach(function (delay) {
+          setTimeout(function () { signalTelegramReady('telegram-ready-' + delay); }, delay);
         });
-        window.addEventListener('DOMContentLoaded', signalTelegramReady, { once: true });
-        window.addEventListener('load', function () {
-          signalTelegramReady();
-          setTimeout(loadTelegramSdkAfterPageLoad, 0);
+
+        window.addEventListener('DOMContentLoaded', function () {
+          bootPing('dom-content-loaded', 'root=' + Boolean(document.getElementById('root')));
+          signalTelegramReady('telegram-ready-dom');
         }, { once: true });
 
-        window.__korganTelegramSdkReady = finishTelegramSdkInit;
+        window.addEventListener('load', function () {
+          var root = document.getElementById('root');
+          bootPing('window-load', 'children=' + (root ? root.childElementCount : -1));
+          signalTelegramReady('telegram-ready-load');
+        }, { once: true });
+
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          bootPing('post-1500ms', 'children=' + (root ? root.childElementCount : -1));
+        }, 1500);
       })();
     </script>
     <link rel="stylesheet" href="/src/professional.css" />
@@ -102,6 +129,6 @@
     <script type="module" src="/src/main.jsx"></script>
     <script type="module" src="/src/home-scroll-fix.js"></script>
     <script type="module" src="/src/motion-ui.js"></script>
-    <script src="/client-safe-ui.js?v=telegram-postload-staging-1"></script>
+    <script src="/client-safe-ui.js?v=telegram-boot-4"></script>
   </body>
 </html>
