@@ -82,17 +82,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Telegram's Main Mini App can keep opening a cached root URL even after
-  // setChatMenuButton changes. Only Telegram WebViews are forced through the
-  // tiny launch bridge; Railway healthchecks and normal browsers keep a 200.
+  // Telegram Android can stall before parsing the target document after an
+  // HTTP redirect from the configured Mini App root. Serve the tiny launch
+  // bridge directly as the root response instead. This keeps the original
+  // URL/hash (including tgWebAppData) intact and lets the bridge release the
+  // native loading overlay before navigating to the full app.
   const userAgent = String(req.headers['user-agent'] || '');
   const isTelegramWebView = /Telegram/i.test(userAgent);
   if (pathname === '/' && isTelegramWebView && !url.searchParams.has('launch')) {
-    res.writeHead(302, {
-      Location: '/launch.html',
-      'Cache-Control': 'no-store, max-age=0, must-revalidate',
-    });
-    res.end();
+    console.log(`KORGAN_BOOT stage=server-root-launch ua=${userAgent.slice(0, 240)}`);
+    if (sendFile(req, res, path.join(root, 'launch.html'))) return;
+    res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Mini App launch bridge is unavailable');
     return;
   }
 
