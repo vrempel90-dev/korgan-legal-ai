@@ -7,11 +7,14 @@ from typing import Iterable
 
 import cv2
 import numpy as np
+import pypdfium2 as pdfium
 from pypdf import PdfReader
 
 _RECEIPT_URL = re.compile(r"https://receipt\.kaspi\.kz/[^\s<>\]\[\"']+", re.IGNORECASE)
 _MAX_IMAGE_PIXELS = 24_000_000
 _MAX_QR_VARIANTS = 18
+_MAX_PDF_PAGES = 3
+_PDF_RENDER_SCALE = 2.0
 
 
 def _clean_url(value: str) -> str:
@@ -61,8 +64,6 @@ def _qr_variants(image: np.ndarray) -> list[np.ndarray]:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
         variants.append(gray)
 
-        # Kaspi PDF/WhatsApp exports often make the QR relatively small. Upscale
-        # only bounded images; this improves detector stability without OCR/AI.
         height, width = gray.shape[:2]
         longest = max(height, width)
         if longest < 2200:
@@ -108,8 +109,6 @@ def _qr_variants(image: np.ndarray) -> list[np.ndarray]:
     except Exception:
         pass
 
-    # Quiet-zone + rotation recovery. Limit total work so a hostile large image
-    # cannot turn receipt verification into an unbounded CPU task.
     base = list(variants[:6])
     for candidate in base:
         if len(variants) >= _MAX_QR_VARIANTS:
@@ -133,20 +132,23 @@ def _qr_variants(image: np.ndarray) -> list[np.ndarray]:
     return variants[:_MAX_QR_VARIANTS]
 
 
-def _decode_qr_image(data: bytes) -> str:
-    if not data:
-        return ""
-    image = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+def _decode_qr_array(image: np.ndarray) -> str:
     image = _bounded_image(image)
     if image is None:
         return ""
-
     detector = cv2.QRCodeDetector()
     for candidate in _qr_variants(image):
         found = _decode_candidate(detector, candidate)
         if found:
             return found
     return ""
+
+
+def _decode_qr_image(data: bytes) -> str:
+    if not data:
+        return ""
+    image = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    return _decode_qr_array(image)
 
 
 def _annotation_urls(page) -> Iterable[str]:  # noqa: ANN001
@@ -165,14 +167,63 @@ def _annotation_urls(page) -> Iterable[str]:  # noqa: ANN001
             continue
 
 
+def _render_pdf_qr(data: bytes) -> str:
+    """Render bounded PDF pages when the QR is drawn into page content.
+
+    Kaspi electronic receipts often expose text to pypdf while the fiscal QR is
+    not a standalone page image. In that shape ``page.images`` may contain only
+    the Kaspi logo, so the complete page must be rasterized before OpenCV can
+    see the QR. Rendering is page- and pixel-bounded to avoid unbounded CPU/RAM.
+    """
+    try:
+        document = pdfium.PdfDocument(data)
+    except Exception:
+        return ""
+
+    try:
+        page_count = min(len(document), _MAX_PDF_PAGES)
+        for index in range(page_count):
+            page = None
+            bitmap = None
+            try:
+                page = document[index]
+                width, height = page.get_size()
+                projected_pixels = int(width * _PDF_RENDER_SCALE) * int(height * _PDF_RENDER_SCALE)
+                if projected_pixels <= 0 or projected_pixels > _MAX_IMAGE_PIXELS:
+                    continue
+                bitmap = page.render(scale=_PDF_RENDER_SCALE, rotation=0)
+                rgb = np.asarray(bitmap.to_pil().convert("RGB"))
+                image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                found = _decode_qr_array(image)
+                if found:
+                    return found
+            except Exception:
+                continue
+            finally:
+                try:
+                    if bitmap is not None:
+                        bitmap.close()
+                except Exception:
+                    pass
+                try:
+                    if page is not None:
+                        page.close()
+                except Exception:
+                    pass
+    finally:
+        try:
+            document.close()
+        except Exception:
+            pass
+    return ""
+
+
 def _extract_pdf(data: bytes) -> str:
     reader = PdfReader(io.BytesIO(data))
 
-    # Prefer URL already present in PDF text/annotations. This is both faster and
-    # more reliable than decoding pixels when Kaspi embeds the fiscal link.
     text_parts: list[str] = []
     annotation_parts: list[str] = []
-    for page in reader.pages:
+    for page in reader.pages[:_MAX_PDF_PAGES]:
         try:
             text_parts.append(page.extract_text() or "")
         except Exception:
@@ -182,9 +233,7 @@ def _extract_pdf(data: bytes) -> str:
     if found:
         return found
 
-    # Kaspi receipts commonly contain the fiscal QR as a raster image. Decode
-    # only QR pixels; no OCR/model is involved.
-    for page in reader.pages:
+    for page in reader.pages[:_MAX_PDF_PAGES]:
         try:
             for image in page.images:
                 found = _decode_qr_image(image.data)
@@ -192,7 +241,8 @@ def _extract_pdf(data: bytes) -> str:
                     return found
         except Exception:
             continue
-    return ""
+
+    return _render_pdf_qr(data)
 
 
 def _extract_sync(data: bytes, filename: str, mime_type: str) -> str:
