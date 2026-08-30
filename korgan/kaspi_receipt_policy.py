@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from korgan.kaspi_ofd import _normalize, _parse_datetime
+from korgan.kaspi_ofd import _parse_datetime
 
 _CLOCK_SKEW = timedelta(minutes=2)
 _FUTURE_SKEW = timedelta(minutes=5)
@@ -20,20 +20,6 @@ _LEGACY_RECEIPT_LOOKBACK = timedelta(days=7)
 _LEGACY_BEFORE_ORDER_ISSUE = "фискальный чек создан до открытия текущей заявки на оплату"
 
 _ZNM_RE = re.compile(r"(?:^|\n)\s*ЗНМ\s*[:№\-—]?\s*([A-Za-zА-Яа-я0-9_-]{4,40})", re.IGNORECASE)
-
-
-def _merchant_tokens(value: str) -> list[str]:
-    tokens: list[str] = []
-    for raw in re.findall(r"[A-Za-zА-Яа-яЁё0-9]+", str(value or "")):
-        normalized = _normalize(raw)
-        if len(normalized) < 4:
-            continue
-        # Phone/card-like values are not merchant names. BIN/RNM handle identity
-        # in that case, so do not make a numeric recipient string a false blocker.
-        if normalized.isdigit():
-            continue
-        tokens.append(normalized)
-    return tokens
 
 
 def _legacy_existing_order_receipt_allowed(
@@ -70,8 +56,9 @@ def strict_receipt_issues(
     """Add the MiniApp payment policy on top of the Kaspi OFD verifier.
 
     Address and payer name are intentionally irrelevant. A third party may pay.
-    Merchant identity is determined by the configured BIN/RNM plus merchant name
-    when a textual recipient is configured.
+    The KORGAN brand is never compared with the legal merchant name shown on a
+    fiscal receipt. Merchant identity is validated by configured fiscal IDs
+    (BIN/RNM) in the base verifier; seller_name is informational but must exist.
     """
     issues = list(
         original(
@@ -88,12 +75,6 @@ def strict_receipt_issues(
     raw_text = str(getattr(receipt, "raw_text", "") or "")
     if not seller_name:
         issues.append("в фискальном чеке не найден продавец/ИП")
-
-    tokens = _merchant_tokens(expected_recipient)
-    if tokens:
-        merchant_haystack = _normalize(f"{seller_name}\n{raw_text}")
-        if not any(token in merchant_haystack for token in tokens):
-            issues.append("ИП/продавец в фискальном чеке не соответствует KORGAN")
 
     # ZNM is a stable cash-register attribute shown on Kaspi fiscal receipts.
     # We require its presence but do not compare the receipt address at all.
