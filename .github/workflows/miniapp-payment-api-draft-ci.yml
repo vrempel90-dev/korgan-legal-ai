@@ -62,6 +62,7 @@ jobs:
           tests/test_miniapp_payment_idempotency.py
           tests/test_zz_miniapp_ai_payment_parity_v5.py
           tests/test_miniapp_ofd_autogeneration.py
+          tests/test_miniapp_client_receipt_policy.py
       - name: Run MiniApp smoke regressions
         run: >-
           python -m pytest -q
