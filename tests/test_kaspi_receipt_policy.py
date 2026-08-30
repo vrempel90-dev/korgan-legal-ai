@@ -34,7 +34,7 @@ def test_fresh_receipt_accepts_merchant_and_ignores_address_and_payer():
         _base,
         _receipt(),
         1000,
-        expected_recipient="ИП YSA EDUCATION",
+        expected_recipient="KORGAN",
         expected_bin="820608350657",
         offered_at="2026-08-30T10:00:00+05:00",
         now=datetime(2026, 8, 30, 5, 10, tzinfo=timezone.utc),
@@ -50,7 +50,7 @@ def test_existing_pre_migration_order_accepts_recent_already_paid_receipt():
         base,
         _receipt(sale_datetime="2026-08-27 18:18:22"),
         1000,
-        expected_recipient="ИП YSA EDUCATION",
+        expected_recipient="KORGAN",
         expected_bin="820608350657",
         offered_at="2026-08-30T11:00:00+00:00",
         now=datetime(2026, 8, 30, 11, 10, tzinfo=timezone.utc),
@@ -66,7 +66,7 @@ def test_new_order_keeps_strict_before_order_rejection():
         base,
         _receipt(sale_datetime="2026-08-27 18:18:22"),
         1000,
-        expected_recipient="ИП YSA EDUCATION",
+        expected_recipient="KORGAN",
         expected_bin="820608350657",
         offered_at="2026-08-30T11:16:00+00:00",
         now=datetime(2026, 8, 30, 11, 20, tzinfo=timezone.utc),
@@ -82,7 +82,7 @@ def test_pre_migration_order_does_not_accept_arbitrarily_old_receipt():
         base,
         _receipt(sale_datetime="2026-08-20 18:18:22"),
         1000,
-        expected_recipient="ИП YSA EDUCATION",
+        expected_recipient="KORGAN",
         expected_bin="820608350657",
         offered_at="2026-08-30T11:00:00+00:00",
         now=datetime(2026, 8, 30, 11, 10, tzinfo=timezone.utc),
@@ -98,7 +98,7 @@ def test_receipt_before_current_order_is_rejected_by_base_policy():
         base,
         _receipt(sale_datetime="2026-08-30 09:40:00"),
         1000,
-        expected_recipient="ИП YSA EDUCATION",
+        expected_recipient="KORGAN",
         offered_at="2026-08-30T10:00:00+05:00",
         now=datetime(2026, 8, 30, 5, 10, tzinfo=timezone.utc),
     )
@@ -110,7 +110,7 @@ def test_receipt_outside_sixty_minute_payment_window_is_rejected():
         _base,
         _receipt(sale_datetime="2026-08-30 11:01:00"),
         1000,
-        expected_recipient="ИП YSA EDUCATION",
+        expected_recipient="KORGAN",
         offered_at="2026-08-30T10:00:00+05:00",
         now=datetime(2026, 8, 30, 6, 2, tzinfo=timezone.utc),
     )
@@ -122,23 +122,37 @@ def test_receipt_more_than_five_minutes_in_future_is_rejected():
         _base,
         _receipt(sale_datetime="2026-08-30 10:16:00"),
         1000,
-        expected_recipient="ИП YSA EDUCATION",
+        expected_recipient="KORGAN",
         offered_at="2026-08-30T10:00:00+05:00",
         now=datetime(2026, 8, 30, 5, 10, tzinfo=timezone.utc),
     )
     assert "дата/время фискального чека находятся недопустимо в будущем" in issues
 
 
-def test_wrong_merchant_is_rejected_even_when_address_is_present():
+def test_merchant_brand_name_is_not_a_payment_blocker():
     issues = strict_receipt_issues(
         _base,
-        _receipt(seller_name="ИП ЧУЖОЙ ПРОДАВЕЦ", raw_text="ИП ЧУЖОЙ ПРОДАВЕЦ\nЗНМ KK4160038097\nАдрес любой"),
+        _receipt(seller_name="ИП YSA EDUCATION"),
         1000,
-        expected_recipient="ИП YSA EDUCATION",
+        expected_recipient="KORGAN",
+        expected_bin="820608350657",
         offered_at="2026-08-30T10:00:00+05:00",
         now=datetime(2026, 8, 30, 5, 10, tzinfo=timezone.utc),
     )
-    assert "ИП/продавец в фискальном чеке не соответствует KORGAN" in issues
+    assert issues == []
+
+
+def test_missing_seller_name_is_rejected():
+    issues = strict_receipt_issues(
+        _base,
+        _receipt(seller_name=""),
+        1000,
+        expected_recipient="KORGAN",
+        expected_bin="820608350657",
+        offered_at="2026-08-30T10:00:00+05:00",
+        now=datetime(2026, 8, 30, 5, 10, tzinfo=timezone.utc),
+    )
+    assert "в фискальном чеке не найден продавец/ИП" in issues
 
 
 def test_missing_znm_is_rejected():
@@ -146,7 +160,7 @@ def test_missing_znm_is_rejected():
         _base,
         _receipt(raw_text="ИП YSA EDUCATION\nРНМ 010103806424\nФП 557225556134\nОФД Kaspi ОФД"),
         1000,
-        expected_recipient="ИП YSA EDUCATION",
+        expected_recipient="KORGAN",
         offered_at="2026-08-30T10:00:00+05:00",
         now=datetime(2026, 8, 30, 5, 10, tzinfo=timezone.utc),
     )
