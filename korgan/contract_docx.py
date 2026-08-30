@@ -26,20 +26,20 @@ DRAFT_NOTICE = (
 # then again in the signing table.
 _REQUISITES_SECTION_RE = re.compile(
     r"(?i)^\s*(?:"
-    r"реквизит\w*(?:\s+и\s+подпис\w*)?(?:\s+сторон)?|"
+    r"реквизит\w*(?:\s+и\s+подпис(?:ь|и))?(?:\s+сторон)?|"
     r"адрес\w*\s+и\s+реквизит\w*(?:\s+сторон)?|"
-    r"подпис\w*\s+сторон|"
+    r"подпис(?:ь|и)\s+сторон|"
     r"местонахождени\w*\s+и\s+(?:банковск\w*\s+)?реквизит\w*"
     r")\s*[.:;-]*\s*$"
 )
-_REQUISITES_HEADING_TOKEN_RE = re.compile(r"(?i)\b(?:реквизит\w*|подпис\w*)\b")
+_REQUISITES_HEADING_TOKEN_RE = re.compile(r"(?i)\b(?:реквизит\w*|подпис(?:ь|и))\b")
 _REQUISITES_CLAUSE_RE = re.compile(
     r"(?i)(?:\bБИН\b|\bИИН\b|\bИИК\b|\bБИК\b|\bIBAN\b|\bКБе\b|"
     r"\bбанк\w*\b|\bюридическ\w*\s+адрес\b|\bпочтов\w*\s+адрес\b|"
-    r"\bподпис\w*\b|\bм\.?\s*п\.?\b|\bдиректор\b\s*[:_])"
+    r"\bподпис(?:ь|и)\b|\bм\.?\s*п\.?\b|\bдиректор\b\s*[:_])"
 )
 _SIGNATURE_LINE_RE = re.compile(
-    r"(?i)^\s*(?:подпис\w*|signature|м\.?\s*п\.?)\s*[:_\-–—.\s]*$"
+    r"(?i)^\s*(?:подпис(?:ь|и)|signature|м\.?\s*п\.?)\s*[:_\-–—.\s]*$"
 )
 _PARTY_LABEL_RE = re.compile(r"(?i)^\s*(?:сторона\s*[12аб]|party\s*[ab12])\s*:?[\s.]*$")
 
@@ -64,7 +64,7 @@ def _renderer_owned_requisites_section(heading: str) -> bool:
 def _clean_combined_heading(heading: str) -> str:
     value = " ".join(str(heading or "").split()).strip()
     value = re.sub(
-        r"(?i)\s+(?:и|,|/)\s*(?:адрес\w*\s+и\s+)?(?:реквизит\w*|подпис\w*).*$",
+        r"(?i)\s+(?:и|,|/)\s*(?:адрес\w*\s+и\s+)?(?:реквизит\w*|подпис(?:ь|и)).*$",
         "",
         value,
     ).strip(" ,;:-")
