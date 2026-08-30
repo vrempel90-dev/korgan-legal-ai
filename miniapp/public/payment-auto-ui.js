@@ -1,9 +1,7 @@
 (() => {
   'use strict';
 
-  const READY_KEY = 'korgan:document-ready-after-payment:v2';
-  let autoStartApprovedDocument = false;
-  let openCasesAfterDocument = false;
+  const READY_KEY = 'korgan:document-ready-after-payment:v3';
   let scheduled = false;
   let casesNavigationStarted = false;
 
@@ -29,7 +27,6 @@
   };
 
   const rememberDocumentReady = () => {
-    openCasesAfterDocument = true;
     try { window.sessionStorage?.setItem(READY_KEY, '1'); } catch {}
   };
 
@@ -38,7 +35,6 @@
   };
 
   const clearDocumentReady = () => {
-    openCasesAfterDocument = false;
     try { window.sessionStorage?.removeItem(READY_KEY); } catch {}
   };
 
@@ -57,13 +53,7 @@
     if (isDocumentPayment && response.ok) {
       try {
         const payload = await response.clone().json();
-        if (payload?.payment?.status === 'approved') {
-          autoStartApprovedDocument = true;
-        }
-        if (isGeneratedDocument(payload)) {
-          autoStartApprovedDocument = false;
-          rememberDocumentReady();
-        }
+        if (isGeneratedDocument(payload)) rememberDocumentReady();
         queueMicrotask(scheduleUiSync);
       } catch {}
     }
@@ -86,22 +76,15 @@
     };
   }
 
+  // Keep the payment UX simple while preserving the real manual-admin state.
+  // Do not hide the admin entry and do not rewrite manual review into an
+  // automatic Kaspi-OFD claim.
   const replacements = new Map([
     ['Загрузить чек', 'Я оплатил'],
     ['Чекті жүктеу', 'Төледім'],
-    ['Проверяю чек…', 'Проверяю оплату…'],
-    ['Чек тексерілуде…', 'Төлем тексерілуде…'],
-    ['Ручное подтверждение', 'Автоматическая проверка Kaspi ОФД'],
-    ['Чек прошёл предварительную проверку. Ожидается ручная сверка по истории Kaspi Pay.', 'Проверяем тот же фискальный чек через Kaspi ОФД. Повторно платить не нужно.'],
-    ['AI не признаёт банковский факт окончательно — администратор сверяет реальный платёж.', 'KORGAN проверяет сумму, получателя, время и уникальность фискального чека через Kaspi ОФД. AI не принимает решение о факте оплаты.'],
-    ['Юридический анализ и генерация Word ещё не начались. Оплатите документ, загрузите чек и дождитесь ручной сверки платежа администратором.', 'Оплатите документ через Kaspi, затем нажмите «Я оплатил» и выберите электронный чек. После проверки KORGAN сразу подготовит документ и сохранит его в «Мои дела».'],
-    ['Теперь можно запустить юридический анализ и генерацию Word. Новая оплата не требуется.', 'Оплата подтверждена. Документ запускается автоматически; повторная оплата не требуется.'],
-    ['Подготовить оплаченный документ', 'Повторить подготовку без оплаты'],
+    ['Проверяю чек…', 'Отправляю чек…'],
+    ['Чек тексерілуде…', 'Чек жіберілуде…'],
     ['KORGAN PREPAY', 'KORGAN PAYMENT'],
-    ['Ручная проверка', 'Проверка Kaspi ОФД'],
-    ['Қолмен растау', 'Kaspi ОФД автоматты тексеруі'],
-    ['AI арқылы автоматты тексеру', 'Kaspi ОФД автоматты тексеруі'],
-    ['Құқықтық талдау мен Word генерациясы әлі басталған жоқ. Құжат үшін төлеңіз, чекті жүктеп, әкімшінің Kaspi Pay бойынша қолмен тексеруін күтіңіз.', 'Kaspi арқылы құжат үшін төлеңіз, содан кейін «Төледім» батырмасын басып, электрондық чекті таңдаңыз. Тексеруден кейін құжат бірден дайындалып, «Менің істерім» бөлімінде сақталады.'],
   ]);
 
   const syncText = () => {
@@ -115,21 +98,6 @@
       for (const [from, to] of replacements) next = next.split(from).join(to);
       if (next !== original) node.nodeValue = next;
     }
-  };
-
-  const maybeAutoStart = () => {
-    if (!autoStartApprovedDocument) return;
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const target = buttons.find(button => {
-      if (button.disabled) return false;
-      const text = (button.textContent || '').trim();
-      return text.includes('Повторить подготовку без оплаты')
-        || text.includes('Подготовить оплаченный документ')
-        || text.includes('Төленген құжатты дайындау');
-    });
-    if (!target) return;
-    autoStartApprovedDocument = false;
-    target.click();
   };
 
   const showSavedToast = () => {
@@ -155,9 +123,7 @@
   };
 
   const maybeOpenCases = () => {
-    if (casesNavigationStarted) return;
-    if (!openCasesAfterDocument && !restoreDocumentReady()) return;
-
+    if (casesNavigationStarted || !restoreDocumentReady()) return;
     const navButtons = Array.from(document.querySelectorAll('.bottom-nav button'));
     const target = navButtons.find(button => {
       if (button.disabled) return false;
@@ -178,14 +144,9 @@
     requestAnimationFrame(() => {
       scheduled = false;
       syncText();
-      maybeAutoStart();
       maybeOpenCases();
     });
   }
-
-  const style = document.createElement('style');
-  style.textContent = '.manual-card,.admin-entry{display:none!important}';
-  document.head.appendChild(style);
 
   const observer = new MutationObserver(scheduleUiSync);
   observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });

@@ -127,3 +127,38 @@
 @media(prefers-reduced-motion:reduce){
   .app-shell:has(.native-home) .home-card-arrow{transition:none!important}
 }
+
+/* iOS Telegram WebView can leave a compositing ghost of a <label> while the
+   case page and generic .secondary controls are animated at the same time.
+   The upload control must stay on one stable paint layer: one icon + one label. */
+main.page:has(> .status-card) > label.secondary.wide{
+  position:relative!important;
+  isolation:isolate!important;
+  transform:none!important;
+  -webkit-transform:none!important;
+  transition:border-color 160ms ease,background-color 160ms ease,opacity 160ms ease!important;
+  animation:none!important;
+  filter:none!important;
+  -webkit-filter:none!important;
+  text-shadow:none!important;
+  backface-visibility:hidden!important;
+  -webkit-backface-visibility:hidden!important;
+  contain:paint!important;
+}
+main.page:has(> .status-card) > label.secondary.wide:active{
+  transform:none!important;
+  -webkit-transform:none!important;
+}
+main.page:has(> .status-card) > label.secondary.wide::before,
+main.page:has(> .status-card) > label.secondary.wide::after{
+  content:none!important;
+  display:none!important;
+}
+main.page:has(> .status-card) > label.secondary.wide > svg{
+  flex:0 0 auto!important;
+  transform:none!important;
+  -webkit-transform:none!important;
+}
+main.page:has(> .status-card) > label.secondary.wide > input[type="file"]{
+  display:none!important;
+}
