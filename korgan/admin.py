@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from korgan.admin_report import send_admin_report
 from korgan.config import Settings, get_settings
+from korgan.miniapp_document_payments import decide_document_order, get_document_order
 
 LOGGER = logging.getLogger(__name__)
 router = Router(name="admin")
@@ -34,10 +35,10 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [_button("👥 Пользователи", "users"), _button("💬 Консультации", "consultations")],
             [_button("📄 Документы", "documents"), _button("⚖️ Обращения", "lawyer_requests")],
-            [_button("📚 Legal RAG", "rag"), _button("🤖 AI", "ai")],
-            [_button("🚨 Контроль", "quality"), _button("📊 Аналитика", "analytics")],
-            [_button("📨 Отчёт", "report"), _button("💰 Расходы", "costs")],
-            [_button("⚙️ Настройки", "settings"), _button("🔐 Безопасность", "security")],
+            [_button("📚 Legal RAG", "rag"), _button("🚨 Контроль", "quality")],
+            [_button("📊 Аналитика", "analytics"), _button("📨 Отчёт", "report")],
+            [_button("💰 Расходы", "costs"), _button("⚙️ Настройки", "settings")],
+            [_button("🔐 Безопасность", "security")],
             [_button("🔄 Обновить", "home"), _button("✖️ Закрыть", "close")],
         ]
     )
@@ -57,13 +58,12 @@ def _configured(value: str) -> str:
 
 def admin_home_text(settings: Settings) -> str:
     return (
-        "🛡 KORGAN AI — АДМИН-ПАНЕЛЬ\n\n"
+        "🛡 KORGAN — АДМИН-ПАНЕЛЬ\n\n"
         "Доступ: 🔒 только ADMIN_TELEGRAM_IDS\n"
-        "Telegram: 🟢 бот работает\n"
-        f"OpenAI: {_configured(settings.openai_api_key)}\n"
-        f"Модель: {settings.openai_model}\n"
+        "Telegram: 🟢 admin-only\n"
+        f"OpenAI для пользовательского Telegram-бота: 🔴 отключён\n"
         f"Отчёты: {'🟢 настроены' if settings.admin_report_id is not None else '🔴 не настроены'}\n"
-        "Fail-closed: 🔒 не изменяется из админки\n\n"
+        "Проверка оплат: 🟢 прямо в Telegram\n\n"
         "Выберите раздел:"
     )
 
@@ -79,16 +79,15 @@ def admin_page(action: str, settings: Settings) -> tuple[str, InlineKeyboardMark
         ),
         "consultations": (
             "💬 КОНСУЛЬТАЦИИ\n\n"
-            "Просмотр полной истории консультаций не включён. Дневной отчёт использует только реальные агрегаты из PostgreSQL: использование квоты и оплаченные консультации."
+            "Пользовательский Telegram AI-агент отключён. MiniApp продолжает обслуживать подготовку документов."
         ),
         "documents": (
             "📄 ДОКУМЕНТЫ\n\n"
-            "Генерация работает в основном контуре KORGAN. Дневной отчёт считает только подтверждённые Kaspi ОФД оплаты Agent и завершённые оплаченные документы Mini App."
+            "Генерация документов работает в MiniApp. Чеки по оплате документов приходят сюда отдельным сообщением с кнопками «Подтвердить» и «Отклонить»."
         ),
         "lawyer_requests": (
             "⚖️ ОБРАЩЕНИЯ К ЮРИСТУ\n\n"
-            "Очередь живого юриста пока не подключена к постоянной базе.\n\n"
-            "После подключения: новые → в работе → завершённые → просроченные, с назначением ответственного юриста."
+            "Клиентские обращения направляются персональному юристу через настроенный канал связи."
         ),
         "rag": (
             "📚 LEGAL RAG\n\n"
@@ -96,29 +95,17 @@ def admin_page(action: str, settings: Settings) -> tuple[str, InlineKeyboardMark
             "Политика: точные нормы, сроки, госпошлина и подсудность не должны считаться подтверждёнными без официального источника.\n\n"
             "Fail-closed нельзя отключить из Telegram-админки."
         ),
-        "ai": (
-            "🤖 УПРАВЛЕНИЕ AI\n\n"
-            f"Консультации: {settings.openai_model}\n"
-            f"Vision: {settings.openai_vision_model}\n"
-            f"Validation: {settings.openai_validation_model}\n"
-            f"OpenAI API key: {_configured(settings.openai_api_key)}\n\n"
-            "API-ключи и системные секреты в Telegram не отображаются и не редактируются."
-        ),
         "quality": (
             "🚨 КОНТРОЛЬ КАЧЕСТВА\n\n"
-            "Fail-closed: 🔒 включён архитектурно.\n"
-            "NEEDS_VERIFICATION должен блокировать уверенную выдачу неподтверждённых юридических реквизитов.\n\n"
-            "Счётчики ошибок появятся после подключения постоянного журнала событий."
+            "Внутренние quality-gates продолжают работать для документов MiniApp и не показываются клиенту."
         ),
         "analytics": (
             "📊 АНАЛИТИКА\n\n"
-            "Доступна подтверждаемая дневная сводка из PostgreSQL. Нажмите «📨 Отчёт» в админ-меню, чтобы отправить её на отдельный Telegram ID получателя.\n\n"
-            "Полная продуктовая аналитика, графики и экспорт остаются отдельным этапом."
+            "Доступна подтверждаемая дневная сводка из PostgreSQL. Нажмите «📨 Отчёт» в админ-меню, чтобы отправить её на отдельный Telegram ID получателя."
         ),
         "costs": (
-            "💰 РАСХОДЫ AI\n\n"
-            "Учёт токенов и стоимости по запросам пока не записывается в постоянное хранилище.\n\n"
-            "В следующей версии можно добавить расход по консультациям, документам, vision и валидации без раскрытия API-ключей."
+            "💰 РАСХОДЫ\n\n"
+            "Пользовательский Telegram AI-агент отключён. Расходы генерации документов MiniApp учитываются отдельно от этого admin-only бота."
         ),
         "settings": (
             "⚙️ НАСТРОЙКИ\n\n"
@@ -128,16 +115,15 @@ def admin_page(action: str, settings: Settings) -> tuple[str, InlineKeyboardMark
             f"Администраторов настроено: {len(settings.admin_ids)}\n"
             f"Получатель отчётов: {'настроен' if settings.admin_report_id is not None else 'не настроен'}\n"
             f"Автоотчёт: {settings.admin_report_hour_almaty:02d}:00 по Алматы\n\n"
-            "ADMIN_REPORT_TELEGRAM_ID не предоставляет доступ к /admin. Секреты и критические политики изменяются только через защищённые переменные окружения Railway."
+            "Секреты и критические политики изменяются только через защищённые переменные окружения Railway."
         ),
         "security": (
             "🔐 БЕЗОПАСНОСТЬ\n\n"
             "• Вход только по Telegram user ID из ADMIN_TELEGRAM_IDS.\n"
-            "• ADMIN_REPORT_TELEGRAM_ID — только адрес доставки отчёта и не даёт прав администратора.\n"
-            "• Проверка выполняется и для /admin, и для каждого callback.\n"
-            "• При пустом/ошибочном списке доступ закрывается для всех (fail-closed).\n"
-            "• API-ключи никогда не выводятся в чат.\n"
-            "• Fail-closed юридического контура из админки не отключается."
+            "• Каждая кнопка подтверждения оплаты повторно проверяет права администратора.\n"
+            "• Решение оплаты записывается атомарно в PostgreSQL.\n"
+            "• Повторное нажатие не проводит оплату повторно.\n"
+            "• API-ключи никогда не выводятся в чат."
         ),
     }
     return pages.get(action, "Раздел не найден."), admin_back_keyboard()
@@ -149,16 +135,96 @@ async def _deny_message(message: Message) -> None:
     await message.answer("Команда недоступна.")
 
 
-@router.message(Command("admin"))
-async def admin_command(message: Message) -> None:
+async def _show_admin(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else None
     settings = get_settings()
     if not is_admin(user_id, settings):
         await _deny_message(message)
         return
-
     LOGGER.info("ADMIN_ACCESS_GRANTED telegram_user_id=%s", user_id)
     await message.answer(admin_home_text(settings), reply_markup=admin_main_keyboard())
+
+
+@router.message(CommandStart())
+async def admin_start(message: Message) -> None:
+    await _show_admin(message)
+
+
+@router.message(Command("admin"))
+async def admin_command(message: Message) -> None:
+    await _show_admin(message)
+
+
+@router.callback_query(F.data.startswith("adminpay:"))
+async def admin_payment_callback(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id if callback.from_user else None
+    settings = get_settings()
+    if not is_admin(user_id, settings):
+        LOGGER.warning("ADMIN_PAYMENT_DENIED telegram_user_id=%s data=%s", user_id, callback.data)
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    parts = str(callback.data or "").split(":")
+    if len(parts) != 3 or parts[1] not in {"approve", "reject"}:
+        await callback.answer("Некорректная команда.", show_alert=True)
+        return
+    try:
+        order_id = int(parts[2])
+    except ValueError:
+        await callback.answer("Некорректный номер заказа.", show_alert=True)
+        return
+
+    order = await get_document_order(order_id)
+    if order is None:
+        await callback.answer("Заказ не найден.", show_alert=True)
+        return
+
+    approved = parts[1] == "approve"
+    if order.status != "awaiting_admin":
+        if approved and order.status in {"approved", "consumed"}:
+            await callback.answer("Оплата уже подтверждена.")
+        elif not approved and order.status == "pending_receipt":
+            await callback.answer("Чек уже отклонён; ожидается новый чек.")
+        else:
+            await callback.answer(f"Заказ уже имеет статус: {order.status}.", show_alert=True)
+        return
+
+    decision = "approved" if approved else "rejected"
+    changed = await decide_document_order(
+        order_id,
+        approved=approved,
+        note=f"telegram admin {user_id}: {decision}",
+    )
+    latest = await get_document_order(order_id)
+    if not changed or latest is None:
+        await callback.answer("Статус уже изменён другим действием. Обновите сообщение.", show_alert=True)
+        return
+
+    if approved:
+        status_text = "✅ ОПЛАТА ПОДТВЕРЖДЕНА"
+        answer_text = "Оплата подтверждена. Клиент может продолжить подготовку документа."
+    else:
+        status_text = "❌ ЧЕК ОТКЛОНЁН"
+        answer_text = "Чек отклонён. Клиент сможет загрузить другой чек без создания нового заказа."
+
+    LOGGER.info(
+        "ADMIN_PAYMENT_DECISION telegram_user_id=%s order_id=%s decision=%s status=%s",
+        user_id,
+        order_id,
+        decision,
+        latest.status,
+    )
+    await callback.answer(answer_text)
+    if callback.message:
+        old_caption = (callback.message.caption or "").strip()
+        suffix = f"\n\n{status_text}\nАдминистратор: {user_id}"
+        try:
+            await callback.message.edit_caption(
+                caption=(old_caption + suffix)[:1024],
+                reply_markup=None,
+            )
+        except Exception:
+            LOGGER.exception("ADMIN_PAYMENT_MESSAGE_EDIT_FAILED order_id=%s", order_id)
 
 
 @router.callback_query(F.data.startswith("admin:"))
@@ -206,4 +272,4 @@ async def admin_callback(callback: CallbackQuery) -> None:
 
     await callback.answer()
     if callback.message:
-        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.message.edit_text(text, reply_markup=keyboard()) if callable(keyboard) else await callback.message.edit_text(text, reply_markup=keyboard)
