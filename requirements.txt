@@ -4,6 +4,7 @@ pydantic-settings>=2.5
 python-dotenv>=1.0
 python-docx>=1.1
 pypdf==6.16.1
+pypdfium2>=4.30,<5
 numpy>=2.0,<3
 opencv-python-headless>=4.10,<5
 asyncpg>=0.30,<1
