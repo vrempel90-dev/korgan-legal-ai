@@ -67,6 +67,26 @@ source = replaceRequired(
   'profile quality target',
 );
 
+// Keep the payment card customer-facing and concise.
+source = replaceRequired(
+  source,
+  "manualCheck: 'Ручное подтверждение'",
+  "manualCheck: 'После загрузки чека администратор проверит оплату и подтвердит подготовку документа.'",
+  'payment verification title',
+);
+source = replaceRequired(
+  source,
+  "manualCheck: 'Қолмен растау'",
+  "manualCheck: 'Төлемді тексеру'",
+  'payment verification title kk',
+);
+source = replaceRequired(
+  source,
+  "<p>{t.manualCheckSub}</p>",
+  "",
+  'payment verification explanatory text',
+);
+
 // Payment flow is intentionally not rewritten at build time. The React source
 // owns the manual-admin states: pending_receipt -> awaiting_admin -> approved.
 writeFileSync(mainFile, source, 'utf8');
