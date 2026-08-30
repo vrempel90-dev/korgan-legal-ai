@@ -80,11 +80,34 @@ async function uploadConsultationReceipt(orderId, file) {
   return request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
 }
 
+async function recoverApprovedDocumentPayment(orderId, error) {
+  if (Number(error?.status || 0) < 500) throw error;
+  try {
+    const status = await request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}`);
+    if (status?.payment?.status === 'approved') {
+      return {
+        ok: true,
+        payment_required: false,
+        generation_started: false,
+        payment: status.payment,
+        message: 'Оплата подтверждена и сохранена. Подготовку документа можно повторить без новой оплаты.',
+      };
+    }
+  } catch {
+    // Preserve the original verification/generation error when status recovery fails.
+  }
+  throw error;
+}
+
 async function uploadDocumentReceipt(orderId, file) {
   const body = new FormData();
   body.append('file', file);
-  const result = await request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
-  return result?.document_base64 ? requireProfessionalDocument(result) : result;
+  try {
+    const result = await request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+    return result?.document_base64 ? requireProfessionalDocument(result) : result;
+  } catch (error) {
+    return recoverApprovedDocumentPayment(orderId, error);
+  }
 }
 
 async function submitConsultationReceiptUrl(orderId, receiptUrl) {
@@ -95,11 +118,15 @@ async function submitConsultationReceiptUrl(orderId, receiptUrl) {
 }
 
 async function submitDocumentReceiptUrl(orderId, receiptUrl) {
-  const result = await request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt-url`, {
-    method: 'POST',
-    body: JSON.stringify({ receipt_url: String(receiptUrl || '').trim() }),
-  });
-  return result?.document_base64 ? requireProfessionalDocument(result) : result;
+  try {
+    const result = await request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt-url`, {
+      method: 'POST',
+      body: JSON.stringify({ receipt_url: String(receiptUrl || '').trim() }),
+    });
+    return result?.document_base64 ? requireProfessionalDocument(result) : result;
+  } catch (error) {
+    return recoverApprovedDocumentPayment(orderId, error);
+  }
 }
 
 export const korganApi = {
