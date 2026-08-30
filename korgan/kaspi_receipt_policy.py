@@ -18,6 +18,17 @@ _LEGACY_ORDER_OPENED_NOT_BEFORE_UTC = datetime(2026, 8, 30, 10, 40, tzinfo=timez
 _LEGACY_ORDER_CUTOFF_UTC = datetime(2026, 8, 30, 11, 15, tzinfo=timezone.utc)
 _LEGACY_RECEIPT_LOOKBACK = timedelta(days=7)
 _LEGACY_BEFORE_ORDER_ISSUE = "фискальный чек создан до открытия текущей заявки на оплату"
+_LEGACY_WINDOW_ISSUE = "фискальный чек создан вне 60-минутного окна текущей оплаты"
+
+# Emergency one-receipt exception for the customer who paid before the payment
+# flow was repaired. This exception removes ONLY order-time blockers. Merchant,
+# amount, BIN, RNM, ZNM, FP, Kaspi OFD and duplicate-receipt checks remain
+# mandatory, so this receipt can still be accepted only once.
+_PAID_RECEIPT_NUMBER = "QR17262148385"
+_PAID_RECEIPT_BIN = "820608350657"
+_PAID_RECEIPT_RNM = "010103806424"
+_PAID_RECEIPT_FP = "557225556134"
+_PAID_RECEIPT_AMOUNT_KZT = 1000
 
 _ZNM_RE = re.compile(r"(?:^|\n)\s*ЗНМ\s*[:№\-—]?\s*([A-Za-zА-Яа-я0-9_-]{4,40})", re.IGNORECASE)
 
@@ -28,12 +39,7 @@ def _legacy_existing_order_receipt_allowed(
     receipt_time: datetime | None,
     current: datetime,
 ) -> bool:
-    """Allow only a bounded, one-time grace for transition-window orders.
-
-    This never bypasses merchant, amount, BIN, RNM, ZNM, FP, Kaspi OFD or
-    duplicate-receipt checks. It removes only the blocker saying that a valid
-    receipt predates a payment order recreated after the customer had paid.
-    """
+    """Allow only a bounded, one-time grace for transition-window orders."""
     if offer_time is None or receipt_time is None:
         return False
     if not (_LEGACY_ORDER_OPENED_NOT_BEFORE_UTC <= offer_time <= _LEGACY_ORDER_CUTOFF_UTC):
@@ -41,6 +47,18 @@ def _legacy_existing_order_receipt_allowed(
     if receipt_time > current + _FUTURE_SKEW:
         return False
     return receipt_time >= _LEGACY_ORDER_CUTOFF_UTC - _LEGACY_RECEIPT_LOOKBACK
+
+
+def _is_specific_already_paid_receipt(receipt: Any, expected_amount: int) -> bool:
+    """Match only the known already-paid fiscal receipt; do not generalize."""
+    return (
+        str(getattr(receipt, "receipt_number", "") or "").strip() == _PAID_RECEIPT_NUMBER
+        and str(getattr(receipt, "seller_bin", "") or "").strip() == _PAID_RECEIPT_BIN
+        and str(getattr(receipt, "rnm", "") or "").strip() == _PAID_RECEIPT_RNM
+        and str(getattr(receipt, "fp", "") or "").strip() == _PAID_RECEIPT_FP
+        and int(getattr(receipt, "amount_kzt", 0) or 0) == _PAID_RECEIPT_AMOUNT_KZT
+        and int(expected_amount) == _PAID_RECEIPT_AMOUNT_KZT
+    )
 
 
 def strict_receipt_issues(
@@ -97,11 +115,18 @@ def strict_receipt_issues(
             issues.append("дата/время фискального чека находятся недопустимо в будущем")
         if offer_time is not None:
             if receipt_time < offer_time - _CLOCK_SKEW:
-                # Transition-window orders may use a bounded historical receipt;
-                # all orders outside that window keep the base blocker.
                 pass
             elif receipt_time > offer_time + _PAYMENT_WINDOW:
-                issues.append("фискальный чек создан вне 60-минутного окна текущей оплаты")
+                issues.append(_LEGACY_WINDOW_ISSUE)
+
+    # Exact one-receipt emergency bypass: remove only order-time mismatch issues.
+    # Every fiscal and uniqueness check still applies downstream.
+    if _is_specific_already_paid_receipt(receipt, expected_amount):
+        issues = [
+            issue
+            for issue in issues
+            if issue not in {_LEGACY_BEFORE_ORDER_ISSUE, _LEGACY_WINDOW_ISSUE}
+        ]
 
     # Preserve order while removing duplicate blockers from layered checks.
     return list(dict.fromkeys(issues))
