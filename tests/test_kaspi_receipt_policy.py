@@ -42,6 +42,54 @@ def test_fresh_receipt_accepts_merchant_and_ignores_address_and_payer():
     assert issues == []
 
 
+def test_existing_pre_migration_order_accepts_recent_already_paid_receipt():
+    def base(*args, **kwargs):
+        return ["фискальный чек создан до открытия текущей заявки на оплату"]
+
+    issues = strict_receipt_issues(
+        base,
+        _receipt(sale_datetime="2026-08-27 18:18:22"),
+        1000,
+        expected_recipient="ИП YSA EDUCATION",
+        expected_bin="820608350657",
+        offered_at="2026-08-30T11:00:00+00:00",
+        now=datetime(2026, 8, 30, 11, 10, tzinfo=timezone.utc),
+    )
+    assert "фискальный чек создан до открытия текущей заявки на оплату" not in issues
+
+
+def test_new_order_keeps_strict_before_order_rejection():
+    def base(*args, **kwargs):
+        return ["фискальный чек создан до открытия текущей заявки на оплату"]
+
+    issues = strict_receipt_issues(
+        base,
+        _receipt(sale_datetime="2026-08-27 18:18:22"),
+        1000,
+        expected_recipient="ИП YSA EDUCATION",
+        expected_bin="820608350657",
+        offered_at="2026-08-30T11:16:00+00:00",
+        now=datetime(2026, 8, 30, 11, 20, tzinfo=timezone.utc),
+    )
+    assert "фискальный чек создан до открытия текущей заявки на оплату" in issues
+
+
+def test_pre_migration_order_does_not_accept_arbitrarily_old_receipt():
+    def base(*args, **kwargs):
+        return ["фискальный чек создан до открытия текущей заявки на оплату"]
+
+    issues = strict_receipt_issues(
+        base,
+        _receipt(sale_datetime="2026-08-20 18:18:22"),
+        1000,
+        expected_recipient="ИП YSA EDUCATION",
+        expected_bin="820608350657",
+        offered_at="2026-08-30T11:00:00+00:00",
+        now=datetime(2026, 8, 30, 11, 10, tzinfo=timezone.utc),
+    )
+    assert "фискальный чек создан до открытия текущей заявки на оплату" in issues
+
+
 def test_receipt_before_current_order_is_rejected_by_base_policy():
     def base(*args, **kwargs):
         return ["фискальный чек создан до открытия текущей заявки на оплату"]
