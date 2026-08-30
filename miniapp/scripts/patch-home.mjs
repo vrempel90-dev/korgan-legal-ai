@@ -67,11 +67,11 @@ source = replaceRequired(
   'profile quality target',
 );
 
-// Keep the payment card customer-facing and concise.
+// Keep payment verification wording concise and customer-facing.
 source = replaceRequired(
   source,
   "manualCheck: 'Ручное подтверждение'",
-  "manualCheck: 'После загрузки чека администратор проверит оплату и подтвердит подготовку документа.'",
+  "manualCheck: 'Проверка оплаты'",
   'payment verification title',
 );
 source = replaceRequired(
@@ -82,10 +82,26 @@ source = replaceRequired(
 );
 source = replaceRequired(
   source,
+  "<h2>{t.manualCheck}</h2>",
+  "<h2>{language === 'kk' ? 'Чекті жүктегеннен кейін әкімші төлемді тексеріп, құжатты дайындауды растайды.' : 'После загрузки чека администратор проверит оплату и подтвердит подготовку документа.'}</h2>",
+  'payment verification customer copy',
+);
+source = replaceRequired(
+  source,
   "<p>{t.manualCheckSub}</p>",
   "",
   'payment verification explanatory text',
 );
+
+// Human-lawyer wording: there are no "live lawyers" in customer copy.
+source = source
+  .replaceAll('Проверка живым юристом', 'Персональный юрист')
+  .replaceAll('живым юристом', 'персональным юристом')
+  .replaceAll('Живой юрист', 'Персональный юрист')
+  .replaceAll('живой юрист', 'персональный юрист')
+  .replaceAll('Тірі заңгердің тексеруі', 'Жеке заңгер')
+  .replaceAll('Тірі заңгер', 'Жеке заңгер')
+  .replaceAll('тірі заңгер', 'жеке заңгер');
 
 // Payment flow is intentionally not rewritten at build time. The React source
 // owns the manual-admin states: pending_receipt -> awaiting_admin -> approved.
