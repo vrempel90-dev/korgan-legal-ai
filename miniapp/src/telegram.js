@@ -2,27 +2,15 @@ export function getTelegramWebApp() {
   return window.Telegram?.WebApp ?? null;
 }
 
-function isDesktopTelegram(tg) {
-  const platform = String(tg?.platform || '').toLowerCase();
-  const desktopPlatforms = new Set(['tdesktop', 'macos', 'weba', 'webk', 'unigram']);
-  const mobilePlatforms = new Set(['android', 'android_x', 'ios']);
-
-  if (desktopPlatforms.has(platform)) return true;
-  if (mobilePlatforms.has(platform)) return false;
-
-  // Fallback for future/unknown Telegram desktop clients.
-  return Boolean(window.matchMedia?.('(min-width: 900px)').matches);
-}
-
-function requestDesktopFullscreen(tg) {
-  if (!isDesktopTelegram(tg)) return;
-  if (typeof tg?.requestFullscreen !== 'function') return;
+function requestTelegramFullscreen(tg) {
+  if (!tg || tg.isFullscreen) return;
+  if (typeof tg.requestFullscreen !== 'function') return;
 
   try {
     tg.requestFullscreen();
   } catch {
-    // Older Telegram clients may expose no fullscreen support. The responsive
-    // desktop layout remains the safe fallback in that case.
+    // Fullscreen is optional and client-dependent. Safe-area handling below
+    // remains the fallback when an older Telegram client rejects the request.
   }
 }
 
@@ -56,11 +44,16 @@ function installTelegramSafeAreaSync(tg) {
   const sync = () => syncTelegramSafeArea(tg);
   sync();
 
-  for (const eventName of ['safeAreaChanged', 'contentSafeAreaChanged', 'viewportChanged']) {
+  for (const eventName of [
+    'safeAreaChanged',
+    'contentSafeAreaChanged',
+    'viewportChanged',
+    'fullscreenChanged',
+  ]) {
     try {
       tg.onEvent?.(eventName, sync);
     } catch {
-      // Older clients may not expose newer safe-area events. CSS/viewport
+      // Older clients may not expose newer safe-area/fullscreen events. CSS
       // fallbacks still protect the layout in those clients.
     }
   }
@@ -77,14 +70,16 @@ export function initTelegram() {
   tg.expand();
   installTelegramSafeAreaSync(tg);
 
-  // Keep Telegram chrome visually consistent with the KORGAN Mini App.
+  // Keep Telegram chrome visually consistent with the KORGAN Mini App. In
+  // fullscreen Telegram makes its header transparent and uses this color to
+  // choose contrasting system controls.
   tg.setHeaderColor?.('#090b0d');
   tg.setBackgroundColor?.('#090b0d');
   tg.setBottomBarColor?.('#090b0d');
 
-  // Telegram Desktop normally opens Mini Apps in a narrow WebView. Ask modern
-  // desktop clients for fullscreen without changing mobile behaviour.
-  window.setTimeout(() => requestDesktopFullscreen(tg), 80);
+  // Fullscreen is supported by modern Telegram Mini Apps on mobile and desktop.
+  // If the client rejects it, the app simply stays expanded with safe areas.
+  window.setTimeout(() => requestTelegramFullscreen(tg), 80);
 
   return tg;
 }
