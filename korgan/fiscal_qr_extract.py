@@ -192,8 +192,10 @@ def _render_pdf_qr(data: bytes) -> str:
                 if projected_pixels <= 0 or projected_pixels > _MAX_IMAGE_PIXELS:
                     continue
                 bitmap = page.render(scale=_PDF_RENDER_SCALE, rotation=0)
-                rgb = np.asarray(bitmap.to_pil().convert("RGB"))
-                image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                # Keep the payment verifier independent from Pillow. PDFium exposes
+                # the rendered pixels directly as NumPy; this is available in the
+                # same runtime where OpenCV performs the QR decode.
+                image = np.asarray(bitmap.to_numpy()).copy()
                 found = _decode_qr_array(image)
                 if found:
                     return found
