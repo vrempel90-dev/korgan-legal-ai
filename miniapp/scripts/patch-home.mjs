@@ -34,6 +34,39 @@ if (!source.includes('className="chat-product-title"')) {
   source = source.slice(0, chatInsertAt) + chatTitle + source.slice(chatInsertAt);
 }
 
+// Quality scoring is an internal release mechanism. Never expose the numeric
+// score, quality target or internal quality issues to MiniApp customers.
+source = replaceRequired(
+  source,
+  ", release_status: result.release_status, quality_score: result.quality_score }));",
+  ", release_status: result.release_status }));",
+  'generated document client quality state',
+);
+source = replaceRequired(
+  source,
+  "{typeof activeCase.quality_score === 'number' && <div className=\"fact\"><span>{t.quality}</span><strong>{activeCase.quality_score}/10</strong></div>}",
+  "",
+  'case quality score',
+);
+source = replaceRequired(
+  source,
+  "<div className=\"release-grid\"><div><span>{t.quality}</span><strong>{typeof documentResult?.quality_score === 'number' ? `${documentResult.quality_score}/10` : '—'}</strong></div><div><span>{t.check}</span><strong>{documentResult?.release_status || '—'}</strong></div></div>",
+  "<div className=\"release-grid\" style={{gridTemplateColumns:'1fr'}}><div><span>{t.check}</span><strong>{documentResult?.release_status || '—'}</strong></div></div>",
+  'ready screen quality score',
+);
+source = replaceRequired(
+  source,
+  "{(documentResult?.verification_notes?.length > 0 || documentResult?.quality_issues?.length > 0) && <div className=\"warning-note left-note\"><AlertTriangle size={17}/><span>{[...(documentResult.verification_notes || []), ...(documentResult.quality_issues || [])].filter((v, i, a) => a.indexOf(v) === i).join(' · ')}</span></div>}",
+  "{documentResult?.verification_notes?.length > 0 && <div className=\"warning-note left-note\"><AlertTriangle size={17}/><span>{(documentResult.verification_notes || []).filter((v, i, a) => a.indexOf(v) === i).join(' · ')}</span></div>}",
+  'ready screen internal quality issues',
+);
+source = replaceRequired(
+  source,
+  "<div className=\"fact\"><span>{t.quality}</span><strong>{runtimeInfo?.word_quality_target || '—'}</strong></div>",
+  "",
+  'profile quality target',
+);
+
 // Payment flow is intentionally not rewritten at build time. The React source
 // owns the manual-admin states: pending_receipt -> awaiting_admin -> approved.
 writeFileSync(mainFile, source, 'utf8');
