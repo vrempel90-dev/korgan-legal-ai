@@ -47,13 +47,14 @@ jobs:
           korgan/fiscal_qr_extract.py
           korgan/miniapp_api_ofd.py
           korgan/miniapp_api_ofd_upload.py
+          korgan/miniapp_document_access.py
           korgan/payment_operation_lock.py
           korgan/miniapp_payment_idempotency.py
           korgan/miniapp_api_recovery_cors.py
           korgan/consultation_quota.py
       - name: Import complete ASGI stack
-        run: python -c "from korgan.miniapp_api_recovery_cors import app; assert app is not None; print(len(app.routes))"
-      - name: Run payment and OFD tests
+        run: python -c "from korgan.miniapp_api_recovery_cors import app; paths={r.path for r in app.routes}; assert '/miniapp/cases/{case_id}/document/access' in paths; assert '/miniapp/document/download' in paths; assert '/miniapp/document/preview' in paths; print(len(app.routes))"
+      - name: Run payment, OFD and stored-document tests
         run: >-
           python -m pytest -q
           tests/test_kaspi_ofd.py
@@ -63,6 +64,7 @@ jobs:
           tests/test_zz_miniapp_ai_payment_parity_v5.py
           tests/test_miniapp_ofd_autogeneration.py
           tests/test_miniapp_client_receipt_policy.py
+          tests/test_miniapp_document_access.py
       - name: Run MiniApp smoke regressions
         run: >-
           python -m pytest -q
