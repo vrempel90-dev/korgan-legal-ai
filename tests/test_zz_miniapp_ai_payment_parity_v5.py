@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from korgan import miniapp_api_ofd_upload as upload_runtime
 from korgan import miniapp_api_v5 as v5
 
 
@@ -17,9 +18,20 @@ def _route(path: str, method: str):
     return matches[0]
 
 
-def test_v5_owns_automatic_document_payment_routes() -> None:
+def test_automatic_payment_routes_use_fiscal_upload_bridge_and_v5_delivery() -> None:
     assert _route("/miniapp/documents/generate", "POST").endpoint is v5.generate_document
-    assert _route("/miniapp/documents/payments/{order_id}/receipt", "POST").endpoint is v5.document_payment_receipt
+    assert (
+        _route("/miniapp/documents/payments/{order_id}/receipt", "POST").endpoint
+        is upload_runtime.document_receipt_upload
+    )
+    assert (
+        _route("/miniapp/consultation/payments/{order_id}/receipt", "POST").endpoint
+        is upload_runtime.consultation_receipt_upload
+    )
+    assert (
+        _route("/miniapp/consultation/payments/{order_id}", "GET").endpoint
+        is upload_runtime.consultation_payment_status
+    )
     assert _route("/miniapp/documents/payments/{order_id}", "GET").endpoint is v5.document_payment_status
     assert _route("/miniapp/documents/payments/{order_id}/retry", "POST").endpoint is v5.retry_paid_document
 
