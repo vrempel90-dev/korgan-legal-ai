@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,29 @@ DRAFT_NOTICE = (
     "Перед подписанием необходимо проверить реквизиты сторон, коммерческие условия и отмеченные системой вопросы."
 )
 
+# The DOCX renderer owns the final requisites/signature layout. Model-generated
+# requisites sections must never be rendered into the numbered contract body,
+# otherwise the document contains the same details twice: first line-by-line and
+# then again in the signing table.
+_REQUISITES_SECTION_RE = re.compile(
+    r"(?i)^\s*(?:"
+    r"реквизит\w*(?:\s+и\s+подпис\w*)?(?:\s+сторон)?|"
+    r"адрес\w*\s+и\s+реквизит\w*(?:\s+сторон)?|"
+    r"подпис\w*\s+сторон|"
+    r"местонахождени\w*\s+и\s+(?:банковск\w*\s+)?реквизит\w*"
+    r")\s*[.:;-]*\s*$"
+)
+_REQUISITES_HEADING_TOKEN_RE = re.compile(r"(?i)\b(?:реквизит\w*|подпис\w*)\b")
+_REQUISITES_CLAUSE_RE = re.compile(
+    r"(?i)(?:\bБИН\b|\bИИН\b|\bИИК\b|\bБИК\b|\bIBAN\b|\bКБе\b|"
+    r"\bбанк\w*\b|\bюридическ\w*\s+адрес\b|\bпочтов\w*\s+адрес\b|"
+    r"\bподпис\w*\b|\bм\.?\s*п\.?\b|\bдиректор\b\s*[:_])"
+)
+_SIGNATURE_LINE_RE = re.compile(
+    r"(?i)^\s*(?:подпис\w*|signature|м\.?\s*п\.?)\s*[:_\-–—.\s]*$"
+)
+_PARTY_LABEL_RE = re.compile(r"(?i)^\s*(?:сторона\s*[12аб]|party\s*[ab12])\s*:?[\s.]*$")
+
 
 def _status(draft: ContractDraft, preamble: list[str]) -> str:
     body = "\n".join([*draft.body_lines(), *preamble]).upper()
@@ -33,15 +57,58 @@ def _today_kz() -> str:
     return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
 
 
+def _renderer_owned_requisites_section(heading: str) -> bool:
+    return bool(_REQUISITES_SECTION_RE.fullmatch(" ".join(str(heading or "").split())))
+
+
+def _clean_combined_heading(heading: str) -> str:
+    value = " ".join(str(heading or "").split()).strip()
+    value = re.sub(
+        r"(?i)\s+(?:и|,|/)\s*(?:адрес\w*\s+и\s+)?(?:реквизит\w*|подпис\w*).*$",
+        "",
+        value,
+    ).strip(" ,;:-")
+    return value or "Заключительные положения"
+
+
+def _looks_like_requisites_clause(text: str) -> bool:
+    value = " ".join(str(text or "").split()).strip()
+    return bool(value and _REQUISITES_CLAUSE_RE.search(value))
+
+
+def _clean_requisites(values: list[str], fallback: list[str]) -> list[str]:
+    result: list[str] = []
+    for raw in values or fallback:
+        value = " ".join(str(raw or "").split()).strip()
+        if not value or _SIGNATURE_LINE_RE.fullmatch(value) or _PARTY_LABEL_RE.fullmatch(value):
+            continue
+        key = re.sub(r"\W+", "", value.casefold())
+        if key and not any(re.sub(r"\W+", "", item.casefold()) == key for item in result):
+            result.append(value)
+    return result
+
+
 def _body_blocks(draft: ContractDraft, preamble: list[str]) -> list[Block]:
     """Describe the contract body; numbering is left entirely to the renderer."""
     blocks: list[Block] = [Prose(item) for item in preamble]
 
     for section in draft.sections:
-        blocks.append(NumberedItem(section.heading, level=0, bold=True))
+        heading = " ".join(str(section.heading or "").split()).strip()
+        if _renderer_owned_requisites_section(heading):
+            continue
+
+        combined_requisites = bool(_REQUISITES_HEADING_TOKEN_RE.search(heading))
+        rendered_heading = _clean_combined_heading(heading) if combined_requisites else heading
+        blocks.append(NumberedItem(rendered_heading, level=0, bold=True))
         for clause in section.clauses:
+            if combined_requisites and _looks_like_requisites_clause(clause.text):
+                continue
             blocks.append(NumberedItem(clause.text, level=1))
-            blocks.extend(NumberedItem(sub, level=2) for sub in clause.subclauses)
+            blocks.extend(
+                NumberedItem(sub, level=2)
+                for sub in clause.subclauses
+                if not (combined_requisites and _looks_like_requisites_clause(sub))
+            )
 
     if not draft.sections:
         blocks.append(
@@ -114,15 +181,24 @@ def build_contract_docx(draft: ContractDraft) -> bytes:
     left.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
     right.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
 
+    left_values = _clean_requisites(
+        draft.requisites_a,
+        draft.party_a or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 1]"],
+    ) or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 1]"]
+    right_values = _clean_requisites(
+        draft.requisites_b,
+        draft.party_b or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 2]"],
+    ) or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 2]"]
+
     left_p = left.paragraphs[0]
     left_p.add_run("Сторона 1\n").bold = True
-    for item in (draft.requisites_a or draft.party_a or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 1]"]):
+    for item in left_values:
         left_p.add_run(f"{item}\n")
     left_p.add_run("\nПодпись: ____________________")
 
     right_p = right.paragraphs[0]
     right_p.add_run("Сторона 2\n").bold = True
-    for item in (draft.requisites_b or draft.party_b or ["[ТРЕБУЕТ УТОЧНЕНИЯ: реквизиты стороны 2]"]):
+    for item in right_values:
         right_p.add_run(f"{item}\n")
     right_p.add_run("\nПодпись: ____________________")
 
