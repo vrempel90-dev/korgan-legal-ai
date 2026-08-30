@@ -34,8 +34,7 @@ if (!source.includes('className="chat-product-title"')) {
   source = source.slice(0, chatInsertAt) + chatTitle + source.slice(chatInsertAt);
 }
 
-// Quality scoring is an internal release mechanism. Never expose the numeric
-// score, quality target or internal quality issues to MiniApp customers.
+// Quality scoring and release diagnostics are internal only.
 source = replaceRequired(
   source,
   ", release_status: result.release_status, quality_score: result.quality_score }));",
@@ -66,6 +65,64 @@ source = replaceRequired(
   "",
   'profile quality target',
 );
+source = replaceRequired(
+  source,
+  "{activeCase.verification_status && <div className=\"fact\"><span>{t.check}</span><strong>{activeCase.filing_ready ? t.verified : t.needsCheck}</strong></div>}",
+  "",
+  'case release verification status',
+);
+
+// Document-specific consultation goes to the KORGAN WhatsApp line with this case context.
+source = replaceRequired(
+  source,
+  '<button className="secondary wide" onClick={() => go(\'chat\')}><MessageCircle size={18}/>{t.consultCase}</button>',
+  `<button className="secondary wide" onClick={() => {
+    const kind = language === 'kk'
+      ? activeCase.document_type === 'claim' ? 'Талап бойынша кеңес'
+        : activeCase.document_type === 'contract' ? 'Шарт бойынша кеңес'
+        : activeCase.document_type === 'response' ? 'Талапқа пікір бойынша кеңес'
+        : activeCase.document_type === 'pretrial' ? 'Сотқа дейінгі талап бойынша кеңес'
+        : activeCase.document_type === 'pretrial_response' ? 'Талапқа жауап бойынша кеңес'
+        : 'Құжат бойынша кеңес'
+      : activeCase.document_type === 'claim' ? 'Консультация по иску'
+        : activeCase.document_type === 'contract' ? 'Консультация по договору'
+        : activeCase.document_type === 'response' ? 'Консультация по отзыву на иск'
+        : activeCase.document_type === 'pretrial' ? 'Консультация по претензии'
+        : activeCase.document_type === 'pretrial_response' ? 'Консультация по ответу на претензию'
+        : 'Консультация по документу';
+    const documentTitle = activeCase.title || title;
+    const text = language === 'kk'
+      ? 'Сәлеметсіз бе. ' + kind + ' қажет.\\n\\nҚұжат: ' + documentTitle + '\\nІс нөмірі: ' + activeCase.id + (activeCase.has_document ? '\\nҚұжат KORGAN жүйесінде дайын және осы істе сақталған.' : '')
+      : 'Здравствуйте. Нужна ' + kind.toLowerCase() + '.\\n\\nДокумент: ' + documentTitle + '\\nНомер дела: ' + activeCase.id + (activeCase.has_document ? '\\nДокумент уже подготовлен и сохранён в KORGAN в этом деле.' : '');
+    const url = WHATSAPP_URL + '?text=' + encodeURIComponent(text);
+    const tg = window.Telegram?.WebApp;
+    if (tg?.openLink) tg.openLink(url); else window.open(url, '_blank', 'noopener,noreferrer');
+  }}><MessageCircle size={18}/>{language === 'kk'
+    ? activeCase.document_type === 'claim' ? 'Талап бойынша кеңес'
+      : activeCase.document_type === 'contract' ? 'Шарт бойынша кеңес'
+      : activeCase.document_type === 'response' ? 'Талапқа пікір бойынша кеңес'
+      : activeCase.document_type === 'pretrial' ? 'Сотқа дейінгі талап бойынша кеңес'
+      : activeCase.document_type === 'pretrial_response' ? 'Талапқа жауап бойынша кеңес'
+      : 'Құжат бойынша кеңес'
+    : activeCase.document_type === 'claim' ? 'Консультация по иску'
+      : activeCase.document_type === 'contract' ? 'Консультация по договору'
+      : activeCase.document_type === 'response' ? 'Консультация по отзыву на иск'
+      : activeCase.document_type === 'pretrial' ? 'Консультация по претензии'
+      : activeCase.document_type === 'pretrial_response' ? 'Консультация по ответу на претензию'
+      : 'Консультация по документу'}</button>`,
+  'document consultation action',
+);
+
+// The customer-ready screen must never expose preliminary/release/quality internals.
+const readyStartMarker = "  if (screen === 'ready')";
+const readyEndMarker = "\n\n  if (screen === 'cases')";
+const readyStart = source.indexOf(readyStartMarker);
+const readyEnd = source.indexOf(readyEndMarker, readyStart);
+if (readyStart < 0 || readyEnd < 0) {
+  throw new Error('KORGAN ready screen block not found; refusing to patch build.');
+}
+const readyBlock = `  if (screen === 'ready') return <div className="app-shell"><Header title={t.docReady} back="case"/><main className="page ready-page"><div className="success-ring"><CheckCircle2 size={48}/></div><h1>{documentResult?.title || t.docReady}</h1><div className="document-preview"><div className="paper-lines"><b>{documentResult?.title || 'KORGAN LEGAL AI'}</b><span/><span/><span/><span/><span/></div></div><button className="primary wide" disabled={!documentResult?.document_base64} onClick={() => downloadBase64(documentResult.document_base64, documentResult.filename)}><Download size={18}/>{t.download}</button></main></div>;`;
+source = source.slice(0, readyStart) + readyBlock + source.slice(readyEnd);
 
 // Keep payment verification wording concise and customer-facing.
 source = replaceRequired(
