@@ -74,10 +74,40 @@ async function uploadMaterial(caseId, file) {
   return request(`/miniapp/cases/${encodeURIComponent(caseId)}/materials`, { method: 'POST', body });
 }
 
+async function recoverPaidConsultation(orderId, originalError) {
+  if (Number(originalError?.status || 0) < 500) throw originalError;
+  try {
+    const status = await request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}`);
+    if (status?.payment?.status === 'paid') {
+      try {
+        return await request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/retry`, { method: 'POST' });
+      } catch (retryError) {
+        retryError.paymentConfirmed = true;
+        throw retryError;
+      }
+    }
+    if (status?.payment?.status === 'consumed') {
+      const completed = new Error('Оплата уже подтверждена и консультация была выдана. Повторно платить не нужно.');
+      completed.status = 409;
+      completed.paymentConfirmed = true;
+      throw completed;
+    }
+  } catch (statusError) {
+    if (statusError?.paymentConfirmed) throw statusError;
+    // If status itself cannot be recovered, keep the original server error.
+  }
+  originalError.paymentConfirmed = false;
+  throw originalError;
+}
+
 async function uploadConsultationReceipt(orderId, file) {
   const body = new FormData();
   body.append('file', file);
-  return request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+  try {
+    return await request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+  } catch (error) {
+    return recoverPaidConsultation(orderId, error);
+  }
 }
 
 async function recoverApprovedDocumentPayment(orderId, error) {
@@ -111,10 +141,14 @@ async function uploadDocumentReceipt(orderId, file) {
 }
 
 async function submitConsultationReceiptUrl(orderId, receiptUrl) {
-  return request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt-url`, {
-    method: 'POST',
-    body: JSON.stringify({ receipt_url: String(receiptUrl || '').trim() }),
-  });
+  try {
+    return await request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt-url`, {
+      method: 'POST',
+      body: JSON.stringify({ receipt_url: String(receiptUrl || '').trim() }),
+    });
+  } catch (error) {
+    return recoverPaidConsultation(orderId, error);
+  }
 }
 
 async function submitDocumentReceiptUrl(orderId, receiptUrl) {
@@ -144,6 +178,7 @@ export const korganApi = {
   }),
   uploadConsultationReceipt,
   submitConsultationReceiptUrl,
+  consultationPaymentStatus: (orderId) => request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}`),
   retryPaidConsultation: (orderId) => request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/retry`, {
     method: 'POST',
   }),
