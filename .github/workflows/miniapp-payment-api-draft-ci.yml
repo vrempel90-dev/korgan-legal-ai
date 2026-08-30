@@ -53,7 +53,7 @@ jobs:
           korgan/miniapp_api_recovery_cors.py
           korgan/consultation_quota.py
       - name: Import complete ASGI stack
-        run: python -c "from korgan.miniapp_api_recovery_cors import app; paths={r.path for r in app.routes}; assert '/miniapp/cases/{case_id}/document/access' in paths; assert '/miniapp/document/download' in paths; assert '/miniapp/document/preview' in paths; print(len(app.routes))"
+        run: python -c "from korgan.miniapp_api_recovery_cors import app; paths={getattr(r,'path','') for r in app.routes}; assert '/miniapp/cases/{case_id}/document/access' in paths; assert '/miniapp/document/download' in paths; assert '/miniapp/document/preview' in paths; print(len(app.routes))"
       - name: Run payment, OFD and stored-document tests
         run: >-
           python -m pytest -q
