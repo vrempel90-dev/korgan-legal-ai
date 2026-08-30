@@ -1,0 +1,36 @@
+name: MiniApp Kaspi payment Web draft CI
+
+on:
+  push:
+    branches:
+      - fix/stable-miniapp-payments-web
+  pull_request:
+    branches:
+      - recovery/miniapp-web-1600-sg
+
+jobs:
+  miniapp-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: miniapp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: miniapp/package.json
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build MiniApp
+        run: npm run build
+      - name: Check payment UX markers
+        run: >-
+          node -e "const fs=require('fs');
+          const main=fs.readFileSync('src/main.jsx','utf8');
+          const api=fs.readFileSync('src/korganApi.js','utf8');
+          if(!main.includes('Я оплатил')) process.exit(1);
+          if(!main.includes('openKaspiPayment')) process.exit(1);
+          if(!api.includes('recoverPaidConsultation')) process.exit(1);
+          if(!api.includes('recoverApprovedDocumentPayment')) process.exit(1);"
