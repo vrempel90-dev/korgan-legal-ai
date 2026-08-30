@@ -21,7 +21,7 @@ app = v5.app
 core = v5.core
 settings = v5.settings
 v4 = v5.v4
-PARITY_REVISION = "2026-08-28.kaspi-ofd-qr-url-v1"
+PARITY_REVISION = "2026-08-30.kaspi-ofd-agent-parity-v2"
 _T = TypeVar("_T")
 
 
@@ -275,13 +275,7 @@ async def document_receipt_url(
     if order.status == "consumed":
         raise HTTPException(status_code=409, detail="Эта оплата уже использована для документа")
     if order.status == "approved":
-        return {
-            "ok": True,
-            "payment_required": False,
-            "generation_started": False,
-            "payment": v5._payment_payload(order),
-            "message": "Оплата уже подтверждена через Kaspi ОФД. Повторно платить не нужно.",
-        }
+        return await v5._run_approved_document(order, x_telegram_init_data=x_telegram_init_data)
     if order.status not in {"pending_receipt", "awaiting_admin"}:
         raise HTTPException(status_code=409, detail="Этот платёжный запрос уже закрыт")
 
@@ -303,13 +297,7 @@ async def document_receipt_url(
         if not accepted:
             latest = await document_store.get_document_order(order.id, user_key=user_key)
             if latest is not None and latest.status == "approved":
-                return {
-                    "ok": True,
-                    "payment_required": False,
-                    "generation_started": False,
-                    "payment": v5._payment_payload(latest),
-                    "message": "Оплата уже подтверждена. Повторно платить не нужно.",
-                }
+                return await v5._run_approved_document(latest, x_telegram_init_data=x_telegram_init_data)
             raise HTTPException(
                 status_code=409,
                 detail="Этот фискальный чек уже использован или платёжный запрос уже обработан",
@@ -340,13 +328,7 @@ async def document_receipt_url(
     if latest is None or latest.status != "approved":
         raise HTTPException(status_code=409, detail="Оплата не подтверждена")
 
-    return {
-        "ok": True,
-        "payment_required": False,
-        "generation_started": False,
-        "payment": v5._payment_payload(latest),
-        "message": "Фискальный чек подтверждён через Kaspi ОФД. Оплата принята автоматически.",
-    }
+    return await v5._run_approved_document(latest, x_telegram_init_data=x_telegram_init_data)
 
 
 # Keep the current 1.0.0 contract required by the live frontend, but expose the
