@@ -10,6 +10,7 @@ on:
     paths:
       - korgan/contract_docx.py
       - tests/test_contract_docx_single_requisites.py
+      - tests/test_miniapp_client_feedback_routes.py
       - .github/workflows/client-feedback-contract-requisites-ci.yml
 
 jobs:
@@ -29,7 +30,7 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Compile contract renderer
-        run: python -m py_compile korgan/contract_docx.py
-      - name: Run requisites regression tests
-        run: python -m pytest -q tests/test_contract_docx_single_requisites.py tests/test_contract_numbering_and_preamble.py
+      - name: Compile client feedback API stack
+        run: python -m py_compile korgan/contract_docx.py korgan/miniapp_telegram_delivery.py korgan/miniapp_api_recovery_cors.py
+      - name: Run client feedback regressions
+        run: python -m pytest -q tests/test_contract_docx_single_requisites.py tests/test_contract_numbering_and_preamble.py tests/test_miniapp_client_feedback_routes.py
