@@ -72,11 +72,15 @@ def _require_pool() -> asyncpg.Pool:
 
 
 async def init_document_payment_store(settings: Settings) -> None:
+    """Admin bot always connects to the shared payment database.
+
+    The Telegram process no longer owns any customer payment/AI flow, but it
+    must be able to decide orders created by the MiniApp API even if the old
+    PAYMENTS_ENABLED flag on the agent service differs from the API service.
+    """
     global _POOL
-    if not settings.payments_enabled:
-        return
     if not settings.database_url.strip():
-        raise RuntimeError("PAYMENTS_ENABLED requires DATABASE_URL for Mini App document payments")
+        raise RuntimeError("Admin payment decisions require DATABASE_URL")
     if _POOL is not None:
         return
     _POOL = await asyncpg.create_pool(
