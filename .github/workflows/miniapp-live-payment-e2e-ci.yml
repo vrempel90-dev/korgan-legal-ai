@@ -1,0 +1,32 @@
+name: Mini App live payment E2E UI CI
+
+on:
+  push:
+    branches:
+      - hotfix/miniapp-live-payment-e2e
+
+jobs:
+  web-payment:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: miniapp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: npm install
+      - name: Production build
+        run: npm run build
+      - name: Verify live payment contract
+        run: |
+          grep -q "Я оплатил" src/main.jsx
+          grep -q "result?.document_base64" src/main.jsx
+          grep -q "Повторить генерацию без оплаты" src/main.jsx
+          grep -q "KORGAN сам прочитает фискальный QR" src/main.jsx
+          if grep -A8 "if (screen === 'doc-payment'" src/main.jsx | grep -q "awaiting_admin"; then
+            echo "stale manual-admin payment state remains in live payment screen" >&2
+            exit 1
+          fi
