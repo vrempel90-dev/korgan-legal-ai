@@ -50,6 +50,28 @@ async def _receipt_url_from_upload(file: UploadFile) -> str:
     return receipt_url
 
 
+@app.get("/miniapp/consultation/payments/{order_id}")
+async def consultation_payment_status(
+    order_id: int,
+    x_telegram_init_data: str = Header(default=""),
+) -> dict[str, Any]:
+    identity = core.legacy._identity(x_telegram_init_data)
+    await core.legacy._require_consent(identity)
+    user_id = ofd.v4._quota_user_id(identity)
+    order = await ofd.consultation_store.get_consultation_order(order_id, user_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Платёжный запрос не найден")
+    return {
+        "ok": True,
+        "payment": {
+            "order_id": order.id,
+            "amount_kzt": order.amount_kzt,
+            "status": order.status,
+            "paid": order.status in {"paid", "consumed"},
+        },
+    }
+
+
 @app.post("/miniapp/consultation/payments/{order_id}/receipt")
 async def consultation_receipt_upload(
     order_id: int,
