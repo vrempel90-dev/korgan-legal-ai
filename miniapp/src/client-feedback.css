@@ -1,0 +1,85 @@
+:root {
+  --korgan-telegram-safe-top: 0px;
+  --korgan-telegram-safe-bottom: 0px;
+}
+
+/*
+ * Client feedback hardening for Telegram Mini App.
+ *
+ * Telegram's native Close/title/menu bar is platform chrome and cannot be
+ * removed by the web app. What KORGAN controls is its own content placement:
+ * no product control may sit underneath the native header or bottom bar.
+ */
+@media (max-width: 599px) {
+  html.telegram-webapp {
+    --korgan-mobile-safe-top: max(
+      var(--korgan-telegram-safe-top, 0px),
+      var(--tg-content-safe-area-inset-top, 0px),
+      var(--tg-safe-area-inset-top, 0px),
+      env(safe-area-inset-top, 0px)
+    );
+    --korgan-mobile-safe-bottom: max(
+      var(--korgan-telegram-safe-bottom, 0px),
+      var(--tg-content-safe-area-inset-bottom, 0px),
+      var(--tg-safe-area-inset-bottom, 0px),
+      env(safe-area-inset-bottom, 0px)
+    );
+    --korgan-mobile-nav-height: calc(72px + var(--korgan-mobile-safe-bottom));
+  }
+
+  html.telegram-webapp .app-shell {
+    box-sizing: border-box;
+    padding-top: var(--korgan-mobile-safe-top);
+    padding-bottom: calc(112px + var(--korgan-mobile-safe-bottom));
+    scroll-padding-top: calc(62px + var(--korgan-mobile-safe-top));
+    scroll-padding-bottom: calc(132px + var(--korgan-mobile-safe-bottom));
+  }
+
+  html.telegram-webapp .topbar,
+  html.telegram-webapp .subbar {
+    top: var(--korgan-mobile-safe-top);
+  }
+
+  /*
+   * Keep the final action fully scrollable above the fixed nav. This covers
+   * document preparation/progress screens as well as ordinary case pages.
+   */
+  html.telegram-webapp .home-page,
+  html.telegram-webapp .page {
+    padding-bottom: calc(136px + var(--korgan-mobile-safe-bottom));
+  }
+
+  html.telegram-webapp .chat-page {
+    padding-bottom: calc(164px + var(--korgan-mobile-safe-bottom));
+  }
+
+  html.telegram-webapp .bottom-nav {
+    bottom: 0;
+    height: var(--korgan-mobile-nav-height);
+    padding-bottom: var(--korgan-mobile-safe-bottom);
+  }
+
+  html.telegram-webapp .composer {
+    bottom: var(--korgan-mobile-nav-height);
+  }
+
+  /* Forward-compatible names for sticky/floating document CTAs. */
+  html.telegram-webapp :is(
+    .sticky-cta,
+    .workflow-cta,
+    .generation-cta,
+    .document-cta,
+    .bottom-action,
+    .floating-action
+  ) {
+    bottom: calc(var(--korgan-mobile-nav-height) + 10px) !important;
+  }
+
+  /* A focused/tapped control must never disappear beneath fixed navigation. */
+  html.telegram-webapp button,
+  html.telegram-webapp input,
+  html.telegram-webapp textarea,
+  html.telegram-webapp label {
+    scroll-margin-bottom: calc(116px + var(--korgan-mobile-safe-bottom));
+  }
+}
