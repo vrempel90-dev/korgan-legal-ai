@@ -1,0 +1,46 @@
+name: Client feedback MiniApp layout CI
+
+on:
+  push:
+    branches:
+      - fix/client-feedback-miniapp-layout
+  pull_request:
+    branches:
+      - recovery/miniapp-web-1600-sg
+    paths:
+      - miniapp/index.html
+      - miniapp/src/telegram.js
+      - miniapp/src/client-feedback.css
+      - miniapp/src/main.jsx
+      - miniapp/src/korganApi.js
+      - .github/workflows/client-feedback-miniapp-layout-ci.yml
+
+jobs:
+  miniapp-client-feedback:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: miniapp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: miniapp/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Build MiniApp
+        run: npm run build
+      - name: Check Telegram safe-area wiring
+        run: |
+          grep -q "contentSafeAreaInset" src/telegram.js
+          grep -q "safeAreaChanged" src/telegram.js
+          grep -q -- "--korgan-telegram-safe-top" src/client-feedback.css
+          grep -q -- "--korgan-mobile-nav-height" src/client-feedback.css
+          grep -q 'client-feedback.css' index.html
+      - name: Check reliable document delivery UX
+        run: |
+          grep -q "Прислать в Telegram" src/main.jsx
+          grep -q "sendDocumentToTelegram" src/korganApi.js
+          grep -q "/document/telegram" src/korganApi.js
