@@ -10,7 +10,7 @@ from korgan.fiscal_qr_extract import extract_kaspi_fiscal_qr_url
 def _vector_qr_pdf(url: str) -> bytes:
     qr = cv2.QRCodeEncoder_create().encode(url)
     modules = int(qr.shape[0])
-    module = 6
+    module = 8
     quiet = 4 * module
     size = modules * module + 2 * quiet
     commands = ["0 0 0 rg"]
