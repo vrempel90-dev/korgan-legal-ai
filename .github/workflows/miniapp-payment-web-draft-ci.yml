@@ -25,12 +25,19 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Build MiniApp
         run: npm run build
-      - name: Check payment UX markers
+      - name: Check payment and document-access UX markers
         run: >-
           node -e "const fs=require('fs');
           const main=fs.readFileSync('src/main.jsx','utf8');
           const api=fs.readFileSync('src/korganApi.js','utf8');
+          const access=fs.readFileSync('src/document-access-ui.js','utf8');
+          const index=fs.readFileSync('index.html','utf8');
           if(!main.includes('Я оплатил')) process.exit(1);
           if(!main.includes('openKaspiPayment')) process.exit(1);
           if(!api.includes('recoverPaidConsultation')) process.exit(1);
-          if(!api.includes('recoverApprovedDocumentPayment')) process.exit(1);"
+          if(!api.includes('recoverApprovedDocumentPayment')) process.exit(1);
+          if(!index.includes('/src/document-access-ui.js')) process.exit(1);
+          if(!access.includes('/document/access')) process.exit(1);
+          if(!access.includes('downloadFile')) process.exit(1);
+          if(!access.includes('preview_url')) process.exit(1);
+          if(!access.includes('Открыть')) process.exit(1);"
