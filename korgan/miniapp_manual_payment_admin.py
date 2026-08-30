@@ -12,14 +12,13 @@ from fastapi import File, Header, HTTPException, UploadFile
 from korgan import miniapp_api_ofd as ofd
 from korgan import miniapp_api_ofd_upload as upload_runtime
 from korgan import miniapp_document_payments as document_store
-from korgan.kaspi_ofd import KaspiFiscalReceipt
+from korgan.kaspi_ofd import KaspiFiscalReceipt, KaspiOFDVerificationError
 
 LOGGER = logging.getLogger(__name__)
 
 app = upload_runtime.app
 core = ofd.core
 settings = ofd.settings
-v4 = ofd.v4
 v5 = ofd.v5
 
 _TELEGRAM_API = "https://api.telegram.org"
@@ -53,7 +52,7 @@ def _manual_receipt_payload(receipt: KaspiFiscalReceipt, *, warning: str = "") -
 
 
 def _caption(order: document_store.DocumentPaymentOrder, receipt: KaspiFiscalReceipt, *, warning: str = "") -> str:
-    warning_line = f"\n⚠️ Предварительная проверка: {warning[:500]}" if warning else "\n✅ Фискальные поля считаны"
+    warning_line = f"\n⚠️ Предварительная проверка: {warning[:420]}" if warning else "\n✅ Фискальные поля считаны"
     return (
         "🧾 KORGAN · РУЧНАЯ ПРОВЕРКА ОПЛАТЫ\n\n"
         f"Заказ: #{order.id}\n"
@@ -69,7 +68,7 @@ def _caption(order: document_store.DocumentPaymentOrder, receipt: KaspiFiscalRec
         f"ОФД: {receipt.ofd_name or '—'}\n"
         f"Оплата: {receipt.payment_method or '—'}"
         f"{warning_line}\n\n"
-        "Сверьте этот платёж в истории Kaspi Pay. Затем откройте MiniApp → Профиль → «Проверка оплат» и нажмите «Подтвердить» или «Отклонить»."
+        "Сверьте платёж в истории Kaspi Pay. Затем откройте MiniApp → Профиль → «Проверка оплат» и нажмите «Подтвердить» или «Отклонить»."
     )[:1024]
 
 
@@ -142,13 +141,14 @@ async def _notify_admins(
     data: bytes,
     content_type: str,
     warning: str = "",
-) -> None:
+) -> int:
     admin_ids = sorted(settings.admin_ids)
     if not admin_ids:
         LOGGER.error("KORGAN manual payment: ADMIN_TELEGRAM_IDS is empty order_id=%s", order.id)
-        return
+        return 0
+    delivered = 0
     for admin_id in admin_ids:
-        await _send_receipt_to_admin(
+        if await _send_receipt_to_admin(
             admin_id,
             order=order,
             receipt=receipt,
@@ -156,12 +156,16 @@ async def _notify_admins(
             data=data,
             content_type=content_type,
             warning=warning,
-        )
+        ):
+            delivered += 1
+    return delivered
 
 
 # Replace automatic document receipt acceptance with a manual-admin queue.
-# Consultation payment remains unchanged.
+# Consultation payment remains unchanged. The legacy receipt-url endpoint is
+# disabled for documents so no client can bypass the administrator decision.
 v5._drop("/miniapp/documents/payments/{order_id}/receipt", "POST")
+v5._drop("/miniapp/documents/payments/{order_id}/receipt-url", "POST")
 v5._drop("/miniapp/parity", "GET")
 v5._drop("/miniapp/pricing", "GET")
 
@@ -188,6 +192,14 @@ async def pricing(x_telegram_init_data: str = Header(default="")) -> dict[str, A
     payload["automatic_receipt_verification"] = False
     payload["document_payment_admin_configured"] = bool(settings.admin_ids)
     return payload
+
+
+@app.post("/miniapp/documents/payments/{order_id}/receipt-url")
+async def document_receipt_url_manual_only(order_id: int) -> dict[str, Any]:
+    raise HTTPException(
+        status_code=409,
+        detail="Для оплаты документа загрузите электронный Kaspi-чек через кнопку «Я оплатил». Оплата подтверждается администратором.",
+    )
 
 
 @app.post("/miniapp/documents/payments/{order_id}/receipt")
@@ -225,6 +237,12 @@ async def document_receipt_upload_manual(
     await file.seek(0)
 
     receipt_url, uploaded_receipt = await upload_runtime._receipt_from_upload(file)
+    if uploaded_receipt is not None:
+        try:
+            upload_runtime._assert_qr_matches_uploaded_receipt(receipt_url, uploaded_receipt)
+        except KaspiOFDVerificationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     token = upload_runtime._uploaded_receipt_ctx.set(uploaded_receipt)
     try:
         offered_at = await v5._order_created_at(order.id, user_key)
@@ -237,9 +255,10 @@ async def document_receipt_upload_manual(
                 offered_at=offered_at,
             )
         except HTTPException as exc:
-            # Manual confirmation is the final authority. A fully parsed electronic
-            # Kaspi PDF with QR/PDF cross-check may still enter the admin queue even
-            # if the remote OFD endpoint returns an incomplete client-rendered page.
+            # The administrator is the final payment authority. A fully parsed
+            # electronic Kaspi PDF can still enter the manual queue when the
+            # remote receipt page is incomplete, but only after its fiscal QR is
+            # cross-checked against amount/RNM/FP/date-time above.
             if uploaded_receipt is None:
                 raise
             receipt = uploaded_receipt
@@ -254,7 +273,7 @@ async def document_receipt_upload_manual(
             )
 
         receipt_hash = hashlib.sha256(data).hexdigest()
-        newly_registered = False
+        notify_now = False
         if order.status == "pending_receipt":
             accepted = await document_store.accept_document_receipt_precheck(
                 order_id=order.id,
@@ -272,7 +291,7 @@ async def document_receipt_upload_manual(
                     )
                 order = latest
             else:
-                newly_registered = True
+                notify_now = True
                 latest = await document_store.get_document_order(order.id, user_key=user_key)
                 if latest is not None:
                     order = latest
@@ -283,12 +302,16 @@ async def document_receipt_upload_manual(
                     status_code=409,
                     detail="Для этой заявки уже отправлен другой чек на ручную проверку",
                 )
+            # Re-uploading the same receipt retries Telegram delivery. This is
+            # useful if the bot temporarily could not reach the administrator.
+            notify_now = True
 
         if order.status != "awaiting_admin":
             raise HTTPException(status_code=409, detail="Статус оплаты изменился; обновите экран")
 
-        if newly_registered:
-            await _notify_admins(
+        delivered = 0
+        if notify_now:
+            delivered = await _notify_admins(
                 order=order,
                 receipt=receipt,
                 filename=filename,
@@ -297,12 +320,15 @@ async def document_receipt_upload_manual(
                 warning=warning,
             )
 
+        message = "Чек отправлен администратору. Повторно платить не нужно — ожидайте ручного подтверждения."
+        if notify_now and delivered == 0:
+            message = "Чек сохранён для ручной проверки. Повторно платить не нужно. Если подтверждение задержится, загрузите этот же чек ещё раз."
         return {
             "ok": True,
             "payment_required": True,
             "generation_started": False,
             "payment": _payment_payload(order),
-            "message": "Чек отправлен администраторам. Повторно платить не нужно — ожидайте ручного подтверждения.",
+            "message": message,
         }
     finally:
         upload_runtime._uploaded_receipt_ctx.reset(token)
