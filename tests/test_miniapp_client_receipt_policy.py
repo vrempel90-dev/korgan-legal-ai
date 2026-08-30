@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,13 @@ from korgan.miniapp_document_payments import DocumentPaymentOrder
 
 KORGAN_BIN = "820608350657"
 KORGAN_RNM = "010103806424"
+_KZ_TZ = timezone(timedelta(hours=5))
+
+
+def _fresh_times() -> tuple[str, str]:
+    sale = datetime.now(timezone.utc).astimezone(_KZ_TZ) - timedelta(minutes=1)
+    offered = sale - timedelta(minutes=1)
+    return sale.strftime("%d.%m.%Y %H:%M"), offered.isoformat()
 
 
 def _receipt(*, sale_datetime: str, amount_kzt: int = 1000, rnm: str = KORGAN_RNM) -> KaspiFiscalReceipt:
@@ -71,7 +79,8 @@ def _install_receipt_settings(monkeypatch) -> None:
 
 def test_client_receipt_fields_pass_without_address_when_fresh(monkeypatch) -> None:
     _install_receipt_settings(monkeypatch)
-    receipt = _receipt(sale_datetime="30.08.2026 13:01")
+    sale_datetime, offered_at = _fresh_times()
+    receipt = _receipt(sale_datetime=sale_datetime)
 
     async def fetch(_url: str):
         return receipt
@@ -82,7 +91,7 @@ def test_client_receipt_fields_pass_without_address_when_fresh(monkeypatch) -> N
         ofd._verify_fiscal_receipt(
             receipt.canonical_url,
             expected_amount=1000,
-            offered_at="2026-08-30T13:00:00+05:00",
+            offered_at=offered_at,
         )
     )
 
@@ -118,7 +127,8 @@ def test_old_receipt_cannot_pay_a_new_order(monkeypatch) -> None:
 
 def test_wrong_amount_or_rnm_never_unlocks_document(monkeypatch) -> None:
     _install_receipt_settings(monkeypatch)
-    receipt = _receipt(sale_datetime="30.08.2026 13:01", amount_kzt=999, rnm="999999999999")
+    sale_datetime, offered_at = _fresh_times()
+    receipt = _receipt(sale_datetime=sale_datetime, amount_kzt=999, rnm="999999999999")
 
     async def fetch(_url: str):
         return receipt
@@ -130,7 +140,7 @@ def test_wrong_amount_or_rnm_never_unlocks_document(monkeypatch) -> None:
             ofd._verify_fiscal_receipt(
                 receipt.canonical_url,
                 expected_amount=1000,
-                offered_at="2026-08-30T13:00:00+05:00",
+                offered_at=offered_at,
             )
         )
 
