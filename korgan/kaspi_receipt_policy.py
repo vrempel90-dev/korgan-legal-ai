@@ -9,6 +9,7 @@ from korgan.kaspi_ofd import _parse_datetime
 _CLOCK_SKEW = timedelta(minutes=2)
 _FUTURE_SKEW = timedelta(minutes=5)
 _PAYMENT_WINDOW = timedelta(minutes=60)
+_KZ_TZ = timezone(timedelta(hours=5))
 
 # One-time migration guard for customers who paid before the strict order-time
 # policy was deployed. Only orders opened during the actual transition window
@@ -18,6 +19,7 @@ _LEGACY_ORDER_OPENED_NOT_BEFORE_UTC = datetime(2026, 8, 30, 10, 40, tzinfo=timez
 _LEGACY_ORDER_CUTOFF_UTC = datetime(2026, 8, 30, 11, 15, tzinfo=timezone.utc)
 _LEGACY_RECEIPT_LOOKBACK = timedelta(days=7)
 _LEGACY_BEFORE_ORDER_ISSUE = "фискальный чек создан до открытия текущей заявки на оплату"
+_PAYMENT_WINDOW_ISSUE = "фискальный чек создан вне 60-минутного окна текущей оплаты"
 
 _ZNM_RE = re.compile(r"(?:^|\n)\s*ЗНМ\s*[:№\-—]?\s*([A-Za-zА-Яа-я0-9_-]{4,40})", re.IGNORECASE)
 
@@ -28,12 +30,7 @@ def _legacy_existing_order_receipt_allowed(
     receipt_time: datetime | None,
     current: datetime,
 ) -> bool:
-    """Allow only a bounded, one-time grace for transition-window orders.
-
-    This never bypasses merchant, amount, BIN, RNM, ZNM, FP, Kaspi OFD or
-    duplicate-receipt checks. It removes only the blocker saying that a valid
-    receipt predates a payment order recreated after the customer had paid.
-    """
+    """Allow only a bounded, one-time grace for transition-window orders."""
     if offer_time is None or receipt_time is None:
         return False
     if not (_LEGACY_ORDER_OPENED_NOT_BEFORE_UTC <= offer_time <= _LEGACY_ORDER_CUTOFF_UTC):
@@ -41,6 +38,14 @@ def _legacy_existing_order_receipt_allowed(
     if receipt_time > current + _FUTURE_SKEW:
         return False
     return receipt_time >= _LEGACY_ORDER_CUTOFF_UTC - _LEGACY_RECEIPT_LOOKBACK
+
+
+def _is_current_kz_day(receipt_time: datetime | None, current: datetime) -> bool:
+    if receipt_time is None:
+        return False
+    if receipt_time > current + _FUTURE_SKEW:
+        return False
+    return receipt_time.astimezone(_KZ_TZ).date() == current.astimezone(_KZ_TZ).date()
 
 
 def strict_receipt_issues(
@@ -56,9 +61,9 @@ def strict_receipt_issues(
     """Add the MiniApp payment policy on top of the Kaspi OFD verifier.
 
     Address and payer name are intentionally irrelevant. A third party may pay.
-    The KORGAN brand is never compared with the legal merchant name shown on a
-    fiscal receipt. Merchant identity is validated by configured fiscal IDs
-    (BIN/RNM) in the base verifier; seller_name is informational but must exist.
+    Merchant identity is validated by configured fiscal IDs. A valid receipt
+    from the current Kazakhstan calendar day is accepted regardless of when the
+    MiniApp payment order was recreated; uniqueness still prevents reuse.
     """
     issues = list(
         original(
@@ -76,8 +81,6 @@ def strict_receipt_issues(
     if not seller_name:
         issues.append("в фискальном чеке не найден продавец/ИП")
 
-    # ZNM is a stable cash-register attribute shown on Kaspi fiscal receipts.
-    # We require its presence but do not compare the receipt address at all.
     if not _ZNM_RE.search(raw_text):
         issues.append("в фискальном чеке не найден ЗНМ")
 
@@ -97,13 +100,21 @@ def strict_receipt_issues(
             issues.append("дата/время фискального чека находятся недопустимо в будущем")
         if offer_time is not None:
             if receipt_time < offer_time - _CLOCK_SKEW:
-                # Transition-window orders may use a bounded historical receipt;
-                # all orders outside that window keep the base blocker.
                 pass
             elif receipt_time > offer_time + _PAYMENT_WINDOW:
-                issues.append("фискальный чек создан вне 60-минутного окна текущей оплаты")
+                issues.append(_PAYMENT_WINDOW_ISSUE)
 
-    # Preserve order while removing duplicate blockers from layered checks.
+    # Current-day receipts are the normal customer flow. Order records may be
+    # recreated after payment, so do not reject a genuine current-day fiscal
+    # receipt only because it predates that recreated order or exceeds 60 min.
+    # All fiscal identity, amount, OFD and duplicate checks remain mandatory.
+    if _is_current_kz_day(receipt_time, current):
+        issues = [
+            issue
+            for issue in issues
+            if issue not in {_LEGACY_BEFORE_ORDER_ISSUE, _PAYMENT_WINDOW_ISSUE}
+        ]
+
     return list(dict.fromkeys(issues))
 
 

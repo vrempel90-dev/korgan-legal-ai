@@ -58,7 +58,7 @@ def test_existing_pre_migration_order_accepts_recent_already_paid_receipt():
     assert "фискальный чек создан до открытия текущей заявки на оплату" not in issues
 
 
-def test_new_order_keeps_strict_before_order_rejection():
+def test_new_order_keeps_strict_previous_day_rejection():
     def base(*args, **kwargs):
         return ["фискальный чек создан до открытия текущей заявки на оплату"]
 
@@ -90,7 +90,7 @@ def test_pre_migration_order_does_not_accept_arbitrarily_old_receipt():
     assert "фискальный чек создан до открытия текущей заявки на оплату" in issues
 
 
-def test_receipt_before_current_order_is_rejected_by_base_policy():
+def test_current_day_receipt_before_recreated_order_is_accepted():
     def base(*args, **kwargs):
         return ["фискальный чек создан до открытия текущей заявки на оплату"]
 
@@ -99,22 +99,24 @@ def test_receipt_before_current_order_is_rejected_by_base_policy():
         _receipt(sale_datetime="2026-08-30 09:40:00"),
         1000,
         expected_recipient="KORGAN",
+        expected_bin="820608350657",
         offered_at="2026-08-30T10:00:00+05:00",
         now=datetime(2026, 8, 30, 5, 10, tzinfo=timezone.utc),
     )
-    assert "фискальный чек создан до открытия текущей заявки на оплату" in issues
+    assert "фискальный чек создан до открытия текущей заявки на оплату" not in issues
 
 
-def test_receipt_outside_sixty_minute_payment_window_is_rejected():
+def test_current_day_receipt_outside_sixty_minute_order_window_is_accepted():
     issues = strict_receipt_issues(
         _base,
         _receipt(sale_datetime="2026-08-30 11:01:00"),
         1000,
         expected_recipient="KORGAN",
+        expected_bin="820608350657",
         offered_at="2026-08-30T10:00:00+05:00",
         now=datetime(2026, 8, 30, 6, 2, tzinfo=timezone.utc),
     )
-    assert "фискальный чек создан вне 60-минутного окна текущей оплаты" in issues
+    assert "фискальный чек создан вне 60-минутного окна текущей оплаты" not in issues
 
 
 def test_receipt_more_than_five_minutes_in_future_is_rejected():
@@ -123,6 +125,7 @@ def test_receipt_more_than_five_minutes_in_future_is_rejected():
         _receipt(sale_datetime="2026-08-30 10:16:00"),
         1000,
         expected_recipient="KORGAN",
+        expected_bin="820608350657",
         offered_at="2026-08-30T10:00:00+05:00",
         now=datetime(2026, 8, 30, 5, 10, tzinfo=timezone.utc),
     )
@@ -161,6 +164,7 @@ def test_missing_znm_is_rejected():
         _receipt(raw_text="ИП YSA EDUCATION\nРНМ 010103806424\nФП 557225556134\nОФД Kaspi ОФД"),
         1000,
         expected_recipient="KORGAN",
+        expected_bin="820608350657",
         offered_at="2026-08-30T10:00:00+05:00",
         now=datetime(2026, 8, 30, 5, 10, tzinfo=timezone.utc),
     )
