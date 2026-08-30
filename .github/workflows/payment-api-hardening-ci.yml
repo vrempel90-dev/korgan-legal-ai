@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - hardening/payment-api-20260828
+      - hotfix/miniapp-payment-receipt-e2e
 
 jobs:
   payment-api:
@@ -53,6 +54,7 @@ jobs:
         run: >-
           python -m pytest -q
           tests/test_kaspi_ofd.py
+          tests/test_fiscal_qr_pdf_render.py
           tests/test_consultation_quota.py
           tests/test_miniapp_payment_idempotency.py
       - name: Run Mini App smoke regressions with PostgreSQL
