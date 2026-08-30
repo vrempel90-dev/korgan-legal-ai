@@ -7,6 +7,7 @@ from fastapi import File, Header, HTTPException, UploadFile
 from korgan import miniapp_api_ofd as ofd
 from korgan.fiscal_qr_extract import extract_kaspi_fiscal_qr_url
 from korgan.kaspi_payment_resilience import install_ofd_retry
+from korgan.kaspi_receipt_policy import install_receipt_policy
 
 app = ofd.app
 core = ofd.core
@@ -15,6 +16,11 @@ _ALLOWED = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
 # Retry only transient Kaspi OFD/network failures. Invalid/mismatched receipts
 # remain fail-closed and are never accepted just because a retry happened.
 install_ofd_retry(ofd)
+
+# Enforce the production MiniApp receipt policy: fresh timestamp for this order,
+# seller/merchant identity, BIN/RNM, ZNM, FP, Kaspi OFD and amount. Address and
+# payer name are deliberately not payment blockers.
+install_receipt_policy(ofd)
 
 # Replace the fail-closed compatibility stubs with deterministic local QR
 # extraction. Existing React clients can upload the Kaspi receipt directly;
