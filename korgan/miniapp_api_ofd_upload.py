@@ -6,14 +6,19 @@ from fastapi import File, Header, HTTPException, UploadFile
 
 from korgan import miniapp_api_ofd as ofd
 from korgan.fiscal_qr_extract import extract_kaspi_fiscal_qr_url
+from korgan.kaspi_payment_resilience import install_ofd_retry
 
 app = ofd.app
 core = ofd.core
 _ALLOWED = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
 
+# Retry only transient Kaspi OFD/network failures. Invalid/mismatched receipts
+# remain fail-closed and are never accepted just because a retry happened.
+install_ofd_retry(ofd)
+
 # Replace the fail-closed compatibility stubs with deterministic local QR
-# extraction. Existing React clients can keep using their current upload button,
-# while payment approval is still based solely on receipt.kaspi.kz / Kaspi OFD.
+# extraction. Existing React clients can upload the Kaspi receipt directly;
+# approval is still based solely on receipt.kaspi.kz / Kaspi OFD.
 ofd.v4._drop_route("/miniapp/consultation/payments/{order_id}/receipt", "POST")
 ofd.v5._drop("/miniapp/documents/payments/{order_id}/receipt", "POST")
 
@@ -23,7 +28,7 @@ async def _receipt_url_from_upload(file: UploadFile) -> str:
     if core.legacy._extension(filename) not in _ALLOWED:
         raise HTTPException(
             status_code=415,
-            detail="Поддерживаются PDF/JPG/PNG/WEBP фискального чека с QR-кодом Kaspi ОФД",
+            detail="Поддерживаются PDF/JPG/PNG/WEBP фискального чека Kaspi",
         )
     data = await file.read(core._MAX_UPLOAD_BYTES + 1)
     if not data:
@@ -35,12 +40,12 @@ async def _receipt_url_from_upload(file: UploadFile) -> str:
     except Exception as exc:
         raise HTTPException(
             status_code=422,
-            detail="Не удалось прочитать QR фискального чека. AI не используется: загрузите полный чек с хорошо видимым QR-кодом.",
+            detail="Не удалось прочитать фискальный QR на чеке Kaspi. Загрузите полный электронный чек или чёткое изображение с QR-кодом.",
         ) from exc
     if not receipt_url:
         raise HTTPException(
             status_code=422,
-            detail="На файле не найден QR, ведущий на receipt.kaspi.kz. Загрузите именно полный фискальный чек Kaspi ОФД.",
+            detail="На чеке не найден фискальный QR Kaspi ОФД. Загрузите полный чек Kaspi, полученный после оплаты.",
         )
     return receipt_url
 
