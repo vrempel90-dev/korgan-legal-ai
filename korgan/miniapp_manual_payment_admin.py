@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 from typing import Any
 
 import httpx
@@ -52,9 +51,9 @@ def _manual_receipt_payload(receipt: KaspiFiscalReceipt, *, warning: str = "") -
 
 
 def _caption(order: document_store.DocumentPaymentOrder, receipt: KaspiFiscalReceipt, *, warning: str = "") -> str:
-    warning_line = f"\n⚠️ Предварительная проверка: {warning[:420]}" if warning else "\n✅ Фискальные поля считаны"
+    warning_line = f"\n⚠️ Предварительная проверка: {warning[:350]}" if warning else "\n✅ Фискальные поля считаны"
     return (
-        "🧾 KORGAN · РУЧНАЯ ПРОВЕРКА ОПЛАТЫ\n\n"
+        "🧾 KORGAN · ПРОВЕРКА ОПЛАТЫ\n\n"
         f"Заказ: #{order.id}\n"
         f"Дело: {order.case_id}\n"
         f"Документ: {order.document_type}\n"
@@ -62,14 +61,27 @@ def _caption(order: document_store.DocumentPaymentOrder, receipt: KaspiFiscalRec
         f"Продавец: {receipt.seller_name or '—'}\n"
         f"БИН: {receipt.seller_bin or '—'}\n"
         f"РНМ: {receipt.rnm or '—'}\n"
+        f"ЗНМ: {getattr(receipt, 'znm', '') or '—'}\n"
         f"ФП: {receipt.fp or '—'}\n"
         f"№ чека: {receipt.receipt_number or '—'}\n"
         f"Дата/время: {receipt.sale_datetime or '—'}\n"
         f"ОФД: {receipt.ofd_name or '—'}\n"
         f"Оплата: {receipt.payment_method or '—'}"
         f"{warning_line}\n\n"
-        "Сверьте платёж в истории Kaspi Pay. Затем откройте MiniApp → Профиль → «Проверка оплат» и нажмите «Подтвердить» или «Отклонить»."
+        "Сверьте платёж в Kaspi Pay и нажмите кнопку ниже."
     )[:1024]
+
+
+def _decision_keyboard(order_id: int) -> str:
+    return json.dumps(
+        {
+            "inline_keyboard": [[
+                {"text": "✅ Подтвердить", "callback_data": f"adminpay:approve:{order_id}"},
+                {"text": "❌ Отклонить", "callback_data": f"adminpay:reject:{order_id}"},
+            ]]
+        },
+        ensure_ascii=False,
+    )
 
 
 async def _send_receipt_to_admin(
@@ -90,20 +102,8 @@ async def _send_receipt_to_admin(
     form: dict[str, str] = {
         "chat_id": str(admin_id),
         "caption": _caption(order, receipt, warning=warning),
+        "reply_markup": _decision_keyboard(order.id),
     }
-    miniapp_url = os.getenv("MINIAPP_PUBLIC_URL", "").strip()
-    if miniapp_url.startswith("https://"):
-        form["reply_markup"] = json.dumps(
-            {
-                "inline_keyboard": [[
-                    {
-                        "text": "Открыть проверку оплат",
-                        "web_app": {"url": miniapp_url},
-                    }
-                ]]
-            },
-            ensure_ascii=False,
-        )
 
     try:
         async with httpx.AsyncClient(timeout=_SEND_TIMEOUT) as client:
@@ -178,7 +178,7 @@ async def parity() -> dict[str, Any]:
             "document_manual_confirmation": True,
             "document_payment_admin_configured": bool(settings.admin_ids),
             "automatic_receipt_verification": False,
-            "receipt_verification_mode": "kaspi_receipt_precheck_then_admin",
+            "receipt_verification_mode": "kaspi_receipt_precheck_then_telegram_admin",
             "receipt_ai_decision": False,
         }
     )
@@ -300,10 +300,9 @@ async def document_receipt_upload_manual(
             if not belongs:
                 raise HTTPException(
                     status_code=409,
-                    detail="Для этой заявки уже отправлен другой чек на ручную проверку",
+                    detail="Для этой заявки уже отправлен другой чек на проверку",
                 )
-            # Re-uploading the same receipt retries Telegram delivery. This is
-            # useful if the bot temporarily could not reach the administrator.
+            # Re-uploading the same receipt retries Telegram delivery if needed.
             notify_now = True
 
         if order.status != "awaiting_admin":
@@ -320,9 +319,9 @@ async def document_receipt_upload_manual(
                 warning=warning,
             )
 
-        message = "Чек отправлен администратору. Повторно платить не нужно — ожидайте ручного подтверждения."
+        message = "Чек отправлен администратору. Повторно платить не нужно — ожидайте подтверждения оплаты."
         if notify_now and delivered == 0:
-            message = "Чек сохранён для ручной проверки. Повторно платить не нужно. Если подтверждение задержится, загрузите этот же чек ещё раз."
+            message = "Чек сохранён для проверки. Повторно платить не нужно. Если подтверждение задержится, загрузите этот же чек ещё раз."
         return {
             "ok": True,
             "payment_required": True,
