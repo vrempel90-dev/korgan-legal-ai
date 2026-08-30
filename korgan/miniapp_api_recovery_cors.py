@@ -5,9 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from korgan.miniapp_payment_idempotency import app
 
 # Keep the already-tested payment/runtime stack as the owner of the ASGI app.
-# Telegram document delivery is registered by the existing side-effect module;
-# secure document access and QR acquisition analytics are isolated APIRouters
-# included only after that stack is fully constructed.
+# Manual payment review is installed after the deterministic receipt stack so it
+# can replace only the document-payment upload/parity surface while preserving
+# consultation payments and document idempotency.
+from korgan import miniapp_manual_payment_admin as _miniapp_manual_payment_admin  # noqa: F401
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_document_access as _miniapp_document_access
 from korgan import miniapp_qr_analytics as _miniapp_qr_analytics
