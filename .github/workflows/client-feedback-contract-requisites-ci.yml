@@ -1,0 +1,35 @@
+name: Client feedback contract requisites CI
+
+on:
+  push:
+    branches:
+      - fix/client-feedback-contract-requisites
+  pull_request:
+    branches:
+      - recovery/miniapp-api-1600-sg
+    paths:
+      - korgan/contract_docx.py
+      - tests/test_contract_docx_single_requisites.py
+      - .github/workflows/client-feedback-contract-requisites-ci.yml
+
+jobs:
+  contract-requisites:
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: test-token
+      OPENAI_API_KEY: test-key
+      DATABASE_URL: postgresql://unused:unused@127.0.0.1:5432/unused
+      PAYMENTS_ENABLED: 'false'
+      CONSULTATION_LIMIT_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Compile contract renderer
+        run: python -m py_compile korgan/contract_docx.py
+      - name: Run requisites regression tests
+        run: python -m pytest -q tests/test_contract_docx_single_requisites.py tests/test_contract_numbering_and_preamble.py
