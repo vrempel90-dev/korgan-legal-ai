@@ -83,7 +83,23 @@ async function uploadConsultationReceipt(orderId, file) {
 async function uploadDocumentReceipt(orderId, file) {
   const body = new FormData();
   body.append('file', file);
-  return request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+  const result = await request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
+  return result?.document_base64 ? requireProfessionalDocument(result) : result;
+}
+
+async function submitConsultationReceiptUrl(orderId, receiptUrl) {
+  return request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/receipt-url`, {
+    method: 'POST',
+    body: JSON.stringify({ receipt_url: String(receiptUrl || '').trim() }),
+  });
+}
+
+async function submitDocumentReceiptUrl(orderId, receiptUrl) {
+  const result = await request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt-url`, {
+    method: 'POST',
+    body: JSON.stringify({ receipt_url: String(receiptUrl || '').trim() }),
+  });
+  return result?.document_base64 ? requireProfessionalDocument(result) : result;
 }
 
 export const korganApi = {
@@ -100,6 +116,7 @@ export const korganApi = {
     body: JSON.stringify({ message, case_id: caseId || null, language }),
   }),
   uploadConsultationReceipt,
+  submitConsultationReceiptUrl,
   retryPaidConsultation: (orderId) => request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/retry`, {
     method: 'POST',
   }),
@@ -142,6 +159,10 @@ export const korganApi = {
     return result?.payment_required ? result : requireProfessionalDocument(result);
   },
   uploadDocumentReceipt,
+  submitDocumentReceiptUrl,
+  retryPaidDocument: async (orderId) => requireProfessionalDocument(
+    await request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/retry`, { method: 'POST' }),
+  ),
   documentPaymentStatus: (orderId) => request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}`),
   adminDocumentPayments: (status = 'awaiting_admin') => request(`/miniapp/admin/document-payments?status=${encodeURIComponent(status)}`),
   adminDocumentPaymentDecision: (orderId, approved, note = '') => request(`/miniapp/admin/document-payments/${encodeURIComponent(orderId)}/decision`, {
