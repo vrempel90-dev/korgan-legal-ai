@@ -92,7 +92,7 @@ async function createDocumentAccess() {
 }
 
 function showError(error) {
-  const message = String(error?.message || error || 'Не удалось открыть документ');
+  const message = String(error?.message || error || 'Не удалось скачать документ');
   try {
     const tg = window.Telegram?.WebApp;
     if (tg && typeof tg.showAlert === 'function') {
@@ -134,51 +134,23 @@ function isDownloadButton(element) {
   return DOWNLOAD_LABELS.has(normalizedText(element?.textContent));
 }
 
-function localOpenLabel(downloadButton) {
-  return normalizedText(downloadButton?.textContent).includes('жүктеу') ? 'Ашу' : 'Открыть';
-}
-
-function wireDocumentButtons(root = document) {
-  const candidates = root.querySelectorAll?.('button, a, [role="button"]') || [];
-  candidates.forEach((button) => {
-    if (!isDownloadButton(button)) return;
-    button.dataset.korganDocumentAction = 'download';
-    if (button.parentElement?.querySelector('[data-korgan-document-action="open"]')) return;
-
-    const open = document.createElement('button');
-    open.type = 'button';
-    open.className = button.className;
-    open.dataset.korganDocumentAction = 'open';
-    open.textContent = localOpenLabel(button);
-    button.parentElement?.insertBefore(open, button);
-  });
-}
-
+/*
+ * Keep document access as a transport adapter only.
+ * It never inserts, removes, clones, reorders or restyles UI nodes.
+ * React remains the single owner of visible document actions.
+ */
 document.addEventListener('click', (event) => {
-  const target = event.target?.closest?.('[data-korgan-document-action], button, a, [role="button"]');
-  if (!target) return;
-  const action = target.dataset?.korganDocumentAction || (isDownloadButton(target) ? 'download' : '');
-  if (!action) return;
+  const target = event.target?.closest?.('button, a, [role="button"]');
+  if (!target || !isDownloadButton(target)) return;
 
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation();
-
-  const operation = action === 'open' ? openStoredDocument : downloadStoredDocument;
-  operation().catch(showError);
+  downloadStoredDocument().catch(showError);
 }, true);
 
-const observer = new MutationObserver(() => wireDocumentButtons(document));
-observer.observe(document.documentElement, { childList: true, subtree: true });
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => wireDocumentButtons(document), { once: true });
-} else {
-  wireDocumentButtons(document);
-}
-
-window.__KORGAN_DOCUMENT_ACCESS__ = {
+window.__KORGAN_DOCUMENT_ACCESS__ = Object.freeze({
   createDocumentAccess,
   openStoredDocument,
   downloadStoredDocument,
-};
+});
