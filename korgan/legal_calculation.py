@@ -38,7 +38,8 @@ def _date(value: date) -> str:
 
 
 def _percent(value: Decimal) -> str:
-    return format(value, "f").rstrip("0").rstrip(".")
+    text = format(value, "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 @dataclass(frozen=True, slots=True)
