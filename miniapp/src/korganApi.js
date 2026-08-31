@@ -51,7 +51,7 @@ function requireProfessionalRuntime(health, parity) {
     || parity?.preliminary_fallback !== true
     || typeof parity?.consultation_limit_enabled !== 'boolean'
     || typeof parity?.document_payments_enabled !== 'boolean'
-    || (parity?.document_payments_enabled && parity?.document_manual_confirmation !== false)
+    || typeof parity?.document_manual_confirmation !== 'boolean'
   ) {
     throw new Error('KORGAN professional legal runtime is not ready');
   }
