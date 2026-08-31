@@ -4,7 +4,14 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+
+_HUNDRED = Decimal(100)
+
+
+def _round_tenge(value: Decimal) -> int:
+    """Округлить до целого тенге вверх на половине и без предела длины."""
+    return int(value.to_integral_value(rounding=ROUND_HALF_UP))
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,7 +219,12 @@ def calc_contractual_penalty(
         raise ValueError("Дата окончания периода просрочки раньше даты начала")
 
     days = (end - start).days + 1
-    raw_amount = round(principal * terms.rate_percent_per_day / 100 * days)
+    # Decimal, а не float: сумма неустойки попадает в просительную часть и
+    # должна сойтись с ручной перепроверкой юриста. round() к тому же округляет
+    # ровно половину к чётному, а бухгалтерский расчёт округляет её вверх.
+    raw_amount = _round_tenge(
+        Decimal(principal) * Decimal(str(terms.rate_percent_per_day)) / _HUNDRED * Decimal(days)
+    )
 
     cap_amount: int | None = None
     cap_reached_on: date | None = None
@@ -220,7 +232,7 @@ def calc_contractual_penalty(
     amount = raw_amount
 
     if terms.cap_percent is not None:
-        cap_amount = round(principal * terms.cap_percent / 100)
+        cap_amount = _round_tenge(Decimal(principal) * Decimal(str(terms.cap_percent)) / _HUNDRED)
         days_to_cap = math.ceil(terms.cap_percent / terms.rate_percent_per_day)
         cap_reached_on = start + timedelta(days=max(days_to_cap - 1, 0))
         capped = raw_amount >= cap_amount
