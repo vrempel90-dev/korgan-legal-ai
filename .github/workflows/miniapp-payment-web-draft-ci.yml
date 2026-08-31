@@ -25,7 +25,9 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Build MiniApp
         run: npm run build
-      - name: Check payment and document-access UX markers
+      - name: UX v2 architecture smoke checks
+        run: node ux-smoke.mjs
+      - name: Check payment and document-access contracts
         run: >-
           node -e "const fs=require('fs');
           const main=fs.readFileSync('src/main.jsx','utf8');
@@ -40,4 +42,5 @@ jobs:
           if(!access.includes('/document/access')) process.exit(1);
           if(!access.includes('downloadFile')) process.exit(1);
           if(!access.includes('preview_url')) process.exit(1);
-          if(!access.includes('Открыть')) process.exit(1);"
+          if(access.includes('MutationObserver')) process.exit(1);
+          if(access.includes('insertBefore(')) process.exit(1);"
