@@ -5,6 +5,7 @@ from typing import Pattern
 
 import korgan.senior_claim_preflight as senior_claim_preflight
 from korgan.claim_quality_gate import check_amount_consistency
+from korgan.legal_calc import parse_all_amounts_kzt
 from korgan.legal_types import ClaimDraft, LegalResearch
 
 _PENALTY_REQUEST_RE = re.compile(
@@ -205,6 +206,59 @@ def _penalty_request_without_amount(requests: list[str]) -> bool:
     return False
 
 
+def _penalty_amounts(lines: list[str] | None) -> set[int]:
+    """Amounts stated on penalty lines, parsed by the canonical fail-closed parser.
+
+    ``parse_all_amounts_kzt`` is the single money parser of the product: it
+    rejects malformed grouping such as ``12 34 567 тенге`` instead of silently
+    reading a suffix. Reconciliation must never be satisfied by a number the
+    claim-price and state-duty paths would refuse to read.
+    """
+    amounts: set[int] = set()
+    for line in lines or []:
+        text = str(line)
+        if _PENALTY_REQUEST_RE.search(text):
+            amounts.update(parse_all_amounts_kzt(text))
+    return amounts
+
+
+def _calculation_relief_errors(draft: ClaimDraft) -> list[str]:
+    """Reconcile each calculated monetary component with the court prayer.
+
+    A total alone is not enough: principal and penalty have different legal bases
+    and must survive as separately identifiable components on both sides.  The
+    structured calculation is optional for legacy/non-monetary drafts, but once it
+    is present it is authoritative and must agree with ``ПРОШУ СУД``.
+    """
+    calculation = _text(draft.calculation)
+    requests = _text(draft.requests)
+    if not calculation:
+        return []
+
+    errors: list[str] = []
+    calculation_has_penalty = bool(_PENALTY_REQUEST_RE.search(calculation))
+    prayer_has_penalty = bool(_PENALTY_REQUEST_RE.search(requests))
+    if calculation_has_penalty and not prayer_has_penalty:
+        errors.append(
+            "В структурированном расчёте есть неустойка/пеня, но соответствующий денежный компонент отсутствует в разделе «ПРОШУ СУД»."
+        )
+    elif prayer_has_penalty and not calculation_has_penalty:
+        errors.append(
+            "В разделе «ПРОШУ СУД» заявлена неустойка/пеня, но этот денежный компонент отсутствует в структурированном расчёте."
+        )
+    elif calculation_has_penalty and prayer_has_penalty:
+        calculation_amounts = _penalty_amounts(draft.calculation)
+        prayer_amounts = _penalty_amounts(draft.requests)
+        if calculation_amounts and prayer_amounts and calculation_amounts.isdisjoint(prayer_amounts):
+            calculated = ", ".join(f"{value:,}".replace(",", " ") for value in sorted(calculation_amounts))
+            prayed = ", ".join(f"{value:,}".replace(",", " ") for value in sorted(prayer_amounts))
+            errors.append(
+                "Размер неустойки в структурированном расчёте "
+                f"({calculated} тенге) не совпадает с размером в разделе «ПРОШУ СУД» ({prayed} тенге)."
+            )
+    return errors
+
+
 def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
     """Return deterministic claim contradictions that must survive model repair."""
     context = case_context or ""
@@ -261,6 +315,7 @@ def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
             "Для filing-ready проекта требуется VERIFIED-норма именно о нарушении сроков начала/окончания выполнения работы (услуги) и соответствующий расчет."
         )
 
+    errors.extend(_calculation_relief_errors(draft))
     amount_errors = check_amount_consistency(draft)
     errors.extend(f"AMOUNT_MISMATCH: {item}" for item in amount_errors)
     return list(dict.fromkeys(errors))

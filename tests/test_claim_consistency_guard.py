@@ -145,6 +145,95 @@ def test_principal_amount_does_not_satisfy_separate_penalty_amount() -> None:
     assert any("без конкретного размера" in error for error in errors)
 
 
+def test_calculated_penalty_cannot_disappear_from_prayer() -> None:
+    draft = _draft(
+        legal_basis=["За нарушение срока выполнения работы исполнитель уплачивает неустойку."],
+        requests=["Взыскать с Ответчика основной долг 1 200 000 тенге."],
+    )
+    draft.title = "Исковое заявление о взыскании задолженности"
+    draft.calculation = [
+        "Основной долг: 1 200 000 тенге.",
+        "Договорная неустойка: 120 000 тенге; база: 1 200 000 тенге; ставка: 1% за день; дней: 10.",
+        "Итого цена иска: 1 320 000 тенге.",
+    ]
+    draft.price_of_claim = "1 200 000 тенге"
+
+    errors = claim_consistency_errors("Ответчик нарушил срок выполнения работ.", draft)
+
+    assert any(
+        "расчёте" in error and "неустойк" in error.lower() and "ПРОШУ СУД" in error
+        for error in errors
+    )
+
+
+def test_prayer_penalty_cannot_be_absent_from_structured_calculation() -> None:
+    draft = _draft(
+        legal_basis=["За нарушение срока выполнения работы исполнитель уплачивает неустойку."],
+        requests=[
+            "Взыскать с Ответчика основной долг 1 200 000 тенге.",
+            "Взыскать с Ответчика договорную неустойку 120 000 тенге.",
+        ],
+    )
+    draft.calculation = ["Основной долг: 1 200 000 тенге."]
+    draft.price_of_claim = "1 320 000 тенге"
+
+    errors = claim_consistency_errors("Ответчик нарушил срок выполнения работ.", draft)
+
+    assert any(
+        "ПРОШУ СУД" in error and "неустойк" in error.lower() and "расчёте" in error
+        for error in errors
+    )
+
+
+def test_penalty_amount_must_match_between_calculation_and_prayer() -> None:
+    draft = _draft(
+        legal_basis=["За нарушение срока выполнения работы исполнитель уплачивает неустойку."],
+        requests=[
+            "Взыскать с Ответчика основной долг 1 200 000 тенге.",
+            "Взыскать с Ответчика договорную неустойку 120 000 тенге.",
+        ],
+    )
+    draft.calculation = [
+        "Основной долг: 1 200 000 тенге.",
+        "Договорная неустойка: 100 000 тенге.",
+        "Итого цена иска: 1 300 000 тенге.",
+    ]
+    draft.price_of_claim = "1 320 000 тенге"
+
+    errors = claim_consistency_errors("Ответчик нарушил срок выполнения работ.", draft)
+
+    assert any(
+        "неустойк" in error.lower() and "100 000" in error and "120 000" in error
+        for error in errors
+    )
+
+
+def test_malformed_penalty_amount_cannot_satisfy_reconciliation() -> None:
+    """Сверка использует канонический парсер, а не собственную «мягкую» регулярку.
+
+    «12 34 567 тенге» — не сумма: разряды разбиты неверно, и цена иска с
+    госпошлиной такое значение читать откажутся. Сверка расчёта с просительной
+    частью не вправе считать такую строку подтверждённым размером неустойки.
+    """
+    draft = _draft(
+        legal_basis=["За нарушение срока выполнения работы исполнитель уплачивает неустойку."],
+        requests=[
+            "Взыскать с Ответчика основной долг 1 200 000 тенге.",
+            "Взыскать с Ответчика договорную неустойку 12 34 567 тенге.",
+        ],
+    )
+    draft.calculation = [
+        "Основной долг: 1 200 000 тенге.",
+        "Договорная неустойка: 120 000 тенге.",
+    ]
+    draft.price_of_claim = "1 320 000 тенге"
+
+    errors = claim_consistency_errors("Ответчик нарушил срок выполнения работ.", draft)
+
+    assert not any("12 34 567" in error for error in errors)
+    assert not any("34 567" in error for error in errors)
+
+
 def test_contract_base_amount_alone_does_not_define_penalty() -> None:
     context = "Прошу взыскать неустойку за нарушение срока выполнения работ."
     draft = _draft(
