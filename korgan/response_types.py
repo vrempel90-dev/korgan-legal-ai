@@ -79,6 +79,12 @@ class ResponseToClaimDraft:
     attachments: list[str] = field(default_factory=list)
     verification_notes: list[str] = field(default_factory=list)
     source_urls: list[str] = field(default_factory=list)
+    # Разбор позиции истца. Значения по умолчанию пусты намеренно: старые
+    # сохранённые черновики продолжают открываться, а пустое признание
+    # допустимо — ответчик не обязан признавать ничего.
+    admitted_circumstances: list[str] = field(default_factory=list)
+    disputed_circumstances: list[str] = field(default_factory=list)
+    calculation_review: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.objections = normalize_response_objections(self.objections)
@@ -91,11 +97,43 @@ class ResponseToClaimDraft:
             *self.claimant,
             *self.defendant,
             *self.claim_summary,
+            *self.admitted_circumstances,
+            *self.disputed_circumstances,
             *self.position,
         ]
         for objection in self.objections:
             lines.extend(objection.body_lines())
+        lines.extend(self.calculation_review)
         lines.extend(self.legal_basis)
         lines.extend(self.requests)
         lines.extend(self.attachments)
         return lines
+
+
+def response_to_claim_payload(draft: ResponseToClaimDraft) -> dict[str, Any]:
+    """Черновик отзыва в форме схемы — для раунда правки качества.
+
+    Живёт рядом с dataclass, чтобы новый раздел нельзя было добавить в схему,
+    забыв про раунд правки: иначе правка не видит уже собранный разбор позиции
+    истца и пересобирает его заново.
+    """
+    return {
+        "title": draft.title,
+        "court": draft.court,
+        "case_number": draft.case_number,
+        "claimant": list(draft.claimant),
+        "defendant": list(draft.defendant),
+        "claim_summary": list(draft.claim_summary),
+        "admitted_circumstances": list(draft.admitted_circumstances),
+        "disputed_circumstances": list(draft.disputed_circumstances),
+        "position": list(draft.position),
+        "calculation_review": list(draft.calculation_review),
+        "objections": [
+            {"text": item.text, "subclauses": list(item.subclauses), "prose": list(item.prose)}
+            for item in draft.objections
+        ],
+        "legal_basis": list(draft.legal_basis),
+        "requests": list(draft.requests),
+        "attachments": list(draft.attachments),
+        "verification_notes": list(draft.verification_notes),
+    }

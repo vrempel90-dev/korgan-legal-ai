@@ -297,38 +297,3 @@ def _reference_line(reference: str, kk: bool) -> str:
     return pretrial_response._reference_line(reference, kk)
 
 
-def build_pretrial_response_with_required_title(draft: Any, language: str = "ru") -> bytes:
-    """Render the existing business-letter layout with an unconditional heading."""
-    from docx import Document
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.shared import Cm, Pt
-    from korgan import pretrial_response as source
-
-    kk = language == "kk"
-    doc = Document()
-    section = doc.sections[0]
-    section.top_margin, section.bottom_margin, section.left_margin, section.right_margin = Cm(2), Cm(2), Cm(2.5), Cm(1.5)
-    doc.styles["Normal"].font.name, doc.styles["Normal"].font.size = "Times New Roman", Pt(12)
-    head = doc.add_paragraph(); head.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    head.add_run("Алушы:\n" if kk else "Кому:\n").bold = True
-    for value in draft.recipient or [("[Алушы деректері]" if kk else "[Данные адресата]")]: head.add_run(str(value) + "\n")
-    head.add_run("Жіберуші:\n" if kk else "От:\n").bold = True
-    for value in draft.sender or [("[Жіберуші деректері]" if kk else "[Данные отправителя]")]: head.add_run(str(value) + "\n")
-    title = doc.add_paragraph(); title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title.add_run("СОТҚА ДЕЙІНГІ ТАЛАПҚА ЖАУАП" if kk else "ОТВЕТ НА ПРЕТЕНЗИЮ"); run.bold = True; run.font.size = Pt(14)
-    reference = _reference_line(draft.reference, kk)
-    if reference:
-        p = doc.add_paragraph(reference); p.paragraph_format.space_after = Pt(8)
-    for collection in (draft.claim_summary, draft.position, draft.objections, draft.legal_basis, draft.response_terms):
-        for item in collection: source._body_paragraph(doc, item)
-    if draft.attachments:
-        p = doc.add_paragraph(); p.add_run("Қосымшалар:" if kk else "Приложения:").bold = True
-        for index, item in enumerate(draft.attachments, 1): doc.add_paragraph(f"{index}. {item}")
-    doc.add_paragraph(); doc.add_paragraph(("Күні: " if kk else "Дата: ") + source._today()); doc.add_paragraph("Қолы: ____________________" if kk else "Подпись: ____________________")
-    stream = io.BytesIO(); doc.save(stream); return stream.getvalue()
-
-
-def install_response_title_patch() -> None:
-    """Install the required response heading without changing delivery/payment."""
-    from korgan import pretrial_response
-    pretrial_response.build_pretrial_response_docx = build_pretrial_response_with_required_title

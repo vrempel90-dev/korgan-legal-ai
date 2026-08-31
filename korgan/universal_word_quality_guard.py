@@ -13,6 +13,7 @@ from korgan.pretrial import (
     PretrialProductionService,
     _PRETRIAL_SCHEMA,
     normalize_pretrial,
+    pretrial_payload,
     pretrial_quality_issues,
 )
 from korgan.pretrial_response import (
@@ -20,6 +21,7 @@ from korgan.pretrial_response import (
     PretrialResponseProductionService,
     _PRETRIAL_RESPONSE_SCHEMA,
     normalize_pretrial_response,
+    pretrial_response_payload,
     pretrial_response_quality_issues,
 )
 from korgan.response_types import ResponseToClaimDraft
@@ -285,35 +287,11 @@ def finalize_claim_for_release(
     _strip_internal_score_notes(draft)
 
 
-def _pretrial_payload(draft: PretrialDraft) -> dict[str, Any]:
-    return {
-        "title": draft.title,
-        "sender": list(draft.sender),
-        "recipient": list(draft.recipient),
-        "facts": list(draft.facts),
-        "legal_basis": list(draft.legal_basis),
-        "demands": list(draft.demands),
-        "deadline": draft.deadline,
-        "consequences": list(draft.consequences),
-        "attachments": list(draft.attachments),
-        "verification_notes": list(draft.verification_notes),
-    }
-
-
-def _pretrial_response_payload(draft: PretrialResponseDraft) -> dict[str, Any]:
-    return {
-        "title": draft.title,
-        "sender": list(draft.sender),
-        "recipient": list(draft.recipient),
-        "reference": draft.reference,
-        "claim_summary": list(draft.claim_summary),
-        "position": list(draft.position),
-        "objections": list(draft.objections),
-        "legal_basis": list(draft.legal_basis),
-        "response_terms": list(draft.response_terms),
-        "attachments": list(draft.attachments),
-        "verification_notes": list(draft.verification_notes),
-    }
+# Сборка payload живёт рядом со схемой и dataclass — см. korgan.pretrial и
+# korgan.pretrial_response. Копии здесь оставались позади при добавлении
+# раздела в схему, и раунд правки не видел уже собранного расчёта.
+_pretrial_payload = pretrial_payload
+_pretrial_response_payload = pretrial_response_payload
 
 
 def _refresh_issue_notes(notes: list[str], old_issues: list[str], new_issues: list[str]) -> list[str]:

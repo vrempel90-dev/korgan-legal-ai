@@ -10,11 +10,12 @@ from docx import Document
 from korgan.contract_preamble import preamble_defects
 from korgan.document_release import review_lines
 from korgan.legal_basis_fit import enforce_legal_basis_fit
+from korgan.legal_calc import parse_all_amounts_kzt
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch
 from korgan.response_types import ResponseToClaimDraft
 from korgan.text_integrity import integrity_findings
 
-DocumentKind = Literal["claim", "contract", "response_to_claim"]
+DocumentKind = Literal["claim", "contract", "response_to_claim", "pretrial", "pretrial_response"]
 MIN_READY_SCORE = 8.5
 
 _PLACEHOLDER_RE = re.compile(
@@ -37,6 +38,15 @@ _SERVICE_MARKERS = (
     "если нужно",
     "###",
     "**",
+    # Внутренняя терминология конвейера. Она нужна внутри проверок и в
+    # verification_notes, но в теле документа, который читает суд или
+    # контрагент, её быть не может.
+    "needs_verification",
+    "korgan quality",
+    "senior_preflight_score",
+    "filing_action",
+    "legal_grounding",
+    "korgan pipeline",
 )
 _GENERIC_COURT_MARKERS = (
     "требует уточнения",
@@ -184,6 +194,53 @@ def _common_hygiene(
         score -= 0.6
 
     return max(0.0, score)
+
+
+# Возражения, которые нельзя заявлять «на всякий случай»: исковая давность и
+# процессуальные нарушения. Каждое из них либо подтверждено конкретными датами
+# и нормой, либо не заявляется вовсе — иначе документ раздувается доводами,
+# которые оппонент разобьёт первым же абзацем.
+_UNSUPPORTABLE_OBJECTION_RE = re.compile(
+    r"(?i)(?:исков\w*\s+давност\w*|срок\w*\s+давност\w*|"
+    r"пропущен\w*\s+срок|"
+    r"нарушен\w*\s+(?:процессуальн\w*|порядок\s+подач\w*)|"
+    r"подсудност\w*\s+наруш\w*|"
+    r"талап\s+қою\s+мерзім\w*)"
+)
+
+# Опора, без которой такое возражение не проверяемо: конкретная дата, период
+# или названная норма.
+# Длительности («3 года») здесь намеренно нет: она не опора. Довод об
+# исковой давности проверяем только тогда, когда названы даты, из которых
+# срок вычисляется, либо норма, которая его устанавливает. Пока длительность
+# засчитывалась, «Истёк срок исковой давности — 3 года» проходило шлюз,
+# не сообщая ни того, ни другого.
+_OBJECTION_ANCHOR_RE = re.compile(
+    r"(?i)(?:\d{2}\.\d{2}\.\d{4}|"
+    r"\b\d{4}\s*год|"
+    r"\bстать\w*\s*\d|\bст\.\s*\d)"
+)
+
+
+def unsupported_objections(objections: list[str]) -> list[str]:
+    """Возражения об исковой давности/процессуальных нарушениях без опоры.
+
+    Опора требуется в самом возражении, а не где-то ещё в документе. Довод об
+    исковой давности профессионально всегда называет даты, из которых срок
+    вычисляется: когда началось течение и когда истекло. Дата, случайно
+    оказавшаяся в соседнем разделе, такой довод не подтверждает — иначе любое
+    возражение «на всякий случай» проходило бы за счёт чужих фактов.
+    """
+    findings: list[str] = []
+    for item in _clean_lines(objections):
+        if not _UNSUPPORTABLE_OBJECTION_RE.search(item):
+            continue
+        if _OBJECTION_ANCHOR_RE.search(item):
+            continue
+        findings.append(
+            "возражение заявлено без подтверждающих дат или нормы: " + item[:120]
+        )
+    return findings
 
 
 def _preserve_known_identifiers(case_context: str, lines: list[str], blockers: list[str]) -> float:
@@ -416,6 +473,25 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
     if not _clean_lines(draft.requests):
         blockers.append("нет процессуальной просительной части")
         position -= 0.4
+    # Схема разрешает вынести даты и норму в subclauses/prose, а в text
+    # оставить заголовок довода. Проверять один заголовок значит блокировать
+    # полностью обоснованное возражение за то, что опора лежит строкой ниже.
+    objection_texts = ["\n".join(item.body_lines()) for item in draft.objections] if draft.objections else []
+    unsupported = unsupported_objections(objection_texts)
+    if unsupported:
+        blockers.extend(unsupported)
+        position -= 0.6
+
+    # Схема требует ключ calculation_review, но не его содержимое: пустой
+    # массив ей соответствует. Без этой проверки отзыв на денежный иск
+    # выходил 10/10, не разобрав расчёт истца, и раунд правки не запускался.
+    # Тот же критерий, что у ответа на претензию: разбор нужен там, где
+    # оппонент предъявил сумму.
+    if parse_all_amounts_kzt("\n".join(draft.claim_summary)) and not _clean_lines(
+        getattr(draft, "calculation_review", [])
+    ):
+        blockers.append("расчёт истца не разобран")
+        position -= 0.5
 
     law = 2.5
     basis = "\n".join(draft.legal_basis)
@@ -462,6 +538,174 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
     return DocumentQualityReport("response_to_claim", score, list(dict.fromkeys(blockers)), list(dict.fromkeys(issues)), categories)
 
 
+def _score_pretrial(case_context: str, research: LegalResearch, draft: Any) -> DocumentQualityReport:
+    """Численная оценка досудебной претензии.
+
+    До этого претензия была единственным клиентским документом без порога:
+    проверялся только список замечаний, поэтому «готова» и «сойдёт» ничем не
+    различались. Категории повторяют то, что читает адресат: кто кому пишет,
+    из чего возник долг, чем требование обосновано в праве, как получена сумма,
+    что именно требуется и к какому сроку.
+    """
+    from korgan.pretrial import has_money_demand, pretrial_quality_issues
+
+    blockers: list[str] = []
+    issues: list[str] = []
+    lines = _clean_lines(draft.body_lines())
+
+    identity = 2.0
+    if not _clean_lines(draft.sender):
+        blockers.append("в претензии не указан отправитель")
+        identity -= 1.0
+    if not _clean_lines(draft.recipient):
+        blockers.append("в претензии не указан адресат")
+        identity -= 1.0
+    identity -= 1.0 - _preserve_known_identifiers(case_context, lines, blockers)
+
+    facts = 2.0
+    if not _clean_lines(draft.facts):
+        blockers.append("не изложено фактическое основание требований")
+        facts -= 1.5
+
+    law = 2.5
+    basis = "\n".join(draft.legal_basis)
+    if not basis.strip():
+        blockers.append("у претензии отсутствует правовое обоснование")
+        law -= 1.5
+    elif research.verified_claims and not _ARTICLE_RE.search(basis):
+        blockers.append("VERIFIED-нормы не перенесены в правовое обоснование претензии")
+        law -= 1.0
+
+    calculation = 1.5
+    if has_money_demand(draft) and not _clean_lines(draft.calculation):
+        blockers.append("денежное требование не раскрыто расчётом")
+        calculation -= 1.5
+
+    demand = 1.0
+    if not _clean_lines(draft.demands):
+        blockers.append("в претензии нет сформулированного требования")
+        demand -= 0.7
+    if not str(draft.deadline or "").strip():
+        blockers.append("не указан срок добровольного исполнения требований")
+        demand -= 0.3
+
+    for issue in pretrial_quality_issues(draft, research):
+        if issue not in blockers:
+            blockers.append(issue)
+
+    hygiene = _common_hygiene(
+        "pretrial",
+        lines,
+        blockers,
+        issues,
+        verified_claims=research.verified_claims,
+        verification_notes=draft.verification_notes,
+    )
+
+    categories = {
+        "identity": max(0.0, identity),
+        "facts": max(0.0, facts),
+        "legal_basis": max(0.0, law),
+        "calculation": max(0.0, calculation),
+        "demand": max(0.0, demand),
+        "hygiene": hygiene,
+    }
+    score = round(sum(categories.values()), 1)
+    if blockers:
+        score = min(score, 8.4)
+    return DocumentQualityReport("pretrial", score, list(dict.fromkeys(blockers)), list(dict.fromkeys(issues)), categories)
+
+
+def _score_pretrial_response(case_context: str, research: LegalResearch, draft: Any) -> DocumentQualityReport:
+    """Численная оценка ответа на досудебную претензию.
+
+    Ответ обязан разобрать требования контрагента по существу: отделить
+    признаваемое от оспариваемого, проверить расчёт и обосновать позицию.
+    Шаблонное «с требованиями не согласны» без разбора — не ответ.
+    """
+    from korgan.pretrial_response import money_claimed, pretrial_response_quality_issues
+
+    blockers: list[str] = []
+    issues: list[str] = []
+    lines = _clean_lines(draft.body_lines())
+
+    identity = 1.5
+    if not _clean_lines(draft.sender):
+        blockers.append("в ответе не указан отправитель")
+        identity -= 0.75
+    if not _clean_lines(draft.recipient):
+        blockers.append("в ответе не указан адресат")
+        identity -= 0.75
+    identity -= 1.0 - _preserve_known_identifiers(case_context, lines, blockers)
+
+    engagement = 3.0
+    if not _clean_lines(draft.claim_summary):
+        blockers.append("не отражены требования исходной претензии")
+        engagement -= 1.2
+    if not _clean_lines(draft.position):
+        blockers.append("не сформулирована позиция получателя претензии")
+        engagement -= 0.9
+    if not _clean_lines(draft.objections) and not _clean_lines(draft.response_terms):
+        blockers.append("нет содержательного ответа на требования претензии")
+        engagement -= 0.9
+
+    law = 2.0
+    basis = "\n".join(draft.legal_basis)
+    if research.verified_claims and not basis.strip():
+        blockers.append("VERIFIED-нормы не перенесены в правовое обоснование ответа")
+        law -= 1.2
+
+    unsupported = unsupported_objections(list(draft.objections))
+    if unsupported:
+        blockers.extend(unsupported)
+        engagement -= 0.6
+
+    review = 1.5
+    # Тот же предикат, что и в pretrial_response_quality_issues: у неденежной
+    # претензии расчёта нет, и требовать его разбор значит понижать документ
+    # за отсутствие раздела, которого в нём быть не должно.
+    if (
+        money_claimed(draft)
+        and _clean_lines(draft.objections)
+        and not _clean_lines(getattr(draft, "calculation_review", []))
+    ):
+        issues.append("расчёт контрагента не разобран построчно")
+        review -= 0.5
+
+    completeness = 1.0
+    if not str(draft.reference or "").strip():
+        issues.append("не указана ссылка на исходную претензию (дата/номер)")
+        completeness -= 0.3
+
+    for issue in pretrial_response_quality_issues(draft, research):
+        if issue not in blockers:
+            blockers.append(issue)
+
+    hygiene = _common_hygiene(
+        "pretrial_response",
+        lines,
+        blockers,
+        issues,
+        verified_claims=research.verified_claims,
+        verification_notes=draft.verification_notes,
+    )
+
+    categories = {
+        "identity": max(0.0, identity),
+        "engagement": max(0.0, engagement),
+        "legal_basis": max(0.0, law),
+        "calculation_review": max(0.0, review),
+        "completeness": max(0.0, completeness),
+        "hygiene": hygiene,
+    }
+    score = round(sum(categories.values()), 1)
+    if blockers:
+        score = min(score, 8.4)
+    return DocumentQualityReport(
+        "pretrial_response", score, list(dict.fromkeys(blockers)), list(dict.fromkeys(issues)), categories
+    )
+
+
 def assess_document_quality(
     kind: DocumentKind,
     case_context: str,
@@ -474,6 +718,10 @@ def assess_document_quality(
         return _score_contract(case_context, research, draft)
     if kind == "response_to_claim":
         return _score_response(case_context, research, draft)
+    if kind == "pretrial":
+        return _score_pretrial(case_context, research, draft)
+    if kind == "pretrial_response":
+        return _score_pretrial_response(case_context, research, draft)
     raise ValueError(f"Unsupported document kind: {kind}")
 
 

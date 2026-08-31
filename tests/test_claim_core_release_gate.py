@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
 import korgan.universal_claim_runtime as runtime
 from korgan.claim_core_release import core_claim_release_blockers
+from korgan.claim_core_release_runtime import send_with_core_release_guard
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.request_scope import start_new_document_request
 
@@ -159,19 +159,17 @@ def test_core_gate_accepts_supported_source_bound_material_law(verified: str, ba
     assert blockers == []
 
 
-def _patch_release_prerequisites(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(runtime, "enforce_legal_basis_fit", lambda _draft: [])
-    monkeypatch.setattr(
-        runtime,
-        "_downgrade_unverified_citations_live",
-        lambda _draft, _research: SimpleNamespace(
-            citations=SimpleNamespace(blocking=[]),
-            integrity=[],
-        ),
-    )
+def test_core_incomplete_claim_is_downgraded_to_preliminary_not_dropped() -> None:
+    """Неполный по существу иск выпускается как PRELIMINARY, а не исчезает.
 
+    Раньше эта обёртка превращала отсутствие исполнимой просительной части в
+    безусловную остановку доставки, и клиент после оплаты не получал вообще
+    ничего. См. docstring send_with_core_release_guard: диагностика ядра
+    сохранена, но отдавать документ поручено уже существующему отправителю с
+    его путём PRELIMINARY. Опасные ссылки и повреждённый текст по-прежнему
+    останавливают выпуск ниже по цепочке.
+    """
 
-def test_runtime_does_not_build_or_send_word_when_core_claim_is_incomplete(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         state = _State({"language": "ru"})
         request_id = await start_new_document_request(state, kind="claim", mode="main")
@@ -183,18 +181,15 @@ def test_runtime_does_not_build_or_send_word_when_core_claim_is_incomplete(monke
             requests=["[ТРЕБУЕТ УТОЧНЕНИЯ: требования к ответчику]"],
             legal_basis=["Правовое основание: ст. 272 ГК РК."],
         )
+        assert core_claim_release_blockers(research, draft)
 
-        _patch_release_prerequisites(monkeypatch)
+        delivered: list[ClaimDraft] = []
 
-        built = False
+        async def sender(_message, _state, *, context, research, draft, request_id):
+            delivered.append(draft)
 
-        def forbidden_build(_draft):
-            nonlocal built
-            built = True
-            raise AssertionError("DOCX must not be built for a core-incomplete claim")
-
-        monkeypatch.setattr(runtime, "build_claim_docx", forbidden_build)
-        await runtime._send_claim(
+        await send_with_core_release_guard(
+            sender,
             message,
             state,
             context="Ответчик должен 500 000 тенге",
@@ -203,16 +198,15 @@ def test_runtime_does_not_build_or_send_word_when_core_claim_is_incomplete(monke
             request_id=request_id,
         )
 
-        assert built is False
-        assert message.documents == []
-        assert len(message.answers) == 1
-        assert "не выпущен в Word" in message.answers[0]
-        assert "просительная часть" in message.answers[0]
+        assert delivered, "иск не должен молча исчезать после оплаты"
+        assert delivered[0].status is VerificationStatus.NEEDS_VERIFICATION
 
     asyncio.run(scenario())
 
 
-def test_stale_claim_is_silent_if_new_request_starts_during_language_await(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stale_claim_is_never_delivered_after_a_new_request_starts() -> None:
+    """Документ прошлого запроса не должен догнать пользователя в новом деле."""
+
     async def scenario() -> None:
         state = _State({"language": "ru"})
         request_id = await start_new_document_request(state, kind="claim", mode="main")
@@ -221,21 +215,53 @@ def test_stale_claim_is_silent_if_new_request_starts_during_language_await(monke
             "Обязательство подлежит исполнению [основание: ст. 272 ГК РК; текст нормы: «обязательства должны исполняться надлежащим образом»; источник: https://adilet.zan.kz/rus/docs/K940001000_#z272]"
         )
         draft = _draft(
-            requests=["[ТРЕБУЕТ УТОЧНЕНИЯ: требования к ответчику]"],
+            requests=["Взыскать с ответчика 500 000 тенге."],
             legal_basis=["Правовое основание: ст. 272 ГК РК."],
         )
 
-        _patch_release_prerequisites(monkeypatch)
+        # Пользователь переключился на другой документ, пока иск готовился.
+        await start_new_document_request(state, kind="contract", mode="contract_details")
 
-        async def language_that_opens_new_request(current_state: _State) -> str:
-            await start_new_document_request(
-                current_state,
-                kind="contract",
-                mode="contract_details",
-            )
-            return "ru"
+        delivered: list[object] = []
 
-        monkeypatch.setattr(runtime.base_bot, "_language", language_that_opens_new_request)
+        async def sender(*_args, **_kwargs):
+            delivered.append(object())
+
+        result = await send_with_core_release_guard(
+            sender,
+            message,
+            state,
+            context="Ответчик должен 500 000 тенге",
+            research=research,
+            draft=draft,
+            request_id=request_id,
+        )
+
+        assert result is None
+        assert delivered == []
+        assert message.answers == []
+        assert message.documents == []
+        assert state.data["request_kind"] == "contract"
+
+    asyncio.run(scenario())
+
+
+def test_installed_production_sender_also_suppresses_a_stale_claim() -> None:
+    """Та же защита обязана стоять и на фактически установленном отправителе."""
+
+    async def scenario() -> None:
+        state = _State({"language": "ru"})
+        request_id = await start_new_document_request(state, kind="claim", mode="main")
+        message = _Message()
+        research = _research(
+            "Обязательство подлежит исполнению [основание: ст. 272 ГК РК; текст нормы: «обязательства должны исполняться надлежащим образом»; источник: https://adilet.zan.kz/rus/docs/K940001000_#z272]"
+        )
+        draft = _draft(
+            requests=["Взыскать с ответчика 500 000 тенге."],
+            legal_basis=["Правовое основание: ст. 272 ГК РК."],
+        )
+        await start_new_document_request(state, kind="contract", mode="contract_details")
+
         await runtime._send_claim(
             message,
             state,
@@ -245,9 +271,8 @@ def test_stale_claim_is_silent_if_new_request_starts_during_language_await(monke
             request_id=request_id,
         )
 
-        assert message.answers == []
         assert message.documents == []
-        assert state.data["request_kind"] == "contract"
+        assert message.answers == []
 
     asyncio.run(scenario())
 

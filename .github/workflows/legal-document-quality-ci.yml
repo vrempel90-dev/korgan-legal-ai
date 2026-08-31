@@ -1,0 +1,66 @@
+name: Legal document quality CI
+
+# Полный набор из корня репозитория. Существующие workflow гоняют выбранные
+# файлы по отдельности, поэтому регрессия в собранной боевой конфигурации —
+# когда порядок установки монки-патчей меняет поведение — ими не ловилась.
+# Именно этот разрыв скрыл дефекты расчёта госпошлины и разбора сумм.
+
+on:
+  pull_request:
+    branches:
+      - recovery/miniapp-api-1600-sg
+  push:
+    branches:
+      - recovery/miniapp-api-1600-sg
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TELEGRAM_BOT_TOKEN: test-token
+      OPENAI_API_KEY: test-key
+      PAYMENTS_ENABLED: "false"
+      CONSULTATION_LIMIT_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Full test suite from the repository root
+        run: python -m pytest -q
+
+      # Денежные функции обязаны вести себя одинаково до и после установки
+      # боевых слоёв. Отдельный прогон делает провал этого инварианта видимым
+      # сразу, не смешивая его с остальными падениями.
+      - name: Production parity of money and state duty
+        run: python -m pytest -q tests/test_production_money_parity.py
+
+      - name: Document quality evaluation suite
+        run: >-
+          python -m pytest -q
+          tests/test_evaluation_suite.py
+          tests/test_legal_calculation.py
+          tests/test_pretrial_professional.py
+          tests/test_adversarial_documents.py
+          tests/test_production_route_ownership.py
+
+      # Свёрнутый скаляр YAML склеивает строки через пробел, поэтому «python -c»
+      # получал программу, начинающуюся с отступа, и падал на IndentationError,
+      # не выполнив ни одной проверки. Heredoc передаёт скрипт дословно.
+      - name: Production ASGI stack imports and routes are unique
+        run: |
+          python - <<'PY'
+          from tests.production_routes import EXPECTED_OWNERS, owner
+
+          bad = {key: owner(*key) for key in EXPECTED_OWNERS if owner(*key) != EXPECTED_OWNERS[key]}
+          assert not bad, bad
+          print("routes ok:", len(EXPECTED_OWNERS))
+          PY

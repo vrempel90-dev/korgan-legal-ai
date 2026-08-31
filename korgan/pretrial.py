@@ -15,6 +15,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Pt
 
 from korgan.document_release import review_lines
+from korgan.legal_calc import parse_all_amounts_kzt
 from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.stable_legal_release import StableLegalProductionService, clean_language_labels, sanitize_research_sources
 
@@ -26,13 +27,14 @@ _PRETRIAL_SCHEMA: dict[str, Any] = {
         "recipient": {"type": "array", "items": {"type": "string"}},
         "facts": {"type": "array", "items": {"type": "string"}},
         "legal_basis": {"type": "array", "items": {"type": "string"}},
+        "calculation": {"type": "array", "items": {"type": "string"}},
         "demands": {"type": "array", "items": {"type": "string"}},
         "deadline": {"type": "string"},
         "consequences": {"type": "array", "items": {"type": "string"}},
         "attachments": {"type": "array", "items": {"type": "string"}},
         "verification_notes": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["title", "sender", "recipient", "facts", "legal_basis", "demands", "deadline", "consequences", "attachments", "verification_notes"],
+    "required": ["title", "sender", "recipient", "facts", "legal_basis", "calculation", "demands", "deadline", "consequences", "attachments", "verification_notes"],
     "additionalProperties": False,
 }
 
@@ -48,6 +50,17 @@ _ADVICE_RU = re.compile(r"(?i)^\s*как\b")
 _ADVICE_KK = re.compile(r"(?i)\bқалай\b")
 
 _LANG_VERSION_RE = re.compile(r"(?i)английск\w*\s+верси\w*|англ\.?\s+ст\.|русск\w*\s+редакц\w*|english\s+version|russian\s+version")
+
+# Законный следующий шаг, который претензия вправе назвать: обращение в суд,
+# в уполномоченный орган, начисление предусмотренной договором неустойки,
+# односторонний отказ от договора. Всё остальное — «мы примем меры» — адресату
+# ничего не сообщает и последствий не порождает.
+_LAWFUL_CONSEQUENCE_RE = re.compile(
+    r"(?i)(?:\bсуд\w*|исков\w*\s+заявлен\w*|уполномоченн\w*\s+орган\w*|"
+    r"неустойк\w*|пен[яию]\b|штраф\w*|расторж\w*|отказ\w*\s+от\s+договор\w*|"
+    r"судебн\w*\s+расход\w*|госпошлин\w*|"
+    r"сот\w*|талап\s+арыз\w*|тұрақсыздық\s+айыб\w*|өсімпұл\w*)"
+)
 
 
 def is_pretrial_request(text: str | None) -> bool:
@@ -71,6 +84,10 @@ class PretrialDraft:
     attachments: list[str]
     verification_notes: list[str] = field(default_factory=list)
     source_urls: list[str] = field(default_factory=list)
+    # Расчёт денежного требования. По умолчанию пуст: старые сохранённые
+    # черновики, собранные до появления раздела, продолжают открываться, а
+    # экспортёр просто не печатает заголовок, для которого нет материала.
+    calculation: list[str] = field(default_factory=list)
 
     def body_lines(self) -> list[str]:
         return [
@@ -79,11 +96,35 @@ class PretrialDraft:
             *self.recipient,
             *self.facts,
             *self.legal_basis,
+            *self.calculation,
             *self.demands,
             self.deadline,
             *self.consequences,
             *self.attachments,
         ]
+
+
+def pretrial_payload(draft: PretrialDraft) -> dict[str, Any]:
+    """Черновик в форме payload схемы — для раунда правки качества.
+
+    Собирается рядом со схемой и dataclass намеренно: раньше такие payload
+    строились копиями внутри модулей правки, и добавление раздела в схему
+    оставляло копии позади. Раунд правки не видел уже собранный расчёт и
+    пересобирал его с нуля, из-за чего суммы между проходами расходились.
+    """
+    return {
+        "title": draft.title,
+        "sender": list(draft.sender),
+        "recipient": list(draft.recipient),
+        "facts": list(draft.facts),
+        "legal_basis": list(draft.legal_basis),
+        "calculation": list(draft.calculation),
+        "demands": list(draft.demands),
+        "deadline": draft.deadline,
+        "consequences": list(draft.consequences),
+        "attachments": list(draft.attachments),
+        "verification_notes": list(draft.verification_notes),
+    }
 
 
 def _dedupe(lines: list[str]) -> list[str]:
@@ -101,11 +142,17 @@ def _dedupe(lines: list[str]) -> list[str]:
 def normalize_pretrial(draft: PretrialDraft) -> None:
     draft.legal_basis = _dedupe(draft.legal_basis)
     draft.facts = _dedupe(draft.facts)
+    draft.calculation = _dedupe(draft.calculation)
     draft.demands = _dedupe(draft.demands)
     draft.consequences = _dedupe(draft.consequences)
     if _LANG_VERSION_RE.search("\n".join(draft.body_lines())):
         draft.status = VerificationStatus.NEEDS_VERIFICATION
         draft.verification_notes.append("В документе обнаружена некорректная ссылка на языковую версию нормы.")
+
+
+def has_money_demand(draft: PretrialDraft) -> bool:
+    """Есть ли в требованиях денежная сумма, которую нужно раскрыть расчётом."""
+    return bool(parse_all_amounts_kzt("\n".join(draft.demands)))
 
 
 def pretrial_quality_issues(draft: PretrialDraft, research: LegalResearch) -> list[str]:
@@ -120,6 +167,23 @@ def pretrial_quality_issues(draft: PretrialDraft, research: LegalResearch) -> li
         issues.append("нет сформулированных требований")
     if not draft.legal_basis and research.verified_claims:
         issues.append("VERIFIED нормы не перенесены в правовое обоснование")
+
+    # Денежное требование без расчёта — это сумма, которую адресат не может
+    # проверить, а суд позже не сможет соотнести с иском.
+    if has_money_demand(draft) and not draft.calculation:
+        issues.append("денежное требование не раскрыто расчётом")
+
+    # Срок добровольного исполнения — то, что превращает письмо в претензию:
+    # от него считается момент, с которого спор можно передать в суд.
+    if not str(draft.deadline or "").strip():
+        issues.append("не указан срок добровольного исполнения требований")
+
+    # Последствие неисполнения должно называть законный следующий шаг.
+    # «Мы примем меры» ничего не сообщает адресату и не порождает последствий.
+    consequences = " ".join(draft.consequences)
+    if consequences.strip() and not _LAWFUL_CONSEQUENCE_RE.search(consequences):
+        issues.append("последствия неисполнения не названы конкретным законным шагом")
+
     report = review_lines(draft.body_lines(), verified_claims=research.verified_claims)
     issues.extend(report.blocking)
     return list(dict.fromkeys(issues))
@@ -149,6 +213,11 @@ class PretrialProductionService(StableLegalProductionService):
             "2. Не придумывай ФИО/БИН/ИИН, адрес, договор, даты, суммы, доказательства или факт направления прежней претензии.\n"
             "3. Каждое требование должно вытекать из факта и иметь правовое основание, если оно VERIFIED.\n"
             "4. Если пользователь дал пункт договора о неустойке/пене и данные для расчёта, изложи договорное основание и понятный расчёт. Если данных нет — не рассчитывай и не придумывай.\n"
+            "4a. calculation — отдельный раздел «Расчёт задолженности». Он ОБЯЗАТЕЛЕН, если хотя бы одно требование денежное. "
+            "Каждую составляющую покажи отдельной строкой и раскрой до элементов: основание, база, ставка, период, количество дней, формула, итог. "
+            "Для договорной неустойки используй именно пункт договора и согласованную сторонами ставку; не подменяй её расчётом по статье 353 ГК РК. "
+            "Расходы на юридические услуги и иные расходы показывай отдельными строками. "
+            "Если не хватает базы, ставки или периода — строку не считай, а укажи недостающий элемент в verification_notes.\n"
             "5. Не пиши 'английская версия', 'русская редакция' и не представляй переводы одного акта как разные нормы.\n"
             "6. Одну статью не пересказывай несколько раз: один точный абзац на одну норму.\n"
             "7. Срок добровольного исполнения указывай только если он дан пользователем или VERIFIED законом/договором; иначе сформулируй нейтрально без выдуманного числа дней.\n"
@@ -246,6 +315,14 @@ def build_pretrial_docx(draft: PretrialDraft, language: str = "ru") -> bytes:
 
     for basis in draft.legal_basis:
         _body_paragraph(doc, basis)
+
+    # Расчёт печатается отдельным озаглавленным блоком: адресат должен видеть,
+    # из чего сложилась сумма, а не искать её в сплошном тексте письма.
+    if draft.calculation:
+        heading = doc.add_paragraph()
+        heading.add_run("Берешек есебі:" if kk else "Расчёт задолженности:").bold = True
+        for line in draft.calculation:
+            _body_paragraph(doc, line)
 
     for demand in draft.demands:
         _body_paragraph(doc, demand)

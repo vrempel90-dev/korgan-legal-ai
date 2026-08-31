@@ -18,8 +18,8 @@ from korgan.claim_docx import build_claim_docx
 from korgan.contract_docx import build_contract_docx
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
 from korgan.legal_types import VerificationStatus
-from korgan.pretrial import build_pretrial_docx, pretrial_quality_issues
-from korgan.pretrial_response import build_pretrial_response_docx, pretrial_response_quality_issues
+from korgan.pretrial import build_pretrial_docx
+from korgan.pretrial_response import build_pretrial_response_docx
 from korgan.response_docx import build_response_to_claim_docx
 
 app = FastAPI(title="KORGAN Mini App API", version="0.7.0")
@@ -131,24 +131,21 @@ def _release_metadata(document_type: str, context: str, research: Any, draft: An
     quality_score: float | None = None
     quality_issues: list[str] = []
 
-    if document_type in {"claim", "contract", "response"}:
-        kind = {
-            "claim": "claim",
-            "contract": "contract",
-            "response": "response_to_claim",
-        }[document_type]
+    # Все пять типов проходят один и тот же численный gate. Раньше претензия и
+    # ответ на претензию оценивались только списком замечаний, без порога:
+    # «готов» и «сойдёт» для них ничем не различались.
+    kind = {
+        "claim": "claim",
+        "contract": "contract",
+        "response": "response_to_claim",
+        "pretrial": "pretrial",
+        "pretrial_response": "pretrial_response",
+    }.get(document_type)
+    if kind is not None:
         report = assess_document_quality(kind, context, research, draft)
         quality_score = report.score
         quality_issues = report.repair_issues(limit=20)
         if not report.ready:
-            _append_unique_notes(draft, quality_issues)
-    elif document_type == "pretrial":
-        quality_issues = [str(item) for item in pretrial_quality_issues(draft, research)]
-        if quality_issues:
-            _append_unique_notes(draft, quality_issues)
-    elif document_type == "pretrial_response":
-        quality_issues = [str(item) for item in pretrial_response_quality_issues(draft, research)]
-        if quality_issues:
             _append_unique_notes(draft, quality_issues)
 
     notes = list(getattr(draft, "verification_notes", []) or [])

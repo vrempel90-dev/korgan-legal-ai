@@ -212,11 +212,15 @@ def test_word_export_renders_professional_sections_in_order():
         "Претензия от 20.05.2026",
         "рассрочку",
         "прервалось 05.05.2026",
-        "заём не передан",
         "Ходатайства",
         "арест на счета ответчика",
     ):
         assert fragment in body, fragment
+
+    # Прогноз возражений ответчика — внутренняя аналитика стратегии. В иске
+    # истца отдельного раздела «Возражения ответчика» быть не должно: суд читает
+    # позицию истца, а не пересказ будущей защиты. См. test_claim_court_facing_policy.
+    assert "заём не передан" not in body
 
     def at(fragment: str) -> int:
         return next(i for i, line in enumerate(lines) if fragment in line)

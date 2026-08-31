@@ -13,6 +13,13 @@
 согласованная пользователем статья не исчезает при пересборке документа.
 
 Сеть не используется: подменяется `korgan.bot.service`.
+
+Сюжет со шлюзом проверки (`verification_gate`) — это собственный диалог
+`korgan/bot.py`. В боевом рантайме его намеренно заменяет
+`client_safe_ui.install_client_safe_runtime()`; боевой контракт закреплён в
+`tests/test_client_safe_gate_supersedes_waiver_flow.py`. Фикстура `bot_own_gate`
+закрепляет предмет проверки за реализацией bot.py, чтобы результат не зависел
+от того, импортировал ли другой тестовый модуль `korgan.strict_bot` раньше.
 """
 
 from __future__ import annotations
@@ -37,6 +44,20 @@ from korgan.legal_basis_fit import (
     legal_basis_defects,
 )
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
+
+
+@pytest.fixture(autouse=True)
+def bot_own_gate(monkeypatch: pytest.MonkeyPatch):
+    """Проверять реализацию bot.py, даже если client-safe слой уже установлен."""
+    from korgan import client_safe_ui
+
+    original_enter = client_safe_ui._original_enter_verification_gate
+    original_reply = client_safe_ui._original_handle_verification_gate_reply
+    if original_enter is not None:
+        monkeypatch.setattr(korgan_bot, "_enter_verification_gate", original_enter)
+    if original_reply is not None:
+        monkeypatch.setattr(korgan_bot, "_handle_verification_gate_reply", original_reply)
+    yield
 
 # Ровно одно сообщение клиента — так, как он его пишет.
 CASE = (

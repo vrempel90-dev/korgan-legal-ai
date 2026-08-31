@@ -18,6 +18,12 @@ from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 LEGAL_GROUNDING_PREFIX = "LEGAL_GROUNDING: "
 MAX_CORPUS_AGE_DAYS = 7
 
+# Видимая в самом документе пометка. Тот же формат, что распознают
+# claim_docx._document_status и document_quality._PLACEHOLDER_RE, поэтому
+# документ автоматически получает статус PRELIMINARY и не может уйти как
+# готовый к подаче.
+STALE_SNAPSHOT_MARKER = "[ТРЕБУЕТ ПРОВЕРКИ: сверить действующую редакцию нормы на дату подачи]"
+
 _ARTICLE_RE = re.compile(r"(?:статья|статьи|ст\.)\s*(\d+(?:-\d+)?)", re.IGNORECASE)
 _SOURCE_RE = re.compile(r"источник:\s*(https?://[^\]\s]+)", re.IGNORECASE)
 _ECONOMIC_COURT_RE = re.compile(r"экономическ\w*\s+суд", re.IGNORECASE)
@@ -110,13 +116,36 @@ def _required_provisions(research: LegalResearch, draft: ClaimDraft) -> set[tupl
     return required
 
 
+def _marked(basis_line: str) -> str:
+    """Пометить правовое основание как требующее сверки редакции.
+
+    Раньше на этом месте ``legal_basis`` обнулялся целиком. Но к моменту вызова
+    ``claim_filing_accuracy`` уже сверил цитату с текстом статьи в корпусе:
+    норма настоящая, под сомнением только свежесть снимка. Обнуление отдавало
+    клиенту иск вообще без раздела «Правовое обоснование» — это профессионально
+    хуже подтверждённой ссылки с явной пометкой и, вопреки замыслу gate,
+    молча уничтожало именно проверенную работу.
+    """
+    text = str(basis_line or "").strip()
+    if not text or STALE_SNAPSHOT_MARKER in text:
+        return text
+    return f"{text} {STALE_SNAPSHOT_MARKER}"
+
+
 def enforce_claim_corpus_health(
     research: LegalResearch,
     draft: ClaimDraft,
     *,
     today: date | None = None,
 ) -> None:
-    """Fail closed when a filing relies on an absent, damaged, incomplete or stale official snapshot."""
+    """Fail closed when a filing relies on an absent, damaged, incomplete or stale official snapshot.
+
+    «Fail closed» здесь означает не удаление права из документа, а перевод
+    документа в controlled verification path: статус понижается до
+    NEEDS_VERIFICATION, замечание фиксирует конкретную проблему снимка, а каждая
+    затронутая ссылка несёт видимую пометку сверки. Тихого выпуска не
+    происходит, и при этом иск не остаётся без правового обоснования.
+    """
     if not local_corpus_enabled():
         # The filing-accuracy gate already handles this case and supplies the
         # user-facing grounding note. Do not duplicate it here.
@@ -149,7 +178,7 @@ def enforce_claim_corpus_health(
         return
 
     draft.status = VerificationStatus.NEEDS_VERIFICATION
-    draft.legal_basis = []
+    draft.legal_basis = [_marked(item) for item in draft.legal_basis]
     for issue in list(dict.fromkeys(issues))[:8]:
         note = LEGAL_GROUNDING_PREFIX + issue
         if note not in draft.verification_notes:

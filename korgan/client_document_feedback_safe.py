@@ -65,7 +65,9 @@ def install_client_document_feedback_safe() -> None:
         "_korgan_claim_consistency_guard",
         True,
     )
-    core.install_response_title_patch()
+    # Официальный заголовок ответа на претензию печатает сам рендерер
+    # korgan.pretrial_response: отдельная копия рендерера здесь перекрывала
+    # канонический и делала правки канона невидимыми в production.
     _install_payment_notices()
     _INSTALLED = True
     LOGGER.info("Installed KORGAN verified client document feedback hardening")

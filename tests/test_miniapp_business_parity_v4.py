@@ -22,9 +22,19 @@ def test_direct_unlimited_consultation_route_is_replaced() -> None:
 
 
 def test_direct_document_generation_route_is_replaced_by_payment_gate() -> None:
+    """Прямой маршрут v2 снят; владельца проверяет tests/test_production_route_ownership.
+
+    Здесь фиксируется только то, что за это отвечает v4: маршрут не задвоен и
+    больше не ведёт в необлагаемую оплатой генерацию v2. Кто именно владеет им в
+    собранном приложении — вопрос всей цепочки слоёв, и утверждать это из
+    отдельного слоя нельзя: v5 добавляет поверх v4 оплату документа, и два
+    таких утверждения противоречили бы друг другу.
+    """
+    from korgan import miniapp_api_v2
+
     routes = _routes("/miniapp/documents/generate", "POST")
     assert len(routes) == 1
-    assert routes[0].endpoint is miniapp_api_v4.generate_document
+    assert routes[0].endpoint is not miniapp_api_v2.generate_document
 
 
 def test_paid_consultation_receipt_and_retry_routes_exist() -> None:

@@ -5,6 +5,19 @@ that marking it NEEDS_VERIFICATION was permissible. The user wrote exactly that
 back and got «не получилось распознать ни одно из запрошенных полей» — the field
 parser had been handed a command. The only ways out were restarting the case or
 a human lawyer.
+
+ВАЖНО ПРО BOT.PY И PRODUCTION.
+Диалоговый шлюз, который проверяется ниже, — это собственная реализация
+``korgan/bot.py``. В боевом рантайме её намеренно заменяет
+``client_safe_ui.install_client_safe_runtime()``: клиента нельзя ставить в
+положение, где он решает, можно ли оставить непроверенную статью. Боевой
+контракт закреплён отдельно, в
+``tests/test_client_safe_gate_supersedes_waiver_flow.py``.
+
+Раньше эти проверки зеленели или краснели в зависимости от того, импортировал ли
+какой-нибудь ДРУГОЙ тестовый модуль ``korgan.strict_bot`` раньше. Фикстура
+``bot_own_gate`` убирает случайность: реализация bot.py проверяется как
+реализация bot.py, независимо от порядка импортов.
 """
 
 from __future__ import annotations
@@ -23,6 +36,20 @@ from korgan.gate_instructions import (
 )
 from korgan.legal_types import ClaimDraft, VerificationStatus
 from tests.test_field_intake import Dialog, FakeMessage, run
+
+
+@pytest.fixture(autouse=True)
+def bot_own_gate(monkeypatch: pytest.MonkeyPatch):
+    """Проверять реализацию bot.py, даже если client-safe слой уже установлен."""
+    from korgan import client_safe_ui
+
+    original_enter = client_safe_ui._original_enter_verification_gate
+    original_reply = client_safe_ui._original_handle_verification_gate_reply
+    if original_enter is not None:
+        monkeypatch.setattr(korgan_bot, "_enter_verification_gate", original_enter)
+    if original_reply is not None:
+        monkeypatch.setattr(korgan_bot, "_handle_verification_gate_reply", original_reply)
+    yield
 
 _ISSUES = [
     "статья 616 ГК РК: текста нормы нет в проверенном корпусе KORGAN — содержание не "
