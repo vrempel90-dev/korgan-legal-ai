@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
 
 _HUNDRED = Decimal(100)
+
+
+def _decimal(value: Decimal | int | float | str) -> Decimal:
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
 
 
 def _round_tenge(value: Decimal) -> int:
@@ -16,9 +21,16 @@ def _round_tenge(value: Decimal) -> int:
 
 @dataclass(frozen=True, slots=True)
 class ContractualPenaltyTerms:
-    rate_percent_per_day: float
-    cap_percent: float | None
+    rate_percent_per_day: Decimal
+    cap_percent: Decimal | None
     clause: str
+
+    def __post_init__(self) -> None:
+        # Callers historically passed numeric literals. Normalize at the boundary
+        # so every calculation and comparison below remains Decimal-only.
+        object.__setattr__(self, "rate_percent_per_day", _decimal(self.rate_percent_per_day))
+        if self.cap_percent is not None:
+            object.__setattr__(self, "cap_percent", _decimal(self.cap_percent))
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,23 +90,19 @@ _CLAUSE_RE_KK = re.compile(
 _CONTRACT_RE = re.compile(r"\b(?:договор\w*|шарт\w*)\b", re.IGNORECASE)
 
 
-def _as_float(raw: str) -> float | None:
+def _as_decimal(raw: str) -> Decimal | None:
     try:
         value = Decimal((raw or "").replace(",", "."))
     except (InvalidOperation, ValueError):
         return None
-    if value <= 0:
-        return None
-    return float(value)
+    return value if value > 0 else None
 
 
-def _unique_numeric(matches: list[re.Match[str]]) -> list[float]:
-    values: list[float] = []
+def _unique_numeric(matches: list[re.Match[str]]) -> list[Decimal]:
+    values: list[Decimal] = []
     for match in matches:
-        value = _as_float(match.group("value"))
-        if value is None:
-            continue
-        if not any(math.isclose(value, existing, rel_tol=0.0, abs_tol=1e-12) for existing in values):
+        value = _as_decimal(match.group("value"))
+        if value is not None and value not in values:
             values.append(value)
     return values
 
@@ -179,7 +187,7 @@ def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerm
         return None
 
     rate_position = min(
-        (match.start() for match in rate_matches if _as_float(match.group("value")) == rates[0]),
+        (match.start() for match in rate_matches if _as_decimal(match.group("value")) == rates[0]),
         default=-1,
     )
     if rate_position < 0:
@@ -223,7 +231,7 @@ def calc_contractual_penalty(
     # должна сойтись с ручной перепроверкой юриста. round() к тому же округляет
     # ровно половину к чётному, а бухгалтерский расчёт округляет её вверх.
     raw_amount = _round_tenge(
-        Decimal(principal) * Decimal(str(terms.rate_percent_per_day)) / _HUNDRED * Decimal(days)
+        Decimal(principal) * terms.rate_percent_per_day / _HUNDRED * Decimal(days)
     )
 
     cap_amount: int | None = None
@@ -232,8 +240,10 @@ def calc_contractual_penalty(
     amount = raw_amount
 
     if terms.cap_percent is not None:
-        cap_amount = _round_tenge(Decimal(principal) * Decimal(str(terms.cap_percent)) / _HUNDRED)
-        days_to_cap = math.ceil(terms.cap_percent / terms.rate_percent_per_day)
+        cap_amount = _round_tenge(Decimal(principal) * terms.cap_percent / _HUNDRED)
+        days_to_cap = int(
+            (terms.cap_percent / terms.rate_percent_per_day).to_integral_value(rounding=ROUND_CEILING)
+        )
         cap_reached_on = start + timedelta(days=max(days_to_cap - 1, 0))
         capped = raw_amount >= cap_amount
         amount = min(raw_amount, cap_amount)
