@@ -1,10 +1,23 @@
 /* Bottom navigation cleanup: consultation remains available from the home card. */
 .bottom-nav {
   grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+
+  /* Telegram WebView can visibly repaint a fixed translucent backdrop-filter
+     while the document screen is busy. Keep only the bottom navigation layer
+     opaque and static so the tabs do not flicker during generation. */
+  background: #090b0d !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* 3 = AI-юрист, 4 = Помощь (already intentionally hidden in the current UI). */
 .bottom-nav button:nth-child(3),
 .bottom-nav button:nth-child(4) {
   display: none !important;
+}
+
+/* Keep the active state color, but remove the GPU filter that can shimmer in
+   Telegram's embedded browser during repeated repaints. */
+.bottom-nav button.active svg {
+  filter: none !important;
 }
