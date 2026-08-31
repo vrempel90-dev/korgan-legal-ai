@@ -1,3 +1,5 @@
+import './document-generation-sync.js';
+
 const API_BASE = String(import.meta.env.VITE_KORGAN_API_BASE || '').replace(/\/$/, '');
 
 const nativeFetch = window.fetch.bind(window);
@@ -60,8 +62,21 @@ function telegramInitData() {
   );
 }
 
+function caseIdFromDom() {
+  try {
+    const header = document.querySelector('.app-shell .subbar strong')?.textContent || '';
+    const match = header.match(/KOR-[A-Z0-9-]+/i);
+    return match ? match[0].toUpperCase() : '';
+  } catch (_) {
+    return '';
+  }
+}
+
 async function fallbackCaseId() {
   if (activeCaseId) return activeCaseId;
+  rememberCaseId(caseIdFromDom());
+  if (activeCaseId) return activeCaseId;
+
   const response = await nativeFetch(`${API_BASE}/miniapp/cases`, {
     headers: { 'X-Telegram-Init-Data': telegramInitData() },
     cache: 'no-store',
@@ -69,10 +84,15 @@ async function fallbackCaseId() {
   if (!response.ok) throw new Error('Не удалось определить дело документа');
   const data = await response.json();
   const cases = Array.isArray(data?.cases) ? data.cases : [];
-  const ready = cases.find((item) => item?.has_document || item?.status === 'document_ready');
-  if (!ready?.id) throw new Error('Готовый документ не найден');
-  rememberCaseId(ready.id);
-  return activeCaseId;
+  const ready = cases.filter((item) => item?.has_document || item?.status === 'document_ready');
+  if (ready.length === 1 && ready[0]?.id) {
+    rememberCaseId(ready[0].id);
+    return activeCaseId;
+  }
+  if (ready.length > 1) {
+    throw new Error('Откройте нужное дело и повторите скачивание');
+  }
+  throw new Error('Готовый документ не найден');
 }
 
 async function createDocumentAccess() {
@@ -116,20 +136,54 @@ async function openStoredDocument() {
   if (!opened) window.location.assign(access.preview_url);
 }
 
-async function downloadStoredDocument() {
-  const access = await createDocumentAccess();
-  const tg = window.Telegram?.WebApp;
-  if (tg && typeof tg.downloadFile === 'function') {
-    tg.downloadFile({ url: access.download_url, file_name: access.filename });
-    return;
-  }
+function requestTelegramDownload(tg, access) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (accepted) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      resolve(Boolean(accepted));
+    };
+    const timeout = window.setTimeout(() => finish(false), 8000);
+    try {
+      tg.downloadFile(
+        { url: access.download_url, file_name: access.filename || 'KORGAN_document.docx' },
+        (accepted) => finish(accepted !== false),
+      );
+    } catch (_) {
+      finish(false);
+    }
+  });
+}
+
+function directServerDownload(access) {
   const link = document.createElement('a');
   link.href = access.download_url;
   link.download = access.filename || 'KORGAN_document.docx';
   link.rel = 'noopener noreferrer';
+  link.style.display = 'none';
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+async function downloadStoredDocument() {
+  const access = await createDocumentAccess();
+  const tg = window.Telegram?.WebApp;
+
+  /* Telegram's native download API is the primary device-save path. Unlike the
+     old Blob + <a download> imitation, this uses a server-backed HTTPS URL that
+     Telegram/Android can hand to the actual download manager. */
+  if (tg && typeof tg.downloadFile === 'function') {
+    const accepted = await requestTelegramDownload(tg, access);
+    if (accepted) return;
+  }
+
+  /* Older Telegram/WebView builds: use the same signed server URL directly.
+     The server owns Content-Disposition/filename and the browser downloads the
+     real DOCX bytes; no in-memory Blob is created. */
+  directServerDownload(access);
 }
 
 function isDownloadControl(element) {
