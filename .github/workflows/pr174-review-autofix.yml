@@ -1,0 +1,294 @@
+name: PR174 review autofix
+
+on:
+  push:
+    branches:
+      - claude/korgan-legal-document-quality-v1vgeo
+    paths:
+      - .github/workflows/pr174-review-autofix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix-review-findings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TELEGRAM_BOT_TOKEN: test-token
+      OPENAI_API_KEY: test-key
+      PAYMENTS_ENABLED: "false"
+      CONSULTATION_LIMIT_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/korgan-legal-document-quality-v1vgeo
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Apply four reviewed fixes and regression tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, got {count}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "korgan/response_legal.py",
+              '''            claim_summary=[str(x).strip() for x in payload.get("claim_summary", []) if str(x).strip()],
+            position=[str(x).strip() for x in payload.get("position", []) if str(x).strip()],
+            objections=list(payload.get("objections", []) or []),
+''',
+              '''            claim_summary=[str(x).strip() for x in payload.get("claim_summary", []) if str(x).strip()],
+            admitted_circumstances=[
+                str(x).strip() for x in payload.get("admitted_circumstances", []) if str(x).strip()
+            ],
+            disputed_circumstances=[
+                str(x).strip() for x in payload.get("disputed_circumstances", []) if str(x).strip()
+            ],
+            position=[str(x).strip() for x in payload.get("position", []) if str(x).strip()],
+            calculation_review=[
+                str(x).strip() for x in payload.get("calculation_review", []) if str(x).strip()
+            ],
+            objections=list(payload.get("objections", []) or []),
+''',
+          )
+
+          replace_once(
+              "korgan/document_quality.py",
+              r'''# Опора, без которой такое возражение не проверяемо: конкретная дата, период
+# или названная норма.
+_OBJECTION_ANCHOR_RE = re.compile(
+    r"(?i)(?:\d{2}\.\d{2}\.\d{4}|"
+    r"\b\d{4}\s*год|"
+    r"\bстать\w*\s*\d|\bст\.\s*\d|"
+    r"\b\d+\s*(?:год\w*|месяц\w*|дн[ейя]))"
+)
+''',
+              r'''# Для «опасных» процессуальных возражений одной ссылки на статью или общего
+# периода недостаточно. Исковая давность требует двух фактических дат и нормы;
+# иные процессуальные возражения — конкретного факта плюс нормы.
+_LIMITATION_OBJECTION_RE = re.compile(
+    r"(?i)(?:исков\w*\s+давност\w*|срок\w*\s+давност\w*|талап\s+қою\s+мерзім\w*)"
+)
+_OBJECTION_DATE_RE = re.compile(r"(?<!\d)\d{2}\.\d{2}\.\d{4}(?!\d)")
+_OBJECTION_LAW_RE = re.compile(r"(?i)\b(?:стать\w*|ст\.)\s*\d+(?:-\d+)?\b")
+_OBJECTION_FACT_RE = re.compile(
+    r"(?i)(?:\d{2}\.\d{2}\.\d{4}|№\s*\S+|"
+    r"\b(?:адрес|место\s+(?:жительства|нахождения)|зарегистрирован\w*|"
+    r"прожива\w*|находится|подан\w*|направлен\w*|получен\w*|вручен\w*)\b)"
+)
+''',
+          )
+
+          replace_once(
+              "korgan/document_quality.py",
+              '''        if _OBJECTION_ANCHOR_RE.search(item):
+            continue
+        findings.append(
+            "возражение заявлено без подтверждающих дат или нормы: " + item[:120]
+        )
+''',
+              '''        has_law = bool(_OBJECTION_LAW_RE.search(item))
+        if _LIMITATION_OBJECTION_RE.search(item):
+            dates = set(_OBJECTION_DATE_RE.findall(item))
+            if has_law and len(dates) >= 2:
+                continue
+            findings.append(
+                "возражение заявлено без подтверждающих дат и нормы: " + item[:120]
+            )
+            continue
+        if has_law and _OBJECTION_FACT_RE.search(item):
+            continue
+        findings.append(
+            "возражение заявлено без подтверждающих фактов и нормы: " + item[:120]
+        )
+''',
+          )
+
+          replace_once(
+              "korgan/document_quality.py",
+              '''    objection_texts = [item.text for item in draft.objections] if draft.objections else []
+''',
+              '''    objection_texts = ["\\n".join(item.body_lines()) for item in draft.objections] if draft.objections else []
+''',
+          )
+
+          replace_once(
+              "korgan/document_quality.py",
+              '''    from korgan.pretrial_response import pretrial_response_quality_issues
+''',
+              '''    from korgan.pretrial_response import _money_claimed, pretrial_response_quality_issues
+''',
+          )
+
+          replace_once(
+              "korgan/document_quality.py",
+              '''    if _clean_lines(draft.objections) and not _clean_lines(getattr(draft, "calculation_review", [])):
+        issues.append("расчёт контрагента не разобран построчно")
+        review -= 0.5
+''',
+              '''    if (
+        _money_claimed(draft)
+        and _clean_lines(draft.objections)
+        and not _clean_lines(getattr(draft, "calculation_review", []))
+    ):
+        issues.append("расчёт контрагента не разобран построчно")
+        review -= 0.5
+''',
+          )
+
+          Path("tests/test_pr174_codex_review_regressions.py").write_text(r'''from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+
+from korgan.document_quality import assess_document_quality, unsupported_objections
+from korgan.legal_types import LegalResearch, VerificationStatus
+from korgan.pretrial_response import PretrialResponseDraft
+from korgan.response_legal import ProductionOpenAILegalService
+from korgan.response_types import ResponseToClaimDraft
+
+
+def _research() -> LegalResearch:
+    return LegalResearch(
+        status=VerificationStatus.VERIFIED,
+        applicable_law=[],
+        procedural_requirements=[],
+        verified_claims=[],
+        unverified_claims=[],
+        source_urls=[],
+        notes=[],
+    )
+
+
+def test_initial_response_draft_preserves_new_structured_sections() -> None:
+    payload = {
+        "title": "ОТЗЫВ НА ИСК",
+        "court": "Районный суд",
+        "case_number": "2-123/2026",
+        "claimant": ["Истец"],
+        "defendant": ["Ответчик"],
+        "claim_summary": ["Истец просит взыскать задолженность."],
+        "admitted_circumstances": ["Факт заключения договора не оспаривается."],
+        "disputed_circumstances": ["Размер задолженности оспаривается."],
+        "position": ["Иск оспаривается в части."],
+        "calculation_review": ["Расчёт истца не учитывает платёж от 10.03.2026."],
+        "objections": [],
+        "legal_basis": [],
+        "requests": ["Отказать в иске в оспариваемой части."],
+        "attachments": [],
+        "verification_notes": [],
+    }
+
+    class StubService(ProductionOpenAILegalService):
+        settings = SimpleNamespace(max_case_text_chars=10000)
+        response_payload = payload
+
+        async def _response_structured(self, **kwargs):  # type: ignore[override]
+            return self.response_payload, object()
+
+    service = object.__new__(StubService)
+    draft = asyncio.run(service.draft_response_to_claim("Материалы дела", _research()))
+
+    assert draft.admitted_circumstances == payload["admitted_circumstances"]
+    assert draft.disputed_circumstances == payload["disputed_circumstances"]
+    assert draft.calculation_review == payload["calculation_review"]
+
+
+def test_structured_limitation_objection_uses_all_body_lines_for_support() -> None:
+    draft = ResponseToClaimDraft(
+        status=VerificationStatus.VERIFIED,
+        title="ОТЗЫВ НА ИСК",
+        court="Районный суд",
+        case_number="2-123/2026",
+        claimant=["Истец"],
+        defendant=["Ответчик"],
+        claim_summary=["Истец заявил требование."],
+        position=["Требование оспаривается."],
+        objections=[{
+            "text": "Истечение срока исковой давности",
+            "subclauses": ["Течение началось 01.01.2020.", "Срок истёк 01.01.2023."],
+            "prose": ["Правовое основание: статья 178 ГК РК."],
+        }],
+        legal_basis=["Правовое основание: статья 178 ГК РК."],
+        requests=["Отказать в удовлетворении требования."],
+        attachments=[],
+    )
+
+    report = assess_document_quality("response_to_claim", "Материалы дела", _research(), draft)
+    assert not any("без подтверждающих дат" in item for item in report.hard_blockers)
+
+
+def test_limitation_needs_two_dates_and_legal_basis() -> None:
+    assert unsupported_objections(["Истёк срок исковой давности — 3 года."])
+    assert unsupported_objections(["Истёк срок исковой давности, статья 178 ГК РК."])
+    assert unsupported_objections([
+        "Срок исковой давности истёк: течение началось 01.01.2020, окончание 01.01.2023, статья 178 ГК РК."
+    ]) == []
+
+
+def test_procedural_objection_needs_fact_and_legal_basis() -> None:
+    assert unsupported_objections(["Подсудность нарушена, статья 29 ГПК РК."])
+    assert unsupported_objections([
+        "Подсудность нарушена: ответчик зарегистрирован в г. Астана; статья 29 ГПК РК."
+    ]) == []
+
+
+def test_non_monetary_pretrial_response_does_not_require_calculation_review() -> None:
+    draft = PretrialResponseDraft(
+        status=VerificationStatus.VERIFIED,
+        title="ОТВЕТ НА ДОСУДЕБНУЮ ПРЕТЕНЗИЮ",
+        sender=["ТОО Ответчик"],
+        recipient=["Истец"],
+        reference="претензия от 05.03.2026 № 7",
+        claim_summary=["Заявлено требование устранить недостатки выполненных работ."],
+        position=["Требование исполнено до получения претензии."],
+        objections=["Недостатки устранены по акту № 15 от 10.03.2026."],
+        legal_basis=[],
+        response_terms=["Повторное устранение тех же недостатков не требуется."],
+        attachments=["Акт № 15 от 10.03.2026"],
+        admitted_circumstances=[],
+        disputed_circumstances=["Наличие неустранённых недостатков оспаривается."],
+        calculation_review=[],
+        settlement_offer="",
+    )
+
+    report = assess_document_quality("pretrial_response", "Материалы дела", _research(), draft)
+    assert "расчёт контрагента не разобран построчно" not in report.issues
+    assert not any("расчёт контрагента не разобран" in item for item in report.hard_blockers)
+''', encoding="utf-8")
+          PY
+
+      - name: Run focused review regressions
+        run: python -m pytest -q tests/test_pr174_codex_review_regressions.py
+
+      - name: Run full suite
+        run: python -m pytest -q
+
+      - name: Diff sanity
+        run: |
+          git diff --check
+          git status --short
+
+      - name: Commit verified fixes
+        run: |
+          git config user.name "KORGAN Review Fix Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/pr174-review-autofix.yml
+          git add korgan/response_legal.py korgan/document_quality.py tests/test_pr174_codex_review_regressions.py
+          git commit -m "fix(review): закрыть P1/P2 замечания PR 174"
+          git push origin HEAD:claude/korgan-legal-document-quality-v1vgeo
