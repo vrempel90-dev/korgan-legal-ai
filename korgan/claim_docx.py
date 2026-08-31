@@ -84,8 +84,6 @@ def _document_status(draft: ClaimDraft) -> str:
             *draft.legal_basis,
             *draft.requests,
             *draft.attachments,
-            # Маркер «требует уточнения» в расчёте или ходатайстве — такой же
-            # признак предварительного проекта, как и в фактах.
             *pro_text(draft),
         ]
     ).upper()
@@ -127,9 +125,9 @@ def _kk_line(value: str) -> str:
 def _body_blocks(draft: ClaimDraft, *, kk: bool) -> list[Block]:
     """Разделы иска в порядке, в котором их читает суд.
 
-    Профессиональные разделы (расчёт, подсудность, досудебный порядок,
-    примирение, исковая давность, снятие возражений, ходатайства) печатаются
-    только при наличии материала: пустой раздел хуже отсутствующего.
+    Расчёт и процессуальные разделы печатаются только при наличии материала.
+    Прогнозируемые возражения ответчика являются внутренней аналитикой и в
+    судебный иск не выводятся.
     """
     blocks: list[Block] = [Prose(fact) for fact in draft.facts]
 
@@ -155,17 +153,6 @@ def _body_blocks(draft: ClaimDraft, *, kk: bool) -> list[Block]:
         blocks.append(Heading("Құқықтық негіздеме" if kk else "Правовое обоснование"))
         blocks.extend(Prose(basis) for basis in draft.legal_basis)
         blocks.extend(Prose(_kk_line(value) if kk else value) for value in procedural)
-
-    defenses = [item.strip() for item in draft.anticipated_defenses if item and item.strip()]
-    if defenses:
-        blocks.append(
-            Heading(
-                "Жауапкердің ықтимал қарсылықтары және оларға жауап"
-                if kk
-                else "Возражения ответчика и ответ на них"
-            )
-        )
-        blocks.extend(Prose(item) for item in defenses)
 
     blocks.append(Heading("Жоғарыда баяндалғандардың негізінде СОТТАН СҰРАЙМЫН:" if kk else "На основании изложенного ПРОШУ СУД:"))
     blocks.append(AutoNumberedList(list(draft.requests)))
