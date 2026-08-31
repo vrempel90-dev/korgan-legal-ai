@@ -33,6 +33,15 @@ def _response_blocks(draft: ResponseToClaimDraft) -> list[Block]:
     if draft.claim_summary:
         blocks.append(Heading("Краткое содержание заявленных требований"))
         blocks.extend(Prose(item) for item in draft.claim_summary)
+    # Признанное и оспариваемое разделяются явно: суд должен видеть, что из
+    # обстоятельств истца ответчик не оспаривает, — это сужает предмет спора
+    # и не даёт молчанию превратиться в признание всего.
+    if draft.admitted_circumstances:
+        blocks.append(Heading("Признаваемые обстоятельства"))
+        blocks.extend(Prose(item) for item in draft.admitted_circumstances)
+    if draft.disputed_circumstances:
+        blocks.append(Heading("Оспариваемые обстоятельства"))
+        blocks.extend(Prose(item) for item in draft.disputed_circumstances)
     if draft.position:
         blocks.append(Heading("Позиция ответчика"))
         blocks.extend(Prose(item) for item in draft.position)
@@ -45,6 +54,10 @@ def _response_blocks(draft: ResponseToClaimDraft) -> list[Block]:
             blocks.extend(Prose(item, indent_levels=1) for item in objection.prose)
     else:
         blocks.append(Prose("[ТРЕБУЕТ УТОЧНЕНИЯ: конкретные возражения ответчика по требованиям истца]"))
+
+    if draft.calculation_review:
+        blocks.append(Heading("Разбор расчёта истца"))
+        blocks.extend(Prose(item) for item in draft.calculation_review)
 
     if draft.legal_basis:
         blocks.append(Heading("Правовое обоснование"))

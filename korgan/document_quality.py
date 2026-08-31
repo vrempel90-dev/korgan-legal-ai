@@ -195,6 +195,49 @@ def _common_hygiene(
     return max(0.0, score)
 
 
+# Возражения, которые нельзя заявлять «на всякий случай»: исковая давность и
+# процессуальные нарушения. Каждое из них либо подтверждено конкретными датами
+# и нормой, либо не заявляется вовсе — иначе документ раздувается доводами,
+# которые оппонент разобьёт первым же абзацем.
+_UNSUPPORTABLE_OBJECTION_RE = re.compile(
+    r"(?i)(?:исков\w*\s+давност\w*|срок\w*\s+давност\w*|"
+    r"пропущен\w*\s+срок|"
+    r"нарушен\w*\s+(?:процессуальн\w*|порядок\s+подач\w*)|"
+    r"подсудност\w*\s+наруш\w*|"
+    r"талап\s+қою\s+мерзім\w*)"
+)
+
+# Опора, без которой такое возражение не проверяемо: конкретная дата, период
+# или названная норма.
+_OBJECTION_ANCHOR_RE = re.compile(
+    r"(?i)(?:\d{2}\.\d{2}\.\d{4}|"
+    r"\b\d{4}\s*год|"
+    r"\bстать\w*\s*\d|\bст\.\s*\d|"
+    r"\b\d+\s*(?:год\w*|месяц\w*|дн[ейя]))"
+)
+
+
+def unsupported_objections(objections: list[str]) -> list[str]:
+    """Возражения об исковой давности/процессуальных нарушениях без опоры.
+
+    Опора требуется в самом возражении, а не где-то ещё в документе. Довод об
+    исковой давности профессионально всегда называет даты, из которых срок
+    вычисляется: когда началось течение и когда истекло. Дата, случайно
+    оказавшаяся в соседнем разделе, такой довод не подтверждает — иначе любое
+    возражение «на всякий случай» проходило бы за счёт чужих фактов.
+    """
+    findings: list[str] = []
+    for item in _clean_lines(objections):
+        if not _UNSUPPORTABLE_OBJECTION_RE.search(item):
+            continue
+        if _OBJECTION_ANCHOR_RE.search(item):
+            continue
+        findings.append(
+            "возражение заявлено без подтверждающих дат или нормы: " + item[:120]
+        )
+    return findings
+
+
 def _preserve_known_identifiers(case_context: str, lines: list[str], blockers: list[str]) -> float:
     score = 1.0
     body = "\n".join(lines)
@@ -425,6 +468,11 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
     if not _clean_lines(draft.requests):
         blockers.append("нет процессуальной просительной части")
         position -= 0.4
+    objection_texts = [item.text for item in draft.objections] if draft.objections else []
+    unsupported = unsupported_objections(objection_texts)
+    if unsupported:
+        blockers.extend(unsupported)
+        position -= 0.6
 
     law = 2.5
     basis = "\n".join(draft.legal_basis)
@@ -587,6 +635,11 @@ def _score_pretrial_response(case_context: str, research: LegalResearch, draft: 
     if research.verified_claims and not basis.strip():
         blockers.append("VERIFIED-нормы не перенесены в правовое обоснование ответа")
         law -= 1.2
+
+    unsupported = unsupported_objections(list(draft.objections))
+    if unsupported:
+        blockers.extend(unsupported)
+        engagement -= 0.6
 
     review = 1.5
     if _clean_lines(draft.objections) and not _clean_lines(getattr(draft, "calculation_review", [])):

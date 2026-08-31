@@ -14,6 +14,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Pt
 
 from korgan.document_release import review_lines
+from korgan.legal_calc import parse_all_amounts_kzt
 from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.pretrial import PretrialProductionService
 from korgan.stable_legal_release import clean_language_labels, sanitize_research_sources
@@ -26,16 +27,22 @@ _PRETRIAL_RESPONSE_SCHEMA: dict[str, Any] = {
         "recipient": {"type": "array", "items": {"type": "string"}},
         "reference": {"type": "string"},
         "claim_summary": {"type": "array", "items": {"type": "string"}},
+        "admitted_circumstances": {"type": "array", "items": {"type": "string"}},
+        "disputed_circumstances": {"type": "array", "items": {"type": "string"}},
         "position": {"type": "array", "items": {"type": "string"}},
         "objections": {"type": "array", "items": {"type": "string"}},
+        "calculation_review": {"type": "array", "items": {"type": "string"}},
         "legal_basis": {"type": "array", "items": {"type": "string"}},
+        "settlement_offer": {"type": "string"},
         "response_terms": {"type": "array", "items": {"type": "string"}},
         "attachments": {"type": "array", "items": {"type": "string"}},
         "verification_notes": {"type": "array", "items": {"type": "string"}},
     },
     "required": [
-        "title", "sender", "recipient", "reference", "claim_summary", "position",
-        "objections", "legal_basis", "response_terms", "attachments", "verification_notes"
+        "title", "sender", "recipient", "reference", "claim_summary",
+        "admitted_circumstances", "disputed_circumstances", "position",
+        "objections", "calculation_review", "legal_basis", "settlement_offer",
+        "response_terms", "attachments", "verification_notes"
     ],
     "additionalProperties": False,
 }
@@ -78,6 +85,13 @@ class PretrialResponseDraft:
     attachments: list[str]
     verification_notes: list[str] = field(default_factory=list)
     source_urls: list[str] = field(default_factory=list)
+    # Разбор требований контрагента. Значения по умолчанию пусты намеренно:
+    # старые сохранённые черновики продолжают открываться, а пустое признание
+    # допустимо — доверитель не обязан признавать ничего.
+    admitted_circumstances: list[str] = field(default_factory=list)
+    disputed_circumstances: list[str] = field(default_factory=list)
+    calculation_review: list[str] = field(default_factory=list)
+    settlement_offer: str = ""
 
     def body_lines(self) -> list[str]:
         return [
@@ -86,9 +100,13 @@ class PretrialResponseDraft:
             *self.recipient,
             self.reference,
             *self.claim_summary,
+            *self.admitted_circumstances,
+            *self.disputed_circumstances,
             *self.position,
             *self.objections,
+            *self.calculation_review,
             *self.legal_basis,
+            self.settlement_offer,
             *self.response_terms,
             *self.attachments,
         ]
@@ -108,11 +126,49 @@ def _dedupe(lines: list[str]) -> list[str]:
 
 def normalize_pretrial_response(draft: PretrialResponseDraft) -> None:
     draft.claim_summary = _dedupe(draft.claim_summary)
+    draft.admitted_circumstances = _dedupe(draft.admitted_circumstances)
+    draft.disputed_circumstances = _dedupe(draft.disputed_circumstances)
     draft.position = _dedupe(draft.position)
     draft.objections = _dedupe(draft.objections)
+    draft.calculation_review = _dedupe(draft.calculation_review)
     draft.legal_basis = _dedupe(draft.legal_basis)
     draft.response_terms = _dedupe(draft.response_terms)
     draft.attachments = _dedupe(draft.attachments)
+
+
+# Формулировки несогласия, которые ничего не сообщают адресату сами по себе.
+# Такое предложение допустимо как вводная фраза, но не как весь ответ.
+_BARE_DISAGREEMENT_RE = re.compile(
+    r"(?i)^\s*(?:с\s+требовани\w*\s+не\s+соглас\w*|"
+    r"требовани\w*\s+не\s+призна\w*|"
+    r"не\s+соглас\w*\s+с\s+претензи\w*|"
+    r"претензи\w*\s+не\s+призна\w*|"
+    r"талап\w*\s+келіспей\w*|талап\w*\s+мойындама\w*)\s*[.!]?\s*$"
+)
+
+# Обстоятельство, на которое можно сослаться: дата, сумма, пункт договора,
+# номер документа. Возражение без единой такой опоры не проверяемо.
+_CONCRETE_ANCHOR_RE = re.compile(
+    r"(?i)(?:\d{2}\.\d{2}\.\d{4}|"
+    r"\bп\.\s*\d|\bпункт\w*\s+\d|\bстать\w*\s*\d|\bст\.\s*\d|"
+    r"№\s*\S|\d[\d\s\u00a0]*(?:тенге|теңге|тг\b|₸))"
+)
+
+
+def _bare_disagreement(draft: PretrialResponseDraft) -> bool:
+    """Весь содержательный ответ сводится к «не согласны» без опоры на факты."""
+    substantive = [*draft.objections, *draft.position]
+    if not substantive:
+        return False
+    return all(
+        _BARE_DISAGREEMENT_RE.match(item) or not _CONCRETE_ANCHOR_RE.search(item)
+        for item in substantive
+    )
+
+
+def _money_claimed(draft: PretrialResponseDraft) -> bool:
+    """Претензия контрагента содержит денежное требование."""
+    return bool(parse_all_amounts_kzt("\n".join(draft.claim_summary)))
 
 
 def pretrial_response_quality_issues(draft: PretrialResponseDraft, research: LegalResearch) -> list[str]:
@@ -129,6 +185,17 @@ def pretrial_response_quality_issues(draft: PretrialResponseDraft, research: Leg
         issues.append("нет содержательного ответа на требования претензии")
     if research.verified_claims and not draft.legal_basis:
         issues.append("VERIFIED нормы не перенесены в правовое обоснование")
+
+    # Несогласие само по себе — не позиция. Ответ обязан назвать, какое
+    # обстоятельство оспаривается, либо чем именно порочен расчёт контрагента.
+    if _bare_disagreement(draft) and not (draft.disputed_circumstances or draft.calculation_review):
+        issues.append("несогласие заявлено без обоснования: не названы оспариваемые обстоятельства")
+
+    # Денежное требование контрагента проверяется построчно: срок начисления,
+    # база, ставка. Без этого спор о сумме сводится к «мы не согласны».
+    if _money_claimed(draft) and not draft.calculation_review:
+        issues.append("расчёт контрагента не разобран")
+
     report = review_lines(draft.body_lines(), verified_claims=research.verified_claims)
     issues.extend(report.blocking)
     return list(dict.fromkeys(issues))
@@ -168,6 +235,11 @@ class PretrialResponseProductionService(PretrialProductionService):
             "11. Если разумно предложить урегулирование, делай это нейтрально и только если оно не противоречит позиции пользователя.\n"
             "12. Приложения перечисляй только из реально имеющихся материалов.\n"
             "13. Не включай в тело документа внутренние рассуждения вроде «позиция не определена», «нет подтверждённого согласия», «правовая оценка не проведена». Недостающие критичные сведения оставляй только в verification_notes.\n"
+            "13a. admitted_circumstances — обстоятельства, которые доверитель ДЕЙСТВИТЕЛЬНО не оспаривает по материалам. Признание нельзя создавать: если оснований признавать нет, оставь массив пустым. Пустое признание — нормальный и допустимый результат.\n"
+            "13b. disputed_circumstances — обстоятельства, которые оспариваются, каждое с указанием документа, даты, суммы или пункта договора, на которых основано оспаривание.\n"
+            "13c. calculation_review — построчный разбор расчёта контрагента: с какой даты начислено, какая база и ставка применены, чему это противоречит по договору или материалам. Обязателен, если требование денежное. Если исходных данных для проверки не хватает, назови недостающее в verification_notes, а не оценивай расчёт наугад.\n"
+            "13d. settlement_offer — предложение частичного исполнения или урегулирования. Только если оно следует из материалов и не противоречит позиции доверителя; иначе пустая строка.\n"
+            "13e. Возражение об исковой давности или процессуальном нарушении заявляй ТОЛЬКО когда в материалах есть даты и норма, из которых оно следует, и назови их прямо в самом возражении. Возражений ради объёма быть не должно.\n"
             f"14. Язык документа: {'казахский' if language == 'kk' else 'русский'}.\n\n"
             f"МАТЕРИАЛЫ:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
             f"VERIFIED:\n{verified}"
@@ -209,6 +281,21 @@ def _body_paragraph(doc: Document, text: str) -> None:
     p.paragraph_format.space_after = Pt(6)
 
 
+def _titled_block(doc: Document, heading: str, items: list[str]) -> None:
+    """Озаглавленный блок, который не печатается, если содержимого нет.
+
+    Пустой заголовок хуже отсутствующего: он сообщает адресату, что раздел
+    должен был быть, но остался незаполненным.
+    """
+    values = [str(item).strip() for item in items or [] if str(item).strip()]
+    if not values:
+        return
+    title = doc.add_paragraph()
+    title.add_run(heading).bold = True
+    for value in values:
+        _body_paragraph(doc, value)
+
+
 def _reference_line(reference: str, kk: bool) -> str:
     value = str(reference or "").strip()
     if not value:
@@ -244,19 +331,27 @@ def build_pretrial_response_docx(draft: PretrialResponseDraft, language: str = "
     for value in draft.sender or [("[Жіберуші деректері]" if kk else "[Данные отправителя]")]:
         head.add_run(str(value) + "\n")
 
+    # Официальный заголовок печатается всегда и не зависит от того, что вернула
+    # модель в поле title: документ должен опознаваться по названию, даже когда
+    # у него есть ссылка на исходящую претензию.
+    title = doc.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = title.add_run("СОТҚА ДЕЙІНГІ ТАЛАПҚА ЖАУАП" if kk else "ОТВЕТ НА ПРЕТЕНЗИЮ")
+    run.bold = True
+    run.font.size = Pt(14)
+
     reference = _reference_line(draft.reference, kk)
     if reference:
         p = doc.add_paragraph(reference)
         p.paragraph_format.space_after = Pt(8)
-    else:
-        title = doc.add_paragraph()
-        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = title.add_run(draft.title or ("Сотқа дейінгі талапқа жауап" if kk else "Ответ на досудебную претензию"))
-        run.bold = True
-        run.font.size = Pt(14)
 
     for item in draft.claim_summary:
         _body_paragraph(doc, item)
+
+    # Признанное и оспариваемое разделяются явно. Так адресат видит, что именно
+    # снято со спора, а молчание об обстоятельстве не читается как признание.
+    _titled_block(doc, "Мойындалатын мән-жайлар:" if kk else "Признаваемые обстоятельства:", draft.admitted_circumstances)
+    _titled_block(doc, "Даулы мән-жайлар:" if kk else "Оспариваемые обстоятельства:", draft.disputed_circumstances)
 
     for item in draft.position:
         _body_paragraph(doc, item)
@@ -264,8 +359,13 @@ def build_pretrial_response_docx(draft: PretrialResponseDraft, language: str = "
     for item in draft.objections:
         _body_paragraph(doc, item)
 
+    _titled_block(doc, "Есепті талдау:" if kk else "Разбор расчёта:", draft.calculation_review)
+
     for item in draft.legal_basis:
         _body_paragraph(doc, item)
+
+    if str(draft.settlement_offer or "").strip():
+        _body_paragraph(doc, draft.settlement_offer)
 
     for item in draft.response_terms:
         _body_paragraph(doc, item)

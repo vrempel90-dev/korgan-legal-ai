@@ -27,7 +27,10 @@ _RESPONSE_DRAFT_SCHEMA: dict[str, Any] = {
         "claimant": {"type": "array", "items": {"type": "string"}},
         "defendant": {"type": "array", "items": {"type": "string"}},
         "claim_summary": {"type": "array", "items": {"type": "string"}},
+        "admitted_circumstances": {"type": "array", "items": {"type": "string"}},
+        "disputed_circumstances": {"type": "array", "items": {"type": "string"}},
         "position": {"type": "array", "items": {"type": "string"}},
+        "calculation_review": {"type": "array", "items": {"type": "string"}},
         "objections": {
             "type": "array",
             "items": {
@@ -48,7 +51,9 @@ _RESPONSE_DRAFT_SCHEMA: dict[str, Any] = {
     },
     "required": [
         "title", "court", "case_number", "claimant", "defendant", "claim_summary",
-        "position", "objections", "legal_basis", "requests", "attachments", "verification_notes"
+        "admitted_circumstances", "disputed_circumstances", "position",
+        "calculation_review", "objections", "legal_basis", "requests",
+        "attachments", "verification_notes"
     ],
     "additionalProperties": False,
 }
@@ -263,7 +268,11 @@ class ProductionOpenAILegalService(_ContractSafeService):
             "7. Просительная часть должна соответствовать позиции и материалам: отказать полностью/частично только когда это действительно следует из позиции ответчика.\n"
             "8. Приложения перечисляй только из реально имеющихся/упомянутых материалов и процессуально обязательных копий, подтверждённых VERIFIED.\n"
             "9. Не вставляй URL, служебные комментарии, Markdown или фразы ассистента в текст судебного документа.\n"
-            "10. Неизвестный суд, номер дела или реквизит оставляй как [ТРЕБУЕТ УТОЧНЕНИЯ: ...], а не выдумывай.\n\n"
+            "10. Неизвестный суд, номер дела или реквизит оставляй как [ТРЕБУЕТ УТОЧНЕНИЯ: ...], а не выдумывай.\n"
+            "11. admitted_circumstances — обстоятельства истца, которые ответчик ДЕЙСТВИТЕЛЬНО не оспаривает по материалам. Признание нельзя создавать: если оснований признавать нет, оставь массив пустым. Пустое признание — нормальный и допустимый результат, оно не ухудшает документ.\n"
+            "12. disputed_circumstances — обстоятельства, которые оспариваются, каждое со ссылкой на документ, дату, сумму или пункт договора, на которых основано оспаривание.\n"
+            "13. calculation_review — построчный разбор расчёта истца: с какой даты начислено, какая база и ставка применены, чему это противоречит по договору или материалам. Заполняй, когда требование денежное. Если данных для проверки не хватает, назови недостающее в verification_notes, а не оценивай расчёт наугад.\n"
+            "14. Возражение об исковой давности или процессуальном нарушении заявляй ТОЛЬКО когда в материалах есть даты и норма, из которых оно следует, и назови их прямо в самом возражении. Возражений ради объёма быть не должно.\n\n"
             f"МАТЕРИАЛЫ:\n{case_context[:self.settings.max_case_text_chars]}\n\n"
             f"VERIFIED:\n{json.dumps(research.verified_claims, ensure_ascii=False)}\n\n"
             f"UNVERIFIED/ПРОБЕЛЫ:\n{json.dumps(research.unverified_claims, ensure_ascii=False)}"

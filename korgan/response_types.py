@@ -79,6 +79,12 @@ class ResponseToClaimDraft:
     attachments: list[str] = field(default_factory=list)
     verification_notes: list[str] = field(default_factory=list)
     source_urls: list[str] = field(default_factory=list)
+    # Разбор позиции истца. Значения по умолчанию пусты намеренно: старые
+    # сохранённые черновики продолжают открываться, а пустое признание
+    # допустимо — ответчик не обязан признавать ничего.
+    admitted_circumstances: list[str] = field(default_factory=list)
+    disputed_circumstances: list[str] = field(default_factory=list)
+    calculation_review: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.objections = normalize_response_objections(self.objections)
@@ -91,10 +97,13 @@ class ResponseToClaimDraft:
             *self.claimant,
             *self.defendant,
             *self.claim_summary,
+            *self.admitted_circumstances,
+            *self.disputed_circumstances,
             *self.position,
         ]
         for objection in self.objections:
             lines.extend(objection.body_lines())
+        lines.extend(self.calculation_review)
         lines.extend(self.legal_basis)
         lines.extend(self.requests)
         lines.extend(self.attachments)
