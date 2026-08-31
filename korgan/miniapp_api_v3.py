@@ -26,7 +26,12 @@ apply_token_budget_guard(settings)
 stable_service = PretrialResponseProductionService(settings)
 claim_mux = ClaimServiceMux(stable_service, settings)
 service = ClaimPipelineV2Adapter(claim_mux)
+# v2 routes claims through ``core.service``, while its legacy helpers resolve
+# contract/response/pre-trial methods through ``miniapp_api.service``. Both
+# names must point at this exact production chain; otherwise the MiniApp keeps
+# two OpenAI clients with configuration that can drift by document type.
 core.service = service
+core.legacy.service = service
 
 app = core.app
 app.title = "KORGAN Mini App API — production legal parity"
