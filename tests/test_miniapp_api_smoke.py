@@ -38,7 +38,12 @@ def test_authenticated_case_lifecycle_without_ai_calls() -> None:
         assert health.status_code == 200
         assert health.json()["status"] == "ok"
         assert health.json()["state_encryption"] == "AES-256-GCM"
-        assert health.json()["storage"] == "postgres"
+        # На Railway DATABASE_URL задан, и хранилище обязано быть postgres:
+        # состояние «Моих дел» не должно жить в памяти процесса. Локально, без
+        # базы, тот же инвариант проверяется в обратную сторону — health не
+        # имеет права рапортовать postgres без открытого пула.
+        expected_storage = "postgres" if miniapp_api.settings.database_url.strip() else "memory"
+        assert health.json()["storage"] == expected_storage
 
         accepted = client.post(
             "/miniapp/consent",

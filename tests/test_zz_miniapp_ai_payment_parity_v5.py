@@ -19,11 +19,16 @@ def _route(path: str, method: str):
 
 
 def test_automatic_payment_routes_use_fiscal_upload_bridge_and_v5_delivery() -> None:
+    """Маршруты, которыми v5 владеет и в собранном приложении.
+
+    Приём чека за документ намеренно не проверяется здесь: поверх фискального
+    моста стоит ручное подтверждение администратором
+    (korgan.miniapp_manual_payment_admin), и утверждать из этого модуля, что
+    верхний слой — upload_runtime, значило бы спорить с более поздним решением.
+    Фактические владельцы всех маршрутов собраны в
+    tests/test_production_route_ownership.
+    """
     assert _route("/miniapp/documents/generate", "POST").endpoint is v5.generate_document
-    assert (
-        _route("/miniapp/documents/payments/{order_id}/receipt", "POST").endpoint
-        is upload_runtime.document_receipt_upload
-    )
     assert (
         _route("/miniapp/consultation/payments/{order_id}/receipt", "POST").endpoint
         is upload_runtime.consultation_receipt_upload

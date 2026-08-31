@@ -112,6 +112,21 @@ def test_below_target_contract_still_delivers_preliminary_word() -> None:
         assert getattr(document, "filename", "") == "KORGAN_dogovor.docx"
         assert "PRELIMINARY" in caption
         assert "10.0/10" in caption
-        assert not message.answers
+
+        # Кроме Word-файла клиент может получить подсказку, каких сведений не
+        # хватает до полного качества, — этот слой добавлен позже
+        # (client_document_runtime_guidance) и является клиентским текстом, а не
+        # дефектом доставки. Требование прежнее и остаётся: наружу не выходит
+        # ни служебная терминология, ни внутренние оценки.
+        for reply in message.answers:
+            for internal in (
+                "NEEDS_VERIFICATION",
+                "KORGAN QUALITY",
+                "SENIOR_PREFLIGHT_SCORE",
+                "FILING_ACTION",
+                "source-bound",
+                "reasoning",
+            ):
+                assert internal not in reply
 
     asyncio.run(scenario())
