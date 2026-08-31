@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from docx import Document
 
+from korgan.admission_support import unsupported_admissions
 from korgan.contract_preamble import preamble_defects
 from korgan.contract_type_safety import misclassification_blockers
 from korgan.document_release import review_lines
@@ -479,6 +480,18 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
         blockers.extend(uncovered)
         position -= min(1.2, 0.3 * len(uncovered))
 
+    # Повтор признания в position или ином model-authored разделе не создаёт
+    # волеизъявление доверителя. Для процессуально чувствительного признания
+    # внешней опорой служат только входящие материалы.
+    unsupported = unsupported_admissions(
+        draft.admitted_circumstances,
+        case_context,
+        model_authored_materials=coverage_lines,
+    )
+    if unsupported:
+        blockers.extend(unsupported)
+        position -= min(1.0, 0.4 * len(unsupported))
+
     # Схема разрешает вынести даты и норму в subclauses/prose, а в text
     # оставить заголовок довода. Проверять один заголовок значит блокировать
     # полностью обоснованное возражение за то, что опора лежит строкой ниже.
@@ -696,6 +709,15 @@ def _score_pretrial_response(case_context: str, research: LegalResearch, draft: 
     if uncovered:
         blockers.extend(uncovered)
         engagement -= min(1.2, 0.3 * len(uncovered))
+
+    unsupported = unsupported_admissions(
+        draft.admitted_circumstances,
+        case_context,
+        model_authored_materials=coverage_lines,
+    )
+    if unsupported:
+        blockers.extend(unsupported)
+        engagement -= min(1.0, 0.4 * len(unsupported))
 
     law = 2.0
     basis = "\n".join(draft.legal_basis)
