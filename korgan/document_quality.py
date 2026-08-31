@@ -10,6 +10,7 @@ from docx import Document
 from korgan.contract_preamble import preamble_defects
 from korgan.contract_type_safety import misclassification_blockers
 from korgan.document_release import review_lines
+from korgan.expense_support import unsupported_expense_claims
 from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.legal_calc import parse_all_amounts_kzt
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch
@@ -186,6 +187,12 @@ def _common_hygiene(
     # Ошибка в виде договора обесценивает весь раздел правового обоснования:
     # нормы будут реальными и процитированными верно, но не о тех отношениях.
     for finding in misclassification_blockers(case_context, lines):
+        blockers.append(finding)
+        score -= 0.6
+
+    # Издержки взыскиваются по документу, а не по утверждению о них: расход,
+    # который материалы дела не подтверждают, суд не присудит.
+    for finding in unsupported_expense_claims(lines, case_context):
         blockers.append(finding)
         score -= 0.6
 
