@@ -170,3 +170,46 @@ def test_monetary_pretension_still_requires_calculation_review() -> None:
     issues = pretrial_response_quality_issues(monetary, _research())
 
     assert any("расчёт" in item.lower() for item in issues), issues
+
+
+# --- 4. отзыв на денежный иск обязан разбирать расчёт истца ----------------
+
+
+def test_monetary_claim_response_requires_calculation_review() -> None:
+    """Схема требует ключ, но пустой массив ей соответствует.
+
+    Без отдельной проверки отзыв на денежный иск выходил 10/10, не разобрав
+    расчёт истца, и раунд правки не запускался — та же дыра, что была
+    закрыта для ответа на претензию.
+    """
+    report = assess_document_quality(
+        "response_to_claim",
+        CONTEXT,
+        _research(),
+        _response(objections=[SUPPORTED_STRUCTURED], calculation_review=[]),
+    )
+
+    assert report.ready is False
+    assert any("расчёт истца не разобран" in blocker for blocker in report.hard_blockers), report.hard_blockers
+
+
+def test_non_monetary_claim_response_does_not_require_calculation_review() -> None:
+    """У неимущественного требования расчёта нет, и разбирать нечего."""
+    report = assess_document_quality(
+        "response_to_claim",
+        CONTEXT,
+        _research(),
+        _response(
+            claim_summary=["Истец просит признать договор № 12 от 15.01.2026 недействительным."],
+            objections=[SUPPORTED_STRUCTURED],
+            calculation_review=[],
+        ),
+    )
+
+    assert not any("расчёт истца" in blocker for blocker in report.hard_blockers), report.hard_blockers
+
+
+def test_monetary_claim_response_with_review_is_released() -> None:
+    report = assess_document_quality("response_to_claim", CONTEXT, _research(), _response(objections=[SUPPORTED_STRUCTURED]))
+
+    assert not any("расчёт истца" in blocker for blocker in report.hard_blockers), report.hard_blockers

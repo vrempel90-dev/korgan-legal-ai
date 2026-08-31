@@ -10,6 +10,7 @@ from docx import Document
 from korgan.contract_preamble import preamble_defects
 from korgan.document_release import review_lines
 from korgan.legal_basis_fit import enforce_legal_basis_fit
+from korgan.legal_calc import parse_all_amounts_kzt
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch
 from korgan.response_types import ResponseToClaimDraft
 from korgan.text_integrity import integrity_findings
@@ -480,6 +481,17 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
     if unsupported:
         blockers.extend(unsupported)
         position -= 0.6
+
+    # Схема требует ключ calculation_review, но не его содержимое: пустой
+    # массив ей соответствует. Без этой проверки отзыв на денежный иск
+    # выходил 10/10, не разобрав расчёт истца, и раунд правки не запускался.
+    # Тот же критерий, что у ответа на претензию: разбор нужен там, где
+    # оппонент предъявил сумму.
+    if parse_all_amounts_kzt("\n".join(draft.claim_summary)) and not _clean_lines(
+        getattr(draft, "calculation_review", [])
+    ):
+        blockers.append("расчёт истца не разобран")
+        position -= 0.5
 
     law = 2.5
     basis = "\n".join(draft.legal_basis)
