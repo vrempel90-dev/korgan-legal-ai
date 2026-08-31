@@ -8,6 +8,7 @@ from typing import Any, Literal
 from docx import Document
 
 from korgan.contract_preamble import preamble_defects
+from korgan.contract_type_safety import misclassification_blockers
 from korgan.document_release import review_lines
 from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.legal_calc import parse_all_amounts_kzt
@@ -144,6 +145,7 @@ def _common_hygiene(
     blockers: list[str],
     issues: list[str],
     *,
+    case_context: str = "",
     verified_claims: list[str] | None = None,
     verification_notes: list[str] | None = None,
 ) -> float:
@@ -179,6 +181,12 @@ def _common_hygiene(
     if unresolved:
         issues.append("вопросы к проверке перед подачей: " + unresolved[0][:180])
         score -= 0.35
+
+    # Ошибка в виде договора обесценивает весь раздел правового обоснования:
+    # нормы будут реальными и процитированными верно, но не о тех отношениях.
+    for finding in misclassification_blockers(case_context, lines):
+        blockers.append(finding)
+        score -= 0.6
 
     integrity = integrity_findings(text)
     if integrity:
@@ -361,6 +369,7 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
         _claim_citation_lines(draft),
         blockers,
         issues,
+        case_context=case_context,
         verified_claims=research.verified_claims,
         verification_notes=draft.verification_notes,
     )
@@ -423,6 +432,7 @@ def _score_contract(case_context: str, research: LegalResearch, draft: ContractD
         lines,
         blockers,
         issues,
+        case_context=case_context,
         verified_claims=research.verified_claims,
         verification_notes=draft.verification_notes,
     )
@@ -520,6 +530,7 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
         lines,
         blockers,
         issues,
+        case_context=case_context,
         verified_claims=research.verified_claims,
         verification_notes=draft.verification_notes,
     )
@@ -598,6 +609,7 @@ def _score_pretrial(case_context: str, research: LegalResearch, draft: Any) -> D
         lines,
         blockers,
         issues,
+        case_context=case_context,
         verified_claims=research.verified_claims,
         verification_notes=draft.verification_notes,
     )
@@ -686,6 +698,7 @@ def _score_pretrial_response(case_context: str, research: LegalResearch, draft: 
         lines,
         blockers,
         issues,
+        case_context=case_context,
         verified_claims=research.verified_claims,
         verification_notes=draft.verification_notes,
     )
