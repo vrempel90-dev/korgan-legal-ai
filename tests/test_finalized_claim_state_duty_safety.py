@@ -88,7 +88,10 @@ def test_verified_consumer_deferral_overwrites_legacy_payment_request(monkeypatc
     )
     monkeypatch.setattr(finalized_litigation, "_deterministic_pre_qa", fake_preqa)
     finalized_litigation._safe_deterministic_pre_qa(
-        "Истец: Иванов Иван, ИИН 900101300001", research, draft
+        "Истец: Иванов Иван, ИИН 900101300001. Товар приобретался для личных нужд, "
+        "не связанных с предпринимательской деятельностью.",
+        research,
+        draft,
     )
     assert "отсрочена" in draft.state_duty
     assert all("пошлин" not in request.lower() for request in draft.requests)

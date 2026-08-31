@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from korgan.claim_filing_accuracy import FILING_ACTION_PREFIX
 from korgan.claim_money_ledger import ClaimMoneyLedger, build_claim_money_ledger
+from korgan.consumer_qualification import ConsumerStatus, consumer_status
 from korgan.legal_calc import (
     CAP_MRP_INDIVIDUAL,
     CAP_MRP_LEGAL_ENTITY,
@@ -124,7 +125,12 @@ def _consumer_grounded(case_context: str, research: LegalResearch, draft: ClaimD
     # especially inside the opponent's position, is not enough.  Require a
     # source-bound VERIFIED proposition from the consumer-law research path.
     verified = "\n".join(str(item) for item in research.verified_claims or [])
-    return bool(_CONSUMER_SOURCE_RE.search(verified))
+    if not _CONSUMER_SOURCE_RE.search(verified):
+        return False
+    # A verified article proves the text of the norm, never that this claimant
+    # falls under it.  Consumer status is a fact about the purpose of the
+    # purchase, so deferral additionally requires that purpose to be established.
+    return consumer_status(case_context, draft) is ConsumerStatus.ESTABLISHED
 
 
 def _article668_exemption(case_context: str, draft: ClaimDraft) -> StateDutyDecision | None:

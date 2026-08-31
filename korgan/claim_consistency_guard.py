@@ -5,6 +5,7 @@ from typing import Pattern
 
 import korgan.senior_claim_preflight as senior_claim_preflight
 from korgan.claim_quality_gate import check_amount_consistency
+from korgan.consumer_qualification import ConsumerStatus, asserts_consumer_law, consumer_status
 from korgan.legal_calc import parse_all_amounts_kzt, parse_amount_kzt
 from korgan.legal_types import ClaimDraft, LegalResearch
 
@@ -329,6 +330,39 @@ def _state_duty_errors(draft: ClaimDraft) -> list[str]:
     ]
 
 
+def _consumer_qualification_errors(case_context: str, draft: ClaimDraft) -> list[str]:
+    """Иск не вправе опираться на статус потребителя, пока цель не установлена.
+
+    Подтверждённая статья ЗПП подтверждает текст нормы, но не то, что истец под
+    неё подпадает: потребитель — это физическое лицо, приобретающее для личных,
+    семейных, домашних нужд вне предпринимательской деятельности. Если цель в
+    материалах не названа или названа предпринимательской, потребительская
+    квалификация — выдуманный факт, а построенные на ней подсудность, отсрочка
+    пошлины и специальные санкции разваливаются в суде.
+    """
+    if not asserts_consumer_law(draft):
+        return []
+
+    status = consumer_status(case_context, draft)
+    if status is ConsumerStatus.ESTABLISHED:
+        return []
+
+    if status is ConsumerStatus.EXCLUDED:
+        return [
+            "Иск опирается на законодательство о защите прав потребителей, хотя по материалам дела истец "
+            "под эту квалификацию не подпадает (истец не является физическим лицом либо приобретение связано "
+            "с предпринимательской деятельностью). Исключите потребительское обоснование и постройте требование "
+            "на нормах, применимых к установленным отношениям."
+        ]
+
+    return [
+        "Иск опирается на законодательство о защите прав потребителей, но цель приобретения товара (работы, услуги) "
+        "в материалах дела не установлена. Статус потребителя — факт, а не ссылка на закон: до filing-ready в фактах "
+        "должно быть указано приобретение для личных, семейных, домашних нужд, не связанных с предпринимательской "
+        "деятельностью, либо потребительское обоснование должно быть исключено."
+    ]
+
+
 def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
     """Return deterministic claim contradictions that must survive model repair."""
     context = case_context or ""
@@ -387,6 +421,7 @@ def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
 
     errors.extend(_calculation_relief_errors(draft))
     errors.extend(_state_duty_errors(draft))
+    errors.extend(_consumer_qualification_errors(context, draft))
     amount_errors = check_amount_consistency(draft)
     errors.extend(f"AMOUNT_MISMATCH: {item}" for item in amount_errors)
     return list(dict.fromkeys(errors))
