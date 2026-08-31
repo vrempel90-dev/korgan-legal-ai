@@ -5,7 +5,7 @@ from typing import Pattern
 
 import korgan.senior_claim_preflight as senior_claim_preflight
 from korgan.claim_quality_gate import check_amount_consistency
-from korgan.legal_calc import parse_all_amounts_kzt
+from korgan.legal_calc import parse_all_amounts_kzt, parse_amount_kzt
 from korgan.legal_types import ClaimDraft, LegalResearch
 
 _PENALTY_REQUEST_RE = re.compile(
@@ -64,6 +64,22 @@ _BASE_CUE_RE = re.compile(
     re.IGNORECASE,
 )
 _SENTENCE_SPLIT_RE = re.compile(r"[.;]")
+
+_STATE_DUTY_CUE = r"(?:государственн\w*\s+пошлин\w*|госпошлин\w*|мемлекетт(?:ік|iк)\s+баж\w*)"
+_MONEY_SUM = r"(?P<amount>\d[\d\s ]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸))"
+# «пошлина в размере 360 000 тенге», «пошлина — 360 000 тенге», «пошлина на 360 000 тенге».
+_STATE_DUTY_AMOUNT_AFTER_RE = re.compile(
+    rf"{_STATE_DUTY_CUE}\s*"
+    r"(?:(?:в\s+размере|в\s+сумме|на\s+сумму|составля\w*|уплачен\w*|оплачен\w*|равн\w*|"
+    r"мөлшерінде|сомасында|на)\s*)?"
+    rf"[\s:—–\-]{{0,4}}{_MONEY_SUM}",
+    re.IGNORECASE,
+)
+# «уплачено 360 000 тенге государственной пошлины».
+_STATE_DUTY_AMOUNT_BEFORE_RE = re.compile(
+    rf"{_MONEY_SUM}\s*(?:в\s+счёт\s+|в\s+счет\s+)?{_STATE_DUTY_CUE}",
+    re.IGNORECASE,
+)
 
 _PAID_IN_FULL_RE = re.compile(
     r"(?:оплат\w*|уплат\w*|внес\w*)[^\n]{0,90}(?:полностью|в\s+полном\s+объ[её]ме|всю\s+сумм\w*)|"
@@ -259,6 +275,60 @@ def _calculation_relief_errors(draft: ClaimDraft) -> list[str]:
     return errors
 
 
+def _grouped(value: int) -> str:
+    return f"{value:,}".replace(",", " ")
+
+
+def _state_duty_amounts(lines: list[str]) -> set[int]:
+    """Суммы, названные в тексте именно размером государственной пошлины.
+
+    Привязка узкая и с обеих сторон от слова «пошлина»: «пошлина 120 000 тенге»
+    и «уплачено 120 000 тенге государственной пошлины». Соседняя сумма расходов
+    на представителя в том же предложении размером пошлины не считается —
+    ложная блокировка здесь так же вредна, как пропуск.
+    """
+    amounts: set[int] = set()
+    for line in lines or []:
+        text = str(line)
+        for pattern in (_STATE_DUTY_AMOUNT_AFTER_RE, _STATE_DUTY_AMOUNT_BEFORE_RE):
+            for match in pattern.finditer(text):
+                value = parse_amount_kzt(match.group("amount"))
+                if value is not None:
+                    amounts.add(value)
+    return amounts
+
+
+def _state_duty_errors(draft: ClaimDraft) -> list[str]:
+    """Детерминированный размер пошлины сильнее любого числа, написанного моделью.
+
+    Пошлину считает korgan.legal_calc по цене иска и статусу истца. Если иск
+    где-то называет другую сумму — в фактах, приложениях, расчёте или просительной
+    части — документ противоречит сам себе, а суд вернёт его как оплаченный не
+    полностью. Расхождение не «сглаживается»: оно блокирует filing-ready.
+    """
+    deterministic = parse_amount_kzt(draft.state_duty or "")
+    if deterministic is None:
+        return []
+
+    stated = _state_duty_amounts([
+        *(draft.facts or []),
+        *(draft.attachments or []),
+        *(draft.requests or []),
+        *(draft.calculation or []),
+        *(draft.legal_basis or []),
+    ])
+    conflicting = sorted(value for value in stated if value != deterministic)
+    if not conflicting:
+        return []
+
+    listed = ", ".join(_grouped(value) for value in conflicting)
+    return [
+        f"Размер государственной пошлины в тексте иска ({listed} тенге) не совпадает с детерминированным "
+        f"расчётом ({_grouped(deterministic)} тенге). "
+        "Действителен детерминированный расчёт: приведите текст иска в соответствие с ним."
+    ]
+
+
 def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
     """Return deterministic claim contradictions that must survive model repair."""
     context = case_context or ""
@@ -316,6 +386,7 @@ def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
         )
 
     errors.extend(_calculation_relief_errors(draft))
+    errors.extend(_state_duty_errors(draft))
     amount_errors = check_amount_consistency(draft)
     errors.extend(f"AMOUNT_MISMATCH: {item}" for item in amount_errors)
     return list(dict.fromkeys(errors))
