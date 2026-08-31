@@ -318,6 +318,26 @@ def _titled_block(doc: Document, heading: str, items: list[str]) -> None:
         _body_paragraph(doc, value)
 
 
+# Ссылку на входящую претензию клиент пишет в именительном падеже
+# («претензия от 05.03.2026 № 7»), а печатается она после предлога «На»,
+# которому нужен винительный. Без склонения в шапку уходит «На претензия».
+# Список закрытый: это правка формулировки, а не морфологический анализатор.
+_ACCUSATIVE_LEAD: tuple[tuple[str, str], ...] = (
+    ("досудебная претензия", "досудебную претензию"),
+    ("досудебной претензии", "досудебную претензию"),
+    ("претензия", "претензию"),
+)
+
+
+def _accusative_reference(value: str) -> str:
+    """Ведущая словоформа ссылки в винительном падеже; остальное не трогается."""
+    lower = value.lower()
+    for nominative, accusative in _ACCUSATIVE_LEAD:
+        if lower.startswith(nominative):
+            return accusative + value[len(nominative):]
+    return value
+
+
 def _reference_line(reference: str, kk: bool) -> str:
     value = str(reference or "").strip()
     if not value:
@@ -327,8 +347,10 @@ def _reference_line(reference: str, kk: bool) -> str:
         if "шығыс" in lower or "№" in value:
             return value
         return f"Сотқа дейінгі талапқа қатысты: {value}"
-    if "исх" in lower or "№" in value:
-        return value if lower.startswith("на ") else f"На {value}"
+    if lower.startswith("на "):
+        return value
+    if "исх" in lower or "№" in value or lower.startswith(("претензи", "досудебн")):
+        return f"На {_accusative_reference(value)}"
     return f"На досудебную претензию: {value}"
 
 

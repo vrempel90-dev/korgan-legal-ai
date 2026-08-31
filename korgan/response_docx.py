@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -9,6 +10,18 @@ from docx.shared import Cm, Mm, Pt
 from korgan.docx_blocks import AutoNumberedList, Block, Heading, NumberedItem, Prose, render_blocks
 from korgan.legal_types import ResponseDraft
 from korgan.response_types import ResponseToClaimDraft
+
+
+# Номер дела клиент переписывает из определения суда вместе с подписью —
+# «дело № 2-1234/2026». Рендерер печатает свою подпись «Гражданское дело №»,
+# поэтому пользовательскую надо снять, иначе в шапке выходит
+# «Гражданское дело № дело № 2-1234/2026».
+_CASE_LABEL_RE = re.compile(r"^\s*(?:гражданск\w*\s+)?(?:дело\s*)?(?:№|N|#)?\s*", re.IGNORECASE)
+
+
+def case_number_value(case_number: str) -> str:
+    """Номер дела без подписи: подпись — забота рендерера, не пользователя."""
+    return _CASE_LABEL_RE.sub("", str(case_number or "")).strip()
 
 
 def _setup_doc() -> Document:
@@ -80,9 +93,10 @@ def build_response_to_claim_docx(draft: ResponseToClaimDraft) -> bytes:
 
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    case_number = case_number_value(draft.case_number)
     p.add_run(
-        f"Гражданское дело № {draft.case_number}"
-        if draft.case_number
+        f"Гражданское дело № {case_number}"
+        if case_number
         else "Гражданское дело № [ТРЕБУЕТ УТОЧНЕНИЯ: номер дела, если присвоен]"
     )
 
@@ -140,8 +154,9 @@ def build_response_docx(draft: ResponseDraft) -> bytes:
     header = doc.add_paragraph()
     header.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     header.add_run(f"В суд: {draft.court or '[ТРЕБУЕТ УТОЧНЕНИЯ: наименование суда]'}\n").bold = True
-    if draft.case_reference:
-        header.add_run(f"Дело № {draft.case_reference}\n")
+    case_reference = case_number_value(draft.case_reference)
+    if case_reference:
+        header.add_run(f"Дело № {case_reference}\n")
     header.add_run("Истец:\n").bold = True
     for item in draft.plaintiff or ["[ТРЕБУЕТ УТОЧНЕНИЯ: данные истца]"]:
         header.add_run(f"{item}\n")
