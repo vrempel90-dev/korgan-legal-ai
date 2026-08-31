@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/patch-home.mjs && node scripts/patch-client-release.mjs && vite build",
+    "build": "node scripts/patch-home.mjs && node scripts/patch-client-release.mjs && node scripts/patch-generation-progress.mjs && node scripts/patch-generation-progress-style.mjs && vite build",
     "preview": "vite preview --host 0.0.0.0 --port ${PORT:-4173}"
   },
   "dependencies": {
