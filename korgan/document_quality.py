@@ -190,12 +190,6 @@ def _common_hygiene(
         blockers.append(finding)
         score -= 0.6
 
-    # Издержки взыскиваются по документу, а не по утверждению о них: расход,
-    # который материалы дела не подтверждают, суд не присудит.
-    for finding in unsupported_expense_claims(lines, case_context):
-        blockers.append(finding)
-        score -= 0.6
-
     integrity = integrity_findings(text)
     if integrity:
         blockers.append("нарушена целостность текста: " + integrity[0].description)
@@ -358,6 +352,11 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
         ):
             blockers.append(finding)
             law -= 0.6
+        # Издержки взыскиваются по документу, а не по утверждению о них: расход,
+        # который материалы дела не подтверждают, суд не присудит.
+        for finding in unsupported_expense_claims(draft.requests, lines, case_context):
+            blockers.append(finding)
+            law -= 0.6
         if not research.verified_claims:
             blockers.append("нет source-bound подтвержденной материально-правовой основы")
             law -= 1.2
@@ -511,6 +510,12 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
         blockers.extend(unsupported)
         position -= 0.6
 
+    # Свои издержки ответчик просит в просительной части — и подтверждает их
+    # так же, как истец. Разбор чужих издержек требованием не является.
+    for finding in unsupported_expense_claims(draft.requests, lines, case_context):
+        blockers.append(finding)
+        position -= 0.6
+
     # Схема требует ключ calculation_review, но не его содержимое: пустой
     # массив ей соответствует. Без этой проверки отзыв на денежный иск
     # выходил 10/10, не разобрав расчёт истца, и раунд правки не запускался.
@@ -605,6 +610,10 @@ def _score_pretrial(case_context: str, research: LegalResearch, draft: Any) -> D
     elif research.verified_claims and not _ARTICLE_RE.search(basis):
         blockers.append("VERIFIED-нормы не перенесены в правовое обоснование претензии")
         law -= 1.0
+    for finding in unsupported_expense_claims(draft.demands, lines, case_context):
+        blockers.append(finding)
+        law -= 0.6
+
     # Претензия проходит через remedy_support_issues (client_document_feedback_hotfix):
     # там требование неустойки уже обязано иметь собственную VERIFIED-норму, причём
     # строже — без договорной альтернативы. Второй такой же проверки здесь не ставим.

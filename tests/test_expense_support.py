@@ -52,7 +52,7 @@ EXPERT_REQUEST = "Взыскать с ответчика расходы на п�
 
 
 def test_representative_expenses_without_any_document_are_unsupported() -> None:
-    findings = unsupported_expense_claims([*FACTS, DEBT_REQUEST, REPRESENTATIVE_REQUEST])
+    findings = unsupported_expense_claims([DEBT_REQUEST, REPRESENTATIVE_REQUEST], FACTS)
 
     assert findings
     assert any("представител" in finding.lower() for finding in findings)
@@ -61,40 +61,34 @@ def test_representative_expenses_without_any_document_are_unsupported() -> None:
 def test_the_demand_itself_is_not_its_own_proof() -> None:
     """Сумма в требовании — это то, что проверяется, а не подтверждение."""
     assert unsupported_expense_claims(
-        ["Расходы на оплату услуг представителя составили 500 000 тенге.", REPRESENTATIVE_REQUEST]
+        [REPRESENTATIVE_REQUEST],
+        ["Расходы на оплату услуг представителя составили 500 000 тенге."],
     )
 
 
 def test_a_contract_for_legal_services_in_the_attachments_supports_them() -> None:
-    lines = [
+    materials = [
         *FACTS,
-        REPRESENTATIVE_REQUEST,
         "Договор об оказании юридических услуг от 20.01.2026",
         "Квитанция об оплате юридических услуг от 20.01.2026 на 500 000 тенге",
     ]
 
-    assert unsupported_expense_claims(lines) == []
+    assert unsupported_expense_claims([REPRESENTATIVE_REQUEST], materials) == []
 
 
 def test_a_payment_document_named_in_the_facts_supports_them() -> None:
-    lines = [
+    materials = [
         *FACTS,
         "Истец оплатил услуги представителя платёжным поручением № 44 от 20.01.2026.",
-        REPRESENTATIVE_REQUEST,
     ]
 
-    assert unsupported_expense_claims(lines) == []
+    assert unsupported_expense_claims([REPRESENTATIVE_REQUEST], materials) == []
 
 
 def test_expert_costs_need_their_own_document() -> None:
-    lines = [
-        *FACTS,
-        "Договор об оказании юридических услуг от 20.01.2026",
-        REPRESENTATIVE_REQUEST,
-        EXPERT_REQUEST,
-    ]
+    materials = [*FACTS, "Договор об оказании юридических услуг от 20.01.2026"]
 
-    findings = unsupported_expense_claims(lines)
+    findings = unsupported_expense_claims([REPRESENTATIVE_REQUEST, EXPERT_REQUEST], materials)
 
     assert len(findings) == 1
     assert "экспертиз" in findings[0].lower()
@@ -102,24 +96,37 @@ def test_expert_costs_need_their_own_document() -> None:
 
 def test_payment_proof_for_the_debt_does_not_support_the_representative() -> None:
     """Платёжное поручение по поставке ничего не говорит о юридических услугах."""
-    lines = [
+    materials = [
         *FACTS,
         "Оплата по договору поставки подтверждается платёжным поручением от 15.01.2026.",
-        REPRESENTATIVE_REQUEST,
     ]
 
-    assert unsupported_expense_claims(lines)
+    assert unsupported_expense_claims([REPRESENTATIVE_REQUEST], materials)
+
+
+def test_contesting_the_opponents_expenses_is_not_a_demand_of_ones_own() -> None:
+    """Отзыв разбирает чужие издержки — это возражение, а не требование.
+
+    Если читать разбор как собственное требование ответчика, блокируется ровно
+    то возражение, ради которого документ и написан.
+    """
+    objections = [
+        "Требование истца о взыскании расходов на оплату услуг представителя "
+        "в размере 150 000 тенге не подтверждено ни договором, ни платёжным документом.",
+    ]
+
+    assert unsupported_expense_claims(["Просить суд в иске отказать."], objections) == []
 
 
 def test_a_claim_without_any_expense_demand_is_not_touched() -> None:
-    assert unsupported_expense_claims([*FACTS, DEBT_REQUEST]) == []
+    assert unsupported_expense_claims([DEBT_REQUEST], FACTS) == []
 
 
 def test_state_duty_is_not_an_expense_this_check_owns() -> None:
     """Пошлина считается детерминированно и живёт в claim_state_duty."""
     assert (
         unsupported_expense_claims(
-            [*FACTS, DEBT_REQUEST, "Взыскать с ответчика государственную пошлину 36 000 тенге."]
+            [DEBT_REQUEST, "Взыскать с ответчика государственную пошлину 36 000 тенге."], FACTS
         )
         == []
     )

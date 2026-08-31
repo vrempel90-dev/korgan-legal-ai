@@ -20,6 +20,11 @@
 поставке ничего не говорит о юридических услугах, поэтому документ и расход
 должны стоять в одном предложении.
 
+Требование берётся только из просительной части самого документа. Отзыв на иск
+разбирает чужие издержки постоянно — «требование о взыскании расходов на
+представителя не подтверждено», — и если читать это как собственное требование
+ответчика, блокируется ровно то возражение, ради которого документ написан.
+
 Государственная пошлина сюда не входит: она считается детерминированно и живёт
 в korgan/claim_state_duty.py.
 """
@@ -127,17 +132,26 @@ def _supported(kind: ExpenseKind, sentences: list[str]) -> bool:
     )
 
 
-def unsupported_expense_claims(lines: list[str] | None, case_context: str = "") -> list[str]:
-    """Издержки, заявленные ко взысканию без подтверждающего документа."""
-    sentences = _sentences([*(lines or []), case_context])
-    if not sentences:
+def unsupported_expense_claims(
+    demands: list[str] | None, materials: list[str] | None = None, case_context: str = ""
+) -> list[str]:
+    """Издержки, заявленные ко взысканию без подтверждающего документа.
+
+    demands — просительная часть самого документа: только там документ требует
+    деньги для себя. materials и case_context — всё остальное дело: факты,
+    приложения, исходные материалы, где подтверждающий документ может быть
+    назван.
+    """
+    demand_sentences = _sentences(demands)
+    if not demand_sentences:
         return []
+    proof_sentences = _sentences([*(demands or []), *(materials or []), case_context])
 
     findings: list[str] = []
     for kind in EXPENSE_KINDS:
-        if not _demanded(kind, sentences):
+        if not _demanded(kind, demand_sentences):
             continue
-        if _supported(kind, sentences):
+        if _supported(kind, proof_sentences):
             continue
         findings.append(
             f"заявлены {kind.label}, но материалы дела их не подтверждают: "
