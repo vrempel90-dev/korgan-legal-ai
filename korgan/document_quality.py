@@ -11,6 +11,7 @@ from korgan.contract_preamble import preamble_defects
 from korgan.contract_type_safety import misclassification_blockers
 from korgan.document_release import review_lines
 from korgan.expense_support import unsupported_expense_claims
+from korgan.incoming_demand_coverage import uncovered_incoming_demands
 from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.legal_calc import parse_all_amounts_kzt
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch
@@ -501,6 +502,29 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
     if not _clean_lines(draft.requests):
         blockers.append("нет процессуальной просительной части")
         position -= 0.4
+
+    # Пересказ петитума не является ответом. Каждое требование исходного иска
+    # должно получить признание, возражение, разбор расчёта либо итоговую
+    # процессуальную позицию в собственных разделах отзыва.
+    coverage_lines = _clean_lines(
+        [
+            *draft.admitted_circumstances,
+            *draft.disputed_circumstances,
+            *draft.position,
+            *(line for item in draft.objections for line in item.body_lines()),
+            *draft.calculation_review,
+            *draft.requests,
+        ]
+    )
+    uncovered = uncovered_incoming_demands(
+        case_context,
+        coverage_lines,
+        summaries=draft.claim_summary,
+    )
+    if uncovered:
+        blockers.extend(uncovered)
+        position -= min(1.2, 0.3 * len(uncovered))
+
     # Схема разрешает вынести даты и норму в subclauses/prose, а в text
     # оставить заголовок довода. Проверять один заголовок значит блокировать
     # полностью обоснованное возражение за то, что опора лежит строкой ниже.
@@ -691,6 +715,29 @@ def _score_pretrial_response(case_context: str, research: LegalResearch, draft: 
     if not _clean_lines(draft.objections) and not _clean_lines(draft.response_terms):
         blockers.append("нет содержательного ответа на требования претензии")
         engagement -= 0.9
+
+    # Claim summary фиксирует, что потребовал контрагент, но не отвечает ему.
+    # Полноту дают только собственные признания, оспаривание, позиция, разбор
+    # расчёта, возражения и условия ответа адресата претензии.
+    coverage_lines = _clean_lines(
+        [
+            *draft.admitted_circumstances,
+            *draft.disputed_circumstances,
+            *draft.position,
+            *draft.objections,
+            *draft.calculation_review,
+            str(draft.settlement_offer or ""),
+            *draft.response_terms,
+        ]
+    )
+    uncovered = uncovered_incoming_demands(
+        case_context,
+        coverage_lines,
+        summaries=draft.claim_summary,
+    )
+    if uncovered:
+        blockers.extend(uncovered)
+        engagement -= min(1.2, 0.3 * len(uncovered))
 
     law = 2.0
     basis = "\n".join(draft.legal_basis)
