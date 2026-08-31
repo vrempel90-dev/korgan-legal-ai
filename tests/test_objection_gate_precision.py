@@ -20,8 +20,9 @@
 
 from __future__ import annotations
 
-from korgan.document_quality import assess_document_quality, unsupported_objections
+from korgan.document_quality import assess_document_quality
 from korgan.legal_types import LegalResearch, VerificationStatus
+from korgan.objection_support import unsupported_objections
 from korgan.pretrial_response import PretrialResponseDraft, pretrial_response_quality_issues
 from korgan.response_types import ResponseObjection, ResponseToClaimDraft
 

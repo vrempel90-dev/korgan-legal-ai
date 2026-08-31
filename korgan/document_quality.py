@@ -15,6 +15,7 @@ from korgan.incoming_demand_coverage import uncovered_incoming_demands
 from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.legal_calc import parse_all_amounts_kzt
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch
+from korgan.objection_support import unsupported_objections
 from korgan.relief_norm_support import unsupported_relief
 from korgan.response_types import ResponseToClaimDraft
 from korgan.text_integrity import integrity_findings
@@ -205,53 +206,6 @@ def _common_hygiene(
         score -= 0.6
 
     return max(0.0, score)
-
-
-# Возражения, которые нельзя заявлять «на всякий случай»: исковая давность и
-# процессуальные нарушения. Каждое из них либо подтверждено конкретными датами
-# и нормой, либо не заявляется вовсе — иначе документ раздувается доводами,
-# которые оппонент разобьёт первым же абзацем.
-_UNSUPPORTABLE_OBJECTION_RE = re.compile(
-    r"(?i)(?:исков\w*\s+давност\w*|срок\w*\s+давност\w*|"
-    r"пропущен\w*\s+срок|"
-    r"нарушен\w*\s+(?:процессуальн\w*|порядок\s+подач\w*)|"
-    r"подсудност\w*\s+наруш\w*|"
-    r"талап\s+қою\s+мерзім\w*)"
-)
-
-# Опора, без которой такое возражение не проверяемо: конкретная дата, период
-# или названная норма.
-# Длительности («3 года») здесь намеренно нет: она не опора. Довод об
-# исковой давности проверяем только тогда, когда названы даты, из которых
-# срок вычисляется, либо норма, которая его устанавливает. Пока длительность
-# засчитывалась, «Истёк срок исковой давности — 3 года» проходило шлюз,
-# не сообщая ни того, ни другого.
-_OBJECTION_ANCHOR_RE = re.compile(
-    r"(?i)(?:\d{2}\.\d{2}\.\d{4}|"
-    r"\b\d{4}\s*год|"
-    r"\bстать\w*\s*\d|\bст\.\s*\d)"
-)
-
-
-def unsupported_objections(objections: list[str]) -> list[str]:
-    """Возражения об исковой давности/процессуальных нарушениях без опоры.
-
-    Опора требуется в самом возражении, а не где-то ещё в документе. Довод об
-    исковой давности профессионально всегда называет даты, из которых срок
-    вычисляется: когда началось течение и когда истекло. Дата, случайно
-    оказавшаяся в соседнем разделе, такой довод не подтверждает — иначе любое
-    возражение «на всякий случай» проходило бы за счёт чужих фактов.
-    """
-    findings: list[str] = []
-    for item in _clean_lines(objections):
-        if not _UNSUPPORTABLE_OBJECTION_RE.search(item):
-            continue
-        if _OBJECTION_ANCHOR_RE.search(item):
-            continue
-        findings.append(
-            "возражение заявлено без подтверждающих дат или нормы: " + item[:120]
-        )
-    return findings
 
 
 def _preserve_known_identifiers(case_context: str, lines: list[str], blockers: list[str]) -> float:
@@ -529,7 +483,11 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
     # оставить заголовок довода. Проверять один заголовок значит блокировать
     # полностью обоснованное возражение за то, что опора лежит строкой ниже.
     objection_texts = ["\n".join(item.body_lines()) for item in draft.objections] if draft.objections else []
-    unsupported = unsupported_objections(objection_texts)
+    unsupported = unsupported_objections(
+        objection_texts,
+        case_context=case_context,
+        verified_claims=research.verified_claims,
+    )
     if unsupported:
         blockers.extend(unsupported)
         position -= 0.6
@@ -745,7 +703,11 @@ def _score_pretrial_response(case_context: str, research: LegalResearch, draft: 
         blockers.append("VERIFIED-нормы не перенесены в правовое обоснование ответа")
         law -= 1.2
 
-    unsupported = unsupported_objections(list(draft.objections))
+    unsupported = unsupported_objections(
+        list(draft.objections),
+        case_context=case_context,
+        verified_claims=research.verified_claims,
+    )
     if unsupported:
         blockers.extend(unsupported)
         engagement -= 0.6
