@@ -80,7 +80,8 @@ def _claim(**overrides) -> ClaimDraft:
         price_of_claim="2 300 000 тенге",
         facts=[
             "Между сторонами заключён договор № 12 от 15.01.2026.",
-            "Обязательство не исполнено, задолженность составляет 2 300 000 тенге.",
+            "Истец исполнил обязательство, что подтверждается актом от 20.02.2026.",
+            "Ответчик оплату не произвёл, задолженность составляет 2 300 000 тенге.",
         ],
         legal_basis=[f"{ARTICLE_272} Правовое основание: статья 272 ГК РК."],
         requests=["Взыскать с ответчика 2 300 000 тенге основного долга."],
@@ -91,6 +92,19 @@ def _claim(**overrides) -> ClaimDraft:
     )
     data.update(overrides)
     return ClaimDraft(**data)
+
+
+def test_production_ready_threshold_is_ten_out_of_ten() -> None:
+    """Боевой порог выпуска — 10.0/10, а не значение по умолчанию 8.5.
+
+    Литерал в document_quality — это значение ДО установки боевых слоёв;
+    universal_word_quality_guard поднимает планку. Раньше это нигде не
+    проверялось, и набор тестов мерил документ не той линейкой, что production.
+    """
+    import korgan.strict_bot  # noqa: F401  — тот же импорт, что делает API
+    from korgan import document_quality
+
+    assert document_quality.MIN_READY_SCORE == 10.0
 
 
 # =========================================================================
@@ -173,10 +187,15 @@ def test_ordinary_money_dispute_reaches_the_ready_score(
 
     Норма об общем принципе исполнения обязательств не заменяет специальную:
     applicability-аудит обязан это ловить, поэтому у сценария своя статья.
+    Фактическая часть раскрывает хронологию: заключение, исполнение, нарушение.
     """
     verified = verified_claim_line(statement, article, text, url)
     draft = _claim(
-        facts=[facts],
+        facts=[
+            facts,
+            "Ответчик задолженность не погасил, на претензию от 05.03.2026 не ответил.",
+            "По состоянию на дату подачи иска задолженность составляет 2 300 000 тенге.",
+        ],
         legal_basis=[f"{text} Правовое основание: {article}."],
         requests=[prayer],
     )
