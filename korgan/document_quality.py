@@ -14,7 +14,7 @@ from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch
 from korgan.response_types import ResponseToClaimDraft
 from korgan.text_integrity import integrity_findings
 
-DocumentKind = Literal["claim", "contract", "response_to_claim"]
+DocumentKind = Literal["claim", "contract", "response_to_claim", "pretrial", "pretrial_response"]
 MIN_READY_SCORE = 8.5
 
 _PLACEHOLDER_RE = re.compile(
@@ -37,6 +37,15 @@ _SERVICE_MARKERS = (
     "если нужно",
     "###",
     "**",
+    # Внутренняя терминология конвейера. Она нужна внутри проверок и в
+    # verification_notes, но в теле документа, который читает суд или
+    # контрагент, её быть не может.
+    "needs_verification",
+    "korgan quality",
+    "senior_preflight_score",
+    "filing_action",
+    "legal_grounding",
+    "korgan pipeline",
 )
 _GENERIC_COURT_MARKERS = (
     "требует уточнения",
@@ -462,6 +471,162 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
     return DocumentQualityReport("response_to_claim", score, list(dict.fromkeys(blockers)), list(dict.fromkeys(issues)), categories)
 
 
+def _score_pretrial(case_context: str, research: LegalResearch, draft: Any) -> DocumentQualityReport:
+    """Численная оценка досудебной претензии.
+
+    До этого претензия была единственным клиентским документом без порога:
+    проверялся только список замечаний, поэтому «готова» и «сойдёт» ничем не
+    различались. Категории повторяют то, что читает адресат: кто кому пишет,
+    из чего возник долг, чем требование обосновано в праве, как получена сумма,
+    что именно требуется и к какому сроку.
+    """
+    from korgan.pretrial import has_money_demand, pretrial_quality_issues
+
+    blockers: list[str] = []
+    issues: list[str] = []
+    lines = _clean_lines(draft.body_lines())
+
+    identity = 2.0
+    if not _clean_lines(draft.sender):
+        blockers.append("в претензии не указан отправитель")
+        identity -= 1.0
+    if not _clean_lines(draft.recipient):
+        blockers.append("в претензии не указан адресат")
+        identity -= 1.0
+    identity -= 1.0 - _preserve_known_identifiers(case_context, lines, blockers)
+
+    facts = 2.0
+    if not _clean_lines(draft.facts):
+        blockers.append("не изложено фактическое основание требований")
+        facts -= 1.5
+
+    law = 2.5
+    basis = "\n".join(draft.legal_basis)
+    if not basis.strip():
+        blockers.append("у претензии отсутствует правовое обоснование")
+        law -= 1.5
+    elif research.verified_claims and not _ARTICLE_RE.search(basis):
+        blockers.append("VERIFIED-нормы не перенесены в правовое обоснование претензии")
+        law -= 1.0
+
+    calculation = 1.5
+    if has_money_demand(draft) and not _clean_lines(draft.calculation):
+        blockers.append("денежное требование не раскрыто расчётом")
+        calculation -= 1.5
+
+    demand = 1.0
+    if not _clean_lines(draft.demands):
+        blockers.append("в претензии нет сформулированного требования")
+        demand -= 0.7
+    if not str(draft.deadline or "").strip():
+        blockers.append("не указан срок добровольного исполнения требований")
+        demand -= 0.3
+
+    for issue in pretrial_quality_issues(draft, research):
+        if issue not in blockers:
+            blockers.append(issue)
+
+    hygiene = _common_hygiene(
+        "pretrial",
+        lines,
+        blockers,
+        issues,
+        verified_claims=research.verified_claims,
+        verification_notes=draft.verification_notes,
+    )
+
+    categories = {
+        "identity": max(0.0, identity),
+        "facts": max(0.0, facts),
+        "legal_basis": max(0.0, law),
+        "calculation": max(0.0, calculation),
+        "demand": max(0.0, demand),
+        "hygiene": hygiene,
+    }
+    score = round(sum(categories.values()), 1)
+    if blockers:
+        score = min(score, 8.4)
+    return DocumentQualityReport("pretrial", score, list(dict.fromkeys(blockers)), list(dict.fromkeys(issues)), categories)
+
+
+def _score_pretrial_response(case_context: str, research: LegalResearch, draft: Any) -> DocumentQualityReport:
+    """Численная оценка ответа на досудебную претензию.
+
+    Ответ обязан разобрать требования контрагента по существу: отделить
+    признаваемое от оспариваемого, проверить расчёт и обосновать позицию.
+    Шаблонное «с требованиями не согласны» без разбора — не ответ.
+    """
+    from korgan.pretrial_response import pretrial_response_quality_issues
+
+    blockers: list[str] = []
+    issues: list[str] = []
+    lines = _clean_lines(draft.body_lines())
+
+    identity = 1.5
+    if not _clean_lines(draft.sender):
+        blockers.append("в ответе не указан отправитель")
+        identity -= 0.75
+    if not _clean_lines(draft.recipient):
+        blockers.append("в ответе не указан адресат")
+        identity -= 0.75
+    identity -= 1.0 - _preserve_known_identifiers(case_context, lines, blockers)
+
+    engagement = 3.0
+    if not _clean_lines(draft.claim_summary):
+        blockers.append("не отражены требования исходной претензии")
+        engagement -= 1.2
+    if not _clean_lines(draft.position):
+        blockers.append("не сформулирована позиция получателя претензии")
+        engagement -= 0.9
+    if not _clean_lines(draft.objections) and not _clean_lines(draft.response_terms):
+        blockers.append("нет содержательного ответа на требования претензии")
+        engagement -= 0.9
+
+    law = 2.0
+    basis = "\n".join(draft.legal_basis)
+    if research.verified_claims and not basis.strip():
+        blockers.append("VERIFIED-нормы не перенесены в правовое обоснование ответа")
+        law -= 1.2
+
+    review = 1.5
+    if _clean_lines(draft.objections) and not _clean_lines(getattr(draft, "calculation_review", [])):
+        issues.append("расчёт контрагента не разобран построчно")
+        review -= 0.5
+
+    completeness = 1.0
+    if not str(draft.reference or "").strip():
+        issues.append("не указана ссылка на исходную претензию (дата/номер)")
+        completeness -= 0.3
+
+    for issue in pretrial_response_quality_issues(draft, research):
+        if issue not in blockers:
+            blockers.append(issue)
+
+    hygiene = _common_hygiene(
+        "pretrial_response",
+        lines,
+        blockers,
+        issues,
+        verified_claims=research.verified_claims,
+        verification_notes=draft.verification_notes,
+    )
+
+    categories = {
+        "identity": max(0.0, identity),
+        "engagement": max(0.0, engagement),
+        "legal_basis": max(0.0, law),
+        "calculation_review": max(0.0, review),
+        "completeness": max(0.0, completeness),
+        "hygiene": hygiene,
+    }
+    score = round(sum(categories.values()), 1)
+    if blockers:
+        score = min(score, 8.4)
+    return DocumentQualityReport(
+        "pretrial_response", score, list(dict.fromkeys(blockers)), list(dict.fromkeys(issues)), categories
+    )
+
+
 def assess_document_quality(
     kind: DocumentKind,
     case_context: str,
@@ -474,6 +639,10 @@ def assess_document_quality(
         return _score_contract(case_context, research, draft)
     if kind == "response_to_claim":
         return _score_response(case_context, research, draft)
+    if kind == "pretrial":
+        return _score_pretrial(case_context, research, draft)
+    if kind == "pretrial_response":
+        return _score_pretrial_response(case_context, research, draft)
     raise ValueError(f"Unsupported document kind: {kind}")
 
 
