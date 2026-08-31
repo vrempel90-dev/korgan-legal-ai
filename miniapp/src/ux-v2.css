@@ -1,23 +1,9 @@
-/* KORGAN Mini App UX v2
-   Single presentation layer. No DOM mutation, no business logic, no runtime patches. */
+/* KORGAN Mini App stability layer.
+   Preserve the existing visual identity; only enforce layout, mobile and WebView invariants. */
 
 :root {
-  --ux-bg: #090b0d;
-  --ux-surface: #111417;
-  --ux-surface-raised: #15191c;
-  --ux-line: rgba(255,255,255,.08);
-  --ux-line-strong: rgba(255,255,255,.13);
-  --ux-text: #f4f1eb;
-  --ux-muted: #a3aaaf;
-  --ux-muted-2: #737b81;
-  --ux-accent: #54d6a6;
-  --ux-accent-soft: #10271f;
-  --ux-copper: #d0936e;
-  --ux-copper-soft: #2a1c17;
-  --ux-danger: #ef8179;
-  --ux-warning: #e5b76d;
-  --ux-nav-height: 72px;
-  --ux-radius: 18px;
+  --ux-nav-height: 70px;
+  --ux-shell-max: 520px;
 }
 
 html,
@@ -28,38 +14,12 @@ body,
   min-height: 100%;
   margin: 0;
   overflow-x: hidden;
-  background: var(--ux-bg);
-  color: var(--ux-text);
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  -webkit-tap-highlight-color: transparent;
 }
 
 body {
   min-height: 100dvh;
   overscroll-behavior-y: none;
-}
-
-button,
-a,
-input,
-textarea,
-label {
   -webkit-tap-highlight-color: transparent;
-}
-
-button,
-a,
-label {
-  touch-action: manipulation;
-}
-
-button {
-  cursor: pointer;
-}
-
-button:disabled {
-  cursor: default;
 }
 
 img,
@@ -69,331 +29,244 @@ canvas {
   max-width: 100%;
 }
 
-/* Keep the app as one stable Telegram surface. */
+button,
+a,
+label,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a,
+label {
+  touch-action: manipulation;
+}
+
 .app-shell {
-  width: min(100%, 560px);
-  max-width: 560px;
+  width: 100%;
+  max-width: var(--ux-shell-max);
   min-height: 100dvh;
   margin: 0 auto;
   padding-bottom: calc(var(--ux-nav-height) + env(safe-area-inset-bottom));
-  background:
-    radial-gradient(circle at 100% -10%, rgba(84,214,166,.045), transparent 31%),
-    radial-gradient(circle at -15% 30%, rgba(208,147,110,.065), transparent 25%),
-    var(--ux-bg);
   overflow-x: hidden;
-  box-shadow: none;
 }
 
-/* Opaque sticky chrome avoids Telegram WebView blur/repaint flicker. */
 .topbar,
 .subbar {
   position: sticky;
   top: 0;
   z-index: 50;
-  height: 60px;
-  min-height: 60px;
-  padding: 0 15px;
   background: #090b0d !important;
-  border-bottom: 1px solid var(--ux-line);
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
 
-.brand-mark {
-  width: 36px;
-  height: 36px;
-  flex: 0 0 36px;
-  border-radius: 12px;
-}
-
-.brand strong {
-  font-size: 15px;
-  letter-spacing: .14em;
-}
-
-.brand span {
-  font-size: 7px;
-  letter-spacing: .14em;
-}
-
-.top-status {
-  max-width: 128px;
-  font-size: 9px;
-}
-
-.icon-btn {
-  width: 42px;
-  height: 42px;
-  min-width: 42px;
-  border-radius: 13px;
+.home-page,
+.page,
+.hero,
+.hero-copy,
+.quick-stats,
+.action-grid,
+.action-card,
+.analysis-card,
+.list-card,
+.profile-card,
+.settings-card,
+.privacy-card,
+.payment-card,
+.case-list-item,
+.status-card {
+  min-width: 0;
 }
 
 .home-page,
 .page {
   width: 100%;
-  min-width: 0;
-  padding-left: 14px;
-  padding-right: 14px;
 }
 
 .home-page {
-  padding-top: 12px;
   padding-bottom: calc(22px + var(--ux-nav-height) + env(safe-area-inset-bottom));
 }
 
 .page {
-  padding-top: 16px;
   padding-bottom: calc(24px + var(--ux-nav-height) + env(safe-area-inset-bottom));
 }
 
-/* Connection state is only shown when actionable. */
-.connection-banner {
-  grid-template-columns: 22px minmax(0,1fr) auto;
-  gap: 10px;
-  padding: 12px;
-  margin-bottom: 12px;
-  border-radius: 15px;
+/* Preserve the current 2x2 KORGAN home cards. */
+.action-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 11px !important;
 }
 
-.connection-banner button {
-  min-height: 40px;
-}
-
-/* Professional, compact hero. */
-.hero {
-  display: block;
-  min-height: 0;
-  padding: 22px 19px 20px;
-  border-radius: 24px;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(84,214,166,.08), transparent 34%),
-    linear-gradient(155deg, #0c0f11 0%, #121619 60%, #0d1012 100%);
-  border: 1px solid rgba(208,147,110,.22);
-  box-shadow: 0 18px 44px rgba(0,0,0,.24);
-}
-
-.hero-copy {
-  width: 100%;
-  max-width: 100%;
-}
-
-.hero h1 {
-  max-width: 100%;
-  margin: 12px 0 10px;
-  font-size: clamp(30px, 8vw, 38px);
-  line-height: 1.02;
-  letter-spacing: -.025em;
-  overflow-wrap: normal;
-  word-break: normal;
-  hyphens: none;
-  -webkit-hyphens: none;
-}
-
-.hero p {
-  max-width: 410px;
-  margin: 0 0 18px;
-  color: #b1b7bb;
-  font-size: 13px;
-  line-height: 1.52;
-}
-
-.hero button {
-  width: 100%;
-  min-height: 50px;
-  border-radius: 15px;
-  box-shadow: none;
-}
-
-.hero-orb,
-.hero::after {
-  display: none !important;
-}
-
-.hero::before {
-  opacity: .65;
-}
-
-.online {
-  color: var(--ux-muted);
-}
-
-/* Summary cards remain readable at narrow widths. */
-.quick-stats {
-  grid-template-columns: repeat(2, minmax(0,1fr));
-  gap: 9px;
-  margin-top: 10px;
-}
-
-.quick-stats > div {
+.action-card {
   min-width: 0;
-  min-height: 74px;
-  padding: 12px;
-  border-radius: 16px;
-  box-shadow: none;
+  width: 100%;
+}
+
+.action-card h2,
+.action-card p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.quick-stats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.quick-stats > div,
+.release-grid > div {
+  min-width: 0;
 }
 
 .quick-stats span {
   white-space: normal !important;
   overflow: visible !important;
   text-overflow: clip !important;
-  text-transform: none;
-  letter-spacing: .01em;
-  line-height: 1.2;
-  color: var(--ux-muted);
 }
 
-.quick-stats strong {
-  font-size: 14px;
+/* Never expose internal architecture/debug presentation. */
+.case-description,
+.system-card {
+  display: none !important;
 }
 
-/* Primary jobs: one clear row per action on phones. */
-.action-grid {
-  grid-template-columns: 1fr;
-  gap: 9px;
-  margin-top: 10px;
+.system-card + .privacy-card.static p {
+  display: none !important;
 }
 
-.action-card {
-  width: 100%;
+.material-list,
+.source-list,
+.source-list a,
+.source-chip,
+.messages,
+.message-wrap,
+.bubble {
   min-width: 0;
-  min-height: 92px;
-  display: grid;
-  grid-template-columns: 48px minmax(0,1fr);
-  grid-template-rows: auto auto;
-  align-items: center;
-  align-content: center;
-  column-gap: 13px;
-  row-gap: 3px;
-  padding: 13px 14px;
-  border-radius: var(--ux-radius);
-  box-shadow: none;
 }
 
-.action-card .action-icon {
-  grid-column: 1;
-  grid-row: 1 / 3;
-  width: 46px;
-  height: 46px;
-  border-radius: 14px;
+.material-list span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.action-card h2 {
-  grid-column: 2;
-  grid-row: 1;
-  min-width: 0;
-  margin: 0;
-  font-size: 16px;
-  line-height: 1.18;
-}
-
-.action-card p {
-  grid-column: 2;
-  grid-row: 2;
-  min-width: 0;
-  margin: 0;
-  color: #aab1b6;
-  font-size: 11px;
-  line-height: 1.36;
-  overflow-wrap: anywhere;
-}
-
-.action-card::after {
-  opacity: .4;
-}
-
-/* Home already exposes data controls through Profile; avoid duplicate blocks. */
-.home-page > .privacy-card {
-  display: none;
-}
-
-/* Clean list/detail cards. */
-.list-card,
-.analysis-card,
-.status-card,
-.profile-card,
-.case-list-item,
-.settings-card,
-.payment-card {
-  border-color: var(--ux-line);
-  box-shadow: none;
-}
-
-.list-row,
-.case-list-item {
-  min-height: 72px;
-}
-
-.list-row {
-  grid-template-columns: 44px minmax(0,1fr) 20px;
-  padding: 13px;
-}
-
+.bubble,
+.warning-note,
+.success-note,
+.price-note,
+.fact strong,
 .list-row strong,
 .case-list-item strong,
-.card-head h2,
-.fact strong,
-.subbar strong {
+.card-head h2 {
   overflow-wrap: anywhere;
 }
 
-.list-row small,
-.case-list-item small,
-.analysis-card p,
-.privacy-card p {
-  color: #aab1b6;
+.fact strong {
+  max-width: 62%;
+  text-align: right;
 }
 
-.subbar strong {
-  min-width: 0;
-  max-width: calc(100% - 96px);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.big-title h1,
-.ready-page h1,
-.payment-page h1 {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-
-.case-input {
-  width: 100%;
-  min-height: 170px;
-  border-radius: 16px;
-}
-
-/* Receipt URL fields were inheriting the large case textarea height. */
+/* Payment URL fields must never inherit textarea size. */
 .payment-card input.case-input,
 .payment-page input.case-input {
-  height: 50px;
-  min-height: 50px;
-  padding: 0 14px;
-  border-radius: 14px;
+  height: 50px !important;
+  min-height: 50px !important;
+  padding: 0 14px !important;
+  resize: none !important;
 }
 
-.primary,
-.secondary,
-.lawyer-btn,
-.receipt-upload {
-  min-height: 50px;
-  border-radius: 15px;
+/* Composer and nav are dimensioned together, so they never overlap. */
+.chat-page {
+  padding-bottom: calc(98px + var(--ux-nav-height) + env(safe-area-inset-bottom));
 }
 
-.wide {
-  width: 100%;
+.composer {
+  position: fixed;
+  left: 50%;
+  right: auto;
+  bottom: calc(var(--ux-nav-height) + env(safe-area-inset-bottom));
+  z-index: 55;
+  width: min(100%, var(--ux-shell-max));
+  transform: translateX(-50%);
+  background: #090b0d !important;
+  border-top: 1px solid rgba(255,255,255,.06);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
-.primary,
-.secondary,
-.lawyer-btn,
-.icon-btn,
-.list-row,
-.case-list-item,
-.action-card,
+.composer input {
+  min-width: 0;
+}
+
+/* Four visible tabs: Home, Cases, AI lawyer, Profile. */
+.bottom-nav {
+  position: fixed;
+  left: 50%;
+  right: auto;
+  bottom: 0;
+  z-index: 60;
+  width: min(100%, var(--ux-shell-max));
+  height: calc(var(--ux-nav-height) + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  padding: 6px 8px env(safe-area-inset-bottom);
+  background: #090b0d !important;
+  border-top: 1px solid rgba(255,255,255,.06);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: 0 -8px 24px rgba(0,0,0,.22);
+}
+
 .bottom-nav button {
-  transition: background-color .14s ease, border-color .14s ease, color .14s ease, opacity .14s ease;
+  display: grid !important;
+  min-width: 0;
+  min-height: 52px;
+  padding: 5px 2px;
+  align-content: center;
+  place-items: center;
+  gap: 3px;
+  transform: none !important;
+}
+
+/* main.jsx order: Home, Cases, AI lawyer, Help, Profile. */
+.bottom-nav button:nth-child(4) {
+  display: none !important;
+}
+
+.bottom-nav button:nth-child(3),
+.bottom-nav button:nth-child(5) {
+  display: grid !important;
+}
+
+.bottom-nav button svg,
+.bottom-nav button.active svg {
+  filter: none !important;
+}
+
+.bottom-nav button span {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Ready-document controls stay React-owned and cannot overlap. */
+.ready-page .primary.wide,
+.ready-page .secondary.wide,
+.ready-page .lawyer-btn.wide {
+  position: static !important;
+  display: flex !important;
+  width: 100% !important;
+  margin-top: 10px;
+  transform: none !important;
+}
+
+.document-preview {
+  max-width: 100%;
+  overflow: hidden;
 }
 
 button:active:not(:disabled) {
@@ -405,287 +278,133 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 label:has(input:focus-visible) {
-  outline: 2px solid var(--ux-accent);
+  outline: 2px solid var(--emerald, #4bd3a2);
   outline-offset: 2px;
 }
 
-/* Case content should not expose raw internal/generated descriptions. */
-.case-description,
-.system-card {
-  display: none !important;
-}
-
-/* Hide the technical profile sentence while keeping consent/privacy copy intact. */
-.system-card + .privacy-card.static p {
-  display: none;
-}
-
-/* Material chips never overflow the viewport. */
-.material-list {
-  min-width: 0;
-}
-
-.material-list span {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Chat: fixed composer and nav are dimensioned together so they never overlap. */
-.chat-page {
-  min-height: calc(100dvh - 60px);
-  padding: 12px 12px calc(96px + var(--ux-nav-height) + env(safe-area-inset-bottom));
-}
-
-.messages {
-  min-width: 0;
-}
-
-.message-wrap {
-  max-width: 92%;
-  min-width: 0;
-}
-
-.bubble {
-  max-width: 100%;
-  font-size: 13px;
-  line-height: 1.52;
-  overflow-wrap: anywhere;
-}
-
-.source-list,
-.source-list a,
-.source-chip {
-  min-width: 0;
-}
-
-.composer {
-  position: fixed;
-  left: 50%;
-  right: auto;
-  bottom: calc(var(--ux-nav-height) + env(safe-area-inset-bottom));
-  z-index: 45;
-  width: min(100%, 560px);
-  transform: translateX(-50%);
-  padding: 10px 12px 12px;
-  background: #090b0d !important;
-  border-top: 1px solid var(--ux-line);
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
-.composer input {
-  min-width: 0;
-  min-height: 48px;
-}
-
-.composer button {
-  width: 48px;
-  min-width: 48px;
-  height: 48px;
-  box-shadow: none;
-}
-
-/* Stable five-item navigation. Nothing is hidden by positional selectors. */
-.bottom-nav {
-  position: fixed;
-  left: 50%;
-  right: auto;
-  bottom: 0;
-  z-index: 60;
-  width: min(100%, 560px);
-  height: calc(var(--ux-nav-height) + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  display: grid !important;
-  grid-template-columns: repeat(5, minmax(0,1fr)) !important;
-  padding: 6px 5px env(safe-area-inset-bottom);
-  background: #090b0d !important;
-  border-top: 1px solid var(--ux-line);
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  box-shadow: 0 -8px 24px rgba(0,0,0,.22);
-}
-
-.bottom-nav button,
-.bottom-nav button:nth-child(3),
-.bottom-nav button:nth-child(4) {
-  display: grid !important;
-}
-
-.bottom-nav button {
-  min-width: 0;
-  min-height: 54px;
-  padding: 5px 2px;
-  align-content: center;
-  place-items: center;
-  gap: 3px;
-  border-radius: 12px;
-  color: #747c82;
-  font-size: 8px;
-  line-height: 1.1;
-}
-
-.bottom-nav button svg {
-  width: 20px;
-  height: 20px;
-  filter: none !important;
-}
-
-.bottom-nav button.active {
-  color: var(--ux-accent);
-  background: rgba(84,214,166,.07);
-}
-
-.bottom-nav button span {
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Ready state: one vertical action hierarchy, no injected sibling buttons. */
-.ready-page {
-  text-align: center;
-}
-
-.success-ring {
-  margin-top: 12px;
-}
-
-.release-grid {
-  grid-template-columns: repeat(2, minmax(0,1fr));
-  gap: 9px;
-}
-
-.release-grid > div {
-  min-width: 0;
-}
-
-.document-preview {
-  height: 190px;
-  margin: 16px 0;
-}
-
-.ready-page .primary.wide,
-.ready-page .secondary.wide,
-.ready-page .lawyer-btn.wide {
-  margin-top: 9px;
-}
-
-.warning-note,
-.success-note,
-.price-note {
-  overflow-wrap: anywhere;
-}
-
-.fact {
-  min-width: 0;
-}
-
-.fact span,
-.fact strong {
-  min-width: 0;
-}
-
-.fact strong {
-  max-width: 62%;
-  text-align: right;
-}
-
-/* Consent screen must not be pushed under a navigation that is not present. */
 .consent-shell {
-  padding-bottom: 0;
+  padding-bottom: 0 !important;
 }
 
 .consent-page {
-  padding-bottom: max(24px, env(safe-area-inset-bottom));
+  padding-bottom: max(24px, env(safe-area-inset-bottom)) !important;
 }
 
-@media (max-width: 360px) {
+@media (max-width: 599px) {
   :root {
-    --ux-nav-height: 68px;
+    --ux-nav-height: 70px;
+  }
+
+  .app-shell {
+    max-width: none;
+    margin: 0;
+    box-shadow: none;
   }
 
   .topbar,
   .subbar {
-    height: 56px;
-    min-height: 56px;
-    padding-left: 12px;
-    padding-right: 12px;
-  }
-
-  .top-status {
-    display: none;
+    min-height: 58px;
+    height: 58px;
+    padding-left: 14px;
+    padding-right: 14px;
   }
 
   .home-page,
   .page {
-    padding-left: 12px;
-    padding-right: 12px;
+    padding-left: 14px;
+    padding-right: 14px;
   }
 
-  .hero {
-    padding: 19px 16px 17px;
+  .home-page {
+    padding-top: 12px;
   }
 
-  .hero h1 {
-    font-size: clamp(27px, 8.2vw, 31px);
-  }
-
-  .hero p {
-    font-size: 12px;
-  }
-
-  .quick-stats {
-    grid-template-columns: 1fr;
-  }
-
-  .quick-stats > div {
-    min-height: 62px;
+  .action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
   }
 
   .action-card {
-    grid-template-columns: 44px minmax(0,1fr);
-    column-gap: 11px;
-    min-height: 88px;
+    min-height: 156px;
+    padding: 16px;
+  }
+
+  .action-card h2 {
+    font-size: 15px !important;
+    line-height: 1.2;
+  }
+
+  .action-card p {
+    font-size: 10.5px;
+    line-height: 1.4;
+  }
+
+  .action-icon {
+    width: 46px;
+    height: 46px;
+  }
+
+  .subbar strong {
+    max-width: calc(100% - 96px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .composer,
+  .bottom-nav {
+    left: 0;
+    right: 0;
+    width: 100%;
+    transform: none;
+  }
+
+  .message-wrap {
+    max-width: 94%;
+  }
+
+  .case-input {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 350px) {
+  .home-page,
+  .page {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .action-grid {
+    gap: 8px !important;
+  }
+
+  .action-card {
+    min-height: 146px;
     padding: 12px;
   }
 
-  .action-card .action-icon {
-    width: 42px;
-    height: 42px;
+  .action-card h2 {
+    font-size: 14px !important;
+  }
+
+  .action-card p {
+    font-size: 9.5px;
+  }
+
+  .bottom-nav {
+    padding-left: 4px;
+    padding-right: 4px;
   }
 
   .bottom-nav button {
     font-size: 7.5px;
   }
-
-  .bottom-nav button svg {
-    width: 19px;
-    height: 19px;
-  }
-
-  .message-wrap {
-    max-width: 95%;
-  }
-
-  .release-grid,
-  .admin-actions {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (min-width: 600px) {
-  .app-shell,
-  .bottom-nav,
-  .composer {
-    width: min(100%, 760px);
-    max-width: 760px;
-  }
-
-  .app-shell {
-    max-width: 760px;
+  :root {
+    --ux-shell-max: 760px;
   }
 
   .home-page,
@@ -694,93 +413,34 @@ label:has(input:focus-visible) {
     padding-right: 24px;
   }
 
-  .hero {
-    padding: 30px;
-  }
-
-  .hero h1 {
-    max-width: 560px;
-    font-size: 46px;
-  }
-
-  .hero button {
-    width: auto;
-    min-width: 220px;
-  }
-
   .action-grid {
-    grid-template-columns: repeat(2, minmax(0,1fr));
-    gap: 12px;
-  }
-
-  .action-card {
-    min-height: 118px;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 }
 
 @media (min-width: 960px) {
+  :root {
+    --ux-shell-max: 1080px;
+  }
+
   body {
     padding: 24px;
   }
 
   .app-shell {
-    width: min(100%, 1080px);
-    max-width: 1080px;
     min-height: calc(100dvh - 48px);
-    border: 1px solid var(--ux-line);
+    border: 1px solid rgba(255,255,255,.06);
     border-radius: 28px;
     overflow: hidden;
-    box-shadow: 0 28px 80px rgba(0,0,0,.35);
   }
 
   .bottom-nav,
   .composer {
-    width: min(calc(100% - 48px), 1080px);
-    max-width: 1080px;
-  }
-
-  .home-page,
-  .page {
-    padding-left: 32px;
-    padding-right: 32px;
-  }
-
-  .hero {
-    padding: 42px;
-  }
-
-  .hero h1 {
-    max-width: 720px;
-    font-size: 58px;
-  }
-
-  .hero p {
-    max-width: 620px;
-    font-size: 15px;
+    width: min(calc(100% - 48px), var(--ux-shell-max));
   }
 
   .action-grid {
-    grid-template-columns: repeat(4, minmax(0,1fr));
-  }
-
-  .action-card {
-    min-height: 150px;
-    display: block;
-    padding: 18px;
-  }
-
-  .action-card .action-icon {
-    width: 46px;
-    height: 46px;
-  }
-
-  .action-card h2 {
-    margin: 14px 0 6px;
-    font-size: 17px;
-  }
-
-  .action-card p {
-    font-size: 11px;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
   }
 }
 
