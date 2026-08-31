@@ -77,10 +77,19 @@ _LEGAL_ENTITY_PHRASES = (
 _INDIVIDUAL_ENTREPRENEUR_RE = re.compile(
     r"(?i)(?:\bиндивидуальн\w*\s+предпринимател\w*\b|(?<!\w)ип(?!\w))"
 )
-_AMOUNT_PATTERN = re.compile(
-    r"(\d[\d\s ]*(?:[.,]\d{1,2})?)\s*(?:\([^)]*\)\s*)?(?:тенге|теңге|тг\b|₸|kzt)",
+# Каноническая форма денежной суммы в юридическом тексте РК. Это единственный
+# разбор сумм в KORGAN: любой другой модуль обязан использовать этот шаблон, а
+# не собирать свой. Отдельный, более узкий шаблон в
+# universal_word_final_hardening однажды потерял и группу «(два миллиона …)»,
+# и «kzt» — профессионально написанная цена иска переставала распознаваться,
+# госпошлина не считалась, и иск не выпускался как готовый к подаче.
+#
+# `(?<!\d)` не даёт начать разбор с середины числа после неудачной попытки.
+AMOUNT_PATTERN = re.compile(
+    r"(?<!\d)(\d[\d\s ]*(?:[.,]\d{1,2})?)\s*(?:\([^)]*\)\s*)?(?:тенге|теңге|тг\b|₸|kzt)",
     re.IGNORECASE,
 )
+_AMOUNT_PATTERN = AMOUNT_PATTERN
 _ROLE_LINE_RE = re.compile(
     r"(?im)^\s*(истец|заявитель|ответчик|должник|взыскатель|кредитор)\s*:\s*(.*)$"
 )
@@ -103,7 +112,14 @@ _IIN_RE = _BARE_12_DIGITS_RE
 
 
 def _round_tenge(value: Decimal) -> int:
-    return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    """Округлить до целого тенге без ограничения на длину числа.
+
+    ``to_integral_value``, а не ``quantize``: последний падает с
+    ``InvalidOperation``, как только результат превышает точность контекста
+    Decimal (28 значащих цифр). Пользователь может прислать сумму любой длины,
+    и разбор материалов не должен ронять генерацию документа.
+    """
+    return int(value.to_integral_value(rounding=ROUND_HALF_UP))
 
 
 def calc_gosposhlina_claim(amount: int, is_individual: bool) -> int:
@@ -345,7 +361,11 @@ def calc_late_payment_penalty(principal: int, start: date, end: date, *, rate_da
     if rate is None:
         return None
     days = (end - start).days + 1
-    amount = round(principal * rate / 100 * days / DAYS_IN_YEAR)
+    # Decimal, а не float: сумма попадает в просительную часть иска и должна
+    # совпадать с ручной перепроверкой юриста до тенге.
+    amount = _round_tenge(
+        Decimal(principal) * Decimal(str(rate)) / Decimal(100) * Decimal(days) / Decimal(DAYS_IN_YEAR)
+    )
     return LatePaymentPenalty(principal, start, end, rate_date, days, rate, amount)
 
 
