@@ -13,6 +13,7 @@ from korgan.document_release import review_lines
 from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.legal_calc import parse_all_amounts_kzt
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch
+from korgan.relief_norm_support import unsupported_relief
 from korgan.response_types import ResponseToClaimDraft
 from korgan.text_integrity import integrity_findings
 
@@ -339,6 +340,17 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
             blockers.append("правовое основание не поддерживает заявленное требование")
             issues.extend(str(item) for item in fit[:4])
             law -= min(1.5, 0.65 + 0.2 * len(fit))
+        # Санкция не выводится из нормы о надлежащем исполнении: у неустойки,
+        # убытков и морального вреда собственные основания.
+        for finding in unsupported_relief(
+            requests=draft.requests,
+            legal_basis=draft.legal_basis,
+            case_context=case_context,
+            facts=draft.facts,
+            verified_claims=research.verified_claims,
+        ):
+            blockers.append(finding)
+            law -= 0.6
         if not research.verified_claims:
             blockers.append("нет source-bound подтвержденной материально-правовой основы")
             law -= 1.2
@@ -586,6 +598,9 @@ def _score_pretrial(case_context: str, research: LegalResearch, draft: Any) -> D
     elif research.verified_claims and not _ARTICLE_RE.search(basis):
         blockers.append("VERIFIED-нормы не перенесены в правовое обоснование претензии")
         law -= 1.0
+    # Претензия проходит через remedy_support_issues (client_document_feedback_hotfix):
+    # там требование неустойки уже обязано иметь собственную VERIFIED-норму, причём
+    # строже — без договорной альтернативы. Второй такой же проверки здесь не ставим.
 
     calculation = 1.5
     if has_money_demand(draft) and not _clean_lines(draft.calculation):
