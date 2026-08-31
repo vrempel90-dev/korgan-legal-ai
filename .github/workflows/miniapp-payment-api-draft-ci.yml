@@ -55,7 +55,7 @@ jobs:
           korgan/consultation_quota.py
       - name: Import complete ASGI stack
         run: python -c "from korgan.miniapp_api_recovery_cors import app; from korgan.miniapp_document_access import router; assert app is not None; paths={getattr(r,'path','') for r in router.routes}; assert '/miniapp/cases/{case_id}/document/access' in paths; assert '/miniapp/document/download' in paths; assert '/miniapp/document/preview' in paths; print(len(app.routes))"
-      - name: Run payment, OFD and stored-document tests
+      - name: Run payment, OFD, stored-document and claim regressions
         run: >-
           python -m pytest -q
           tests/test_kaspi_ofd.py
@@ -67,6 +67,7 @@ jobs:
           tests/test_miniapp_ofd_autogeneration.py
           tests/test_miniapp_client_receipt_policy.py
           tests/test_miniapp_document_access.py
+          tests/test_claim_court_facing_policy.py
       - name: Run MiniApp smoke regressions
         run: >-
           python -m pytest -q
