@@ -52,11 +52,15 @@ jobs:
           tests/test_adversarial_documents.py
           tests/test_production_route_ownership.py
 
+      # Свёрнутый скаляр YAML склеивает строки через пробел, поэтому «python -c»
+      # получал программу, начинающуюся с отступа, и падал на IndentationError,
+      # не выполнив ни одной проверки. Heredoc передаёт скрипт дословно.
       - name: Production ASGI stack imports and routes are unique
-        run: >-
-          python -c "
-          from tests.production_routes import EXPECTED_OWNERS, owner;
-          bad = {k: owner(*k) for k in EXPECTED_OWNERS if owner(*k) != EXPECTED_OWNERS[k]};
-          assert not bad, bad;
-          print('routes ok:', len(EXPECTED_OWNERS))
-          "
+        run: |
+          python - <<'PY'
+          from tests.production_routes import EXPECTED_OWNERS, owner
+
+          bad = {key: owner(*key) for key in EXPECTED_OWNERS if owner(*key) != EXPECTED_OWNERS[key]}
+          assert not bad, bad
+          print("routes ok:", len(EXPECTED_OWNERS))
+          PY
