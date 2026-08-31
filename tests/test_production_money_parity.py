@@ -103,3 +103,33 @@ def test_legal_entity_price_form_uses_legal_entity_rate(production_legal_calc) -
 
     assert line.startswith("72 000 тенге")
     assert "20 000 МРП" in line
+
+
+def test_amount_parsing_stays_linear_on_hostile_input(production_legal_calc) -> None:
+    """Материалы дела приходят от пользователя и не должны занимать процессор.
+
+    Прежний шаблон допускал экспоненциальный откат внутри класса [\\d\\s]*:
+    строка вида «1 1 1 1 …» разбиралась квадратично (2000 токенов — 0.8 с,
+    4000 — 3.3 с). При лимите описания дела в 60 000 символов это давало
+    минуты процессорного времени на один запрос.
+    """
+    import time
+
+    hostile = "1 " * 30_000 + "x"
+    started = time.perf_counter()
+    assert production_legal_calc.parse_all_amounts_kzt(hostile) == []
+    elapsed = time.perf_counter() - started
+
+    # Порог с большим запасом: линейный разбор укладывается в единицы
+    # миллисекунд, квадратичный на этом входе занимал бы минуты.
+    assert elapsed < 1.0, f"разбор занял {elapsed:.2f}s — вероятен возврат отката"
+
+
+def test_thousand_separators_group_by_three(production_legal_calc) -> None:
+    """«1 1 1» — не сумма: разряды разделяются по три цифры."""
+    parse = production_legal_calc.parse_all_amounts_kzt
+
+    assert parse("1 1 1 тенге") == [1]
+    assert parse("2 400 000 тенге") == [2_400_000]
+    assert parse("12 000 000,49 тенге") == [12_000_000]
+    assert parse("2400000 тенге") == [2_400_000]

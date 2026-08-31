@@ -151,7 +151,7 @@ _BARE_DISAGREEMENT_RE = re.compile(
 _CONCRETE_ANCHOR_RE = re.compile(
     r"(?i)(?:\d{2}\.\d{2}\.\d{4}|"
     r"\bп\.\s*\d|\bпункт\w*\s+\d|\bстать\w*\s*\d|\bст\.\s*\d|"
-    r"№\s*\S|\d[\d\s\u00a0]*(?:тенге|теңге|тг\b|₸))"
+    r"№\s*\S)"
 )
 
 
@@ -161,7 +161,8 @@ def _bare_disagreement(draft: PretrialResponseDraft) -> bool:
     if not substantive:
         return False
     return all(
-        _BARE_DISAGREEMENT_RE.match(item) or not _CONCRETE_ANCHOR_RE.search(item)
+        _BARE_DISAGREEMENT_RE.match(item)
+        or not (_CONCRETE_ANCHOR_RE.search(item) or parse_all_amounts_kzt(item))
         for item in substantive
     )
 
