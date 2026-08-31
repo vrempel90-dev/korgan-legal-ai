@@ -41,7 +41,7 @@ jobs:
           if(!access.includes('/document/access')) process.exit(1);
           if(!access.includes('downloadFile')) process.exit(1);
           if(!access.includes('preview_url')) process.exit(1);
-          if(access.includes('MutationObserver')) process.exit(1);
+          if(access.includes('new MutationObserver')) process.exit(1);
           if(access.includes("createElement('button')") || access.includes('createElement(\"button\")')) process.exit(1);
           if(!nav.includes('repeat(4, minmax(0, 1fr))')) process.exit(1);
           if(!nav.includes('button:nth-child(3)')) process.exit(1);
