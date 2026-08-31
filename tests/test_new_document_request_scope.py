@@ -16,6 +16,8 @@ from korgan.request_scope import (
     start_new_document_request,
 )
 
+from tests.wrapper_chain import chain_source_text
+
 
 class _State:
     def __init__(self, data: dict):
@@ -162,6 +164,11 @@ def test_old_request_becomes_stale_as_soon_as_new_document_is_selected() -> None
 
 
 def test_every_generator_has_a_stale_request_release_guard() -> None:
+    """Защита от устаревшего запроса обязана быть в цепочке каждого генератора.
+
+    Проверяется вся цепочка обёрток, а не только внешний слой: production
+    надевает на генератор до девяти слоёв, и защита обычно лежит глубже.
+    """
     generators = {
         "claim": universal_claim_runtime._send_claim,
         "pretrial": pretrial_runtime._generate,
@@ -170,20 +177,18 @@ def test_every_generator_has_a_stale_request_release_guard() -> None:
         "contract": universal_document_runtime._send_contract,
     }
     for kind, generator in generators.items():
-        source = inspect.getsource(generator)
+        source = chain_source_text(generator)
         assert "request_is_current" in source, kind
         assert "STALE_DOCUMENT_SUPPRESSED" in source, kind
 
 
 def test_user_facing_generating_banners_are_removed() -> None:
-    source = "\n".join(
-        [
-            inspect.getsource(universal_claim_runtime._generate_now),
-            inspect.getsource(universal_document_runtime._send_contract),
-            inspect.getsource(universal_document_runtime._send_response),
-            inspect.getsource(pretrial_runtime._generate),
-            inspect.getsource(pretrial_response_runtime._generate),
-        ]
+    source = chain_source_text(
+        universal_claim_runtime._generate_now,
+        universal_document_runtime._send_contract,
+        universal_document_runtime._send_response,
+        pretrial_runtime._generate,
+        pretrial_response_runtime._generate,
     )
     assert "Формирую и проверяю" not in source
     assert "Формирую досудебную" not in source

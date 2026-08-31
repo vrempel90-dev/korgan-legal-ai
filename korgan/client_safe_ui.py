@@ -38,6 +38,11 @@ _GENERIC_CHECK_MESSAGE = (
     "можно передать дело персональному юристу."
 )
 
+# Реализации bot.py, заменённые install_client_safe_runtime(). Заполняются при
+# установке; до неё остаются None.
+_original_enter_verification_gate: Any | None = None
+_original_handle_verification_gate_reply: Any | None = None
+
 _GATE_MARKERS = (
     "как поступить:",
     "не понял, что сделать с замечаниями",
@@ -267,6 +272,14 @@ def install_client_safe_runtime() -> None:
         LOGGER.info("STALE_VERIFICATION_GATE_CLEARED telegram_user_id=%s", getattr(getattr(message, "from_user", None), "id", None))
         await state.update_data(mode="main", gate_issues=[], claim_draft=None)
         await message.answer(_GENERIC_CHECK_MESSAGE, reply_markup=base_bot.MENU)
+
+    # Сохраняем заменённые реализации под тем же именем, что уже используется в
+    # платёжных слоях (``_original_*``). Это делает подмену наблюдаемой: тест
+    # может проверить и боевой контракт, и собственную реализацию bot.py, не
+    # завися от того, какой модуль импортировался раньше.
+    global _original_enter_verification_gate, _original_handle_verification_gate_reply
+    _original_enter_verification_gate = base_bot._enter_verification_gate
+    _original_handle_verification_gate_reply = base_bot._handle_verification_gate_reply
 
     base_bot._enter_verification_gate = safe_enter_verification_gate
     base_bot._handle_verification_gate_reply = safe_gate_reply
