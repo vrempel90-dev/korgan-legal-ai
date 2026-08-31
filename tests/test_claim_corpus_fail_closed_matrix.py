@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from korgan.claim_corpus_health import STALE_SNAPSHOT_MARKER
 from korgan.legal import pipeline
 from korgan.legal.corpus import ACT_GK_SPECIAL, LegalCorpus
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
@@ -112,11 +113,35 @@ def _build_corpus(
 
 
 def _assert_fail_closed() -> None:
+    """Корпус недоступен или не содержит нужную статью — сверять было нечего.
+
+    Здесь ни одна ссылка не прошла сверку с текстом нормы, поэтому в судебный
+    текст не выпускается ничего: правовое обоснование пустое.
+    """
     draft = _draft()
     finalize_professional_claim(_context(), _research(), draft)
     assert draft.status == VerificationStatus.NEEDS_VERIFICATION
     assert draft.legal_basis == []
     assert any(str(note).startswith("LEGAL_GROUNDING: ") for note in draft.verification_notes)
+
+
+def _assert_controlled_verification_path() -> None:
+    """Снимок несвеж или недатирован, но сама норма сверена с текстом статьи.
+
+    Это другой случай, чем недоступный корпус. Цитата уже сопоставлена с
+    официальным текстом; под сомнением только свежесть снимка. Стирать здесь
+    правовое обоснование значит отдать клиенту иск вообще без права — и молча
+    уничтожить как раз подтверждённую работу. Документ переводится в
+    контролируемый путь проверки: статус понижен, замечание записано, ссылка
+    осталась и несёт видимую пометку сверки, поэтому уйти как готовый к подаче
+    он не может.
+    """
+    draft = _draft()
+    finalize_professional_claim(_context(), _research(), draft)
+    assert draft.status == VerificationStatus.NEEDS_VERIFICATION
+    assert any(str(note).startswith("LEGAL_GROUNDING: ") for note in draft.verification_notes)
+    assert any("статья 685" in item.lower() for item in draft.legal_basis)
+    assert all(STALE_SNAPSHOT_MARKER in item for item in draft.legal_basis)
 
 
 def test_disabled_corpus_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -155,7 +180,7 @@ def test_partial_corpus_missing_cited_article_fails_closed(tmp_path: Path, monke
         (None, None, ""),
     ],
 )
-def test_stale_snapshot_or_undated_revision_fails_closed(
+def test_stale_snapshot_or_undated_revision_enters_controlled_verification(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     act_edition: str | None,
@@ -171,7 +196,7 @@ def test_stale_snapshot_or_undated_revision_fails_closed(
     )
     monkeypatch.setenv("KORGAN_LOCAL_CORPUS", "1")
     monkeypatch.setattr(pipeline, "DEFAULT_DB_PATH", path)
-    _assert_fail_closed()
+    _assert_controlled_verification_path()
 
 
 def test_old_legal_revision_is_valid_when_official_snapshot_was_fetched_today(

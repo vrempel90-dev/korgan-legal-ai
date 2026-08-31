@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,12 @@ GK_GENERAL_URL = "https://adilet.zan.kz/rus/docs/K940001000_"
 GK_SPECIAL_URL = "https://adilet.zan.kz/rus/docs/K990000409_"
 GPK_URL = "https://adilet.zan.kz/rus/docs/K1500000377"
 
+# Дата официальной сверки снимка корпуса. Обязана быть относительной:
+# claim_corpus_health считает снимок несвежим через 7 дней, поэтому
+# захардкоженная дата превращает тест в мину замедленного действия — он зеленеет
+# в день написания и краснеет через неделю независимо от кода.
+CORPUS_CHECKED_ON = date.today().isoformat()
+
 ARTICLE_684 = "Если иное не предусмотрено договором возмездного оказания услуг, исполнитель обязан оказать услуги лично."
 ARTICLE_685 = "Заказчик обязан оплатить оказанные ему услуги в сроки и в порядке, которые указаны в договоре возмездного оказания услуг."
 ARTICLE_285 = "Должник, обязанный совершить одно из двух или нескольких действий, имеет право выбора предмета исполнения обязательства."
@@ -33,16 +40,16 @@ ARTICLE_700_SHARED = "Сторона обязана передать товар 
 def grounding_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "corpus.sqlite3"
     with LegalCorpus(path) as db:
-        db.upsert_act(ACT_GK_GENERAL, "K940001000_", "ГК РК (Общая часть)", GK_GENERAL_URL, "2026-08-22", "2026-08-22")
-        db.upsert_act(ACT_GK_SPECIAL, "K990000409_", "ГК РК (Особенная часть)", GK_SPECIAL_URL, "2026-08-22", "2026-08-22")
-        db.upsert_act(ACT_GPK, "K1500000377", "ГПК РК", GPK_URL, "2026-08-22", "2026-08-22")
+        db.upsert_act(ACT_GK_GENERAL, "K940001000_", "ГК РК (Общая часть)", GK_GENERAL_URL, CORPUS_CHECKED_ON, CORPUS_CHECKED_ON)
+        db.upsert_act(ACT_GK_SPECIAL, "K990000409_", "ГК РК (Особенная часть)", GK_SPECIAL_URL, CORPUS_CHECKED_ON, CORPUS_CHECKED_ON)
+        db.upsert_act(ACT_GPK, "K1500000377", "ГПК РК", GPK_URL, CORPUS_CHECKED_ON, CORPUS_CHECKED_ON)
         db.upsert_provision(
             act_id=ACT_GK_SPECIAL,
             article_no="684",
             item_no=None,
             heading="Исполнение договора возмездного оказания услуг",
             body=ARTICLE_684,
-            edition_date="2026-08-22",
+            edition_date=CORPUS_CHECKED_ON,
             url=GK_SPECIAL_URL,
             sort_key=684,
         )
@@ -52,7 +59,7 @@ def grounding_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             item_no=None,
             heading="Оплата услуг",
             body=ARTICLE_685,
-            edition_date="2026-08-22",
+            edition_date=CORPUS_CHECKED_ON,
             url=GK_SPECIAL_URL,
             sort_key=685,
         )
@@ -62,7 +69,7 @@ def grounding_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             item_no="1",
             heading="Тестовая составная норма",
             body=ARTICLE_700_SHARED,
-            edition_date="2026-08-22",
+            edition_date=CORPUS_CHECKED_ON,
             url=GK_SPECIAL_URL,
             sort_key=700,
         )
@@ -72,7 +79,7 @@ def grounding_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             item_no="2",
             heading="Тестовая составная норма",
             body=ARTICLE_700_SHARED,
-            edition_date="2026-08-22",
+            edition_date=CORPUS_CHECKED_ON,
             url=GK_SPECIAL_URL,
             sort_key=701,
         )
@@ -82,7 +89,7 @@ def grounding_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             item_no=None,
             heading="Исполнение альтернативного обязательства",
             body=ARTICLE_285,
-            edition_date="2026-08-22",
+            edition_date=CORPUS_CHECKED_ON,
             url=GK_GENERAL_URL,
             sort_key=285,
         )
@@ -92,7 +99,7 @@ def grounding_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             item_no=None,
             heading="Понятие нарушения обязательства",
             body=ARTICLE_349,
-            edition_date="2026-08-22",
+            edition_date=CORPUS_CHECKED_ON,
             url=GK_GENERAL_URL,
             sort_key=349,
         )
@@ -102,7 +109,7 @@ def grounding_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             item_no=None,
             heading="Подсудность гражданских дел специализированным межрайонным экономическим судам",
             body=ARTICLE_27,
-            edition_date="2026-08-22",
+            edition_date=CORPUS_CHECKED_ON,
             url=GPK_URL,
             sort_key=27,
         )

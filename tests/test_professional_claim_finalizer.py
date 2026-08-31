@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,12 @@ from korgan.provision_check import verified_claim_line
 
 GPK_URL = "https://adilet.zan.kz/rus/docs/K1500000377"
 GK_SPECIAL_URL = "https://adilet.zan.kz/rus/docs/K990000409_"
+
+# Дата официальной сверки снимка корпуса. Обязана быть относительной:
+# claim_corpus_health считает снимок несвежим через 7 дней, поэтому
+# захардкоженная дата превращает тест в мину замедленного действия — он зеленеет
+# в день написания и краснеет через неделю независимо от кода.
+CORPUS_CHECKED_ON = date.today().isoformat()
 ARTICLE_30_PART_9 = (
     "Иски о защите прав потребителей могут быть предъявлены по месту жительства истца "
     "либо по месту заключения или исполнения договора."
@@ -29,16 +36,16 @@ def grounded_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             "K1500000377",
             "Гражданский процессуальный кодекс Республики Казахстан",
             GPK_URL,
-            "2026-08-22",
-            "2026-08-22",
+            CORPUS_CHECKED_ON,
+            CORPUS_CHECKED_ON,
         )
         db.upsert_act(
             ACT_GK_SPECIAL,
             "K990000409_",
             "Гражданский кодекс Республики Казахстан (Особенная часть)",
             GK_SPECIAL_URL,
-            "2026-08-22",
-            "2026-08-22",
+            CORPUS_CHECKED_ON,
+            CORPUS_CHECKED_ON,
         )
         db.upsert_provision(
             act_id=ACT_GPK,
@@ -46,7 +53,7 @@ def grounded_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             item_no="9",
             heading="Подсудность по выбору истца",
             body=ARTICLE_30_PART_9,
-            edition_date="2026-08-22",
+            edition_date=CORPUS_CHECKED_ON,
             url=GPK_URL,
             sort_key=30,
         )
@@ -56,7 +63,7 @@ def grounded_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             item_no=None,
             heading="Права заказчика во время выполнения работы подрядчиком",
             body=ARTICLE_627,
-            edition_date="2026-08-22",
+            edition_date=CORPUS_CHECKED_ON,
             url=GK_SPECIAL_URL,
             sort_key=627,
         )
