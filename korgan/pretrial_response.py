@@ -188,8 +188,13 @@ def _bare_disagreement(draft: PretrialResponseDraft) -> bool:
     )
 
 
-def _money_claimed(draft: PretrialResponseDraft) -> bool:
-    """Претензия контрагента содержит денежное требование."""
+def money_claimed(draft: PretrialResponseDraft) -> bool:
+    """Претензия контрагента содержит денежное требование.
+
+    Один предикат на весь конвейер: разбор расчёта требуется только там, где
+    контрагент предъявил сумму. Требование устранить недостатки или вернуть
+    имущество расчёта не содержит, и разбирать в нём нечего.
+    """
     return bool(parse_all_amounts_kzt("\n".join(draft.claim_summary)))
 
 
@@ -215,7 +220,7 @@ def pretrial_response_quality_issues(draft: PretrialResponseDraft, research: Leg
 
     # Денежное требование контрагента проверяется построчно: срок начисления,
     # база, ставка. Без этого спор о сумме сводится к «мы не согласны».
-    if _money_claimed(draft) and not draft.calculation_review:
+    if money_claimed(draft) and not draft.calculation_review:
         issues.append("расчёт контрагента не разобран")
 
     report = review_lines(draft.body_lines(), verified_claims=research.verified_claims)

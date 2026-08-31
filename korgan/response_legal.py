@@ -314,7 +314,15 @@ class ProductionOpenAILegalService(_ContractSafeService):
             claimant=[str(x).strip() for x in payload.get("claimant", []) if str(x).strip()],
             defendant=[str(x).strip() for x in payload.get("defendant", []) if str(x).strip()],
             claim_summary=[str(x).strip() for x in payload.get("claim_summary", []) if str(x).strip()],
+            # Схема требует эти три раздела, а промпт подробно объясняет, как их
+            # заполнять. Пока их не было в конструкторе, содержимое молча
+            # терялось: разделение признанного и оспариваемого и разбор расчёта
+            # истца не доезжали до документа, а _score_response их не требует,
+            # поэтому и раунд правки не запускался.
+            admitted_circumstances=[str(x).strip() for x in payload.get("admitted_circumstances", []) if str(x).strip()],
+            disputed_circumstances=[str(x).strip() for x in payload.get("disputed_circumstances", []) if str(x).strip()],
             position=[str(x).strip() for x in payload.get("position", []) if str(x).strip()],
+            calculation_review=[str(x).strip() for x in payload.get("calculation_review", []) if str(x).strip()],
             objections=list(payload.get("objections", []) or []),
             legal_basis=legal_basis,
             requests=[str(x).strip() for x in payload.get("requests", []) if str(x).strip()],

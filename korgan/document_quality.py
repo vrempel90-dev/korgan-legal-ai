@@ -209,11 +209,15 @@ _UNSUPPORTABLE_OBJECTION_RE = re.compile(
 
 # Опора, без которой такое возражение не проверяемо: конкретная дата, период
 # или названная норма.
+# Длительности («3 года») здесь намеренно нет: она не опора. Довод об
+# исковой давности проверяем только тогда, когда названы даты, из которых
+# срок вычисляется, либо норма, которая его устанавливает. Пока длительность
+# засчитывалась, «Истёк срок исковой давности — 3 года» проходило шлюз,
+# не сообщая ни того, ни другого.
 _OBJECTION_ANCHOR_RE = re.compile(
     r"(?i)(?:\d{2}\.\d{2}\.\d{4}|"
     r"\b\d{4}\s*год|"
-    r"\bстать\w*\s*\d|\bст\.\s*\d|"
-    r"\b\d+\s*(?:год\w*|месяц\w*|дн[ейя]))"
+    r"\bстать\w*\s*\d|\bст\.\s*\d)"
 )
 
 
@@ -468,7 +472,10 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
     if not _clean_lines(draft.requests):
         blockers.append("нет процессуальной просительной части")
         position -= 0.4
-    objection_texts = [item.text for item in draft.objections] if draft.objections else []
+    # Схема разрешает вынести даты и норму в subclauses/prose, а в text
+    # оставить заголовок довода. Проверять один заголовок значит блокировать
+    # полностью обоснованное возражение за то, что опора лежит строкой ниже.
+    objection_texts = ["\n".join(item.body_lines()) for item in draft.objections] if draft.objections else []
     unsupported = unsupported_objections(objection_texts)
     if unsupported:
         blockers.extend(unsupported)
@@ -604,7 +611,7 @@ def _score_pretrial_response(case_context: str, research: LegalResearch, draft: 
     признаваемое от оспариваемого, проверить расчёт и обосновать позицию.
     Шаблонное «с требованиями не согласны» без разбора — не ответ.
     """
-    from korgan.pretrial_response import pretrial_response_quality_issues
+    from korgan.pretrial_response import money_claimed, pretrial_response_quality_issues
 
     blockers: list[str] = []
     issues: list[str] = []
@@ -642,7 +649,14 @@ def _score_pretrial_response(case_context: str, research: LegalResearch, draft: 
         engagement -= 0.6
 
     review = 1.5
-    if _clean_lines(draft.objections) and not _clean_lines(getattr(draft, "calculation_review", [])):
+    # Тот же предикат, что и в pretrial_response_quality_issues: у неденежной
+    # претензии расчёта нет, и требовать его разбор значит понижать документ
+    # за отсутствие раздела, которого в нём быть не должно.
+    if (
+        money_claimed(draft)
+        and _clean_lines(draft.objections)
+        and not _clean_lines(getattr(draft, "calculation_review", []))
+    ):
         issues.append("расчёт контрагента не разобран построчно")
         review -= 0.5
 
