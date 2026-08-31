@@ -171,3 +171,54 @@ def test_internal_terminology_never_reaches_the_pretrial_body() -> None:
     draft = _draft(facts=["NEEDS_VERIFICATION: уточнить дату акта."])
     report = assess_document_quality("pretrial", "материалы дела", _research(), draft)
     assert report.ready is False
+
+
+# --- сверка расчёта с требованиями ----------------------------------------
+
+
+def test_calculated_penalty_cannot_disappear_from_the_demands() -> None:
+    """Компонент расчёта, не заявленный в требованиях, адресат платить не обязан.
+
+    Претензия задаёт объём добровольного исполнения. Если неустойка посчитана,
+    но в требованиях осталась только основная задолженность, адресат погасит
+    долг и будет считаться исполнившим претензию, а неустойка молча пропадёт.
+    """
+    draft = _draft(demands=["Оплатить задолженность в размере 2 300 000 тенге."])
+
+    issues = pretrial_quality_issues(draft, _research())
+
+    assert any("неустойк" in issue.lower() and "требован" in issue.lower() for issue in issues)
+
+
+def test_demanded_penalty_must_be_disclosed_by_the_calculation() -> None:
+    draft = _draft(
+        calculation=["Основной долг: 2 300 000 тенге; основание: договор подряда № 12 от 15.01.2026."],
+    )
+
+    issues = pretrial_quality_issues(draft, _research())
+
+    assert any("неустойк" in issue.lower() and "расчёт" in issue.lower() for issue in issues)
+
+
+def test_penalty_amount_must_agree_between_calculation_and_demands() -> None:
+    draft = _draft(
+        demands=["Оплатить задолженность в размере 2 300 000 тенге и договорную неустойку 90 000 тенге."],
+    )
+
+    issues = pretrial_quality_issues(draft, _research())
+
+    assert any("71 300" in issue and "90 000" in issue for issue in issues)
+
+
+def test_principal_amount_must_agree_between_calculation_and_demands() -> None:
+    draft = _draft(
+        demands=["Оплатить задолженность в размере 2 500 000 тенге и договорную неустойку 71 300 тенге."],
+    )
+
+    issues = pretrial_quality_issues(draft, _research())
+
+    assert any("2 300 000" in issue and "2 500 000" in issue for issue in issues)
+
+
+def test_matching_two_component_demand_passes() -> None:
+    assert pretrial_quality_issues(_draft(), _research()) == []

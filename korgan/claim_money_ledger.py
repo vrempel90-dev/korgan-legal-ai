@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from korgan.legal_calc import parse_amount_kzt
 
 _AMOUNT_RE = re.compile(
-    r"(?<!\d)(\d[\d\s\u00a0]*(?:[.,]\d{1,2})?)\s*(?:тенге|теңге|тг\b|₸|kzt)",
+    r"(?<!\d)(\d[\d\s ]*(?:[.,]\d{1,2})?)\s*(?:тенге|теңге|тг\b|₸|kzt)",
     re.IGNORECASE,
 )
 _STATE_DUTY_RE = re.compile(
@@ -79,20 +79,25 @@ class ClaimMoneyLedger:
 
 
 def _amount(value: str) -> int:
-    """\u041f\u0440\u043e\u0447\u0438\u0442\u0430\u0442\u044c \u0441\u0443\u043c\u043c\u0443 \u043a\u0430\u043d\u043e\u043d\u0438\u0447\u0435\u0441\u043a\u0438\u043c \u043f\u0430\u0440\u0441\u0435\u0440\u043e\u043c \u043f\u0440\u043e\u0434\u0443\u043a\u0442\u0430 \u0438\u043b\u0438 \u0432\u0435\u0440\u043d\u0443\u0442\u044c 0.
+    """Прочитать сумму каноническим парсером продукта или вернуть 0.
 
-    \u0421\u0432\u043e\u0439 \u0440\u0430\u0437\u0431\u043e\u0440 \u0437\u0434\u0435\u0441\u044c \u043f\u0440\u043e\u0441\u0442\u043e \u0432\u044b\u0440\u0435\u0437\u0430\u043b \u043f\u0440\u043e\u0431\u0435\u043b\u044b, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u043a\u0440\u0438\u0432\u0430\u044f \u0433\u0440\u0443\u043f\u043f\u0438\u0440\u043e\u0432\u043a\u0430
-    \u00ab12 34 567 \u0442\u0435\u043d\u0433\u0435\u00bb \u043f\u0440\u0435\u0432\u0440\u0430\u0449\u0430\u043b\u0430\u0441\u044c \u0432 1 234 567 \u2014 \u0447\u0438\u0441\u043b\u043e, \u043a\u043e\u0442\u043e\u0440\u043e\u0433\u043e \u0432
-    \u043f\u0440\u043e\u0441\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0439 \u0447\u0430\u0441\u0442\u0438 \u043d\u0435\u0442. \u041e\u0442\u0441\u044e\u0434\u0430 \u043e\u043d\u043e \u0443\u0445\u043e\u0434\u0438\u043b\u043e \u0432 \u0446\u0435\u043d\u0443 \u0438\u0441\u043a\u0430 \u0438 \u0432 \u0431\u0430\u0437\u0443
-    \u0433\u043e\u0441\u043f\u043e\u0448\u043b\u0438\u043d\u044b. \u041a\u0430\u043d\u043e\u043d\u0438\u0447\u0435\u0441\u043a\u0438\u0439 parse_amount_kzt \u0442\u0430\u043a\u0443\u044e \u0437\u0430\u043f\u0438\u0441\u044c \u043e\u0442\u0432\u0435\u0440\u0433\u0430\u0435\u0442, \u0430
-    \u043d\u0443\u043b\u0435\u0432\u043e\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 \u0432\u044b\u0448\u0435 \u043f\u043e \u0444\u0443\u043d\u043a\u0446\u0438\u0438 \u043f\u0435\u0440\u0435\u0432\u043e\u0434\u0438\u0442 \u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d\u0438\u0435 \u0432
-    unresolved_requests: fail-closed \u0432\u043c\u0435\u0441\u0442\u043e \u0432\u044b\u0434\u0443\u043c\u0430\u043d\u043d\u043e\u0439 \u0441\u0443\u043c\u043c\u044b.
+    Свой разбор здесь просто вырезал пробелы, поэтому кривая группировка
+    «12 34 567 тенге» превращалась в 1 234 567 — число, которого в
+    просительной части нет. Отсюда оно уходило в цену иска и в базу
+    госпошлины. Канонический parse_amount_kzt такую запись отвергает, а
+    нулевое значение выше по функции переводит требование в
+    unresolved_requests: fail-closed вместо выдуманной суммы.
     """
-    return parse_amount_kzt(f"{value} \u0442\u0435\u043d\u0433\u0435") or 0
+    return parse_amount_kzt(f"{value} тенге") or 0
 
 
-def _kind(text: str, start: int, end: int) -> str:
-    """Bind an amount to the nearest recognised remedy label."""
+def money_kind(text: str, start: int, end: int) -> str:
+    """Bind an amount to the nearest recognised remedy label.
+
+    Public because the same binding decides which component a pre-trial demand
+    line is talking about. One binder keeps the claim and the demand that
+    precedes it from disagreeing about what a number means.
+    """
     candidates: list[tuple[int, int, int, str]] = []
     for order, (code, pattern) in enumerate(_KIND_PATTERNS):
         for match in pattern.finditer(text or ""):
@@ -157,7 +162,7 @@ def _component_list(
     values: list[int],
     indices: list[int],
 ) -> list[ClaimMoneyComponent] | None:
-    kinds = [_kind(request, matches[idx].start(), matches[idx].end()) for idx in indices]
+    kinds = [money_kind(request, matches[idx].start(), matches[idx].end()) for idx in indices]
     if "other" in kinds or len(set(kinds)) != len(kinds):
         return None
     return [_component(kind, values[idx], request) for kind, idx in zip(kinds, indices, strict=True)]
@@ -191,7 +196,7 @@ def _resolved_components(request: str) -> list[ClaimMoneyComponent] | None:
         return [_component("total", values[total_index], request)]
 
     if len(matches) == 1:
-        return [_component(_kind(request, matches[0].start(), matches[0].end()), values[0], request)]
+        return [_component(money_kind(request, matches[0].start(), matches[0].end()), values[0], request)]
 
     if len(values) >= 3 and values[-1] == sum(values[:-1]):
         components = _component_list(request, matches, values, list(range(len(values) - 1)))
