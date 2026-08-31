@@ -108,3 +108,32 @@ class ResponseToClaimDraft:
         lines.extend(self.requests)
         lines.extend(self.attachments)
         return lines
+
+
+def response_to_claim_payload(draft: ResponseToClaimDraft) -> dict[str, Any]:
+    """Черновик отзыва в форме схемы — для раунда правки качества.
+
+    Живёт рядом с dataclass, чтобы новый раздел нельзя было добавить в схему,
+    забыв про раунд правки: иначе правка не видит уже собранный разбор позиции
+    истца и пересобирает его заново.
+    """
+    return {
+        "title": draft.title,
+        "court": draft.court,
+        "case_number": draft.case_number,
+        "claimant": list(draft.claimant),
+        "defendant": list(draft.defendant),
+        "claim_summary": list(draft.claim_summary),
+        "admitted_circumstances": list(draft.admitted_circumstances),
+        "disputed_circumstances": list(draft.disputed_circumstances),
+        "position": list(draft.position),
+        "calculation_review": list(draft.calculation_review),
+        "objections": [
+            {"text": item.text, "subclauses": list(item.subclauses), "prose": list(item.prose)}
+            for item in draft.objections
+        ],
+        "legal_basis": list(draft.legal_basis),
+        "requests": list(draft.requests),
+        "attachments": list(draft.attachments),
+        "verification_notes": list(draft.verification_notes),
+    }

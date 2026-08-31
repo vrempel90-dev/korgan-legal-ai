@@ -11,7 +11,8 @@ from korgan.pretrial_response import (
     normalize_pretrial_response,
 )
 from korgan.response_legal import _RESPONSE_DRAFT_SCHEMA
-from korgan.response_types import ResponseToClaimDraft
+from korgan.pretrial_response import pretrial_response_payload as _pretrial_response_payload
+from korgan.response_types import ResponseToClaimDraft, response_to_claim_payload as _response_to_claim_payload
 
 LOGGER = logging.getLogger(__name__)
 
@@ -100,19 +101,7 @@ async def _repair_pretrial_voice(
     language: str,
     issues: list[str],
 ) -> PretrialResponseDraft:
-    current = {
-        "title": draft.title,
-        "sender": draft.sender,
-        "recipient": draft.recipient,
-        "reference": draft.reference,
-        "claim_summary": draft.claim_summary,
-        "position": draft.position,
-        "objections": draft.objections,
-        "legal_basis": draft.legal_basis,
-        "response_terms": draft.response_terms,
-        "attachments": draft.attachments,
-        "verification_notes": draft.verification_notes,
-    }
+    current = _pretrial_response_payload(draft)
     payload = await service._quality_repair(  # type: ignore[attr-defined]
         schema_name="korgan_voice_pretrial_response",
         schema=_PRETRIAL_RESPONSE_SCHEMA,
@@ -142,23 +131,7 @@ async def _repair_claim_response_voice(
     language: str,
     issues: list[str],
 ) -> ResponseToClaimDraft:
-    current = {
-        "title": draft.title,
-        "court": draft.court,
-        "case_number": draft.case_number,
-        "claimant": draft.claimant,
-        "defendant": draft.defendant,
-        "claim_summary": draft.claim_summary,
-        "position": draft.position,
-        "objections": [
-            {"text": item.text, "subclauses": item.subclauses, "prose": item.prose}
-            for item in draft.objections
-        ],
-        "legal_basis": draft.legal_basis,
-        "requests": draft.requests,
-        "attachments": draft.attachments,
-        "verification_notes": draft.verification_notes,
-    }
+    current = _response_to_claim_payload(draft)
     payload = await service._quality_repair(  # type: ignore[attr-defined]
         schema_name="korgan_voice_response_to_claim",
         schema=_RESPONSE_DRAFT_SCHEMA,

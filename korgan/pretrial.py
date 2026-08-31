@@ -104,6 +104,29 @@ class PretrialDraft:
         ]
 
 
+def pretrial_payload(draft: PretrialDraft) -> dict[str, Any]:
+    """Черновик в форме payload схемы — для раунда правки качества.
+
+    Собирается рядом со схемой и dataclass намеренно: раньше такие payload
+    строились копиями внутри модулей правки, и добавление раздела в схему
+    оставляло копии позади. Раунд правки не видел уже собранный расчёт и
+    пересобирал его с нуля, из-за чего суммы между проходами расходились.
+    """
+    return {
+        "title": draft.title,
+        "sender": list(draft.sender),
+        "recipient": list(draft.recipient),
+        "facts": list(draft.facts),
+        "legal_basis": list(draft.legal_basis),
+        "calculation": list(draft.calculation),
+        "demands": list(draft.demands),
+        "deadline": draft.deadline,
+        "consequences": list(draft.consequences),
+        "attachments": list(draft.attachments),
+        "verification_notes": list(draft.verification_notes),
+    }
+
+
 def _dedupe(lines: list[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()

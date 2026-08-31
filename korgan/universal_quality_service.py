@@ -12,7 +12,7 @@ from korgan.late_interest_hotfix import _apply_verified_article_353, _today_kz
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch, VerificationStatus
 from korgan.openai_legal import _CLAIM_SCHEMA
 from korgan.response_legal import _RESPONSE_DRAFT_SCHEMA
-from korgan.response_types import ResponseToClaimDraft
+from korgan.response_types import ResponseToClaimDraft, response_to_claim_payload as _response_payload
 from korgan.robust_production_legal import _CONTRACT_SCHEMA
 from korgan.pro_claim_sections import pro_payload
 
@@ -249,23 +249,7 @@ class UniversalQualityProductionService(InstantClaimProductionService):
         if first.ready:
             return draft
 
-        current = {
-            "title": draft.title,
-            "court": draft.court,
-            "case_number": draft.case_number,
-            "claimant": draft.claimant,
-            "defendant": draft.defendant,
-            "claim_summary": draft.claim_summary,
-            "position": draft.position,
-            "objections": [
-                {"text": item.text, "subclauses": item.subclauses, "prose": item.prose}
-                for item in draft.objections
-            ],
-            "legal_basis": draft.legal_basis,
-            "requests": draft.requests,
-            "attachments": draft.attachments,
-            "verification_notes": draft.verification_notes,
-        }
+        current = _response_payload(draft)
         payload = await self._quality_repair(
             schema_name="korgan_universal_quality_response",
             schema=_RESPONSE_DRAFT_SCHEMA,

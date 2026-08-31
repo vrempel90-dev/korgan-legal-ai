@@ -112,6 +112,27 @@ class PretrialResponseDraft:
         ]
 
 
+def pretrial_response_payload(draft: PretrialResponseDraft) -> dict[str, Any]:
+    """Черновик в форме схемы ответа на претензию — для раунда правки."""
+    return {
+        "title": draft.title,
+        "sender": list(draft.sender),
+        "recipient": list(draft.recipient),
+        "reference": draft.reference,
+        "claim_summary": list(draft.claim_summary),
+        "admitted_circumstances": list(draft.admitted_circumstances),
+        "disputed_circumstances": list(draft.disputed_circumstances),
+        "position": list(draft.position),
+        "objections": list(draft.objections),
+        "calculation_review": list(draft.calculation_review),
+        "legal_basis": list(draft.legal_basis),
+        "settlement_offer": draft.settlement_offer,
+        "response_terms": list(draft.response_terms),
+        "attachments": list(draft.attachments),
+        "verification_notes": list(draft.verification_notes),
+    }
+
+
 def _dedupe(lines: list[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
