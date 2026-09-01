@@ -14,6 +14,9 @@ from __future__ import annotations
 
 from datetime import date
 
+from dataclasses import replace
+
+from korgan import late_interest_hotfix
 from korgan.claim_consistency_guard import claim_consistency_errors
 from korgan.late_interest_hotfix import _apply_verified_penalty
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
@@ -222,6 +225,37 @@ def test_a_penalty_that_disagrees_with_the_document_is_withdrawn_not_patched() -
     detail = " ".join(draft.verification_notes)
     assert "996 000 тенге" in detail and "1 020 000 тенге" in detail
     assert not any("Расхождения:" in item for item in draft.requests)
+
+
+def test_the_gate_also_guards_the_single_period_path(monkeypatch) -> None:
+    """Гейт закрывает и обычное дело, а не только погашение частями.
+
+    Долг, погашавшийся частями, считается по интервалам, и там сверка стояла
+    с самого начала. Но большинство исков — один период и одна формула, и до
+    сих пор эта ветка писала расчёт в документ вообще без сверки: ошибиться
+    она могла ровно так же, а поймать её было нечем.
+
+    Здесь исторический калькулятор подменён на возвращающий чужое число.
+    Документ пишется из него, эталон движка остаётся настоящим — и требование
+    обязано уйти юристу, а не в суд с непроверенной суммой.
+    """
+    real = late_interest_hotfix.calc_contractual_penalty
+
+    def wrong(principal, terms, start, end):
+        honest = real(principal, terms, start, end)
+        return replace(honest, amount=honest.amount + 24_000)
+
+    monkeypatch.setattr(late_interest_hotfix, "calc_contractual_penalty", wrong)
+
+    draft = _supply_draft()
+    _apply_verified_penalty(CONTRACT_CONTEXT, _supply_research(), draft, filing_date=date(2026, 8, 23))
+
+    assert draft.status is VerificationStatus.NEEDS_VERIFICATION
+    assert any("не сошёлся с текстом документа" in note for note in draft.verification_notes)
+    # Сумма расхождения не попадает в просительную часть ни в каком виде:
+    # ни «правильная», ни та, что калькулятор насчитал.
+    assert not any("1 044 000" in item for item in draft.requests)
+    assert not any("1 020 000" in item for item in draft.requests)
 
 
 # --- статья 353 ГК РК ---
