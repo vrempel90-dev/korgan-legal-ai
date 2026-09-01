@@ -1,9 +1,33 @@
 const LINK_OPEN_ERROR = 'Не удалось открыть ссылку на документ';
+const FRAME_LIFETIME_MS = 60000;
+
+/**
+ * Забирает вложение скрытой рамкой, когда всплывающее окно заблокировано.
+ *
+ * Ссылку выдаёт сервер, и запрос за ней проходит между нажатием и открытием
+ * окна: разрешение открывать окна живёт «по нажатию» и такого ожидания не
+ * переживает — Safari отзывает его сразу, Chrome через несколько секунд. Ответ
+ * сервера помечен как вложение, поэтому рамка его скачивает и никуда не уводит
+ * со страницы, а блокировщик всплывающих окон её не касается.
+ */
+function downloadInFrame(url, page) {
+  if (!page?.body || typeof page.createElement !== 'function') return false;
+  const frame = page.createElement('iframe');
+  frame.hidden = true;
+  frame.style.display = 'none';
+  frame.src = url;
+  page.body.appendChild(frame);
+  if (typeof setTimeout === 'function') {
+    setTimeout(() => { try { frame.remove(); } catch { /* страница уже сменилась */ } }, FRAME_LIFETIME_MS);
+  }
+  return true;
+}
 
 /** Открывает подписанную ссылку через нативную загрузку Telegram, если она есть. */
 export async function openSignedDocument(url, filename, {
   telegram = globalThis.window?.Telegram?.WebApp ?? null,
   openWindow = globalThis.window?.open?.bind(globalThis.window),
+  documentRef = globalThis.document ?? null,
 } = {}) {
   if (typeof telegram?.downloadFile === 'function') {
     return new Promise((resolve) => {
@@ -17,8 +41,10 @@ export async function openSignedDocument(url, filename, {
       }
     });
   }
-  if (typeof openWindow !== 'function') return false;
-  return Boolean(openWindow(url, '_blank', 'noopener,noreferrer'));
+  // Окно остаётся первым способом: истёкшую ссылку сервер объясняет прямо в
+  // открытой вкладке, а рамка такой ответ проглотила бы молча.
+  if (typeof openWindow === 'function' && openWindow(url, '_blank', 'noopener,noreferrer')) return true;
+  return downloadInFrame(url, documentRef);
 }
 
 function requireCaseId(caseId) {

@@ -149,6 +149,70 @@ test('обычный браузер открывает подписанную с
   assert.deepEqual(opened, [[ACCESS.download_url, '_blank', 'noopener,noreferrer']]);
 });
 
+/*
+ * Ссылка запрашивается у сервера, и только потом открывается окно. Между
+ * нажатием и открытием проходит запрос, а браузер разрешает открывать окна
+ * лишь «по нажатию»: Safari отзывает это разрешение сразу после ожидания,
+ * Chrome — через несколько секунд. На медленной связи `window.open` возвращает
+ * null, и пользователь получал ошибку вместо документа.
+ *
+ * Ответ сервера — вложение (Content-Disposition: attachment), поэтому его
+ * можно забрать скрытой рамкой: она не всплывающее окно, её не блокируют, а
+ * страница Mini App остаётся на месте. Рамка — запасной путь, а не основной:
+ * открытая вкладка показывает ошибку сервера, если ссылка успела истечь.
+ */
+function fakeDocument() {
+  const created = [];
+  const body = { children: [], appendChild(node) { this.children.push(node); } };
+  return {
+    created,
+    body,
+    createElement(tag) {
+      const node = { tag, style: {}, remove() { body.children = body.children.filter(item => item !== node); } };
+      created.push(node);
+      return node;
+    },
+  };
+}
+
+test('заблокированное окно не отменяет скачивание', async () => {
+  const doc = fakeDocument();
+
+  const result = await openSignedDocument(ACCESS.download_url, ACCESS.filename, {
+    telegram: null,
+    openWindow: () => null,
+    documentRef: doc,
+  });
+
+  assert.equal(result, true);
+  assert.equal(doc.created.length, 1, 'скрытая рамка для скачивания не создана');
+  assert.equal(doc.created[0].tag, 'iframe');
+  assert.equal(doc.created[0].src, ACCESS.download_url);
+  assert.deepEqual(doc.body.children, doc.created, 'рамка не добавлена на страницу');
+});
+
+test('открытое окно не дублируется скрытой рамкой', async () => {
+  const doc = fakeDocument();
+
+  await openSignedDocument(ACCESS.download_url, ACCESS.filename, {
+    telegram: null,
+    openWindow: () => ({}),
+    documentRef: doc,
+  });
+
+  assert.deepEqual(doc.created, [], 'документ скачивается дважды: окном и рамкой');
+});
+
+test('без страницы и без окна доставка честно проваливается', async () => {
+  const result = await openSignedDocument(ACCESS.download_url, ACCESS.filename, {
+    telegram: null,
+    openWindow: () => null,
+    documentRef: null,
+  });
+
+  assert.equal(result, false, 'неудача выдаётся за скачивание');
+});
+
 test('бот не может написать первым — пользователь узнаёт, что делать', async () => {
   /*
    * Бэкенд отвечает 409 с готовой инструкцией: открыть бота и нажать «Старт».
