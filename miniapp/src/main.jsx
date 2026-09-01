@@ -154,9 +154,19 @@ function App() {
   // прежним рендером: значение состояния там устарело, а ссылка — нет.
   const shownNotice = useRef('');
   const pollNotice = useRef('');
+  // Тем же способом читается и текущий экран: обработчик знает из замыкания тот
+  // экран, на котором его нажали, а ссылка — тот, где пользователь сейчас.
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
   // Любая другая запись отменяет право опроса снять сообщение: показано уже не
   // то, что он писал, и позже он снял бы чужое вместо своего.
-  const setNotice = text => { shownNotice.current = String(text || ''); pollNotice.current = ''; setNoticeState(shownNotice.current); };
+  const writeNotice = text => { shownNotice.current = String(text || ''); pollNotice.current = ''; setNoticeState(shownNotice.current); };
+  // Уведомление принадлежит экрану, на котором действие началось. Кнопки
+  // навигации не гаснут во время работы, поэтому долгий запрос легко оставить в
+  // пути и уйти; его ответ писал сообщение туда, где пользователь уже стоит —
+  // «Обработано файлов: 1» над списком дел ничего не объясняет и читается как
+  // предупреждение. Опоздавший ответ теперь молчит.
+  const setNotice = text => { if (screenRef.current === screen) writeNotice(text); };
   if (bootstrap.current === null) {
     bootstrap.current = createBootstrapSession({
       api: korganApi,
@@ -238,6 +248,9 @@ function App() {
   // Сбой опроса — сообщение самого опроса: он снимает его, как только ответ
   // снова получен, и не трогает написанного действием пользователя.
   const reportPolling = error => {
+    // Опрос своего экрана и заканчивается вместе с ним: с чужого он не пишет и
+    // не запоминает написанного — иначе позже снял бы вместо своего чужое.
+    if (screenRef.current !== screen) return;
     const update = pollingNoticeUpdate({
       shown: shownNotice.current,
       owned: pollNotice.current,
@@ -248,8 +261,10 @@ function App() {
   };
   // Уведомление принадлежит экрану, на котором возникло. Смена экрана гасит его
   // всегда, каким бы способом переход ни произошёл: иначе временная ошибка
-  // опроса переезжает на экран готового документа и противоречит ему.
-  const showScreen = next => { latestCase.current.invalidate(); setNotice(''); setScreen(next); };
+  // опроса переезжает на экран готового документа и противоречит ему. Гасит
+  // напрямую, минуя проверку экрана: переход и есть тот случай, когда чужое
+  // сообщение обязано исчезнуть.
+  const showScreen = next => { latestCase.current.invalidate(); writeNotice(''); setScreen(next); };
   const go = next => { haptic(); showScreen(next); };
   const switchLanguage = next => { setLanguage(next); persistLanguage(next); };
   const refreshCases = async () => {
@@ -425,7 +440,11 @@ function App() {
     try { const result = await korganApi.adminDocumentPayments('awaiting_admin'); setAdminOrders(result.orders || []); }
     catch (error) { setNotice(clientMessage(error)); } finally { setAdminBusy(false); }
   };
-  const openAdmin = async () => { showScreen('admin-payments'); await loadAdminOrders(); };
+  // Экран проверки оплат загружает заказы сам. Раньше их грузил переход, уже
+  // сменивший экран: запрос шёл от обработчика прежнего экрана, и сообщение о
+  // сбое загрузки считалось чужим — список молча оставался пустым.
+  const openAdmin = () => { showScreen('admin-payments'); };
+  useEffect(() => { if (view === 'admin-payments') loadAdminOrders(); }, [view]);
   const decideAdminOrder = async (orderId, approved) => {
     const question = approved ? (language === 'kk' ? 'Kaspi Pay тарихында осы төлем нақты расталды ма?' : 'Вы действительно сверили этот платёж в истории Kaspi Pay?') : (language === 'kk' ? 'Бұл төлемді қабылдамау керек пе?' : 'Отклонить эту оплату?');
     if (!window.confirm(question)) return;

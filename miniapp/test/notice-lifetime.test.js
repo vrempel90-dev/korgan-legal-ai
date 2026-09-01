@@ -10,6 +10,10 @@
  *
  * Одно событие — одно уведомление: смена экрана гасит сообщение предыдущего
  * всегда, каким бы способом переход ни произошёл.
+ *
+ * «Всегда» позже стало буквальным: обычная запись уведомления проверяет, что
+ * пишет с текущего экрана (см. `notice-ownership.test.js`), а переход обязан
+ * гасить именно чужое — и потому пишет напрямую, минуя эту проверку.
  */
 
 import test from 'node:test';
@@ -25,7 +29,7 @@ const app = readFileSync(join(src, 'main.jsx'), 'utf8');
 test('смена экрана гасит уведомление предыдущего', () => {
   const showScreen = app.slice(app.indexOf('const showScreen'), app.indexOf('const go ='));
 
-  assert.match(showScreen, /setNotice\(''\)/, 'общий переход не гасит уведомление предыдущего экрана');
+  assert.match(showScreen, /writeNotice\(''\)/, 'общий переход не гасит уведомление предыдущего экрана');
   assert.match(showScreen, /setScreen\(next\)/, 'общий переход не меняет экран');
 });
 
