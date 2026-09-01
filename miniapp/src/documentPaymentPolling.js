@@ -1,4 +1,18 @@
 /**
+ * Достаёт из ответа сервера статус оплаты или отказывается его признавать.
+ *
+ * Ответ без статуса нельзя класть в состояние экрана: экран оплаты перестаёт
+ * рисоваться, а пользователь оказывается неизвестно где и без объяснения.
+ */
+export function requireDocumentPayment(result) {
+  const payment = result?.payment;
+  if (!payment || typeof payment.status !== 'string' || !payment.status.trim()) {
+    throw new Error('Получен неполный статус оплаты');
+  }
+  return payment;
+}
+
+/**
  * Последовательно проверяет решение администратора по оплате документа.
  * Следующий запрос планируется только после ответа на предыдущий.
  */
@@ -30,10 +44,7 @@ export function startDocumentPaymentPolling({
     try {
       const result = await fetchStatus(id);
       if (stopped) return;
-      const payment = result?.payment;
-      if (!payment || typeof payment.status !== 'string') {
-        throw new Error('Получен неполный статус оплаты');
-      }
+      const payment = requireDocumentPayment(result);
       onPayment(payment);
       if (payment.status !== 'awaiting_admin') return;
     } catch (error) {

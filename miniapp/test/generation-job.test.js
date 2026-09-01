@@ -350,7 +350,7 @@ test('экран следует за состоянием задачи, а не 
 
 test('технические имена стадий не доходят до экрана', () => {
   const app = readFileSync(join(src, 'main.jsx'), 'utf8');
-  const screen = app.slice(app.indexOf("if (screen === 'generating'"), app.indexOf("if (screen === 'ready')"));
+  const screen = app.slice(app.indexOf("if (view === 'generating'"), app.indexOf("if (view === 'ready')"));
 
   assert.match(screen, /stageText\(generation\.stage, language\)/);
   assert.ok(

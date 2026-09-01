@@ -5,8 +5,14 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { startDocumentPaymentPolling } from '../src/documentPaymentPolling.js';
+import { requireDocumentPayment, startDocumentPaymentPolling } from '../src/documentPaymentPolling.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const src = join(here, '..', 'src');
 
 function scheduler() {
   const jobs = new Map();
@@ -113,6 +119,28 @@ test('следующий таймер появляется только посл
   release({ payment: { order_id: 'DOC-42', status: 'awaiting_admin' } });
   await running;
   assert.equal(options.clock.jobs.size, 1);
+});
+
+test('неполный ответ об оплате отвергается одним общим правилом', () => {
+  /*
+   * Фоновая проверка это уже делала, а ручное обновление статуса и загрузка
+   * чека — нет: они клали в состояние `undefined`, экран оплаты переставал
+   * рисоваться, и пользователь оказывался на главной без объяснения.
+   */
+  const payment = { order_id: 'DOC-42', status: 'awaiting_admin' };
+
+  assert.deepEqual(requireDocumentPayment({ payment }), payment);
+  assert.throws(() => requireDocumentPayment({ ok: true }), /неполный статус оплаты/i);
+  assert.throws(() => requireDocumentPayment(null), /неполный статус оплаты/i);
+  assert.throws(() => requireDocumentPayment({ payment: { order_id: 'DOC-42' } }), /неполный статус оплаты/i);
+});
+
+test('ручное обновление оплаты и загрузка чека проверяют ответ так же', () => {
+  const app = readFileSync(join(src, 'main.jsx'), 'utf8');
+  const unchecked = app.match(/setDocPayment\(result\.payment\)/g) || [];
+
+  assert.match(app, /requireDocumentPayment\(/, 'ответы об оплате принимаются на веру');
+  assert.deepEqual(unchecked, [], 'ответ об оплате попадает в состояние без проверки');
 });
 
 test('остановка удаляет ожидающий таймер', () => {
