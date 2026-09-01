@@ -212,7 +212,11 @@ function App() {
     return q ? DOCUMENTS.filter(item => item[language].join(' ').toLowerCase().includes(q)) : DOCUMENTS;
   }, [query, language]);
 
-  const go = next => { haptic(); setNotice(''); setScreen(next); };
+  // Уведомление принадлежит экрану, на котором возникло. Смена экрана гасит его
+  // всегда, каким бы способом переход ни произошёл: иначе временная ошибка
+  // опроса переезжает на экран готового документа и противоречит ему.
+  const showScreen = next => { setNotice(''); setScreen(next); };
+  const go = next => { haptic(); showScreen(next); };
   const switchLanguage = next => { setLanguage(next); persistLanguage(next); };
   const refreshCases = async () => { const result = await korganApi.listCases(); setCases(result.cases || []); return result.cases || []; };
 
@@ -221,15 +225,15 @@ function App() {
   const applyDocument = document => {
     setDocumentResult(document); setDocPayment(null); setGeneration(null);
     setActiveCase(prev => prev ? { ...prev, status: document.status, title: document.title, verification_status: document.verification_status, has_document: true, filing_ready: document.filing_ready, release_status: document.release_status, quality_score: document.quality_score } : prev);
-    setScreen('ready');
+    showScreen('ready');
   };
 
   const applyGenerationState = async result => {
     const state = interpretGeneration(result);
-    if (state.status === 'payment_required') { setGeneration(null); setDocPayment(state.payment); setScreen('doc-payment'); return; }
+    if (state.status === 'payment_required') { setGeneration(null); setDocPayment(state.payment); showScreen('doc-payment'); return; }
     if (state.status === 'ready') { applyDocument(state.document); try { await refreshCases(); } catch {} return; }
     if (state.status === 'idle') { setGeneration(null); return; }
-    setGeneration(state.job); setDocPayment(null); setScreen('generating');
+    setGeneration(state.job); setDocPayment(null); showScreen('generating');
   };
 
   const acceptTerms = async () => {
@@ -256,7 +260,7 @@ function App() {
       if (pendingFiles.length) {
         await korganApi.uploadMaterials(item.id, pendingFiles, ({ result: uploaded }) => { item = uploaded.case || item; setActiveCase(item); });
       }
-      setActiveCase(item); setDocumentResult(null); setDocPayment(null); resetChat(); await refreshCases(); clearLocalCaseData(); setCaseText(''); setPendingFiles([]); setScreen('case');
+      setActiveCase(item); setDocumentResult(null); setDocPayment(null); resetChat(); await refreshCases(); clearLocalCaseData(); setCaseText(''); setPendingFiles([]); showScreen('case');
     } catch (error) { setNotice(error?.message || t.down); }
     finally { setBusy(false); }
   };
@@ -266,13 +270,13 @@ function App() {
     try {
       const result = await korganApi.getCase(item.id); const detail = result.case; setActiveCase(detail); setDocumentResult(null); setDocPayment(null); setConsultPayment(null); setGeneration(null);
       const restored = (detail.conversation || []).map(entry => ({ from: entry.role === 'user' ? 'user' : 'ai', text: entry.text || '', sources: entry.sources || [] }));
-      setChat(restored.length ? restored : [{ from: 'ai', text: language === 'kk' ? 'Осы іс бойынша сұрағыңызды жазыңыз.' : 'Задайте вопрос по этому делу.' }]); setScreen('case');
+      setChat(restored.length ? restored : [{ from: 'ai', text: language === 'kk' ? 'Осы іс бойынша сұрағыңызды жазыңыз.' : 'Задайте вопрос по этому делу.' }]); showScreen('case');
       // Подготовка переживает закрытие Mini App, а выданный при запуске
       // идентификатор задачи — нет. Незавершённая работа возвращается на экран,
       // а завершённая ничего не перехватывает: дело открыли, а не документ.
       try {
         const resumed = interpretGeneration(await korganApi.caseGeneration(detail.id));
-        if (resumed.status === 'running' || resumed.status === 'failed') { setGeneration(resumed.job); setScreen('generating'); }
+        if (resumed.status === 'running' || resumed.status === 'failed') { setGeneration(resumed.job); showScreen('generating'); }
       } catch { /* дело открыто; состояние подготовки узнаётся повторным запуском */ }
     } catch (error) { setNotice(error?.message || t.down); }
     finally { setBusy(false); }
@@ -358,11 +362,11 @@ function App() {
 
   const deleteCurrentCase = async () => {
     if (!activeCase || !window.confirm(language === 'kk' ? 'Бұл істі жою керек пе?' : 'Удалить это дело и все его данные?')) return;
-    setBusy(true); try { await korganApi.deleteCase(activeCase.id); setActiveCase(null); setDocPayment(null); await refreshCases(); setScreen('cases'); } catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
+    setBusy(true); try { await korganApi.deleteCase(activeCase.id); setActiveCase(null); setDocPayment(null); await refreshCases(); showScreen('cases'); } catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
   };
   const deleteAllData = async () => {
     if (!window.confirm(language === 'kk' ? 'Барлық Mini App деректерін жою керек пе?' : 'Удалить все данные Mini App и все дела?')) return;
-    setBusy(true); try { await korganApi.deleteMyData(); clearAllLocalData(); setCases([]); setActiveCase(null); setConsent(false); setScreen('home'); } catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
+    setBusy(true); try { await korganApi.deleteMyData(); clearAllLocalData(); setCases([]); setActiveCase(null); setConsent(false); showScreen('home'); } catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
   };
 
   const loadAdminOrders = async () => {
@@ -370,7 +374,7 @@ function App() {
     try { const result = await korganApi.adminDocumentPayments('awaiting_admin'); setAdminOrders(result.orders || []); }
     catch (error) { setNotice(error?.message || t.down); } finally { setAdminBusy(false); }
   };
-  const openAdmin = async () => { setScreen('admin-payments'); await loadAdminOrders(); };
+  const openAdmin = async () => { showScreen('admin-payments'); await loadAdminOrders(); };
   const decideAdminOrder = async (orderId, approved) => {
     const question = approved ? (language === 'kk' ? 'Kaspi Pay тарихында осы төлем нақты расталды ма?' : 'Вы действительно сверили этот платёж в истории Kaspi Pay?') : (language === 'kk' ? 'Бұл төлемді қабылдамау керек пе?' : 'Отклонить эту оплату?');
     if (!window.confirm(question)) return;
