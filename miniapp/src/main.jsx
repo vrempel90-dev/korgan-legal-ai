@@ -18,6 +18,7 @@ import { getTelegramUser, getTelegramWebApp, initTelegram, haptic } from './tele
 import { PERSONAL_LAWYER_URL, personalLawyerCopy } from './personalLawyer';
 import { deliverDocument, openSignedDocument } from './documentDelivery';
 import { startDocumentPaymentPolling } from './documentPaymentPolling';
+import { interpretGeneration, startGenerationPolling } from './generationJob';
 import { createBootstrapSession } from './bootstrapSession';
 
 const TERMS_VERSION = '2026-08-16-v1';
@@ -61,6 +62,8 @@ const L = {
     dataControl: 'Данные под контролем', dataControlSub: 'Mini App использует отдельный API и не изменяет production Telegram‑агента.', runtime: 'Юридическое ядро', secure: 'Защищённое хранение', refresh: 'Обновить', support: 'Техподдержка',
     helpText: 'Создайте дело, добавьте факты и материалы, задайте вопросы AI‑юристу. Для документа KORGAN использует то же production‑юридическое ядро и quality gates, что и AI‑агент. Если включена оплата документов, генерация не начинается до оплаты и ручного подтверждения.',
     admin: 'Проверка оплат', adminTitle: 'Оплаты документов', adminEmpty: 'Чеков на ручную проверку нет', approve: 'Подтвердить', reject: 'Отклонить', adminRefresh: 'Обновить список', payer: 'Плательщик', recipient: 'Получатель', transaction: 'Операция', dateTime: 'Дата / время', anomalies: 'Аномалии AI', clientRef: 'Клиент', order: 'Заказ',
+    preparing: 'Документ готовится', preparingText: 'Работа идёт на сервере. Mini App можно закрыть — подготовка не прервётся, а состояние вернётся при следующем открытии дела.',
+    preparingFailed: 'Подготовка не завершилась', retryGeneration: 'Повторить подготовку без новой оплаты', backToCase: 'Вернуться к делу', progress: 'Готовность',
   },
   kk: {
     home: 'Басты', cases: 'Істер', lawyer: 'AI-заңгер', profile: 'Профиль', help: 'Көмек',
@@ -70,8 +73,30 @@ const L = {
     message: 'Заңдық сұрағыңызды жазыңыз…', checking: 'Құқық пен дереккөздер тексерілуде…', sources: 'Дереккөздер', freeRemaining: 'Қалған тегін кеңес', paymentNeeded: 'Тегін лимит аяқталды', consultPaymentText: 'Kaspi арқылы бір кеңес ақысын төлеп, толық чекті жүктеңіз. Автоматты тексеруден кейін осы сұрақ бойынша жауап жалғасады.', payKaspi: 'Kaspi арқылы төлеу', uploadReceipt: 'Чекті жүктеу', checkingReceipt: 'Чек тексерілуде…', retryPaid: 'Жаңа төлемсіз жауапты қайталау', paidSaved: 'Төлем сақталды. Қайта төлеу қажет емес.',
     documentPayment: 'Құжат төлемі', documentPaymentText: 'Құқықтық талдау мен Word генерациясы әлі басталған жоқ. Құжат үшін төлеңіз, чекті жүктеп, әкімшінің Kaspi Pay бойынша қолмен тексеруін күтіңіз.', waitingAdmin: 'Чек алдын ала тексеруден өтті. Kaspi Pay тарихы бойынша қолмен растау күтілуде.', paymentApproved: 'Төлем расталды', paymentApprovedText: 'Енді құқықтық талдау мен Word генерациясын бастауға болады. Қайта төлем қажет емес.', checkPayment: 'Растауды тексеру', startPaidGeneration: 'Төленген құжатты дайындау', paymentRejected: 'Төлем расталмады. Басқа толық чекті жүктеңіз.', manualCheck: 'Қолмен растау', manualCheckSub: 'AI банк төлемін түпкілікті растамайды — әкімші нақты төлемді тексереді.', filingReady: 'Заңгердің қорытынды тексеруіне дайын', preliminary: 'Алдын ала құжат', verified: 'Автоматты тексерулер аяқталды. Пайдаланар алдында құжатты заңгер тексеруі тиіс.', needsCheck: 'Тексеру қажет', quality: 'Сапа', status: 'Мәртебе', check: 'Тексеру', pricing: 'Тарифтер мен лимиттер', freePerDay: 'Күніне тегін кеңес', consultPrice: 'Лимиттен кейінгі кеңес', language: 'Тіл', deleteAll: 'Барлық деректерімді жою', dataControl: 'Деректер бақылауда', dataControlSub: 'Mini App бөлек API қолданады және production Telegram‑агентін өзгертпейді.', runtime: 'Заңдық ядро', secure: 'Қорғалған сақтау', refresh: 'Жаңарту', support: 'Техқолдау', helpText: 'Іс құрыңыз, фактілер мен материалдарды қосыңыз, AI‑заңгерге сұрақ қойыңыз. Құжат үшін KORGAN AI‑агентпен бірдей production заңдық ядро мен quality gate-терді қолданады. Құжат төлемі қосылса, генерация төлем мен қолмен растаудан бұрын басталмайды.',
     admin: 'Төлемдерді тексеру', adminTitle: 'Құжат төлемдері', adminEmpty: 'Қолмен тексерілетін чек жоқ', approve: 'Растау', reject: 'Қабылдамау', adminRefresh: 'Тізімді жаңарту', payer: 'Төлеуші', recipient: 'Алушы', transaction: 'Операция', dateTime: 'Күні / уақыты', anomalies: 'AI аномалиялары', clientRef: 'Клиент', order: 'Тапсырыс',
+    preparing: 'Құжат дайындалуда', preparingText: 'Жұмыс серверде жүріп жатыр. Mini App-ты жабуға болады — дайындау тоқтамайды, ал күйі істі келесі ашқанда қайта көрінеді.',
+    preparingFailed: 'Дайындау аяқталмады', retryGeneration: 'Жаңа төлемсіз дайындауды қайталау', backToCase: 'Іске оралу', progress: 'Дайындық',
   },
 };
+
+// Сервер называет стадии своими служебными именами. Клиенту показывается то,
+// что происходит с его документом, а не название шага конвейера.
+const STAGE_TEXT = {
+  ru: {
+    queued: 'Дело принято в работу', starting: 'Материалы дела подготовлены к анализу',
+    legal_research: 'Проверяю право Республики Казахстан и источники',
+    quality_control: 'Проверяю факты, суммы и требования документа',
+    document_render: 'Формирую документ Word', completed: 'Документ готов',
+    interrupted: 'Работа прервалась и может быть продолжена', failed: 'Подготовка не завершилась',
+  },
+  kk: {
+    queued: 'Іс жұмысқа қабылданды', starting: 'Іс материалдары талдауға дайындалды',
+    legal_research: 'Қазақстан Республикасының құқығы мен дереккөздер тексерілуде',
+    quality_control: 'Фактілер, сомалар және құжат талаптары тексерілуде',
+    document_render: 'Word құжаты жасалуда', completed: 'Құжат дайын',
+    interrupted: 'Жұмыс үзілді және жалғастырылуы мүмкін', failed: 'Дайындау аяқталмады',
+  },
+};
+const stageText = (stage, lang) => STAGE_TEXT[lang]?.[stage] || STAGE_TEXT[lang]?.queued || '';
 
 const money = value => `${Number(value || 0).toLocaleString('ru-RU')} ₸`;
 const docText = (id, lang) => DOCUMENTS.find(x => x.id === id)?.[lang] || ['KORGAN Legal AI', ''];
@@ -110,6 +135,7 @@ function App() {
   const [receiptBusy, setReceiptBusy] = useState(false);
   const [documentResult, setDocumentResult] = useState(null);
   const [docPayment, setDocPayment] = useState(null);
+  const [generation, setGeneration] = useState(null);
   const [adminOrders, setAdminOrders] = useState([]);
   const [adminBusy, setAdminBusy] = useState(false);
   const bootstrap = useRef(null);
@@ -158,6 +184,19 @@ function App() {
       onError: error => setNotice(error?.message || t.down),
     });
   }, [screen, docPayment?.status, docPayment?.order_id, t.down]);
+  // Опрос привязан к задаче, а не к процентам: обновление прогресса не должно
+  // перезапускать проверку, иначе на экране одновременно жили бы два опроса.
+  useEffect(() => {
+    if (screen !== 'generating' || !generation?.jobId || generation.status === 'failed') return undefined;
+    return startGenerationPolling({
+      jobId: generation.jobId,
+      fetchStatus: korganApi.generationStatus,
+      onProgress: setGeneration,
+      onReady: document => { applyDocument(document); refreshCases().catch(() => {}); },
+      onFailed: setGeneration,
+      onError: error => setNotice(error?.message || t.down),
+    });
+  }, [screen, generation?.jobId, generation?.status]);
 
   const filteredDocuments = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -167,6 +206,22 @@ function App() {
   const go = next => { haptic(); setNotice(''); setScreen(next); };
   const switchLanguage = next => { setLanguage(next); persistLanguage(next); };
   const refreshCases = async () => { const result = await korganApi.listCases(); setCases(result.cases || []); return result.cases || []; };
+
+  // Готовность объявляется только описанием реально сохранённого документа:
+  // экран выпуска нельзя открыть на описании ещё идущей задачи.
+  const applyDocument = document => {
+    setDocumentResult(document); setDocPayment(null); setGeneration(null);
+    setActiveCase(prev => prev ? { ...prev, status: document.status, title: document.title, verification_status: document.verification_status, has_document: true, filing_ready: document.filing_ready, release_status: document.release_status, quality_score: document.quality_score } : prev);
+    setScreen('ready');
+  };
+
+  const applyGenerationState = async result => {
+    const state = interpretGeneration(result);
+    if (state.status === 'payment_required') { setGeneration(null); setDocPayment(state.payment); setScreen('doc-payment'); return; }
+    if (state.status === 'ready') { applyDocument(state.document); try { await refreshCases(); } catch {} return; }
+    if (state.status === 'idle') { setGeneration(null); return; }
+    setGeneration(state.job); setDocPayment(null); setScreen('generating');
+  };
 
   const acceptTerms = async () => {
     setBusy(true); setNotice('');
@@ -200,9 +255,16 @@ function App() {
   const openCase = async item => {
     setBusy(true); setNotice('');
     try {
-      const result = await korganApi.getCase(item.id); const detail = result.case; setActiveCase(detail); setDocumentResult(null); setDocPayment(null); setConsultPayment(null);
+      const result = await korganApi.getCase(item.id); const detail = result.case; setActiveCase(detail); setDocumentResult(null); setDocPayment(null); setConsultPayment(null); setGeneration(null);
       const restored = (detail.conversation || []).map(entry => ({ from: entry.role === 'user' ? 'user' : 'ai', text: entry.text || '', sources: entry.sources || [] }));
       setChat(restored.length ? restored : [{ from: 'ai', text: language === 'kk' ? 'Осы іс бойынша сұрағыңызды жазыңыз.' : 'Задайте вопрос по этому делу.' }]); setScreen('case');
+      // Подготовка переживает закрытие Mini App, а выданный при запуске
+      // идентификатор задачи — нет. Незавершённая работа возвращается на экран,
+      // а завершённая ничего не перехватывает: дело открыли, а не документ.
+      try {
+        const resumed = interpretGeneration(await korganApi.caseGeneration(detail.id));
+        if (resumed.status === 'running' || resumed.status === 'failed') { setGeneration(resumed.job); setScreen('generating'); }
+      } catch { /* дело открыто; состояние подготовки узнаётся повторным запуском */ }
     } catch (error) { setNotice(error?.message || t.down); }
     finally { setBusy(false); }
   };
@@ -246,15 +308,19 @@ function App() {
     catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
   };
 
+  // Запуск подготовки отвечает описанием задачи, а не готовым документом:
+  // работа продолжается на сервере, и экран следует за её состоянием.
   const generateDocument = async () => {
     if (!activeCase || busy) return; setBusy(true); setNotice('');
-    try {
-      const result = await korganApi.generateDocument(activeCase.id, activeCase.document_type, activeCase.language || language);
-      if (result?.payment_required && result?.payment) { setDocPayment(result.payment); setScreen('doc-payment'); return; }
-      setDocumentResult(result); setDocPayment(null);
-      setActiveCase(prev => ({ ...prev, status: result.status, title: result.title, verification_status: result.verification_status, has_document: true, filing_ready: result.filing_ready, release_status: result.release_status, quality_score: result.quality_score }));
-      await refreshCases(); setScreen('ready');
-    } catch (error) { setNotice(error?.message || t.down); }
+    try { await applyGenerationState(await korganApi.generateDocument(activeCase.id, activeCase.document_type, activeCase.language || language)); }
+    catch (error) { setNotice(error?.message || t.down); }
+    finally { setBusy(false); }
+  };
+  // Повтор берёт ту же оплаченную задачу, поэтому второй оплаты не возникает.
+  const retryGeneration = async () => {
+    if (!generation?.jobId || !generation.retryable || busy) return; setBusy(true); setNotice('');
+    try { await applyGenerationState(await korganApi.retryGeneration(generation.jobId)); }
+    catch (error) { setNotice(error?.message || t.down); }
     finally { setBusy(false); }
   };
   const uploadDocReceipt = async event => {
@@ -338,6 +404,22 @@ function App() {
   if (screen === 'doc-payment' && docPayment) {
     const awaiting = docPayment.status === 'awaiting_admin'; const approved = docPayment.status === 'approved';
     return <div className="app-shell"><Header title={t.documentPayment} back="case"/><main className="page payment-page"><div className={`payment-stage-icon ${approved ? 'approved' : awaiting ? 'waiting' : ''}`}>{approved ? <CheckCircle2 size={38}/> : awaiting ? <Clock3 size={38}/> : <Banknote size={38}/>}</div><span className="section-kicker">KORGAN PREPAY · #{docPayment.order_id}</span><h1>{approved ? t.paymentApproved : awaiting ? t.manualCheck : t.documentPayment}</h1><p>{approved ? t.paymentApprovedText : awaiting ? t.waitingAdmin : t.documentPaymentText}</p><div className="payment-amount centered">{money(docPayment.amount_kzt)}</div><section className="analysis-card manual-card"><div className="card-head"><div><span className="section-kicker">SECURITY</span><h2>{t.manualCheck}</h2></div><ClipboardCheck size={22}/></div><p>{t.manualCheckSub}</p></section>{docPayment.decision_note && !approved && !awaiting && <div className="warning-note"><XCircle size={17}/>{t.paymentRejected}</div>}{notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}{!approved && !awaiting && <><button className="primary wide" onClick={() => window.open(docPayment.kaspi_url, '_blank', 'noopener,noreferrer')}><CreditCard size={18}/>{t.payKaspi}<ExternalLink size={15}/></button><label className="secondary wide receipt-upload"><Paperclip size={18}/>{receiptBusy ? t.checkingReceipt : t.uploadReceipt}<input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" disabled={receiptBusy} onChange={uploadDocReceipt}/></label></>}{awaiting && <button className="secondary wide" disabled={busy} onClick={refreshDocPayment}><RefreshCw size={18}/>{t.checkPayment}</button>}{approved && <button className="primary wide" disabled={busy} onClick={generateDocument}>{busy ? <LoaderCircle className="spin" size={18}/> : <Sparkles size={18}/>} {busy ? t.generating : t.startPaidGeneration}</button>}</main></div>;
+  }
+
+  if (screen === 'generating' && generation) {
+    const failed = generation.status === 'failed';
+    return <div className="app-shell"><Header title={t.preparing} back="case"/><main className="page ready-page">
+      <div className={`success-ring ${failed ? '' : 'preliminary-ring'}`}>{failed ? <ShieldAlert size={44}/> : <LoaderCircle className="spin" size={44}/>}</div>
+      <h1>{failed ? t.preparingFailed : t.preparing}</h1>
+      <p>{failed ? (generation.error || t.down) : t.preparingText}</p>
+      <div role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={generation.progress} aria-label={stageText(generation.stage, language)} style={{ width: '100%', height: 8, borderRadius: 99, overflow: 'hidden', background: 'rgba(255,255,255,0.12)' }}>
+        <span style={{ display: 'block', height: '100%', width: `${generation.progress}%`, background: 'currentColor', transition: 'width .4s ease' }}/>
+      </div>
+      <div className="release-grid"><div><span>{t.status}</span><strong>{stageText(generation.stage, language)}</strong></div><div><span>{t.progress}</span><strong>{generation.progress}%</strong></div></div>
+      {notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}
+      {failed && generation.retryable && <button className="primary wide" disabled={busy} onClick={retryGeneration}>{busy ? <LoaderCircle className="spin" size={18}/> : <RefreshCw size={18}/>} {t.retryGeneration}</button>}
+      <button className="secondary wide" onClick={() => go('case')}><ArrowLeft size={18}/>{t.backToCase}</button>
+    </main></div>;
   }
 
   if (screen === 'ready') { const ready = Boolean(documentResult?.filing_ready); return <div className="app-shell"><Header title={t.docReady} back="case"/><main className="page ready-page"><div className={`success-ring ${ready ? '' : 'preliminary-ring'}`}>{ready ? <CheckCircle2 size={48}/> : <ShieldAlert size={44}/>}</div><span className={`release-badge ${ready ? 'ready' : 'preliminary'}`}>{ready ? t.filingReady : t.preliminary}</span><h1>{documentResult?.title || t.docReady}</h1><p>{ready ? t.verified : t.needsCheck}</p><div className="release-grid"><div><span>{t.quality}</span><strong>{typeof documentResult?.quality_score === 'number' ? `${documentResult.quality_score}/10` : '—'}</strong></div><div><span>{t.check}</span><strong>{documentResult?.release_status || '—'}</strong></div></div>{(documentResult?.verification_notes?.length > 0 || documentResult?.quality_issues?.length > 0) && <div className="warning-note left-note"><AlertTriangle size={17}/><span>{[...(documentResult.verification_notes || []), ...(documentResult.quality_issues || [])].filter((v, i, a) => a.indexOf(v) === i).join(' · ')}</span></div>}<div className="document-preview"><div className="paper-lines"><b>{documentResult?.title || 'KORGAN LEGAL AI'}</b><span/><span/><span/><span/><span/></div></div>{notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}<button className="primary wide" disabled={!activeCase || busy} onClick={deliverActiveDocument}>{busy ? <LoaderCircle className="spin" size={18}/> : <Download size={18}/>} {t.download}</button><button className="lawyer-btn wide" onClick={() => window.open(WHATSAPP_URL, '_blank', 'noopener,noreferrer')}><ShieldCheck size={18}/>{t.liveReview}</button></main></div>; }

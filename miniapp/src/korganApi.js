@@ -81,14 +81,18 @@ export const korganApi = {
     }
     return results;
   },
-  generateDocument: async (caseId, documentType = 'claim', language = 'ru') => {
-    const result = await request('/miniapp/documents/generate', {
-      method: 'POST',
-      body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
-      timeoutMs: 180000,
-    });
-    return result?.payment_required ? result : requireProfessionalDocument(result);
-  },
+  // Запуск подготовки отвечает описанием задачи: сам документ готовится на
+  // сервере и приходит отдельным опросом состояния.
+  generateDocument: (caseId, documentType = 'claim', language = 'ru') => request('/miniapp/documents/generate', {
+    method: 'POST',
+    body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
+  }),
+  generationStatus: (jobId) => request(`/miniapp/documents/generation/${encodeURIComponent(jobId)}`),
+  retryGeneration: (jobId) => request(`/miniapp/documents/generation/${encodeURIComponent(jobId)}/retry`, {
+    method: 'POST',
+  }),
+  // Дело переживает закрытие Mini App, а идентификатор задачи — нет.
+  caseGeneration: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/generation`),
   uploadDocumentReceipt,
   documentPaymentStatus: (orderId) => request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}`),
   adminDocumentPayments: (status = 'awaiting_admin') => request(`/miniapp/admin/document-payments?status=${encodeURIComponent(status)}`),
