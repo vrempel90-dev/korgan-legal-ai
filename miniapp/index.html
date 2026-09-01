@@ -5,53 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#090b0d" />
     <meta name="color-scheme" content="dark" />
-    <meta name="description" content="KORGAN Legal AI — ваш AI Юрист в Республике Казахстан" />
+    <meta name="description" content="KORGAN Legal AI — профессиональный AI-юрист Республики Казахстан" />
     <title>KORGAN Legal AI</title>
-    <script>
-      (function () {
-        try {
-          var raw = String(location.hash || '').replace(/^#/, '');
-          var query = raw.indexOf('?') >= 0 ? raw.slice(raw.indexOf('?') + 1) : raw;
-          var initData = new URLSearchParams(query).get('tgWebAppData') || '';
-          if (initData) window.__KORGAN_TG_INIT_DATA__ = initData;
-        } catch (_) {}
-
-        function signalTelegramReady() {
-          try {
-            if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
-              window.TelegramWebviewProxy.postEvent('web_app_ready', '{}');
-              return true;
-            }
-          } catch (_) {}
-          try {
-            if (window.external && typeof window.external.notify === 'function') {
-              window.external.notify(JSON.stringify(['web_app_ready', {}]));
-              return true;
-            }
-          } catch (_) {}
-          try {
-            if (window.parent && window.parent !== window) {
-              window.parent.postMessage(JSON.stringify({ eventType: 'web_app_ready', eventData: {} }), '*');
-              return true;
-            }
-          } catch (_) {}
-          return false;
-        }
-
-        signalTelegramReady();
-        [50, 150, 350, 700, 1200, 2000].forEach(function (delay) {
-          setTimeout(signalTelegramReady, delay);
-        });
-        window.addEventListener('DOMContentLoaded', signalTelegramReady, { once: true });
-        window.addEventListener('load', signalTelegramReady, { once: true });
-
-        window.__korganTelegramSdkReady = function () {
-          signalTelegramReady();
-          try { window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.ready(); } catch (_) {}
-          try { window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.expand(); } catch (_) {}
-        };
-      })();
-    </script>
     <link rel="stylesheet" href="/src/professional.css" />
     <link rel="stylesheet" href="/src/personal-lawyer.css" />
     <link rel="stylesheet" href="/src/korgan-site-typography.css" />
@@ -59,14 +14,10 @@
     <link rel="stylesheet" href="/src/ux-cleanup.css" />
     <link rel="stylesheet" href="/src/nav-cleanup.css" />
     <link rel="stylesheet" href="/src/korgan-brand.css" />
-    <script async src="https://telegram.org/js/telegram-web-app.js?63" onload="window.__korganTelegramSdkReady && window.__korganTelegramSdkReady()"></script>
-    <script src="/payment-auto-ui.js"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/document-access-ui.js"></script>
     <script type="module" src="/src/main.jsx"></script>
-    <script type="module" src="/src/personal-lawyer.js"></script>
-    <script src="/client-safe-ui.js?v=restore-1700-nonblocking-2"></script>
   </body>
 </html>

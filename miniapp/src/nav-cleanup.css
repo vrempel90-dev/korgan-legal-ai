@@ -1,35 +1,10 @@
-/* Stability only. Preserve the current KORGAN Telegram design. */
+/* Bottom navigation cleanup: consultation remains available from the home card. */
 .bottom-nav {
-  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-  background: #090b0d !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
 }
 
-/* Current product navigation is: Главная / Дела / Консультация / Профиль.
-   Help remains intentionally hidden; do not hide the consultation tab. */
-.bottom-nav button {
-  display: grid !important;
-}
-.bottom-nav button:nth-child(3) {
-  display: grid !important;
-}
+/* 3 = AI-юрист, 4 = Помощь (already intentionally hidden in the current UI). */
+.bottom-nav button:nth-child(3),
 .bottom-nav button:nth-child(4) {
   display: none !important;
-}
-.bottom-nav button:nth-child(5) {
-  display: grid !important;
-}
-
-/* Avoid GPU filter/repaint shimmer in Telegram WebView. */
-.bottom-nav button.active svg {
-  filter: none !important;
-}
-
-/* The chat composer sits immediately above the fixed navigation.
-   Keep it opaque/static as well so the two fixed layers do not repaint each other. */
-.composer {
-  background: #090b0d !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
 }

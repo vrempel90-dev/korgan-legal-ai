@@ -20,10 +20,10 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: miniapp/package.json
+          cache-dependency-path: miniapp/package-lock.json
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Build MiniApp
         run: npm run build
-      - name: Check payment and stable document-access UX
-        run: node ui-stability-smoke.mjs
+      - name: Run frontend regression suite
+        run: npm test
