@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import os
 import time
 from typing import Any
 
@@ -233,6 +234,12 @@ async def health() -> dict[str, Any]:
         # подтвердить, что запрос ушёл в Anthropic, а не тихо откатился на
         # OpenAI из-за неустановленного SDK, было бы нечем.
         "ai_provider": settings.active_ai_provider,
+        # Какой именно commit отвечает. Railway подставляет SHA сам при сборке
+        # из GitHub. Без этого поля «деплой заехал» проверялось по тому, что
+        # сервис вообще отвечает, — но так неотличимы новая версия и живая
+        # старая, если ответ /health от изменений не зависит. Пустая строка
+        # означает запуск не из Railway (локально, в тестах), а не сбой.
+        "commit": os.getenv("RAILWAY_GIT_COMMIT_SHA", ""),
         # Фактический расход, измеренный по ответам провайдера. До этого
         # monthly_ai_budget_usd попадал только в текст лог-сообщения, и
         # «бюджета хватит на четыре месяца» нельзя было ни подтвердить, ни

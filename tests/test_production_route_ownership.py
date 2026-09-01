@@ -35,6 +35,29 @@ def test_no_miniapp_route_is_registered_twice() -> None:
     assert duplicates == {}
 
 
+def test_health_names_the_commit_it_runs() -> None:
+    """`/health` боевого приложения обязан сообщать развёрнутый commit.
+
+    Проверка деплоя снаружи ничем другим не располагает: остальные поля
+    /health от версии кода не зависят, поэтому «сервис отвечает» одинаково
+    выглядит и для нового деплоя, и для живой старой версии, которую новый
+    билд не заменил. SHA подставляет Railway при сборке из GitHub; пустая
+    строка означает запуск не из Railway, а не сбой, — но ключ обязан быть
+    всегда, иначе внешняя проверка не отличит его отсутствие от старого SHA.
+    """
+    import os
+
+    from fastapi.testclient import TestClient
+
+    from korgan.miniapp_api_recovery_cors import app
+
+    with TestClient(app) as client:
+        health = client.get("/health").json()
+
+    assert "commit" in health
+    assert health["commit"] == os.getenv("RAILWAY_GIT_COMMIT_SHA", "")
+
+
 def test_document_generation_cannot_bypass_payment_or_persisted_jobs() -> None:
     """Прямая генерация v2/v5 не должна обходить платёж и очередь задач."""
     from korgan import miniapp_api_v2, miniapp_api_v5, miniapp_generation_api
