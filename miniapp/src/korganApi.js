@@ -1,39 +1,16 @@
 import { requireProfessionalDocument, requireProfessionalRuntime } from './runtimeReadiness.js';
+import { createApiTransport } from './apiTransport.js';
 
 const API_BASE = import.meta.env.VITE_KORGAN_API_BASE || '';
+const request = createApiTransport({
+  baseUrl: API_BASE,
+  getTelegramInitData: () => window.Telegram?.WebApp?.initData || '',
+});
 
 const LEGACY_UPLOAD_ONLY_DESCRIPTIONS = new Set([
   'Дело создано на основании загруженных материалов. Факты следует брать только из документов, загруженных пользователем.',
   'Іс жүктелген материалдар негізінде құрылды. Фактілерді тек пайдаланушы жүктеген құжаттардан алу керек.',
 ]);
-
-async function request(path, options = {}) {
-  if (!API_BASE) throw new Error('KORGAN_API_NOT_CONNECTED');
-
-  const tg = window.Telegram?.WebApp;
-  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
-  const headers = {
-    ...(!isFormData && options.body ? { 'Content-Type': 'application/json' } : {}),
-    ...(options.headers || {}),
-  };
-
-  if (tg?.initData) headers['X-Telegram-Init-Data'] = tg.initData;
-
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  const contentType = response.headers.get('content-type') || '';
-  const payload = contentType.includes('application/json')
-    ? await response.json().catch(() => ({}))
-    : await response.text().catch(() => '');
-
-  if (!response.ok) {
-    const detail = typeof payload === 'object' ? (payload?.detail || payload?.message) : payload;
-    const error = new Error(detail || `KORGAN_API_${response.status}`);
-    error.status = response.status;
-    error.payload = payload;
-    throw error;
-  }
-  return payload;
-}
 
 async function uploadMaterial(caseId, file) {
   const body = new FormData();
@@ -108,6 +85,7 @@ export const korganApi = {
     const result = await request('/miniapp/documents/generate', {
       method: 'POST',
       body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
+      timeoutMs: 180000,
     });
     return result?.payment_required ? result : requireProfessionalDocument(result);
   },
