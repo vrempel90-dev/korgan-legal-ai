@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import uuid
@@ -13,6 +14,11 @@ from korgan import miniapp_document_payments as document_store
 
 LOGGER = logging.getLogger(__name__)
 _POOL: asyncpg.Pool | None = None
+# Как часто идущая задача подтверждает, что жива, и через сколько молчания её
+# считают прерванной. Аренда заведомо длиннее нескольких пропущенных отметок,
+# иначе живую работу объявили бы прерванной из-за одной медленной записи.
+_HEARTBEAT_SECONDS = 20.0
+_LEASE_SECONDS = 120.0
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS korgan_miniapp_generation_jobs (
@@ -104,6 +110,15 @@ async def close_generation_job_store() -> None:
 
 
 async def recover_interrupted_jobs(pool: Any) -> None:
+    """Объявить прерванными только молчащие задачи.
+
+    Обновление с перекрытием версий и вторая реплика поднимаются, пока соседний
+    процесс ещё готовит документ. Объявлять прерванной любую незавершённую
+    задачу значило бы сказать клиенту «подготовка не завершилась» о работе,
+    которая идёт: он нажал бы повтор, и вторая генерация писала бы документ в то
+    же дело одновременно с первой. Живая задача о себе сообщает, поэтому
+    прерванной считается та, что молчит дольше аренды.
+    """
     await pool.execute(
         """
         UPDATE korgan_miniapp_generation_jobs
@@ -111,7 +126,42 @@ async def recover_interrupted_jobs(pool: Any) -> None:
             error_detail='Сервис перезапустился во время подготовки документа. Запустите повтор без новой оплаты.',
             finished_at=NOW(), updated_at=NOW()
         WHERE status IN ('queued', 'running')
+          AND updated_at < NOW() - make_interval(secs => $1::double precision)
+        """,
+        _LEASE_SECONDS,
+    )
+
+
+async def claim_job(job_id: str) -> GenerationJob | None:
+    """Забрать задачу в работу переходом `queued -> running` в самой базе.
+
+    Реестр запущенных задач живёт в памяти процесса и потому различает только
+    двойное нажатие внутри одного процесса. Единственная точка, где два процесса
+    договариваются, — это строка задачи: работу продолжает тот, чей переход
+    состояния прошёл, остальные не начинают её вовсе.
+    """
+    row = await _require_pool().fetchrow(
         """
+        UPDATE korgan_miniapp_generation_jobs
+        SET status='running', started_at=COALESCE(started_at, NOW()), updated_at=NOW()
+        WHERE id=$1 AND status='queued'
+        RETURNING id, payment_order_id, user_key, case_id,
+                  status, stage, progress, error_detail
+        """,
+        job_id,
+    )
+    return None if row is None else _from_row(row)
+
+
+async def touch_job(job_id: str) -> None:
+    """Признак жизни задачи: обновляет только отметку времени."""
+    await _require_pool().execute(
+        """
+        UPDATE korgan_miniapp_generation_jobs
+        SET updated_at=NOW()
+        WHERE id=$1 AND status='running'
+        """,
+        job_id,
     )
 
 
@@ -318,6 +368,22 @@ async def _claim_payment(job: GenerationJob) -> None:
     )
 
 
+async def _heartbeat(job_id: str) -> None:
+    """Пока задача идёт, она подтверждает это отметкой времени.
+
+    Сбой отдельной отметки не должен ронять подготовку документа: молчание
+    дороже одной пропущенной записи только после истечения аренды.
+    """
+    while True:
+        await asyncio.sleep(_HEARTBEAT_SECONDS)
+        try:
+            await touch_job(job_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.warning("Mini App generation heartbeat failed job_id=%s", job_id)
+
+
 async def run_job(
     job: GenerationJob,
     *,
@@ -335,6 +401,14 @@ async def run_job(
             progress=progress,
         )
 
+    # Работу продолжает тот, кто выиграл переход состояния в базе. Проигравший
+    # молча уходит: чужую задачу нельзя ни выполнить второй раз, ни пометить
+    # упавшей — она идёт в другом процессе.
+    if await claim_job(job.id) is None:
+        LOGGER.info("Mini App generation job already claimed job_id=%s", job.id)
+        return
+
+    heartbeat = asyncio.create_task(_heartbeat(job.id), name=f"korgan-generation-alive-{job.id}")
     try:
         await on_stage("starting", 5)
         result = await _generate_payload(
@@ -374,3 +448,5 @@ async def run_job(
         )
         LOGGER.exception("Mini App generation job failed job_id=%s", job.id)
         raise
+    finally:
+        heartbeat.cancel()

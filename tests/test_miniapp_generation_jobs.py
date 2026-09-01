@@ -171,7 +171,12 @@ def test_run_job_persists_real_stages_and_marks_success_after_document_save(monk
         consumed.append(order_id)
         return True
 
+    async def fake_claim(job_id: str):
+        assert job_id == job.id
+        return job
+
     monkeypatch.setattr(jobs, "_POOL", pool)
+    monkeypatch.setattr(jobs, "claim_job", fake_claim)
     monkeypatch.setattr(jobs, "update_job", fake_update)
     monkeypatch.setattr(jobs, "_generate_payload", fake_generate)
     monkeypatch.setattr(jobs.document_store, "consume_document_order", fake_consume)
@@ -226,6 +231,10 @@ def test_failed_job_keeps_payment_retryable_and_persists_error(monkeypatch) -> N
     async def forbidden_consume(*args, **kwargs):
         raise AssertionError("failed generation must not consume payment")
 
+    async def fake_claim(_job_id: str):
+        return job
+
+    monkeypatch.setattr(jobs, "claim_job", fake_claim)
     monkeypatch.setattr(jobs, "_POOL", pool)
     monkeypatch.setattr(jobs, "update_job", fake_update)
     monkeypatch.setattr(jobs, "_generate_payload", fail_generate)

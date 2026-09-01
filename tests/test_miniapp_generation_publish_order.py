@@ -63,6 +63,11 @@ _RESULT = {
 
 
 def _install(monkeypatch, *, log: list[str], consume: bool, order_status: str = "approved"):
+    async def fake_claim(_job_id: str):
+        # Работу начинает только выигравший переход `queued -> running`.
+        log.append("claim")
+        return _job()
+
     async def fake_update(_job_id: str, **values):
         log.append(f"update:{values.get('status')}")
 
@@ -79,6 +84,7 @@ def _install(monkeypatch, *, log: list[str], consume: bool, order_status: str = 
         log.append("order")
         return SimpleNamespace(id=order_id, status=order_status, user_key="user-key")
 
+    monkeypatch.setattr(jobs, "claim_job", fake_claim)
     monkeypatch.setattr(jobs, "update_job", fake_update)
     monkeypatch.setattr(jobs, "_generate_payload", fake_generate)
     monkeypatch.setattr(jobs.document_store, "consume_document_order", fake_consume)
@@ -105,6 +111,7 @@ def test_payment_is_claimed_before_the_document_becomes_visible(monkeypatch) -> 
 
     _run(store)
 
+    assert log[0] == "claim", "работа началась до захвата задачи"
     assert log.index("consume") < log.index("save")
     assert log.index("save") < log.index("update:succeeded")
     assert store.saved[-1]["cases"]["case-1"]["document_base64"] == "ZmlsZQ=="

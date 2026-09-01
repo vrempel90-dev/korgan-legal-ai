@@ -112,6 +112,10 @@ def test_blocked_release_never_stores_document_and_keeps_payment(monkeypatch) ->
     async def forbidden_consume(*args, **kwargs):
         raise AssertionError("заблокированный выпуск не должен списывать оплату")
 
+    async def fake_claim(_job_id: str):
+        return job
+
+    monkeypatch.setattr(jobs, "claim_job", fake_claim)
     monkeypatch.setattr(jobs, "update_job", fake_update)
     monkeypatch.setattr(jobs.document_store, "consume_document_order", forbidden_consume)
 
