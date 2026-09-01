@@ -10,6 +10,7 @@ from korgan.contractual_penalty import (
     calc_contractual_penalty,
     parse_contractual_penalty_terms,
 )
+from korgan.partial_payments import find_partial_payments
 from korgan.legal_calc import (
     NEEDS_RATE_MARKER,
     calc_late_payment_penalty,
@@ -133,6 +134,17 @@ ARTICLE_353_MISSING_NOTE = (
 DUE_DATE_MISSING_NOTE = (
     "Для расчёта неустойки по статье 353 не удалось однозначно установить срок исполнения; "
     "требуется проверить дату начала просрочки."
+)
+PARTIAL_PAYMENT_NOTE = (
+    "В материалах дела указана частичная оплата долга. Неустойка начисляется на остаток "
+    "задолженности за каждый отрезок периода отдельно, поэтому расчёт одной суммой за весь "
+    "период дал бы завышенное требование; расчёт по интервалам требует проверки дат и сумм "
+    "платежей юристом."
+)
+PARTIAL_PAYMENT_UNCLEAR_NOTE = (
+    "В материалах дела упоминается частичная оплата, но её дату и сумму нельзя однозначно "
+    "установить. Пока платежи не подтверждены, размер неустойки не рассчитывается: "
+    "начисление на первоначальный долг завысило бы требование."
 )
 CONTRACT_DUE_DATE_MISSING_NOTE = (
     "Договорная неустойка заявлена и её ставка распознана, но дату начала просрочки нельзя "
@@ -550,6 +562,19 @@ def _apply_verified_penalty(
     requested = _explicit_penalty_requested(case_context)
     if not requested:
         _strip_penalty_everywhere(draft)
+        _recompute_claim_price_and_duty(draft, case_context)
+        return
+
+    # Частичная оплата разрывает период просрочки: до неё неустойка идёт от
+    # полного долга, после — от остатка. Обе имеющиеся формулы считают одну
+    # сумму по одной ставке за один отрезок, поэтому платёж середины периода
+    # в расчёт не попадает и требование выходит завышенным — молча, ровно то
+    # число, которое первым пересчитает ответчик.
+    payments = find_partial_payments(case_context)
+    if payments.blocks_single_interval_calculation:
+        note = PARTIAL_PAYMENT_NOTE if payments.payments and not payments.unparsed else PARTIAL_PAYMENT_UNCLEAR_NOTE
+        _drop_article_353_lines(draft)
+        _mark_penalty_for_verification(draft, note, case_context=case_context)
         _recompute_claim_price_and_duty(draft, case_context)
         return
 

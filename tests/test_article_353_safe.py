@@ -96,3 +96,37 @@ def test_explicit_article_353_claim_is_calculated_and_added_to_claim_price() -> 
     assert "846 992 тенге" in draft.price_of_claim
     assert "8 470 тенге" in draft.state_duty
     assert sum("353" in item for item in draft.requests) == 1
+
+
+def test_partial_payment_blocks_the_single_formula_penalty() -> None:
+    """Долг, погашенный частично, нельзя считать одной формулой за весь период.
+
+    Неустойка после платежа начисляется на остаток. Прежний расчёт брал одну
+    сумму и все дни периода, поэтому платёж середины периода в него не попадал
+    и требование выходило завышенным — с виду обычное правдоподобное число,
+    которое ответчик пересчитывает первым. До подтверждения дат и сумм платежей
+    сумма не заявляется вовсе.
+    """
+    draft = _draft()
+    context = (
+        "Истец ИИН 900000000001. Ответчик обязался вернуть сумму не позднее 10 апреля 2026 года. "
+        "01.06.2026 ответчик частично оплатил задолженность в размере 300 000 тенге. "
+        "Прошу взыскать неустойку по статье 353 ГК РК за просрочку."
+    )
+    _apply_verified_article_353(context, _verified_353(), draft, filing_date=date(2026, 8, 16))
+
+    assert "46 992" not in draft.late_interest
+    assert not any("46 992" in item for item in draft.requests)
+    assert any("частичн" in note.lower() for note in draft.verification_notes)
+
+
+def test_a_case_without_payments_still_gets_its_calculated_penalty() -> None:
+    """Проверка на частичную оплату не должна глушить обычный расчёт."""
+    draft = _draft()
+    context = (
+        "Истец ИИН 900000000001. Ответчик обязался вернуть сумму не позднее 10 апреля 2026 года. "
+        "Оплата не поступила. Прошу взыскать неустойку по статье 353 ГК РК за просрочку."
+    )
+    _apply_verified_article_353(context, _verified_353(), draft, filing_date=date(2026, 8, 16))
+
+    assert "46 992 тенге" in draft.late_interest
