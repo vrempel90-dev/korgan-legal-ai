@@ -9,6 +9,7 @@ from korgan.claim_corpus_health import enforce_claim_corpus_health
 from korgan.claim_filing_accuracy import apply_claim_filing_accuracy
 from korgan.claim_money_ledger import build_claim_money_ledger
 from korgan.claim_release_invariants import enforce_claim_release_invariants
+from korgan.consumer_qualification import ConsumerStatus, consumer_status
 from korgan.legal_calc import format_kzt
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 
@@ -90,7 +91,13 @@ def _resolve_court(case_context: str, research: LegalResearch, draft: ClaimDraft
         return
 
     entry: dict[str, str] | None = None
-    if _CONSUMER_VENUE_RE.search(verified):
+    # Часть 9 статьи 30 ГПК РК даёт выбор подсудности потребителю. Подтверждение
+    # самой нормы не делает истца потребителем: пока цель приобретения не
+    # установлена, иск идёт по общему правилу, иначе суд вернёт его по подсудности.
+    consumer_venue = _CONSUMER_VENUE_RE.search(verified) and (
+        consumer_status(case_context, draft) is ConsumerStatus.ESTABLISHED
+    )
+    if consumer_venue:
         entry = _court_for(city, _district_from_text(_party_text(draft.claimant)))
     elif _GENERAL_VENUE_RE.search(verified):
         entry = _court_for(city, _district_from_text(_party_text(draft.defendant)))

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal
 
 from korgan.contractual_penalty import ContractualPenalty, ContractualPenaltyTerms, calc_contractual_penalty
 from korgan.legal_calc import ARTICLE_353_LABEL, DAYS_IN_YEAR, LatePaymentPenalty, format_kzt
@@ -34,6 +35,11 @@ from korgan.legal_calc import ARTICLE_353_LABEL, DAYS_IN_YEAR, LatePaymentPenalt
 
 def _date(value: date) -> str:
     return value.strftime("%d.%m.%Y")
+
+
+def _percent(value: Decimal) -> str:
+    text = format(value, "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,11 +98,13 @@ def contractual_penalty_component(penalty: ContractualPenalty) -> MoneyComponent
     basis = f"пункт {clause} договора" if clause else "условие договора о неустойке"
     limits: list[str] = []
     if penalty.terms.cap_percent is not None:
-        limits.append(f"ограничение по договору: не более {penalty.terms.cap_percent:g}% от суммы долга")
+        limits.append(
+            f"ограничение по договору: не более {_percent(penalty.terms.cap_percent)}% от суммы долга"
+        )
         if penalty.capped and penalty.cap_amount is not None:
             limits.append(f"начислено до предела: {format_kzt(penalty.cap_amount)}")
     formula = (
-        f"{format_kzt(penalty.principal)} × {penalty.terms.rate_percent_per_day:g}% × "
+        f"{format_kzt(penalty.principal)} × {_percent(penalty.terms.rate_percent_per_day)}% × "
         f"{penalty.days} дн. = {format_kzt(penalty.amount)}"
     )
     return MoneyComponent(
@@ -104,7 +112,7 @@ def contractual_penalty_component(penalty: ContractualPenalty) -> MoneyComponent
         basis=basis,
         amount=penalty.amount,
         penalty_base=penalty.principal,
-        penalty_rate=f"{penalty.terms.rate_percent_per_day:g}% за каждый день просрочки",
+        penalty_rate=f"{_percent(penalty.terms.rate_percent_per_day)}% за каждый день просрочки",
         start_date=penalty.start,
         end_date=penalty.end,
         days=penalty.days,
@@ -168,8 +176,8 @@ def render_calculation(components: list[MoneyComponent]) -> list[str]:
 def try_contractual_penalty_component(
     *,
     principal: int | None,
-    rate_percent_per_day: float | None,
-    cap_percent: float | None,
+    rate_percent_per_day: Decimal | float | int | str | None,
+    cap_percent: Decimal | float | int | str | None,
     clause: str,
     start: date | None,
     end: date | None,

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from korgan.claim_filing_accuracy import FILING_ACTION_PREFIX
 from korgan.claim_money_ledger import ClaimMoneyLedger, build_claim_money_ledger
+from korgan.consumer_qualification import ConsumerStatus, consumer_status
 from korgan.legal_calc import (
     CAP_MRP_INDIVIDUAL,
     CAP_MRP_LEGAL_ENTITY,
@@ -124,12 +125,46 @@ def _consumer_grounded(case_context: str, research: LegalResearch, draft: ClaimD
     # especially inside the opponent's position, is not enough.  Require a
     # source-bound VERIFIED proposition from the consumer-law research path.
     verified = "\n".join(str(item) for item in research.verified_claims or [])
-    return bool(_CONSUMER_SOURCE_RE.search(verified))
+    if not _CONSUMER_SOURCE_RE.search(verified):
+        return False
+    # A verified article proves the text of the norm, never that this claimant
+    # falls under it.  Consumer status is a fact about the purpose of the
+    # purchase, so deferral additionally requires that purpose to be established.
+    return consumer_status(case_context, draft) is ConsumerStatus.ESTABLISHED
+
+
+# Освобождения статьи 668 НК РК делятся на два вида, и смешивать их нельзя.
+# Льгота по инвалидности принадлежит самому истцу и поэтому покрывает весь иск.
+# Остальные привязаны к характеру требования: они освобождают алиментное,
+# трудовое или деликтное требование, но не то, что заявлено рядом с ним.
+_CLAIM_TYPE_EXEMPTIONS: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (_ALIMONY_RE, "exempt_alimony", "пункт 4 статьи 668 Налогового кодекса РК"),
+    (_WAGE_RE, "exempt_wage", "пункт 1 статьи 668 Налогового кодекса РК"),
+    (_HEALTH_DAMAGE_RE, "exempt_health_damage", "пункт 5 статьи 668 Налогового кодекса РК"),
+    (_CRIMINAL_DAMAGE_RE, "exempt_criminal_damage", "пункт 6 статьи 668 Налогового кодекса РК"),
+)
+
+
+def _duty_bearing_requests(draft: ClaimDraft) -> list[str]:
+    """Требования, за которые в принципе платится пошлина.
+
+    Просьба о возмещении самой пошлины, о судебных расходах и процессуальные
+    ходатайства отдельным объектом обложения не являются.
+    """
+    result: list[str] = []
+    for raw in draft.requests or []:
+        text = " ".join(str(raw or "").split()).strip()
+        if not text:
+            continue
+        if _STATE_DUTY_RE.search(text) or _COST_RE.search(text) or _PROCEDURAL_RE.search(text):
+            continue
+        result.append(text)
+    return result
 
 
 def _article668_exemption(case_context: str, draft: ClaimDraft) -> StateDutyDecision | None:
     claimant = _claimant_context(case_context, draft)
-    relief = "\n".join([draft.title or "", *[str(item) for item in draft.requests or []]])
+    title = draft.title or ""
 
     if _DISABILITY_RE.search(claimant):
         return StateDutyDecision(
@@ -139,31 +174,35 @@ def _article668_exemption(case_context: str, draft: ClaimDraft) -> StateDutyDeci
             exempt=True,
             exemption_proof_required=True,
         )
-    if _ALIMONY_RE.search(relief):
+
+    requests = _duty_bearing_requests(draft)
+    for pattern, mode, provision in _CLAIM_TYPE_EXEMPTIONS:
+        covered = [text for text in requests if pattern.search(text)]
+        if not covered and not pattern.search(title):
+            continue
+
+        # Основание освобождения описывает конкретное требование. Всё, что оно
+        # не описывает, может нести собственную пошлину, и оплачивается она не
+        # этой льготой. Автоматически определить ставку для такого соседа
+        # нельзя: он может вытекать из того же правоотношения и подпадать под
+        # то же освобождение, а может быть самостоятельным иском.
+        uncovered = [text for text in requests if text not in covered]
+        if uncovered or _SPECIAL_CATEGORY_RE.search(title):
+            return StateDutyDecision(
+                mode="exemption_with_other_relief",
+                line=NEEDS_CALCULATION_MARKER,
+                amount=None,
+                needs_review=True,
+                note=(
+                    f"заявлено освобождение по основанию «{provision}», но иск содержит требования, "
+                    "которых это основание не описывает; пошлина по ним не может быть определена "
+                    "автоматически и обнуление пошлины по всему иску не применяется."
+                ),
+            )
+
         return StateDutyDecision(
-            mode="exempt_alimony",
-            line="0 тенге (освобождение от уплаты государственной пошлины; пункт 4 статьи 668 Налогового кодекса РК)",
-            amount=0,
-            exempt=True,
-        )
-    if _WAGE_RE.search(relief):
-        return StateDutyDecision(
-            mode="exempt_wage",
-            line="0 тенге (освобождение от уплаты государственной пошлины; пункт 1 статьи 668 Налогового кодекса РК)",
-            amount=0,
-            exempt=True,
-        )
-    if _HEALTH_DAMAGE_RE.search(relief):
-        return StateDutyDecision(
-            mode="exempt_health_damage",
-            line="0 тенге (освобождение от уплаты государственной пошлины; пункт 5 статьи 668 Налогового кодекса РК)",
-            amount=0,
-            exempt=True,
-        )
-    if _CRIMINAL_DAMAGE_RE.search(relief):
-        return StateDutyDecision(
-            mode="exempt_criminal_damage",
-            line="0 тенге (освобождение от уплаты государственной пошлины; пункт 6 статьи 668 Налогового кодекса РК)",
+            mode=mode,
+            line=f"0 тенге (освобождение от уплаты государственной пошлины; {provision})",
             amount=0,
             exempt=True,
         )

@@ -6,7 +6,11 @@ from datetime import date
 
 import pytest
 
-from korgan.contractual_penalty import ContractualPenaltyTerms, calc_contractual_penalty
+from korgan.contractual_penalty import (
+    ContractualPenaltyTerms,
+    calc_contractual_penalty,
+    parse_contractual_penalty_terms,
+)
 from korgan.legal_calculation import (
     CalculationGap,
     MoneyComponent,
@@ -56,6 +60,25 @@ def test_contractual_penalty_cap_is_visible_in_the_calculation() -> None:
 
     assert component.amount == 100_000
     assert "не более 10% " in component.render() or "не более 10%" in component.render()
+
+
+def test_parser_integer_percent_cap_renders_without_losing_trailing_zero() -> None:
+    terms = parse_contractual_penalty_terms(
+        "Пунктом 6.3 договора предусмотрена неустойка 0,1% от суммы задолженности "
+        "за каждый день просрочки, но не более 10% от суммы задолженности."
+    )
+    assert terms is not None
+
+    penalty = calc_contractual_penalty(
+        1_000_000,
+        terms,
+        date(2026, 1, 1),
+        date(2026, 3, 1),
+    )
+    rendered = contractual_penalty_component(penalty).render()
+
+    assert "не более 10%" in rendered
+    assert "не более 1%" not in rendered
 
 
 def test_late_interest_component_names_article_353() -> None:

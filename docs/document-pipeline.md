@@ -62,14 +62,13 @@ POST /miniapp/documents/generate            → miniapp_api_v5.generate_document
 `tests/test_claim_release_entrypoint_wiring.py` и через
 `PretrialResponseProductionService.__mro__`.
 
-**Известное расхождение.** `miniapp_api_v3` подменяет `miniapp_api_v2.service`,
-но `_generate()` для `contract`, `response`, `pretrial`, `pretrial_response`
-вызывает `legacy._method(...)`, который резолвится по `miniapp_api.service` —
-это **отдельный инстанс**, который v3 не настраивал (`v2.service is
-legacy.service` → False). Функционально они близки: оба
-`ClaimPipelineV2Adapter` поверх `PretrialResponseProductionService`, и
-`ClaimServiceMux` маршрутизирует только иск. Практический эффект — два набора
-клиентов OpenAI и риск расхождения конфигурации, а не разный конвейер.
+`miniapp_api_v3` устанавливает одну и ту же production-цепочку одновременно в
+`miniapp_api_v2.service` и `miniapp_api.service`. Это необходимо потому, что
+`_generate()` маршрутизирует иск через первый указатель, а `contract`,
+`response`, `pretrial`, `pretrial_response` — через `legacy._method(...)` и
+второй. Инвариант `v2.service is legacy.service is v3.service` зафиксирован в
+`tests/test_miniapp_runtime_parity_v3.py`: все типы используют один набор
+клиентов OpenAI и одну конфигурацию, а не два способных разойтись инстанса.
 
 ## 4. Четыре типа документов
 

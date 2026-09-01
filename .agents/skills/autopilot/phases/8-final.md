@@ -1,0 +1,263 @@
+# Phase 8 — Touchdown
+
+Landing. Two things happen here, and the first one is the reason this framework exists. A third — the доводка loop — happens between them, and only when the `polish` parameter is on.
+
+## 1. Blind acceptance — gate G4
+
+Every check so far has measured the build against the **spec**. But the spec is your own paraphrase of the brief, written several phases ago. If a requirement was lost on the way into it, everything downstream has been faithfully confirming that loss.
+
+So the last check does not use the spec.
+
+**Spawn a subagent that receives:**
+
+- `.autopilot/<dir>/<дата>-brief.md` — the user's own words (the directory is `dir` in `state.js`, the filename `briefFile`). **The whole file, `## Дополнения` included** — what they said at ticket four is as much the задача as what they said at the start, and this file is the only place the checker can learn it
+- the repository as it now stands
+- how to run the project and its tests
+
+**It must not receive:** `spec.md`, `manifest.md`, the tickets, or any summary of them. A checker given the spec inherits the spec's blind spots and will confirm them. Independence is the entire mechanism — take it away and this phase is theatre.
+
+**Not sending them is no longer enough — say it in the prompt.** `.autopilot/` is committed and sits in the repository you just handed over, with a `README.md` explaining what each file is; a checker that opens `spec.md` «чтобы понять контекст» has broken the gate without disobeying anything you wrote. One line closes it: **«не открывай `.autopilot/` — ни спецификацию, ни манифест, ни таски; сверяйся только с брифом и с тем, что реально работает»**. The same line belongs in the G2 coverage check (`phases/3-spec.md`) and in the memory agent's prompt below, for the same reason.
+
+Its brief:
+
+> Прочитай приложенный файл брифа — это задача, которую поставил заказчик. Затем изучи
+> репозиторий и определи, что из этого действительно реализовано.
+>
+> Если в брифе есть раздел «Дополнения» — это то, что заказчик сказал уже по ходу
+> работы, и оно часть задачи наравне с основным текстом. При расхождении верно
+> более позднее: отменённое там не требуется, добавленное требуется.
+>
+> **Запусти проект** — команды в приложенном описании — и пройди основной сценарий так,
+> как прошёл бы его заказчик. Чтение кода показывает намерение, запуск показывает результат.
+> Если проект не поднимается или сценарий обрывается — это и есть главная находка
+> проверки, поставь её первым пунктом. Если запустить нельзя вообще (нужен аккаунт,
+> ключ, внешний сервис) — скажи прямо, что именно помешало, и не выдавай чтение кода
+> за проверку работоспособности.
+>
+> По каждому требованию из брифа: реализовано / частично / нет — и одна строка,
+> где именно это видно (что ты увидел при запуске, или где это в коде,
+> или почему ты решил, что этого нет).
+>
+> Отдельной строкой верни **команды, которыми ты поднимал проект, и их результат** —
+> дословно. Они нужны не тебе: рядом с тобой работает агент, который пишет память
+> проекта, и без этого он поставит тот же `install` во второй раз.
+>
+> Не оценивай качество кода. Не предлагай улучшений. Не ищи оправданий
+> отсутствию — просто зафиксируй факт. Если требование выполнено формально,
+> но по сути не работает (данные сохраняются, но пользователю не показываются) —
+> это «частично», а не «реализовано».
+
+**Then compare its verdict with `manifest.md`:**
+
+| Manifest says | Blind says | Meaning |
+|---|---|---|
+| `done` | реализовано | agreed |
+| `done` | **частично / нет** | 🔴 **drift** — the manifest is wrong. Report it; the fix is a ticket or a line in the report, never an edit of your own (§1a) |
+| `placeholder` | частично | expected — confirm the placeholder is visible, not an invented fact |
+| `dropped` / `deferred` | нет | expected — must appear in the report as not built |
+| — | реализовано, но не из брифа | scope that grew without a parent; report it. With the brief kept current (`phases/2-briefing.md`), a `G##` never lands here — anything that still does is genuinely unordered |
+
+Every 🔴 goes in the report **and** in `state.js` under `blind`. A drift found here is not a failure of the run — it is the run working. Hiding it is the failure.
+
+If there are no tickets (tier T0), this check still runs. Small builds drift too, and it is one subagent.
+
+**A build that was never run is a build nobody has seen work.** The tests were written by the same process that wrote the code, so they agree with it by construction; the first time this project meets a user must not be the first time it is launched. If it genuinely cannot be run here — no credentials, a service that needs an account, a platform this machine is not — that goes in the report as an open item under «что нужно от тебя», not silently into the accepted column.
+
+## 1a. The deferred findings — triaged once, here
+
+Through the build, every Craft finding that was not blocking went into `state.js` under `concerns` instead of into a дозапрос (`phases/6-review.md`). **This is where that list gets its one reader.** A deferred-findings list nobody opens is not a deferral, it is a silent discard — and the whole loosening that produced it was justified on the promise that this pass happens.
+
+Read the list — it is `concerns`, in `state.js`, on disk, not from memory — and sort it in one pass:
+
+| Verdict | What it means | What happens |
+|---|---|---|
+| **Fix now** | it will cost more to leave than to close, and the fix is bounded | a ticket, cut and flown and reviewed like any other — `phases/5-subagents.md` |
+| **Report** | real, but not worth holding delivery for | one line in «что пошло не по плану», in the user's language |
+| **Drop** | it was a matter of taste, or the code it pointed at no longer exists | struck, with the reason kept in `concerns` |
+
+Two rules keep this honest. **Never fix one yourself** — a concern repaired by the orchestrator skips review and puts a diff into the one context that cannot afford it; it is a ticket or it is a line in the report. And **anything repeated across three or more tickets is promoted to «fix now» regardless of how small it looked** — the same judgement call landing that often is not a judgement call, it is a convention the project never settled, and the next session will meet it on its first day.
+
+At tier T0 there was one context and no tickets, so `concerns` is short and this pass takes a minute. It still runs: the list exists either way.
+
+## 2. What outlives the run — memory and decisions
+
+**Launch these at the same time as the blind acceptance.** Up to three subagents in one slot, no contact between them, each answering a different question:
+
+| Agent | Question | Receives | Never receives |
+|---|---|---|---|
+| blind checker | что из брифа сделано | the brief, the repo | `spec.md`, `manifest.md`, tickets |
+| memory | как этим пользоваться завтра | the repo, `interfaces.md`, the memory file, the tier | `spec.md`, tickets |
+| ADR *(tier T2+)* | почему сделано именно так | `spec.md`, `manifest.md` | the repo — it documents decisions, not code |
+
+The memory agent writes the full description of the project into `CLAUDE.md` or `AGENTS.md` — architecture, key files, conventions, environment, tests, gotchas — scaled to the tier, folding in what `interfaces.md` accumulated. Like the blind checker, **it does not receive `spec.md` or the tickets**: a memory written from the plan documents intentions, and the next session has no way to tell the difference.
+
+The ADR agent is the mirror image and that is why it cannot be the same one. **`spec.md` dies with the run**, and with it every «почему так» in it — the reason for the data model, what the build proved wrong at ticket four, which word the project uses for which thing. Six months later the next session reads working code and no reason for any of it, and re-opens decisions that were settled here. At tier T2+ that is worth three files in `docs/adr/`; below it, the memory file carries what little there is.
+
+Everything about all of this — which memory file, the markers, the sections per tier, what an ADR contains, and the verification pass over the commands — is in `phases/9-memory.md`. Read it before spawning.
+
+This is the artifact that decides what the *next* run costs. A project whose second session begins by re-reading the whole codebase paid for that in the first session and got nothing.
+
+## 2a. Доводка — only with `polish` on
+
+If the run has the `polish` parameter, the loop goes **here**: after the blind acceptance has said what is and is not built, and before the report describes the result. Both halves of that matter. The blind verdict is the baseline the regression rule compares against, and a report written before the loop describes a build that no longer exists.
+
+Read `phases/polish.md` now — and only now. On a run without the parameter, skip this section entirely and do not read the file.
+
+Without `polish`, nothing changes: the blind checker's findings go into the report as open items, exactly as below.
+
+## 2b. The `--wip` comes off
+
+The flight has landed, so the directory stops saying it has not. `.autopilot/<YYYY-MM-DD>-<slug>--wip/` loses its suffix and becomes the canonical name it keeps forever (`phases/0-preflight.md` step 1):
+
+```bash
+A=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.autopilot
+D=2026-08-07-telegram-repair-bot--wip          # `dir` из state.js, дословно
+git -C "$A" mv "$D" "${D%--wip}"
+```
+
+**`git mv`, not `mv`.** The directory is committed — a plain rename shows up as a wholesale deletion plus an untracked twin, and the run's record loses its history in the one commit that was supposed to seal it.
+
+**Here, and not after the report.** The report names paths inside that directory (`## Где что лежит`), and a path that stops existing a minute after the user reads it is a broken path. The rename also has to be inside the final commit, so it goes before the memory file is committed, not after.
+
+Then two writes, both small:
+
+- `dir` in `state.js` → the new name. It is the field every path is built from, and the next session — a доводка, a «доделай» a month later — resolves nothing without it.
+- the run's row in `.autopilot/README.md` → status «сдан», and the `Итог` cell filled with **one line of what it delivered**, in the user's language. Not a stage count, not «готово»: what now exists that did not before. Once the dashboard moves on to the next flight, that row is the only place this run says what it was.
+
+**If the rename fails, the run is not undone by it.** A name already taken by an earlier flight of the same slug, or a dirty index inside the directory — say it in one line, leave the directory as it is, and make `dir` in `state.js` match whatever it is actually called. A landed run wearing a `--wip` is a cosmetic defect; a `dir` pointing at a directory that does not exist breaks every path the next session builds.
+
+## 3. The final report
+
+Run the full test suite once more first — truncated, `2>&1 | tail -30`, for the same reason as after every ticket — and wait for both subagents. Then write in the user's language, plain, no jargon.
+
+### Where every line of it comes from
+
+**Re-read the files. Do not write this from memory.**
+
+By this phase your context is the most polluted it has been all run, and most of it has been compacted at least once. The report is the one artifact the user actually reads, and writing it from memory is how a `deferred` requirement gets reported as done, a placeholder disappears, and an `A##` nobody ordered turns up in the summary as though they had asked for it.
+
+So build each section from its source, opened now:
+
+| Section | Read from |
+|---|---|
+| Решения, принятые за вас | `manifest.md` — every `ASSUMPTION` in Основание |
+| Готово | the blind checker's return, not the manifest's `done` rows |
+| Доводка *(only with `polish`)* | `state.js` → `polish`, and `reference.md` for what was compared against |
+| Что нужно от тебя | `manifest.md` `placeholder` rows + `state.js` → `debt` |
+| Что не вошло | `manifest.md` `deferred` and `dropped` rows, with their quotes |
+| Что я добавил сверх заказанного | `state.js` → `additions`, cross-checked against `A##` in the spec |
+| Что пошло не по плану | every `D##` row in `manifest.md`, plus any ticket whose `handoffs` reached 2 — that is the plan reporting its own coarse cut, and it is the only place the counter is ever read |
+| Открытые вопросы | `state.js` → `blind`, plus anything in `coverage` that ended up not built |
+| Запустить / Где что лежит | `state.js` → `memoryFile`, `briefFile`, and the commands the memory agent verified |
+
+Two of these are worth naming, because memory gets them wrong in a specific direction. **«Готово» comes from the blind checker, not from your own bookkeeping** — the manifest says what you believe was delivered, and the whole point of the previous section is that those two can disagree. And **«Что не вошло» comes from the rows, not from recollection**: a requirement dropped in the first ten minutes of a three-hour run is exactly the one you will not remember, and it is quoted in the file.
+
+Order matters — the user reads the top and skims the rest.
+
+**In full mode, the report opens with «Решения, принятые за вас»** — every `ASSUMPTION` from the self-briefing, in plain language, each with the one-line reason. They never asked for these; they have the right to see all of them in one place, first.
+
+```markdown
+## Готово
+
+<Что теперь работает — 3–6 строк обычным языком, от лица пользователя.>
+
+**Запустить:**
+```
+npm install && npm run dev
+```
+Открыть http://localhost:3000
+
+## Что нужно от тебя
+
+1. Впиши в `.env` — `TELEGRAM_BOT_TOKEN`, `GOOGLE_SHEETS_ID`.
+   Файл `.env.example` уже лежит рядом, скопируй и заполни.
+2. Замени заглушки: цены в `src/data/prices.ts`, тексты писем
+   в `src/emails/`. Сейчас там видимые метки `[ВПИШИ]`, не выдуманные значения.
+
+## Что не вошло
+
+| Что | Почему |
+|---|---|
+| Уведомления на SMS | ты сказал «SMS не надо, только телега» |
+| Админка для заявок | отложено: заявки видно в таблице, отдельный экран — следующий заход |
+
+## Что я добавил сверх заказанного
+
+<Каждая `A##`-история, дошедшая до кода, — обычным языком, с требованием,
+ради которого добавлена. Раздел опускается только если добавлений не было
+(на глубине `strict` — всегда). Пользователь должен узнать о них отсюда,
+а не наткнувшись в коде.>
+
+| Что добавил | Ради чего |
+|---|---|
+| Номер заявки в подтверждении | чтобы клиент мог на неё сослаться — R01 |
+
+## Что пошло не по плану
+
+<Каждая строка `D##` из манифеста — обычным языком: что задумывалось,
+что этому помешало и как сделано вместо. Раздел опускается, только если
+`D##` не было. Требование при этом то же — меняется способ, а не заказ.>
+
+| Что не сработало | Как сделано |
+|---|---|
+| Одна заявка на один адрес — у половины клиентов адресов два | Адреса вынесены в список, форма принимает несколько |
+
+## Открытые вопросы
+
+<Расхождения слепой приёмки, если есть. Прямо, без смягчения:
+«Требование "клиент видит статус" я считал готовым, независимая проверка
+показала, что статус сохраняется, но нигде не отображается. Исправлено /
+требует отдельного таска.»
+
+Сюда же — то, что нашла сверка покрытия на спецификации и что в итоге
+НЕ построено. Найденное и построенное здесь не упоминается: гейт
+отработал, пользователю нечего с этим делать.>
+
+## Где что лежит
+
+- Описание проекта для следующего раза — `AGENTS.md` в корне
+- Почему сделано именно так — `docs/adr/` (если проект крупный)
+- Прогресс и цифры — `.autopilot/dashboard.html`
+- Твоя изначальная задача — `.autopilot/<дата>-<проект>/<дата>-brief.md`
+- Требования и их судьба — `.autopilot/<дата>-<проект>/manifest.md`
+- Спецификация — `.autopilot/<дата>-<проект>/spec.md`
+- Список всех сборок этого проекта — `.autopilot/README.md`
+```
+
+## Rules for the report
+
+- **Плейсхолдеры и пустые переменные — обязательный раздел**, даже если их ноль (тогда одной строкой: «всё заполнено»). Это то, что отделяет «работает» от «работает у тебя».
+- **Секреты — только именами.** Никогда значениями, включая те, что пользователь присылал сам.
+- **«Что не вошло» пишется всегда**, даже когда всё вошло. Пустой раздел с одной строкой честнее отсутствующего: он показывает, что вопрос задавался.
+- **Не приукрашивать.** Упавший тест, невыполненный таск, найденное расхождение — называются прямо, с тем, что именно сломано и что для починки нужно. Отчёт, скрывающий дефект, стоит дороже дефекта.
+- **Никаких диффов, имён файлов кода, названий тестов** — они в инструментах, для тех, кому нужны.
+
+## Closing the instruments
+
+The memory file goes in with the final commit, before this. Then, in `state.js` and nowhere else: set `finishedAt`, write the `blind` block, refresh the counts, close every stage — `final` to `done`, and anything still `active` or `pending` to `done`, `skipped` (with a note) or `failed`, whichever is true. A run whose dashboard says «в работе» a day after it landed is lying to the person who trusted it.
+
+The open page picks this up by itself within ten seconds — this is the picture the user is left with, and it arrives without you doing anything more.
+
+`finishedAt` also stops the clocks and the ten-second polling: the page freezes on the final numbers instead of counting time nobody is spending. Leave it `null` on a finished run and the user's total keeps growing overnight.
+
+**Sync once more right after writing it** — `python3 .autopilot/sync.py`. This is the write that decides what a landed run looks like six months later: the snapshot inside `dashboard.html` freezes on the final numbers, so the page opens from the archive with the whole flight intact, long after the server is gone. `sync.py` sees `finishedAt` and does not raise a server for a run that has landed, so this cannot resurrect what the next block is about to kill.
+
+**Then, and only then, put out the server** — the one Phase 0 started for the pane (`phases/0-instruments.md`). It goes last because the page has to fetch the final state first, and it goes at all because a run that ends leaving an HTTP server on the user's machine has left something running that nobody will ever think to stop.
+
+**Last means after the report reaches the user, not in the same breath as `finishedAt`.** The page polls every ten seconds; killing the server in the same turn that wrote the final state means it never fetches it, and the picture the user is left staring at says «в работе» forever — the exact failure this whole section exists to prevent, arriving from the other side. Writing the report is what buys the time, so put the kill after it:
+
+```bash
+A=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.autopilot
+( sleep 12
+  read -r PORT PID < "$A/serve.pid"
+  for X in $PID $(pgrep -f -- "--directory $A"); do
+    ps -p "$X" -o command= 2>/dev/null | grep -qi -- 'python.* -m http\.server' && kill "$X"
+  done
+  rm -f "$A/serve.pid" "$A/serve.log" ) >/dev/null 2>&1 &
+```
+
+**The twelve seconds are what make «after the report» actually true.** A tool call always runs before the text of the message it sits in, so a bare `kill` here executes while the user is still reading nothing — the page's next poll is up to ten seconds away, it never fetches the final state, and the screen keeps saying «в работе» with the clock running. Deferring the kill into a background subshell costs nothing, blocks nothing, and closes the gap from the other side. Do not «fix» this by moving the block earlier or dropping the `sleep`.
+
+**The pid file is the run's own** — `.autopilot/serve.pid`, addressed from the git root (`phases/0-instruments.md` §3), never a machine-wide name: a shared one is how one run's ending takes down another run's dashboard mid-flight. **The loop is over every server on this directory, not just the recorded pid** — a session that raised two of them (a restart, a lost pid file) records only the last, and the others outlive the run. **The `ps` check is not ceremony.** A pid file proves nothing about the process alive under that number today, and the pattern is `-m http\.server`, not `http.server`, because the loose form also matches the unrelated `http-server` from npm — measured 2026-08-19, with a user's dev server as the casualty.
+
+The pane keeps the final picture on screen — it is already rendered and no longer polling. Nothing is lost with the port: `dashboard.html` carries the final state inside itself, so a double-click reopens it with every number intact — in a real browser, in a pane, on another machine, with no server and no `state.js` anywhere near it. Say nothing about any of this; the shutdown is not news. If доводка is running (`phases/polish.md`), the run is not over — the server stays up until the доводка closes too.

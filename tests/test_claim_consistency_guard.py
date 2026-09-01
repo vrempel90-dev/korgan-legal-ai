@@ -145,6 +145,179 @@ def test_principal_amount_does_not_satisfy_separate_penalty_amount() -> None:
     assert any("без конкретного размера" in error for error in errors)
 
 
+def test_calculated_penalty_cannot_disappear_from_prayer() -> None:
+    draft = _draft(
+        legal_basis=["За нарушение срока выполнения работы исполнитель уплачивает неустойку."],
+        requests=["Взыскать с Ответчика основной долг 1 200 000 тенге."],
+    )
+    draft.title = "Исковое заявление о взыскании задолженности"
+    draft.calculation = [
+        "Основной долг: 1 200 000 тенге.",
+        "Договорная неустойка: 120 000 тенге; база: 1 200 000 тенге; ставка: 1% за день; дней: 10.",
+        "Итого цена иска: 1 320 000 тенге.",
+    ]
+    draft.price_of_claim = "1 200 000 тенге"
+
+    errors = claim_consistency_errors("Ответчик нарушил срок выполнения работ.", draft)
+
+    assert any(
+        "расчёте" in error and "неустойк" in error.lower() and "ПРОШУ СУД" in error
+        for error in errors
+    )
+
+
+def test_prayer_penalty_cannot_be_absent_from_structured_calculation() -> None:
+    draft = _draft(
+        legal_basis=["За нарушение срока выполнения работы исполнитель уплачивает неустойку."],
+        requests=[
+            "Взыскать с Ответчика основной долг 1 200 000 тенге.",
+            "Взыскать с Ответчика договорную неустойку 120 000 тенге.",
+        ],
+    )
+    draft.calculation = ["Основной долг: 1 200 000 тенге."]
+    draft.price_of_claim = "1 320 000 тенге"
+
+    errors = claim_consistency_errors("Ответчик нарушил срок выполнения работ.", draft)
+
+    assert any(
+        "ПРОШУ СУД" in error and "неустойк" in error.lower() and "расчёте" in error
+        for error in errors
+    )
+
+
+def test_penalty_amount_must_match_between_calculation_and_prayer() -> None:
+    draft = _draft(
+        legal_basis=["За нарушение срока выполнения работы исполнитель уплачивает неустойку."],
+        requests=[
+            "Взыскать с Ответчика основной долг 1 200 000 тенге.",
+            "Взыскать с Ответчика договорную неустойку 120 000 тенге.",
+        ],
+    )
+    draft.calculation = [
+        "Основной долг: 1 200 000 тенге.",
+        "Договорная неустойка: 100 000 тенге.",
+        "Итого цена иска: 1 300 000 тенге.",
+    ]
+    draft.price_of_claim = "1 320 000 тенге"
+
+    errors = claim_consistency_errors("Ответчик нарушил срок выполнения работ.", draft)
+
+    assert any(
+        "неустойк" in error.lower() and "100 000" in error and "120 000" in error
+        for error in errors
+    )
+
+
+def test_malformed_penalty_amount_cannot_satisfy_reconciliation() -> None:
+    """Сверка использует канонический парсер, а не собственную «мягкую» регулярку.
+
+    «12 34 567 тенге» — не сумма: разряды разбиты неверно, и цена иска с
+    госпошлиной такое значение читать откажутся. Сверка расчёта с просительной
+    частью не вправе считать такую строку подтверждённым размером неустойки.
+    """
+    draft = _draft(
+        legal_basis=["За нарушение срока выполнения работы исполнитель уплачивает неустойку."],
+        requests=[
+            "Взыскать с Ответчика основной долг 1 200 000 тенге.",
+            "Взыскать с Ответчика договорную неустойку 12 34 567 тенге.",
+        ],
+    )
+    draft.calculation = [
+        "Основной долг: 1 200 000 тенге.",
+        "Договорная неустойка: 120 000 тенге.",
+    ]
+    draft.price_of_claim = "1 320 000 тенге"
+
+    errors = claim_consistency_errors("Ответчик нарушил срок выполнения работ.", draft)
+
+    assert not any("12 34 567" in error for error in errors)
+    assert not any("34 567" in error for error in errors)
+
+
+def _duty_draft(*, state_duty: str, facts: list[str] | None = None, attachments: list[str] | None = None) -> ClaimDraft:
+    """Иск, у которого госпошлина уже посчитана детерминированным кодом."""
+    draft = _draft(
+        legal_basis=["Обязанность оплатить принятый товар."],
+        requests=["Взыскать с Ответчика основной долг 12 000 000 тенге."],
+    )
+    draft.title = "Исковое заявление о взыскании задолженности"
+    draft.price_of_claim = "12 000 000 тенге"
+    draft.facts = facts if facts is not None else ["Долг 12 000 000 тенге не оплачен."]
+    draft.attachments = attachments or []
+    draft.state_duty = state_duty
+    return draft
+
+
+def test_model_state_duty_cannot_contradict_the_deterministic_value() -> None:
+    """Размер госпошлины определяет детерминированный код, а не текст модели.
+
+    Если документ где-то называет другую сумму пошлины, суд вернёт иск как
+    оплаченный не полностью, а истец узнает об этом уже после подачи.
+    """
+    draft = _duty_draft(
+        state_duty="360 000 тенге (3% от цены иска; максимум 20 000 МРП; статья 665 Налогового кодекса РК)",
+        facts=[
+            "Долг 12 000 000 тенге не оплачен.",
+            "Государственная пошлина составляет 120 000 тенге.",
+        ],
+    )
+
+    errors = claim_consistency_errors("ТОО против ТОО, долг 12 000 000 тенге.", draft)
+
+    assert any("пошлин" in error.lower() and "120 000" in error and "360 000" in error for error in errors)
+
+
+def test_paid_duty_in_attachments_must_match_the_deterministic_value() -> None:
+    draft = _duty_draft(
+        state_duty="360 000 тенге (3% от цены иска; максимум 20 000 МРП; статья 665 Налогового кодекса РК)",
+        attachments=["Квитанция об уплате государственной пошлины на 120 000 тенге."],
+    )
+
+    errors = claim_consistency_errors("ТОО против ТОО, долг 12 000 000 тенге.", draft)
+
+    assert any("пошлин" in error.lower() and "120 000" in error for error in errors)
+
+
+def test_matching_duty_amount_is_not_reported() -> None:
+    draft = _duty_draft(
+        state_duty="360 000 тенге (3% от цены иска; максимум 20 000 МРП; статья 665 Налогового кодекса РК)",
+        attachments=["Квитанция об уплате государственной пошлины на 360 000 тенге."],
+    )
+    draft.requests.append(
+        "Взыскать с ответчика в пользу истца расходы по уплате государственной пошлины в размере 360 000 тенге."
+    )
+
+    errors = claim_consistency_errors("ТОО против ТОО, долг 12 000 000 тенге.", draft)
+
+    assert not any("пошлин" in error.lower() for error in errors)
+
+
+def test_undetermined_duty_does_not_produce_a_false_conflict() -> None:
+    """Пока детерминированного значения нет, сверять не с чем — молчим."""
+    draft = _duty_draft(
+        state_duty="[ТРЕБУЕТ РАСЧЁТА]",
+        attachments=["Квитанция об уплате государственной пошлины на 120 000 тенге."],
+    )
+
+    errors = claim_consistency_errors("ТОО против ТОО, долг 12 000 000 тенге.", draft)
+
+    assert not any("пошлин" in error.lower() for error in errors)
+
+
+def test_representative_expense_amount_is_not_read_as_state_duty() -> None:
+    """Соседняя сумма расходов на представителя — не размер пошлины."""
+    draft = _duty_draft(
+        state_duty="360 000 тенге (3% от цены иска; максимум 20 000 МРП; статья 665 Налогового кодекса РК)",
+        attachments=[
+            "Судебные расходы: государственная пошлина 360 000 тенге и услуги представителя 200 000 тенге.",
+        ],
+    )
+
+    errors = claim_consistency_errors("ТОО против ТОО, долг 12 000 000 тенге.", draft)
+
+    assert not any("пошлин" in error.lower() for error in errors)
+
+
 def test_contract_base_amount_alone_does_not_define_penalty() -> None:
     context = "Прошу взыскать неустойку за нарушение срока выполнения работ."
     draft = _draft(

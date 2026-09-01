@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 from korgan.contractual_penalty import (
     ContractualPenaltyTerms,
@@ -14,8 +15,8 @@ def test_parse_contractual_penalty_terms_with_cap_and_clause() -> None:
     )
     terms = parse_contractual_penalty_terms(text)
     assert terms is not None
-    assert terms.rate_percent_per_day == 0.1
-    assert terms.cap_percent == 10.0
+    assert terms.rate_percent_per_day == Decimal("0.1")
+    assert terms.cap_percent == Decimal("10")
     assert terms.clause == "6.3"
 
 
@@ -27,8 +28,8 @@ def test_parse_contractual_penalty_spelling_variants() -> None:
     for text in variants:
         terms = parse_contractual_penalty_terms(text)
         assert terms is not None
-        assert terms.rate_percent_per_day == 0.1
-        assert terms.cap_percent == 10.0
+        assert terms.rate_percent_per_day == Decimal("0.1")
+        assert terms.cap_percent == Decimal("10")
         assert terms.clause == "6.3"
 
 
@@ -43,8 +44,8 @@ def test_parse_contractual_penalty_keeps_cap_beyond_fixed_character_window() -> 
     terms = parse_contractual_penalty_terms(text)
 
     assert terms is not None
-    assert terms.rate_percent_per_day == 0.1
-    assert terms.cap_percent == 10.0
+    assert terms.rate_percent_per_day == Decimal("0.1")
+    assert terms.cap_percent == Decimal("10")
     assert terms.clause == "6.3"
 
 
@@ -57,7 +58,7 @@ def test_cap_from_next_contract_clause_is_not_applied_to_current_rate() -> None:
     terms = parse_contractual_penalty_terms(text)
 
     assert terms is not None
-    assert terms.rate_percent_per_day == 0.1
+    assert terms.rate_percent_per_day == Decimal("0.1")
     assert terms.clause == "6.3"
     assert terms.cap_percent is None
 
@@ -75,7 +76,7 @@ def test_long_numbered_clause_remains_scope_beyond_320_characters() -> None:
     terms = parse_contractual_penalty_terms(text)
 
     assert terms is not None
-    assert terms.rate_percent_per_day == 0.1
+    assert terms.rate_percent_per_day == Decimal("0.1")
     assert terms.clause == "6.3"
     assert terms.cap_percent is None
 
@@ -89,8 +90,8 @@ def test_parse_kazakh_contractual_penalty_terms() -> None:
     terms = parse_contractual_penalty_terms(text)
 
     assert terms is not None
-    assert terms.rate_percent_per_day == 0.1
-    assert terms.cap_percent == 10.0
+    assert terms.rate_percent_per_day == Decimal("0.1")
+    assert terms.cap_percent == Decimal("10")
     assert terms.clause == "6.3"
 
 
@@ -103,8 +104,8 @@ def test_parse_kazakh_contractual_penalty_reversed_daily_rate() -> None:
     terms = parse_contractual_penalty_terms(text)
 
     assert terms is not None
-    assert terms.rate_percent_per_day == 0.1
-    assert terms.cap_percent == 10.0
+    assert terms.rate_percent_per_day == Decimal("0.1")
+    assert terms.cap_percent == Decimal("10")
     assert terms.clause == "6.3"
 
 

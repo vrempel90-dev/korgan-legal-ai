@@ -19,6 +19,13 @@ from korgan.legal_calc import (
     parse_all_amounts_kzt,
     parse_amount_kzt,
 )
+from korgan.legal_calculation import (
+    MoneyComponent,
+    contractual_penalty_component,
+    late_interest_component,
+    principal_component,
+    render_calculation,
+)
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.state_duty_final_hotfix import (
     ProductionOpenAILegalService as _BaseProductionOpenAILegalService,
@@ -220,6 +227,7 @@ def _strip_penalty_everywhere(draft: ClaimDraft) -> None:
     draft.attachments = [item for item in draft.attachments if not _PENALTY_LINE_RE.search(item)]
     draft.late_interest = ""
     draft.title = _TITLE_PENALTY_RE.sub("", draft.title or "").strip()
+    _drop_penalty_calculation(draft)
 
 
 def _drop_article_353_lines(draft: ClaimDraft) -> None:
@@ -309,6 +317,7 @@ def _mark_penalty_for_verification(draft: ClaimDraft, reason: str, *, case_conte
     else:
         updated.append(f"Взыскать заявленную клиентом неустойку. {suffix}")
     draft.requests = updated
+    _drop_penalty_calculation(draft)
     if reason not in draft.verification_notes:
         draft.verification_notes.append(reason)
     draft.status = VerificationStatus.NEEDS_VERIFICATION
@@ -327,9 +336,16 @@ def _component_label(request: str) -> str:
     return "имущественное требование"
 
 
-def _recompute_claim_price_and_duty(draft: ClaimDraft, case_context: str) -> None:
-    """Цена иска = сумма всех определённых имущественных требований, без судебных расходов."""
-    components: list[tuple[str, int]] = []
+def _property_components(draft: ClaimDraft) -> tuple[list[tuple[str, int, str]], bool]:
+    """Имущественные требования просительной части: ярлык, сумма и сама строка.
+
+    Один разбор обслуживает и цену иска, и раздел «Расчёт взыскиваемых сумм»:
+    иначе итог расчёта и цена иска считались бы разными обходами одного текста и
+    со временем разошлись бы. Второй элемент результата — признак того, что хотя
+    бы одно требование не разрешилось в число; тогда обе величины обязаны
+    остановиться, а не публиковать половину.
+    """
+    components: list[tuple[str, int, str]] = []
     unresolved = False
 
     for request in list(draft.requests or []):
@@ -346,7 +362,64 @@ def _recompute_claim_price_and_duty(draft: ClaimDraft, case_context: str) -> Non
         if amount is None:
             unresolved = True
             continue
-        components.append((_component_label(text), amount))
+        components.append((_component_label(text), amount, text))
+
+    return components, unresolved
+
+
+def _upper_first(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def _write_deterministic_calculation(draft: ClaimDraft, detail: MoneyComponent) -> None:
+    """Сделать детерминированную арифметику содержанием раздела расчёта.
+
+    Раздел расчёта — это арифметика, а арифметику в KORGAN пишет не модель.
+    После пересчёта неустойки прежний расчёт модели остаётся с прежней суммой,
+    прежней ставкой и прежним итогом: документ начинает утверждать два разных
+    числа. Поэтому раздел собирается заново из тех же требований, из которых
+    считается цена иска, а посчитанная позиция раскрывается целиком — база,
+    ставка, период, дни, формула и договорный предел.
+
+    Если хотя бы одно имущественное требование не разрешилось в число, раздел
+    очищается: неполный расчёт с итогом хуже, чем честно отсутствующий раздел,
+    и document_quality отметит его отсутствие.
+    """
+    components, unresolved = _property_components(draft)
+    if unresolved or not components:
+        draft.calculation = []
+        return
+
+    rendered: list[MoneyComponent] = []
+    used_detail = False
+    for label, amount, text in components:
+        if not used_detail and amount == detail.amount and _PENALTY_LINE_RE.search(text):
+            rendered.append(detail)
+            used_detail = True
+        elif label == "основной долг":
+            rendered.append(principal_component(amount, basis=""))
+        else:
+            rendered.append(MoneyComponent(title=_upper_first(label), basis="", amount=amount))
+
+    draft.calculation = render_calculation(rendered)
+
+
+def _drop_penalty_calculation(draft: ClaimDraft) -> None:
+    """Убрать расчёт, построенный вокруг неустойки, которой больше нет.
+
+    Неустойка либо снята как выдуманная моделью, либо переведена в статус
+    требующей проверки. Оставшийся расчёт продолжал бы называть её размер и
+    включать его в итог — то есть утверждать сумму, которую документ уже не
+    заявляет.
+    """
+    if any(_PENALTY_LINE_RE.search(str(line)) for line in draft.calculation or []):
+        draft.calculation = []
+
+
+def _recompute_claim_price_and_duty(draft: ClaimDraft, case_context: str) -> None:
+    """Цена иска = сумма всех определённых имущественных требований, без судебных расходов."""
+    scanned, unresolved = _property_components(draft)
+    components: list[tuple[str, int]] = [(label, amount) for label, amount, _ in scanned]
 
     if unresolved:
         draft.price_of_claim = "[ТРЕБУЕТ РАСЧЁТА]"
@@ -463,6 +536,7 @@ def _apply_contractual_penalty(
     draft.late_interest = _contractual_penalty_line(penalty)
     draft.requests.append(_contractual_penalty_request(penalty))
     _recompute_claim_price_and_duty(draft, case_context)
+    _write_deterministic_calculation(draft, contractual_penalty_component(penalty))
     return True
 
 
@@ -547,6 +621,7 @@ def _apply_verified_penalty(
         "за последующий период — по день фактической уплаты суммы долга в порядке статьи 353 ГК РК."
     )
     _recompute_claim_price_and_duty(draft, case_context)
+    _write_deterministic_calculation(draft, late_interest_component(penalty))
 
 
 # Backwards compatibility: five production call sites and existing tests import

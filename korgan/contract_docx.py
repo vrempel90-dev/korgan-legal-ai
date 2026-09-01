@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import io
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
@@ -20,8 +18,8 @@ DRAFT_NOTICE = (
 )
 
 
-def _status(draft: ContractDraft, preamble: list[str]) -> str:
-    body = "\n".join([*draft.body_lines(), *preamble]).upper()
+def _status(draft: ContractDraft, preamble: list[str], place_and_date: str) -> str:
+    body = "\n".join([*draft.body_lines(), *preamble, place_and_date]).upper()
     if "[ТРЕБУЕТ УТОЧНЕНИЯ" in body:
         return "PRELIMINARY DRAFT"
     if draft.status == VerificationStatus.NEEDS_VERIFICATION or draft.verification_notes:
@@ -29,8 +27,11 @@ def _status(draft: ContractDraft, preamble: list[str]) -> str:
     return "READY FOR FINAL HUMAN REVIEW"
 
 
-def _today_kz() -> str:
-    return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
+# Место и дата заключения — существенный реквизит договора, а не оформление
+# шапки: с даты заключения течёт срок действия, а место определяет применимые
+# правила. День генерации проекта днём заключения не является, поэтому пропуск
+# остаётся видимым, а не подменяется сегодняшним числом.
+PLACE_AND_DATE_PLACEHOLDER = "[ТРЕБУЕТ УТОЧНЕНИЯ: место и дата заключения договора]"
 
 
 def _body_blocks(draft: ContractDraft, preamble: list[str]) -> list[Block]:
@@ -73,7 +74,8 @@ def build_contract_docx(draft: ContractDraft) -> bytes:
         party_a=draft.party_a,
         party_b=draft.party_b,
     )
-    document_status = _status(draft, preamble)
+    place_and_date = (draft.place_and_date or "").strip() or PLACE_AND_DATE_PLACEHOLDER
+    document_status = _status(draft, preamble, place_and_date)
 
     # Internal product QA is useful only on a non-ready project. A contract that
     # passed the universal quality bar must be a clean signing document.
@@ -98,7 +100,7 @@ def build_contract_docx(draft: ContractDraft) -> bytes:
 
     date_line = doc.add_paragraph()
     date_line.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    date_line.add_run(draft.place_and_date or f"[ТРЕБУЕТ УТОЧНЕНИЯ: место заключения], {_today_kz()}")
+    date_line.add_run(place_and_date)
 
     render_blocks(doc, _body_blocks(draft, preamble))
 

@@ -7,5 +7,9 @@ __pycache__/
 .idea/
 .vscode/
 
+# Фронтенд: зависимости ставятся из package-lock.json, сборка собирается из src
+node_modules/
+miniapp/dist/
+
 # Локальный корпус норм — собирается scripts/load_corpus.py
 korgan/data/*.sqlite3

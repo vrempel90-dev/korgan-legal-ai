@@ -9,6 +9,7 @@ from typing import Any
 # document-release metadata. v3 replaces only the legal service chain with the
 # exact chain used by strict_bot.main(), then adds a parity probe.
 from korgan import miniapp_api_v2 as core
+from korgan.asgi_lifespan import add_lifespan
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter, claim_pipeline_v2_mode
 from korgan.claim_service_mux import ClaimServiceMux
 from korgan.legal.corpus_refresh import start_corpus_refresh_task
@@ -26,7 +27,12 @@ apply_token_budget_guard(settings)
 stable_service = PretrialResponseProductionService(settings)
 claim_mux = ClaimServiceMux(stable_service, settings)
 service = ClaimPipelineV2Adapter(claim_mux)
+# v2 routes claims through ``core.service``, while its legacy helpers resolve
+# contract/response/pre-trial methods through ``miniapp_api.service``. Both
+# names must point at this exact production chain; otherwise the MiniApp keeps
+# two OpenAI clients with configuration that can drift by document type.
 core.service = service
+core.legacy.service = service
 
 app = core.app
 app.title = "KORGAN Mini App API — production legal parity"
@@ -34,7 +40,6 @@ app.version = "0.8.0"
 _corpus_task: asyncio.Task[None] | None = None
 
 
-@app.on_event("startup")
 async def _production_parity_startup() -> None:
     global _corpus_task
     # Pre-deploy tests must never wait for an external Adilet/ZAN refresh. The
@@ -46,7 +51,6 @@ async def _production_parity_startup() -> None:
         _corpus_task = start_corpus_refresh_task()
 
 
-@app.on_event("shutdown")
 async def _production_parity_shutdown() -> None:
     global _corpus_task
     if _corpus_task is not None:
@@ -54,6 +58,9 @@ async def _production_parity_shutdown() -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await _corpus_task
         _corpus_task = None
+
+
+add_lifespan(app, startup=_production_parity_startup, shutdown=_production_parity_shutdown)
 
 
 @app.get("/miniapp/parity")
