@@ -323,7 +323,14 @@ function App() {
       if (pendingFiles.length) {
         await korganApi.uploadMaterials(item.id, pendingFiles, ({ result: uploaded }) => { item = uploaded.case || item; setActiveCase(item); });
       }
-      setActiveCase(item); setDocumentResult(null); setDocPayment(null); resetChat(); await refreshCases(); clearLocalCaseData(); setCaseText(''); setPendingFiles([]); showScreen('case');
+      setActiveCase(item); setDocumentResult(null); setDocPayment(null); resetChat();
+      // Дело создано и материалы загружены — это подтвердил сервер. Обновление
+      // списка стояло перед очисткой черновика и переходом, и его сбой обрывал
+      // цепочку: пользователь оставался на форме со своим текстом и файлами,
+      // читал ошибку и нажимал «Создать дело» ещё раз — в списке появлялось
+      // второе такое же дело. Сверка со списком идёт следом.
+      clearLocalCaseData(); setCaseText(''); setPendingFiles([]); showScreen('case');
+      refreshCases().catch(() => {});
     } catch (error) { setNotice(clientMessage(error)); }
     finally { setBusy(false); }
   };
