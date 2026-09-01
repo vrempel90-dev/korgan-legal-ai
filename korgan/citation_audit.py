@@ -174,12 +174,22 @@ def extract_references(text: str) -> list[ProvisionReference]:
     return found
 
 
-def _is_adilet(url: str) -> bool:
+def is_official_source(url: str) -> bool:
+    """Официальный ли это источник законодательства.
+
+    Официальным считается только Adilet — информационно-правовая система
+    нормативных правовых актов РК. Перепечатка на стороннем сайте выглядит так
+    же, но не отражает ни редакцию, ни факт утраты силы.
+    """
     try:
         host = (urlparse(url).hostname or "").lower()
     except ValueError:
         return False
     return host == "adilet.zan.kz" or host.endswith(".adilet.zan.kz")
+
+
+#: Прежнее внутреннее имя: используется ниже по файлу и в тестах.
+_is_adilet = is_official_source
 
 
 def runtime_provisions(verified_claims: list[str] | None) -> list[RuntimeProvision]:
