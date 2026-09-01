@@ -63,6 +63,23 @@ _ADDRESS_RE = re.compile(
     r"(?i)\b(?:адрес\w*|прожива\w*|находи\w*)\s*(?:ответчик\w*|истц\w*)?\s*:\s*"
     r"(?P<value>[^\n]+)"
 )
+# Адрес заканчивается там, где заканчивается адрес. Значение забиралось до
+# конца строки, поэтому в него попадал следующий факт того же абзаца, и верно
+# перенесённый адрес не мог совпасть с материалами. Части адреса опознаются по
+# закрытому списку обозначений населённого пункта, улицы и помещения.
+_ADDRESS_MARKER_RE = re.compile(
+    r"(?i)(?<!\w)(?:г|гор|город\w*|обл\w*|район\w*|р-н|село|аул\w*|пос[её]л\w*|пгт|"
+    r"ул|улиц\w*|проспект\w*|пр-т|пр|переул\w*|пер|бульвар\w*|шоссе|мкр|микрорайон\w*|"
+    r"дом|д|зд|здани\w*|стр|строени\w*|корп\w*|кв|квартир\w*|оф|офис\w*|пом|"
+    r"помещени\w*|индекс)(?!\w)"
+)
+# Точка в «г.» и «ул.» — часть сокращения, а не конец предложения. Пока она
+# такая же, как точка после «150», отличить адрес от следующего факта нельзя.
+_ADDRESS_ABBREV_RE = re.compile(
+    r"(?i)(?<!\w)(г|гор|ул|д|кв|пр|пр-т|пер|стр|зд|корп|оф|пом|обл|мкр|пгт|р-н|бул|ш)\."
+)
+_LEADING_NUMBER_RE = re.compile(r"^\s*(\d+(?:\s*[A-Za-zА-Яа-я])?(?:\s*/\s*\d+)?)")
+_SENTENCE_END_RE = re.compile(r"[.!?;]")
 _CONTRACT_NUMBER_RE = re.compile(
     r"(?i)\b(?:договор|контракт|соглашени\w*)[^\n.;]{0,40}?"
     r"(?:№|номер)\s*(?P<value>[A-Za-zА-Яа-я0-9/-]+)"
@@ -208,6 +225,39 @@ def _date_token(match: re.Match[str]) -> str:
     raise ValueError(f"неизвестная форма даты: {match.group(0)!r}")
 
 
+def _address_value(raw: str) -> str:
+    """Оставить от захваченного хвоста строки только сам адрес.
+
+    Части идут через запятую и разбираются слева направо: часть с обозначением
+    адреса принимается целиком; часть, начинающаяся с числа, даёт номер дома и
+    заканчивает адрес; короткое продолжение вида «Абая 150» принимается как
+    улица с домом. Всё остальное — уже не адрес.
+    """
+    defused = _ADDRESS_ABBREV_RE.sub(r"\1 ", str(raw or ""))
+    parts: list[str] = []
+    for raw_part in defused.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        ends_sentence = bool(_SENTENCE_END_RE.search(part))
+        if _ADDRESS_MARKER_RE.search(part) and not ends_sentence:
+            parts.append(part)
+            continue
+        number = _LEADING_NUMBER_RE.match(part)
+        if number:
+            parts.append(number.group(1).strip())
+            break
+        if parts and not ends_sentence and len(part.split()) <= 2 and any(c.isdigit() for c in part):
+            parts.append(part)
+            continue
+        if _ADDRESS_MARKER_RE.search(part):
+            # Обозначение адреса есть, но внутри части кончается предложение:
+            # адрес обрывается там же.
+            parts.append(_SENTENCE_END_RE.split(part)[0].strip())
+        break
+    return ", ".join(item for item in parts if item)
+
+
 def _asserts_payment(sentence: str) -> bool:
     """Утверждает ли предложение, что платёж состоялся.
 
@@ -266,8 +316,8 @@ def forbidden_fact_findings(statements: list[str] | None, materials: str) -> lis
             if not _contains(source, value):
                 findings.append(f"ИИН/БИН отсутствует во входящих материалах: {value}")
         for match in _ADDRESS_RE.finditer(text):
-            value = match.group("value")
-            if not _contains(source, value):
+            value = _address_value(match.group("value"))
+            if value and not _contains(source, value):
                 findings.append(f"адрес отсутствует во входящих материалах: {value}")
         for match in _CONTRACT_NUMBER_RE.finditer(text):
             value = match.group("value")

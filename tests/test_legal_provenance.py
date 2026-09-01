@@ -193,6 +193,56 @@ def test_a_date_absent_from_the_materials_is_still_detected_in_any_form() -> Non
     )
 
 
+def test_address_followed_by_another_fact_on_the_same_line_is_not_reported_as_invented() -> None:
+    """Адрес заканчивается там, где заканчивается адрес.
+
+    Значение забиралось до конца строки, поэтому в «адрес» попадал следующий
+    факт того же абзаца, и совпасть с материалами такая строка уже не могла:
+    верно перенесённый адрес становился жёстким блокером.
+    """
+    materials = (
+        "Ответчик: ТОО «Компания», БИН 210987654321, адрес: г. Алматы, ул. Абая, 150.\n"
+        "Договор поставки № 12 от 15.01.2026.\n"
+    )
+
+    findings = forbidden_fact_findings(
+        ["Адрес ответчика: г. Алматы, ул. Абая, 150. Договор заключён 15.01.2026."], materials
+    )
+
+    assert not any("адрес" in item.lower() for item in findings), findings
+
+
+def test_address_followed_by_a_clause_in_the_same_sentence_is_not_reported_as_invented() -> None:
+    """Продолжение предложения после адреса не является частью адреса."""
+    materials = "Истец проживает по адресу: г. Астана, ул. Сыганак, 10.\n"
+
+    findings = forbidden_fact_findings(
+        ["Адрес истца: г. Астана, ул. Сыганак, 10, и по нему направляется корреспонденция."],
+        materials,
+    )
+
+    assert not any("адрес" in item.lower() for item in findings), findings
+
+
+def test_an_invented_address_is_still_detected() -> None:
+    """Обрезка хвоста не должна ослабить сам детектор."""
+    materials = "Ответчик: ТОО «Компания», адрес: г. Алматы, ул. Абая, 150.\n"
+
+    assert any(
+        "адрес" in item.lower()
+        for item in forbidden_fact_findings(
+            ["Адрес ответчика: г. Шымкент, ул. Тауке хана, 3."], materials
+        )
+    )
+    # Номер дома — часть адреса, а не хвост: подменённый дом обязан ловиться.
+    assert any(
+        "адрес" in item.lower()
+        for item in forbidden_fact_findings(
+            ["Адрес ответчика: г. Алматы, ул. Абая, 151. Договор заключён 15.01.2026."], materials
+        )
+    )
+
+
 def test_source_denying_the_demand_was_sent_does_not_authorise_asserting_it() -> None:
     """Отрицание направления претензии — не подтверждение направления.
 
