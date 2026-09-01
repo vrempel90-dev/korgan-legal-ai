@@ -147,6 +147,29 @@ def test_calculated_claim_passes_the_calculation_to_prayer_reconciliation() -> N
     assert not any("ПРОШУ СУД" in error and "неустойк" in error.lower() for error in errors)
 
 
+def test_contractual_penalty_after_a_partial_payment_is_charged_on_the_balance() -> None:
+    """Платёж середины периода уменьшает базу, а не остаётся незамеченным.
+
+    Одной формулой вышло бы 12 000 000 × 0,1% × 85 дн. = 1 020 000 — начисление
+    на весь долг и после того, как треть его вернули. По остатку:
+    12 000 000 × 0,1% × 31 дн. = 372 000, затем 8 000 000 × 0,1% × 54 дн. = 432 000.
+    """
+    draft = _supply_draft()
+    context = CONTRACT_CONTEXT + (
+        "01.07.2026 ответчик частично оплатил задолженность в размере 4 000 000 тенге.\n"
+    )
+
+    _apply_verified_penalty(context, _supply_research(), draft, filing_date=date(2026, 8, 23))
+
+    body = "\n".join(draft.calculation)
+    assert "1 020 000" not in body
+    assert "Договорная неустойка: 804 000 тенге" in body
+    assert "31.05.2026—30.06.2026: 12 000 000 тенге × 0.1% × 31 дн. = 372 000 тенге" in body
+    assert "01.07.2026—23.08.2026: 8 000 000 тенге × 0.1% × 54 дн. = 432 000 тенге" in body
+    assert any("804 000 тенге" in item for item in draft.requests)
+    assert not any("1 020 000" in item for item in draft.requests)
+
+
 # --- статья 353 ГК РК ---
 
 

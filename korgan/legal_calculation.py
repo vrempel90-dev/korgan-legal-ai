@@ -31,6 +31,7 @@ from decimal import Decimal
 
 from korgan.contractual_penalty import ContractualPenalty, ContractualPenaltyTerms, calc_contractual_penalty
 from korgan.legal_calc import ARTICLE_353_LABEL, DAYS_IN_YEAR, LatePaymentPenalty, format_kzt
+from korgan.penalty_engine import PenaltyCalculation
 
 
 def _date(value: date) -> str:
@@ -139,6 +140,53 @@ def late_interest_component(penalty: LatePaymentPenalty) -> MoneyComponent:
         end_date=penalty.end,
         days=penalty.days,
         formula=formula,
+    )
+
+
+def interval_penalty_component(
+    calculation: PenaltyCalculation, *, title: str, basis: str, rate_label: str
+) -> MoneyComponent:
+    """Неустойка, посчитанная по интервалам, — с раскрытой таблицей.
+
+    Когда долг гасили частями, одной строки «база × ставка × дни» не хватает:
+    база в каждом отрезке своя, и без таблицы проверяющий не может повторить
+    расчёт — а расчёт, который нельзя повторить, суд не принимает. Поэтому в
+    раздел выносится каждый отрезок со своим остатком, своими днями и своим
+    итогом, и подытоги складываются в ту же сумму, что стоит в требовании.
+    """
+    rows = [
+        (
+            f"{_date(interval.period_from)}—{_date(interval.period_to)}: "
+            f"{format_kzt(interval.principal)} × {_percent(interval.rate)}% × "
+            f"{interval.days} дн. = {format_kzt(interval.subtotal)}"
+            + (
+                f" (остаток изменён: {interval.event_ending_period})"
+                if interval.event_ending_period
+                else ""
+            )
+        )
+        for interval in calculation.intervals
+    ]
+    if calculation.capped and calculation.cap_amount is not None:
+        rows.append(
+            f"начислено {format_kzt(calculation.raw_total)}, "
+            f"предъявлено в пределах ограничения {format_kzt(calculation.cap_amount)}"
+        )
+
+    first = calculation.intervals[0]
+    last = calculation.intervals[-1]
+    return MoneyComponent(
+        title=title,
+        basis=basis,
+        amount=calculation.total,
+        penalty_base=first.principal,
+        penalty_rate=rate_label,
+        start_date=first.period_from,
+        end_date=last.period_to,
+        days=sum(interval.days for interval in calculation.intervals),
+        formula=" + ".join(format_kzt(i.subtotal) for i in calculation.intervals)
+        + f" = {format_kzt(calculation.raw_total)}",
+        limits=rows,
     )
 
 

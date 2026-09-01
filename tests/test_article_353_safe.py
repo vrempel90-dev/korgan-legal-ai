@@ -98,19 +98,42 @@ def test_explicit_article_353_claim_is_calculated_and_added_to_claim_price() -> 
     assert sum("353" in item for item in draft.requests) == 1
 
 
-def test_partial_payment_blocks_the_single_formula_penalty() -> None:
+def test_partial_payment_is_calculated_by_intervals_not_by_one_formula() -> None:
     """Долг, погашенный частично, нельзя считать одной формулой за весь период.
 
     Неустойка после платежа начисляется на остаток. Прежний расчёт брал одну
     сумму и все дни периода, поэтому платёж середины периода в него не попадал
     и требование выходило завышенным — с виду обычное правдоподобное число,
-    которое ответчик пересчитывает первым. До подтверждения дат и сумм платежей
-    сумма не заявляется вовсе.
+    которое ответчик пересчитывает первым.
+
+    800 000 × 16,75% × 51 дн. / 365 = 18 723; после платежа 01.06.2026
+    500 000 × 16,75% × 77 дн. / 365 = 17 668. Итого 36 391, а не 46 992.
     """
     draft = _draft()
     context = (
         "Истец ИИН 900000000001. Ответчик обязался вернуть сумму не позднее 10 апреля 2026 года. "
         "01.06.2026 ответчик частично оплатил задолженность в размере 300 000 тенге. "
+        "Прошу взыскать неустойку по статье 353 ГК РК за просрочку."
+    )
+    _apply_verified_article_353(context, _verified_353(), draft, filing_date=date(2026, 8, 16))
+
+    assert "46 992" not in draft.late_interest
+    assert not any("46 992" in item for item in draft.requests)
+    assert "36 391 тенге" in draft.late_interest
+    # Обе строки таблицы видны в документе и складываются в заявленную сумму.
+    assert "800 000 тенге × 16.75% × 51 дн. = 18 723 тенге" in draft.late_interest
+    assert "500 000 тенге × 16.75% × 77 дн. = 17 668 тенге" in draft.late_interest
+    assert any("36 391 тенге" in item for item in draft.requests)
+    # Основной долг код за юриста не уменьшает, но и молчать о платеже не вправе.
+    assert any("300 000 тенге" in note for note in draft.verification_notes)
+
+
+def test_an_unclear_partial_payment_still_blocks_the_penalty() -> None:
+    """Оплата была, а её дату установить нельзя: считать по-прежнему нечего."""
+    draft = _draft()
+    context = (
+        "Истец ИИН 900000000001. Ответчик обязался вернуть сумму не позднее 10 апреля 2026 года. "
+        "Ответчик частично оплатил задолженность в размере 300 000 тенге. "
         "Прошу взыскать неустойку по статье 353 ГК РК за просрочку."
     )
     _apply_verified_article_353(context, _verified_353(), draft, filing_date=date(2026, 8, 16))
