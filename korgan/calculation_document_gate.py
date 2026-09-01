@@ -15,7 +15,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from korgan.legal_calc import format_kzt
 from korgan.penalty_engine import PenaltyCalculation
+
+
+def _money(value: object) -> str:
+    """Сумма в том же виде, в каком она стоит в документе.
+
+    Причина расхождения читается человеком и сравнивается им с текстом иска.
+    «12000000» и «12 000 000 тенге» — одно число, но глазом они сверяются
+    по-разному, и именно в такой строке ошибиться на разряд проще всего.
+    """
+    try:
+        return format_kzt(int(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,26 +85,26 @@ def check_calculation_against_document(
 
     if calculation.claim_matches is False:
         reasons.append(
-            f"сумма, названная клиентом ({calculation.claimed_amount}), "
-            f"не совпадает с расчётом ({calculation.total})"
+            f"сумма, названная клиентом ({_money(calculation.claimed_amount)}), "
+            f"не совпадает с расчётом ({_money(calculation.total)})"
         )
 
     table_total = sum(row.subtotal for row in calculation.intervals)
     if calculation.intervals and table_total != calculation.raw_total:
         reasons.append(
-            f"строки таблицы расчёта дают {table_total}, "
-            f"а итог до применения предела — {calculation.raw_total}"
+            f"строки таблицы расчёта дают {_money(table_total)}, "
+            f"а итог до применения предела — {_money(calculation.raw_total)}"
         )
 
     if amounts.principal_in_document != principal:
         reasons.append(
-            f"основной долг в документе ({amounts.principal_in_document}) "
-            f"не совпадает с установленным ({principal})"
+            f"основной долг в документе ({_money(amounts.principal_in_document)}) "
+            f"не совпадает с установленным ({_money(principal)})"
         )
     if amounts.principal_in_relief != principal:
         reasons.append(
-            f"основной долг в просительной части ({amounts.principal_in_relief}) "
-            f"не совпадает с установленным ({principal})"
+            f"основной долг в просительной части ({_money(amounts.principal_in_relief)}) "
+            f"не совпадает с установленным ({_money(principal)})"
         )
 
     penalty = calculation.total
@@ -101,14 +115,15 @@ def check_calculation_against_document(
     ):
         if value != penalty:
             reasons.append(
-                f"неустойка в {where} ({value}) не совпадает с расчётом ({penalty})"
+                f"неустойка в {where} ({_money(value)}) "
+                f"не совпадает с расчётом ({_money(penalty)})"
             )
 
     expected_total = principal + penalty + amounts.other_verified_claims
     if amounts.total_in_relief != expected_total:
         reasons.append(
-            f"общая сумма в просительной части ({amounts.total_in_relief}) "
-            f"не равна сумме требований ({expected_total})"
+            f"общая сумма в просительной части ({_money(amounts.total_in_relief)}) "
+            f"не равна сумме требований ({_money(expected_total)})"
         )
 
     return GateResult(ready=not reasons, reasons=tuple(reasons))

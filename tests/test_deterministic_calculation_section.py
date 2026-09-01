@@ -216,6 +216,13 @@ def test_a_penalty_that_disagrees_with_the_document_is_withdrawn_not_patched() -
     assert not any("996 000" in item for item in draft.requests)
     assert any("не сошёлся с текстом документа" in note for note in draft.verification_notes)
 
+    # Разбор расхождения адресован юристу и называет суммы читаемо. В самой
+    # просительной части его быть не должно: перечисленные там чужие суммы
+    # читаются как заявленное требование.
+    detail = " ".join(draft.verification_notes)
+    assert "996 000 тенге" in detail and "1 020 000 тенге" in detail
+    assert not any("Расхождения:" in item for item in draft.requests)
+
 
 # --- статья 353 ГК РК ---
 

@@ -385,6 +385,35 @@ def test_document_is_blocked_when_the_relief_does_not_match_the_calculation() ->
     assert any("просительной части" in reason for reason in gate.reasons)
 
 
+def test_the_reason_names_amounts_the_way_the_document_writes_them() -> None:
+    """Причину расхождения читает человек и сверяет её глазом с текстом иска.
+
+    Пока суммы подставлялись как есть, строка выходила «неустойка в
+    просительной части (70000) не совпадает с расчётом (62000)»: то же число,
+    но без разрядов и без валюты — то есть в том единственном виде, в котором
+    ошибиться разрядом проще всего.
+    """
+    result = calculate_penalty(2_000_000, date(2026, 3, 1), date(2026, 3, 31), daily())
+    gate = check_calculation_against_document(
+        result,
+        DocumentAmounts(
+            principal_in_document=2_000_000,
+            penalty_in_reasoning=62_000,
+            penalty_in_calculation=62_000,
+            penalty_in_relief=70_000,
+            principal_in_relief=2_000_000,
+            total_in_relief=2_070_000,
+        ),
+        principal=2_000_000,
+    )
+
+    text = " | ".join(gate.reasons)
+    assert "70 000 тенге" in text
+    assert "62 000 тенге" in text
+    assert "2 070 000 тенге" in text
+    assert "(70000)" not in text and "(62000)" not in text
+
+
 def test_document_passes_when_every_figure_agrees() -> None:
     result = calculate_penalty(2_000_000, date(2026, 3, 1), date(2026, 3, 31), daily())
     gate = check_calculation_against_document(

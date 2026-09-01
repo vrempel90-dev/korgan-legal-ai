@@ -332,8 +332,16 @@ def _explicit_penalty_amount_from_context(case_context: str) -> int | None:
     return values[0] if len(values) == 1 else None
 
 
-def _mark_penalty_for_verification(draft: ClaimDraft, reason: str, *, case_context: str) -> None:
-    """Keep the remedy while discarding any model-only monetary figure."""
+def _mark_penalty_for_verification(
+    draft: ClaimDraft, reason: str, *, case_context: str, detail: str = ""
+) -> None:
+    """Keep the remedy while discarding any model-only monetary figure.
+
+    ``reason`` попадает в саму просительную часть и потому должен читаться как
+    пометка на полях иска. Разбор расхождения — какая сумма где стоит — идёт
+    в ``detail`` и остаётся в замечаниях для юриста: в «ПРОШУ СУД» ему не
+    место, там перечисление чужих сумм читается как заявленное требование.
+    """
     suffix = f"[ТРЕБУЕТ ПРОВЕРКИ: {reason}]"
     source_amount = _explicit_penalty_amount_from_context(case_context)
     updated = [str(item) for item in draft.requests if not _PENALTY_LINE_RE.search(str(item))]
@@ -345,8 +353,9 @@ def _mark_penalty_for_verification(draft: ClaimDraft, reason: str, *, case_conte
         updated.append(f"Взыскать заявленную клиентом неустойку. {suffix}")
     draft.requests = updated
     _drop_penalty_calculation(draft)
-    if reason not in draft.verification_notes:
-        draft.verification_notes.append(reason)
+    note = f"{reason} {detail}".strip() if detail else reason
+    if note not in draft.verification_notes:
+        draft.verification_notes.append(note)
     draft.status = VerificationStatus.NEEDS_VERIFICATION
 
 
@@ -631,8 +640,9 @@ def _enforce_calculation_gate(
     _drop_article_353_lines(draft)
     _mark_penalty_for_verification(
         draft,
-        "Расчёт неустойки не сошёлся с текстом документа (" + "; ".join(reasons) + ").",
+        "расчёт неустойки не сошёлся с текстом документа",
         case_context=case_context,
+        detail="Расхождения: " + "; ".join(reasons) + ".",
     )
     _recompute_claim_price_and_duty(draft, case_context)
 
