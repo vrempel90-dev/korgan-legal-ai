@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 # Importing strict_bot installs the same production legal hardening layers, but
 # does NOT start Telegram polling because main() is protected by __main__.
 from korgan import strict_bot as _production_runtime  # noqa: F401
+from korgan.asgi_lifespan import add_lifespan
 from korgan.claim_docx import build_claim_docx
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
 from korgan.config import get_settings
@@ -79,14 +80,15 @@ class ConsentRequest(BaseModel):
     terms_version: str = "2026-08-16-v1"
 
 
-@app.on_event("startup")
 async def _startup() -> None:
     await store.open()
 
 
-@app.on_event("shutdown")
 async def _shutdown() -> None:
     await store.close()
+
+
+add_lifespan(app, startup=_startup, shutdown=_shutdown)
 
 
 def _validate_init_data(raw: str) -> dict[str, str]:
