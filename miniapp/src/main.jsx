@@ -470,7 +470,16 @@ function App() {
     const question = approved ? (language === 'kk' ? 'Kaspi Pay тарихында осы төлем нақты расталды ма?' : 'Вы действительно сверили этот платёж в истории Kaspi Pay?') : (language === 'kk' ? 'Бұл төлемді қабылдамау керек пе?' : 'Отклонить эту оплату?');
     if (!window.confirm(question)) return;
     setAdminBusy(true); setNotice('');
-    try { await korganApi.adminDocumentPaymentDecision(orderId, approved, approved ? 'Kaspi Pay manually confirmed' : 'Payment not confirmed in Kaspi Pay'); await loadAdminOrders(); }
+    try {
+      await korganApi.adminDocumentPaymentDecision(orderId, approved, approved ? 'Kaspi Pay manually confirmed' : 'Payment not confirmed in Kaspi Pay');
+      // Очередь показывает только нерешённые заказы, а решение уже принято
+      // сервером. Раньше заказ уходил из очереди только вместе с успешным
+      // перечитыванием списка, а оно гасит свои ошибки само: на сбое сети
+      // подтверждённая оплата оставалась в очереди, и оператор решал её второй
+      // раз. Сверка с сервером идёт следом и ничего больше не решает.
+      setAdminOrders(prev => prev.filter(order => order.order_id !== orderId));
+      await loadAdminOrders();
+    }
     catch (error) { setNotice(clientMessage(error)); } finally { setAdminBusy(false); }
   };
 
