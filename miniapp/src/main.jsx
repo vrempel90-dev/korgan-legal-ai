@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Scale, MessageCircle, FileText, FolderOpen, ShieldCheck, Home,
@@ -18,7 +18,7 @@ import { getTelegramUser, getTelegramWebApp, initTelegram, haptic } from './tele
 import { PERSONAL_LAWYER_URL, personalLawyerCopy } from './personalLawyer';
 import { deliverDocument, openSignedDocument } from './documentDelivery';
 import { startDocumentPaymentPolling } from './documentPaymentPolling';
-import { resolveConsent } from './consentAuthority';
+import { createBootstrapSession } from './bootstrapSession';
 
 const TERMS_VERSION = '2026-08-16-v1';
 const WHATSAPP_URL = 'https://wa.me/77005000553';
@@ -112,6 +112,14 @@ function App() {
   const [docPayment, setDocPayment] = useState(null);
   const [adminOrders, setAdminOrders] = useState([]);
   const [adminBusy, setAdminBusy] = useState(false);
+  const bootstrap = useRef(null);
+  if (bootstrap.current === null) {
+    bootstrap.current = createBootstrapSession({
+      api: korganApi,
+      isBackendConnected,
+      termsVersion: TERMS_VERSION,
+    });
+  }
   const t = L[language];
   const backendOk = connection === 'ok';
 
@@ -121,28 +129,26 @@ function App() {
   };
 
   const boot = async () => {
-    if (!isBackendConnected()) { setConnection('down'); return; }
     setConnection('checking'); setNotice('');
-    try {
-      const [health, serverConsent] = await Promise.all([
-        korganApi.health(),
-        korganApi.consentStatus(),
-      ]);
-      const decision = resolveConsent(serverConsent, TERMS_VERSION);
-      setRuntimeInfo(health);
-      if (!decision.accepted) {
-        setConsent(false); setCases([]); setPricing(null); setConnection('ok');
-        return;
-      }
-      const [caseResult, priceResult] = await Promise.all([korganApi.listCases(), korganApi.pricing()]);
-      if (consent !== true) setConsent(true);
-      setPricing(priceResult); setCases(caseResult.cases || []); setConnection('ok');
-    } catch (error) { setConsent(false); setConnection('down'); setNotice(error?.message || t.down); }
+    const result = await bootstrap.current.run();
+    if (result.kind === 'stale') return;
+    if (result.kind === 'error' || result.kind === 'unavailable') {
+      setConnection('down');
+      setNotice(result.error?.message || t.down);
+      return;
+    }
+    setRuntimeInfo(result.health);
+    setConsent(result.consent);
+    setPricing(result.pricing);
+    setCases(result.cases);
+    setConnection('ok');
   };
 
-  useEffect(() => { initTelegram(); setTelegramUser(getTelegramUser()); boot(); }, []);
+  useEffect(() => {
+    initTelegram(); setTelegramUser(getTelegramUser()); boot();
+    return () => bootstrap.current.cancel();
+  }, []);
   useEffect(() => { if (!activeCase) resetChat(); }, [language]);
-  useEffect(() => { if (consent === true) boot(); }, [consent]);
   useEffect(() => {
     if (screen !== 'doc-payment' || docPayment?.status !== 'awaiting_admin' || !docPayment?.order_id) return undefined;
     return startDocumentPaymentPolling({
@@ -164,7 +170,7 @@ function App() {
 
   const acceptTerms = async () => {
     setBusy(true); setNotice('');
-    try { await korganApi.acceptConsent(TERMS_VERSION); setConsent(true); }
+    try { await korganApi.acceptConsent(TERMS_VERSION); await boot(); }
     catch (error) { setNotice(error?.message || t.down); }
     finally { setBusy(false); }
   };
@@ -309,7 +315,7 @@ function App() {
   const ConnectionBanner = () => connection === 'down' ? <div className="connection-banner error-banner"><WifiOff size={18}/><div><strong>{t.systemProblem}</strong><small>{t.down}</small></div><button onClick={boot}><RefreshCw size={17}/>{t.retry}</button></div> : null;
   const Sources = ({ items = [] }) => !items.length ? null : <div className="source-list"><span>{t.sources}</span>{items.map((source, i) => { const url = safeUrl(source); return url ? <a key={`${source}-${i}`} href={url} target="_blank" rel="noreferrer"><Link2 size={13}/>{sourceLabel(url)}<ExternalLink size={12}/></a> : <span className="source-chip" key={`${source}-${i}`}><Link2 size={13}/>{source}</span>; })}</div>;
 
-  if (consent === null) return <div className="app-shell consent-shell"><main className="page consent-page"><div className="success-ring preliminary-ring"><LoaderCircle className="spin" size={38}/></div><h1>{t.connecting}</h1>{notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}</main></div>;
+  if (consent === null) return <div className="app-shell consent-shell"><main className="page consent-page"><div className="success-ring preliminary-ring">{connection === 'down' ? <WifiOff size={38}/> : <LoaderCircle className="spin" size={38}/>}</div><h1>{connection === 'down' ? t.systemProblem : t.connecting}</h1>{notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}{connection === 'down' && <button className="primary wide" onClick={boot}><RefreshCw size={17}/>{t.retry}</button>}</main></div>;
 
   if (!consent) return <div className="app-shell consent-shell"><main className="page consent-page">
     <div className="brand-mark large"><Scale size={28}/></div><div className="language-switch"><button className={language === 'ru' ? 'active' : ''} onClick={() => switchLanguage('ru')}>RU</button><button className={language === 'kk' ? 'active' : ''} onClick={() => switchLanguage('kk')}>KK</button></div>

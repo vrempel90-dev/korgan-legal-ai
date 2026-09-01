@@ -31,15 +31,15 @@ async function uploadDocumentReceipt(orderId, file) {
 }
 
 export const korganApi = {
-  health: async () => {
+  health: async (options = {}) => {
     const [health, parity] = await Promise.all([
-      request('/health'),
-      request('/miniapp/parity'),
+      request('/health', options),
+      request('/miniapp/parity', options),
     ]);
     return requireProfessionalRuntime(health, parity);
   },
-  consentStatus: () => request('/miniapp/consent'),
-  pricing: () => request('/miniapp/pricing'),
+  consentStatus: (options = {}) => request('/miniapp/consent', options),
+  pricing: (options = {}) => request('/miniapp/pricing', options),
   consultation: (message, caseId, language = 'ru') => request('/miniapp/consultation', {
     method: 'POST',
     body: JSON.stringify({ message, case_id: caseId || null, language }),
@@ -96,7 +96,7 @@ export const korganApi = {
     method: 'POST',
     body: JSON.stringify({ approved: Boolean(approved), note }),
   }),
-  listCases: () => request('/miniapp/cases'),
+  listCases: (options = {}) => request('/miniapp/cases', options),
   deleteCase: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}`, { method: 'DELETE' }),
   deleteMyData: () => request('/miniapp/me', { method: 'DELETE' }),
   acceptConsent: (termsVersion) => request('/miniapp/consent', {

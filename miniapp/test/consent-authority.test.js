@@ -40,9 +40,11 @@ test('неполный ответ не превращается в соглас�
 });
 
 test('запуск не принимает условия автоматически', () => {
-  const source = readFileSync(join(miniapp, 'src', 'main.jsx'), 'utf8');
-  const boot = source.slice(source.indexOf('const boot = async'), source.indexOf('const acceptTerms = async'));
+  const main = readFileSync(join(miniapp, 'src', 'main.jsx'), 'utf8');
+  const bootstrap = readFileSync(join(miniapp, 'src', 'bootstrapSession.js'), 'utf8');
+  const boot = main.slice(main.indexOf('const boot = async'), main.indexOf('const acceptTerms = async'));
 
   assert.doesNotMatch(boot, /korganApi\.acceptConsent\(TERMS_VERSION\)/);
-  assert.match(boot, /korganApi\.consentStatus\(\)/);
+  assert.match(boot, /bootstrap\.current\.run\(\)/);
+  assert.match(bootstrap, /api\.consentStatus\(options\)/);
 });
