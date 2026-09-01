@@ -85,6 +85,12 @@ export const korganApi = {
   getDocument: async (caseId) => requireProfessionalDocument(
     await request(`/miniapp/cases/${encodeURIComponent(caseId)}/document`),
   ),
+  documentAccess: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/document/access`, {
+    method: 'POST',
+  }),
+  sendDocumentToTelegram: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/document/telegram`, {
+    method: 'POST',
+  }),
   uploadMaterial,
   uploadMaterials: async (caseId, files, onProgress) => {
     const list = Array.from(files || []);
