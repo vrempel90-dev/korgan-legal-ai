@@ -367,7 +367,14 @@ function App() {
     try {
       let latest = activeCase;
       await korganApi.uploadMaterials(activeCase.id, files, ({ result }) => { latest = result.case || latest; setActiveCase(latest); });
-      setActiveCase(latest); setDocPayment(null); await refreshCases(); setNotice(language === 'kk' ? `${files.length} файл өңделді.` : `Обработано файлов: ${files.length}.`);
+      setActiveCase(latest); setDocPayment(null);
+      // Материалы приняты сервером, и счётчик файлов на экране дела уже вырос.
+      // Обновление списка дел стояло между отправкой и сообщением, и его сбой
+      // уводил обработчик в разбор ошибок: успешная загрузка объявлялась
+      // неудачной, а пользователь грузил те же файлы второй раз. Списка на
+      // этом экране нет, поэтому его сверка уходит за результат загрузки.
+      setNotice(language === 'kk' ? `${files.length} файл өңделді.` : `Обработано файлов: ${files.length}.`);
+      refreshCases().catch(() => {});
     } catch (error) { setNotice(clientMessage(error)); }
     finally { setBusy(false); }
   };
