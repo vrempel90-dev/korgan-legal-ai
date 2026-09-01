@@ -146,6 +146,9 @@ function App() {
   // Открытие дела переживает смену экрана и повторное нажатие только как
   // поколение: устаревший ответ ничего не меняет.
   const latestCase = useRef(createLatestAction());
+  // Список дел перечитывается из шести мест, и ответы возвращаются вперемешку:
+  // применяется только самый свежий, иначе удалённое дело возвращается в список.
+  const latestCases = useRef(createLatestAction());
   if (bootstrap.current === null) {
     bootstrap.current = createBootstrapSession({
       api: korganApi,
@@ -181,6 +184,7 @@ function App() {
     setRuntimeInfo(result.health);
     setConsent(result.consent);
     setPricing(result.pricing);
+    latestCases.current.invalidate();
     setCases(result.cases);
     setConnection('ok');
   };
@@ -229,7 +233,14 @@ function App() {
   const showScreen = next => { latestCase.current.invalidate(); setNotice(''); setScreen(next); };
   const go = next => { haptic(); showScreen(next); };
   const switchLanguage = next => { setLanguage(next); persistLanguage(next); };
-  const refreshCases = async () => { const result = await korganApi.listCases(); setCases(result.cases || []); return result.cases || []; };
+  const refreshCases = async () => {
+    const mine = latestCases.current.start();
+    const result = await korganApi.listCases();
+    const items = result.cases || [];
+    if (!mine()) return items;
+    setCases(items);
+    return items;
+  };
 
   // Готовность объявляется только описанием реально сохранённого документа:
   // экран выпуска нельзя открыть на описании ещё идущей задачи.
@@ -387,7 +398,7 @@ function App() {
   const deleteAllData = async () => {
     if (busy) return;
     if (!window.confirm(language === 'kk' ? 'Барлық Mini App деректерін жою керек пе?' : 'Удалить все данные Mini App и все дела?')) return;
-    setBusy(true); try { await korganApi.deleteMyData(); clearAllLocalData(); setCases([]); setActiveCase(null); setConsent(false); showScreen('home'); } catch (error) { setNotice(clientMessage(error)); } finally { setBusy(false); }
+    setBusy(true); try { await korganApi.deleteMyData(); clearAllLocalData(); latestCases.current.invalidate(); setCases([]); setActiveCase(null); setConsent(false); showScreen('home'); } catch (error) { setNotice(clientMessage(error)); } finally { setBusy(false); }
   };
 
   const loadAdminOrders = async () => {
