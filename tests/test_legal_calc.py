@@ -10,6 +10,7 @@ from korgan.legal_calc import (
     calc_gosposhlina_claim,
     calc_mixed_state_duty,
     calc_nonproperty_state_duty,
+    base_rate_on,
     claimant_is_individual,
     format_kzt,
     gosposhlina_line,
@@ -80,6 +81,29 @@ def test_a_day_before_every_known_mrp_fails_closed() -> None:
 
     with pytest.raises(RuntimeError):
         mrp_on(date(2025, 12, 31), rows=rows)
+
+
+def test_base_rate_is_chosen_by_the_day_and_not_by_position_in_the_file() -> None:
+    """Решение Нацбанка действует с даты, а не с места в списке.
+
+    Ставка выбиралась перебором строк в порядке файла, и последняя подошедшая
+    выигрывала. Новую ставку естественно дописать в начало списка — после этого
+    неустойка считалась бы по прежней, уже отменённой ставке.
+    """
+    rows = [
+        {"from": "2026-06-08", "value": 17.0},
+        {"from": "2025-10-13", "value": 18.0},
+    ]
+
+    assert base_rate_on(date(2026, 7, 1), rows=rows) == 17.0
+    assert base_rate_on(date(2026, 1, 1), rows=rows) == 18.0
+
+
+def test_base_rate_before_the_table_is_not_approximated() -> None:
+    """До первой известной ставки считать нечем — это не повод взять ближайшую."""
+    rows = [{"from": "2025-10-13", "value": 18.0}]
+
+    assert base_rate_on(date(2025, 1, 1), rows=rows) is None
 
 
 def test_state_duty_cap_uses_the_mrp_effective_today() -> None:

@@ -387,14 +387,21 @@ class LatePaymentPenalty:
         return f"с {self.start.strftime('%d.%m.%Y')} по {self.end.strftime('%d.%m.%Y')}"
 
 
-def base_rate_on(day: date) -> float | None:
-    if day > NB_RATE_TABLE_VALID_THROUGH:
+def base_rate_on(day: date, *, rows: list[dict[str, Any]] | None = None) -> float | None:
+    """Базовая ставка НБ РК, действовавшая в этот день.
+
+    Ставка выбирается по дате решения Нацбанка, а не по месту строки в файле:
+    новую ставку естественно дописать в начало списка, и перебор в порядке файла
+    тогда оставлял бы действующей уже отменённую. Отсутствие ставки — ``None``:
+    неустойка не считается вовсе, ближайшая ставка не подставляется.
+    """
+    table = rows if rows is not None else _NB_RATE_ROWS
+    if rows is None and day > NB_RATE_TABLE_VALID_THROUGH:
         return None
-    rate: float | None = None
-    for effective_from, value in NB_BASE_RATES:
-        if day >= effective_from:
-            rate = value
-    return rate
+    try:
+        return float(_rate_row_on(table, day, "базовая ставка НБ РК")["value"])
+    except RuntimeError:
+        return None
 
 
 def calc_late_payment_penalty(principal: int, start: date, end: date, *, rate_date: date) -> LatePaymentPenalty | None:
