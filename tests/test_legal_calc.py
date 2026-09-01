@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -6,7 +6,9 @@ from korgan.legal_calc import (
     CAP_MRP_INDIVIDUAL,
     CAP_MRP_LEGAL_ENTITY,
     MRP_2026,
+    NB_RATE_TABLE_VALID_THROUGH,
     NEEDS_CALCULATION_MARKER,
+    rates_freshness,
     calc_gosposhlina_claim,
     calc_mixed_state_duty,
     calc_nonproperty_state_duty,
@@ -104,6 +106,50 @@ def test_base_rate_before_the_table_is_not_approximated() -> None:
     rows = [{"from": "2025-10-13", "value": 18.0}]
 
     assert base_rate_on(date(2025, 1, 1), rows=rows) is None
+
+
+def test_rate_table_covers_every_decision_that_changed_the_rate() -> None:
+    """Каждое решение Нацбанка, менявшее ставку, должно быть в справочнике.
+
+    Строк с «сохранением» в файле нет намеренно — они ничего не меняют. А вот
+    пропуск решения, менявшего ставку, тих и опасен: неустойка за период после
+    него считалась бы по прежней ставке, и сумма в просительной части иска
+    разошлась бы с ручной перепроверкой юриста.
+
+    Раньше таблица начиналась с октября 2025 года, и обычный долг начала
+    2025-го вовсе не поддавался расчёту.
+    """
+    known = {
+        date(2025, 1, 20): 15.25,
+        date(2025, 3, 11): 16.5,
+        date(2025, 10, 13): 18.0,
+        date(2026, 6, 8): 17.0,
+        date(2026, 7, 27): 16.75,
+    }
+
+    for day, rate in known.items():
+        assert base_rate_on(day) == rate, f"ставка на {day.isoformat()}"
+        # Накануне решения обязана действовать предыдущая, а не новая.
+        previous = base_rate_on(day - timedelta(days=1))
+        assert previous != rate or previous is None, f"ставка не менялась {day.isoformat()}"
+
+
+def test_rate_table_expiry_is_visible_before_it_reaches_a_client() -> None:
+    """Обрыв справочника обязан быть виден снаружи, а не только в документе.
+
+    После `valid_through` ставки нет, и неустойка честно не считается. Отказ
+    правильный, но безмолвный: без этого поля о нём узнавали бы по маркеру
+    «требует проверки», уже попавшему клиенту в исковое заявление.
+    """
+    fresh = rates_freshness(NB_RATE_TABLE_VALID_THROUGH)
+    assert fresh["nb_base_rate_stale"] is False
+    assert fresh["nb_base_rate_days_left"] == 0
+
+    expired = rates_freshness(NB_RATE_TABLE_VALID_THROUGH + timedelta(days=1))
+    assert expired["nb_base_rate_stale"] is True
+    assert expired["nb_base_rate_days_left"] == -1
+    # То, о чём предупреждает поле, обязано и вправду происходить.
+    assert base_rate_on(NB_RATE_TABLE_VALID_THROUGH + timedelta(days=1)) is None
 
 
 def test_state_duty_cap_uses_the_mrp_effective_today() -> None:

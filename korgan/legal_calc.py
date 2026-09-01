@@ -371,6 +371,28 @@ NB_RATE_TABLE_VALID_THROUGH = date.fromisoformat(str(_RATES_DATA["nb_base_rate_v
 DAYS_IN_YEAR = int(_RATES_DATA["days_in_year"])
 
 
+def rates_freshness(day: date | None = None) -> dict[str, Any]:
+    """Состояние справочника ставок на указанный день.
+
+    Таблица базовой ставки честно кончается накануне следующего заседания
+    Нацбанка: после этой даты ``base_rate_on`` возвращает None, и неустойка не
+    считается, а помечается как требующая проверки. Отказ правильный, но до сих
+    пор он был безмолвным — узнать о нём можно было только по маркеру, уже
+    попавшему в документ клиента. Здесь то же самое состояние выражено числом,
+    которое видно снаружи: `/health` показывает, сколько дней осталось, и
+    справочник можно обновить до того, как обрыв дойдёт до людей.
+
+    Отрицательный `nb_base_rate_days_left` означает, что обрыв уже наступил.
+    """
+    today = day or date.today()
+    return {
+        "actual_on": str(_RATES_DATA["actual_on"]),
+        "nb_base_rate_valid_through": NB_RATE_TABLE_VALID_THROUGH.isoformat(),
+        "nb_base_rate_days_left": (NB_RATE_TABLE_VALID_THROUGH - today).days,
+        "nb_base_rate_stale": today > NB_RATE_TABLE_VALID_THROUGH,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class LatePaymentPenalty:
     principal: int

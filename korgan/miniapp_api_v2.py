@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 # strict_bot, which installs the exact same production legal hardening layers
 # without starting Telegram polling.
 from korgan import ai_cost
+from korgan import legal_calc
 from korgan import miniapp_api as legacy
 from korgan.asgi_lifespan import add_lifespan
 from korgan.claim_docx import build_claim_docx
@@ -240,6 +241,11 @@ async def health() -> dict[str, Any]:
         # старая, если ответ /health от изменений не зависит. Пустая строка
         # означает запуск не из Railway (локально, в тестах), а не сбой.
         "commit": os.getenv("RAILWAY_GIT_COMMIT_SHA", ""),
+        # Свежесть справочника ставок. Таблица базовой ставки НБ РК кончается
+        # накануне следующего заседания, и после этой даты неустойка честно не
+        # считается. Отказ правильный, но безмолвный: без этого поля о нём
+        # узнавали бы по маркеру «требует проверки» в документе клиента.
+        "legal_rates": legal_calc.rates_freshness(),
         # Фактический расход, измеренный по ответам провайдера. До этого
         # monthly_ai_budget_usd попадал только в текст лог-сообщения, и
         # «бюджета хватит на четыре месяца» нельзя было ни подтвердить, ни
