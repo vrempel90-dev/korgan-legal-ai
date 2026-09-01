@@ -394,6 +394,58 @@ NEEDS_RATE_MARKER = "[ТРЕБУЕТ ПРОВЕРКИ: базовая ставк
 NB_RATE_TABLE_VALID_THROUGH = date.fromisoformat(str(_RATES_DATA["nb_base_rate_valid_through"]))
 DAYS_IN_YEAR = int(_RATES_DATA["days_in_year"])
 
+#: Опубликованный график объявления решений по базовой ставке. Это даты, а не
+#: ставки: значение на них Нацбанком ещё не объявлено.
+_NB_NEXT_DECISIONS = tuple(
+    sorted(
+        date.fromisoformat(str(item))
+        for item in (_RATES_DATA.get("nb_base_rate_next_decisions") or {}).get("dates", [])
+    )
+)
+
+
+def next_rate_decision_on(day: date) -> date | None:
+    """Ближайшая опубликованная дата объявления решения по базовой ставке.
+
+    График заседаний Нацбанк публикует заранее, а ставку — только в день
+    заседания. Разница между этими двумя фактами и есть причина, по которой
+    неустойка на завтрашнюю дату не считается: ставка не «потерялась», её ещё
+    не существует. Дату заседания знать можно, ставку на неё — нет.
+    """
+    return next((when for when in _NB_NEXT_DECISIONS if when >= day), None)
+
+
+def needs_rate_marker(rate_date: date | None = None) -> str:
+    """Отказ считать неустойку — с причиной и датой, когда он снимется.
+
+    Голый маркер «[ТРЕБУЕТ ПРОВЕРКИ: базовая ставка]» одинаково выглядит и когда
+    система сломана, и когда ставки на эту дату в природе ещё нет. Юрист,
+    получивший его в документе, не может отличить одно от другого и вынужден
+    выяснять это сам — а выяснять, как правило, нечего: до заседания Нацбанка
+    ставку не назовёт никто.
+
+    Поэтому здесь называются оба недостающих факта: на какую дату ставка не
+    подтверждена и когда она будет объявлена. Ни то ни другое не является
+    предположением о её значении — значение по-прежнему не подставляется.
+    """
+    if rate_date is None:
+        return NEEDS_RATE_MARKER
+    announcement = next_rate_decision_on(rate_date)
+    if announcement is None:
+        return (
+            f"{NEEDS_RATE_MARKER[:-1]} на {rate_date.strftime('%d.%m.%Y')}: "
+            f"справочник подтверждён по {NB_RATE_TABLE_VALID_THROUGH.strftime('%d.%m.%Y')}, "
+            "дальнейший график заседаний не опубликован]"
+        )
+    # «объявляется», а не «не объявлено, ближайшее объявление ДД.ММ»: когда
+    # заседание приходится ровно на спорную дату, второе читается как
+    # противоречие само себе.
+    return (
+        f"{NEEDS_RATE_MARKER[:-1]} на {rate_date.strftime('%d.%m.%Y')}: "
+        f"решение Нацбанка по ставке на эту дату объявляется "
+        f"{announcement.strftime('%d.%m.%Y')}, до объявления ставка неизвестна]"
+    )
+
 
 def rates_freshness(day: date | None = None) -> dict[str, Any]:
     """Состояние справочника ставок на указанный день.
@@ -476,9 +528,9 @@ def calc_late_payment_penalty(principal: int, start: date, end: date, *, rate_da
     return LatePaymentPenalty(principal, start, end, rate_date, days, rate, amount)
 
 
-def late_penalty_line(penalty: LatePaymentPenalty | None) -> str:
+def late_penalty_line(penalty: LatePaymentPenalty | None, *, rate_date: date | None = None) -> str:
     if penalty is None:
-        return NEEDS_RATE_MARKER
+        return needs_rate_marker(rate_date)
     return (
         f"{format_kzt(penalty.amount)} за период {penalty.period()} "
         f"({penalty.days} дн.; базовая ставка НБ РК {penalty.rate_percent:g}% "

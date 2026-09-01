@@ -15,7 +15,12 @@ import logging
 from datetime import date, timedelta
 
 from korgan import claim_release_entrypoint as entrypoint
-from korgan.legal_calc import NB_RATE_TABLE_VALID_THROUGH
+from korgan.legal_calc import (
+    NB_RATE_TABLE_VALID_THROUGH,
+    late_penalty_line,
+    needs_rate_marker,
+    next_rate_decision_on,
+)
 
 
 def _log_with(monkeypatch, today: date, caplog) -> list[logging.LogRecord]:
@@ -67,3 +72,67 @@ def test_mrp_is_reported_alongside_the_base_rate(monkeypatch, caplog) -> None:
     records = _log_with(monkeypatch, NB_RATE_TABLE_VALID_THROUGH - timedelta(days=90), caplog)
 
     assert any("МРП" in record.getMessage() for record in records)
+
+
+# --- отказ считать неустойку называет причину и срок ---
+
+
+def test_the_refusal_names_the_day_the_rate_becomes_knowable() -> None:
+    """Маркер должен отличать «сломалось» от «ставки ещё не существует».
+
+    После обрыва справочника в документ вместо суммы уходит маркер. Голый
+    маркер выглядит как неисправность и посылает юриста искать ставку — а
+    искать нечего: до заседания Нацбанка её не назовёт никто. Дата заседания
+    публикуется заранее, поэтому отказ обязан её называть.
+    """
+    marker = needs_rate_marker(date(2026, 11, 1))
+
+    assert "01.11.2026" in marker
+    assert "04.12.2026" in marker
+    # Значение ставки при этом по-прежнему не подставляется ни в каком виде.
+    assert "%" not in marker
+
+
+def test_the_refusal_does_not_contradict_itself_on_the_meeting_day() -> None:
+    """Заседание может прийтись ровно на спорную дату.
+
+    Формулировка «на эту дату не объявлено, ближайшее объявление 04.09.2026»
+    для 04.09.2026 читается как противоречие и подрывает доверие ко всему
+    остальному, что написано в том же абзаце документа.
+    """
+    marker = needs_rate_marker(date(2026, 9, 4))
+
+    assert "объявляется 04.09.2026" in marker
+    assert "не объявлено" not in marker
+
+
+def test_beyond_the_published_schedule_the_refusal_says_so_plainly() -> None:
+    """График заседаний тоже конечен, и выдумывать его продолжение нельзя."""
+    marker = needs_rate_marker(date(2027, 3, 1))
+
+    assert "не опубликован" in marker
+    assert next_rate_decision_on(date(2027, 3, 1)) is None
+
+
+def test_the_published_schedule_starts_after_the_confirmed_table() -> None:
+    """График и таблица ставок должны стыковаться, а не перекрываться.
+
+    Если ближайшее заседание попадает внутрь подтверждённого периода, значит
+    одно из двух устарело: либо решение уже принято и не внесено в таблицу,
+    либо `valid_through` продлён дальше, чем подтверждено источником. И то и
+    другое молча даёт неверную ставку в расчёте.
+    """
+    first = next_rate_decision_on(date(1999, 1, 1))
+
+    assert first is not None
+    assert first > NB_RATE_TABLE_VALID_THROUGH
+
+
+def test_a_document_without_a_rate_never_shows_a_number_instead(monkeypatch) -> None:
+    """Ни при каких условиях отказ не превращается в подставленную ставку."""
+    monkeypatch.setattr("korgan.legal_calc.base_rate_on", lambda *a, **k: None)
+
+    line = late_penalty_line(None, rate_date=date(2026, 11, 1))
+
+    assert line.startswith("[ТРЕБУЕТ ПРОВЕРКИ")
+    assert "тенге" not in line

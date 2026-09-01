@@ -21,6 +21,8 @@ from korgan.legal_calc import (
     format_kzt,
     gosposhlina_line,
     late_penalty_line,
+    needs_rate_marker,
+    next_rate_decision_on,
     parse_all_amounts_kzt,
     parse_amount_kzt,
 )
@@ -174,6 +176,25 @@ RATE_MISSING_NOTE = (
     "Базовая ставка НБ РК для даты предъявления иска не подтверждена актуальным внутренним справочником; "
     "расчёт неустойки по статье 353 не выполнен."
 )
+
+
+def rate_missing_note(day: date) -> str:
+    """То же замечание юристу, но с датой ближайшего заседания Нацбанка.
+
+    Замечание «ставка не подтверждена справочником» звучит как неисправность и
+    подталкивает искать её в справочнике. Если же заседание ещё не состоялось,
+    искать нечего ни в справочнике, ни где-либо ещё, и единственное осмысленное
+    действие — дождаться объявления. Дата заседания опубликована заранее,
+    поэтому здесь она и называется: замечание превращается из жалобы в срок.
+    """
+    announcement = next_rate_decision_on(day)
+    if announcement is None:
+        return RATE_MISSING_NOTE
+    return (
+        f"{RATE_MISSING_NOTE} Решение Нацбанка по базовой ставке на "
+        f"{day.strftime('%d.%m.%Y')} объявляется {announcement.strftime('%d.%m.%Y')} — "
+        "до этой даты ставку не подтвердит ни один источник."
+    )
 
 
 def _today_kz() -> date:
@@ -698,8 +719,10 @@ def _apply_article_353_by_intervals(
     """Неустойка по статье 353 ГК РК при частичном погашении долга."""
     rate = base_rate_on(end)
     if rate is None:
-        draft.late_interest = NEEDS_RATE_MARKER
-        _mark_penalty_for_verification(draft, RATE_MISSING_NOTE, case_context=case_context)
+        draft.late_interest = needs_rate_marker(end)
+        _mark_penalty_for_verification(
+            draft, rate_missing_note(end), case_context=case_context
+        )
         _recompute_claim_price_and_duty(draft, case_context)
         return
 
@@ -1011,8 +1034,10 @@ def _apply_verified_penalty(
         rate_date=filing_date,
     )
     if penalty is None:
-        draft.late_interest = NEEDS_RATE_MARKER
-        _mark_penalty_for_verification(draft, RATE_MISSING_NOTE, case_context=case_context)
+        draft.late_interest = needs_rate_marker(filing_date)
+        _mark_penalty_for_verification(
+            draft, rate_missing_note(filing_date), case_context=case_context
+        )
         _recompute_claim_price_and_duty(draft, case_context)
         return
 

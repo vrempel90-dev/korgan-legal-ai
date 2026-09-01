@@ -69,6 +69,16 @@
     }
   ],
   "nb_base_rate_valid_through": "2026-09-03",
+  "nb_base_rate_next_decisions": {
+    "note": "Опубликованный график объявления решений по базовой ставке. Это даты заседаний, а не ставки: значение на эти даты Нацбанком ещё не объявлено и подставляться не должно. График нужен, чтобы отказ считать неустойку называл дату, начиная с которой справочник можно будет обновить.",
+    "source_url": "https://nationalbank.kz/ru/news/grafik-prinyatiya-resheniy-po-bazovoy-stavke/rubrics/2365",
+    "verified_on": "2026-09-02",
+    "dates": [
+      "2026-09-04",
+      "2026-10-23",
+      "2026-12-04"
+    ]
+  },
   "consumer_penalty": {
     "rate_per_day": 0.03,
     "cap": "order_price",
