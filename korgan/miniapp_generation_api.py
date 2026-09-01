@@ -81,7 +81,6 @@ async def _schedule_job(
     *,
     job: jobs.GenerationJob,
     identity: str,
-    state: dict[str, Any],
     document_type: str,
     context: str,
     language: str,
@@ -93,7 +92,6 @@ async def _schedule_job(
         jobs.run_job(
             job,
             identity=identity,
-            state=state,
             store=core.store,
             document_type=document_type,
             context=context,
@@ -200,7 +198,6 @@ async def generate_document_job(
             await _schedule_job(
                 job=job,
                 identity=identity,
-                state=state,
                 document_type=document_type,
                 context=core._case_context(case),
                 language=language,
@@ -269,7 +266,6 @@ async def retry_generation(
         await _schedule_job(
             job=job,
             identity=identity,
-            state=state,
             document_type=order.document_type,
             context=core._case_context(case),
             language=order.language,

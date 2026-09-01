@@ -243,7 +243,6 @@ def test_process_local_task_registry_prevents_duplicate_worker(monkeypatch) -> N
         await generation_api._schedule_job(
             job=job,
             identity="identity",
-            state={"cases": {"case-1": {}}},
             document_type="claim",
             context="Факты",
             language="ru",
@@ -252,7 +251,6 @@ def test_process_local_task_registry_prevents_duplicate_worker(monkeypatch) -> N
         await generation_api._schedule_job(
             job=job,
             identity="identity",
-            state={"cases": {"case-1": {}}},
             document_type="claim",
             context="Факты",
             language="ru",

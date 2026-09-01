@@ -31,11 +31,15 @@ class FakePool(FakeConnection):
 
 
 class FakeStore:
-    def __init__(self) -> None:
+    def __init__(self, state: dict[str, object] | None = None) -> None:
+        self.state = state if state is not None else {"cases": {}}
         self.saved: list[tuple[str, dict[str, object]]] = []
 
     def user_key(self, _identity: str) -> str:
         return "user-key"
+
+    async def load(self, _identity: str) -> dict[str, object]:
+        return self.state
 
     async def save(self, identity: str, state: dict[str, object]) -> None:
         self.saved.append((identity, state))
@@ -123,8 +127,8 @@ def test_public_job_status_never_reports_ready_before_success() -> None:
 
 def test_run_job_persists_real_stages_and_marks_success_after_document_save(monkeypatch) -> None:
     pool = FakePool()
-    store = FakeStore()
     state: dict[str, object] = {"cases": {"case-1": {"id": "case-1"}}}
+    store = FakeStore(state)
     job = jobs.GenerationJob(
         id="job-1",
         payment_order_id=91,
@@ -176,7 +180,6 @@ def test_run_job_persists_real_stages_and_marks_success_after_document_save(monk
         jobs.run_job(
             job,
             identity="identity",
-            state=state,
             store=store,
             document_type="claim",
             context="Проверяемые факты",
@@ -201,8 +204,7 @@ def test_run_job_persists_real_stages_and_marks_success_after_document_save(monk
 
 def test_failed_job_keeps_payment_retryable_and_persists_error(monkeypatch) -> None:
     pool = FakePool()
-    store = FakeStore()
-    state: dict[str, object] = {"cases": {"case-1": {"id": "case-1"}}}
+    store = FakeStore({"cases": {"case-1": {"id": "case-1"}}})
     job = jobs.GenerationJob(
         id="job-1",
         payment_order_id=91,
@@ -234,7 +236,6 @@ def test_failed_job_keeps_payment_retryable_and_persists_error(monkeypatch) -> N
             jobs.run_job(
                 job,
                 identity="identity",
-                state=state,
                 store=store,
                 document_type="claim",
                 context="Факты",

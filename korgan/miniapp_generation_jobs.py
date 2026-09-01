@@ -261,11 +261,34 @@ async def _generate_payload(
     return payload
 
 
+async def _claim_payment(job: GenerationJob) -> None:
+    """Списать подтверждённую оплату ровно один раз за задачу.
+
+    Повторный запуск той же задачи после сбоя публикации не должен требовать
+    второй оплаты: ордер привязан к задаче уникально, поэтому уже списанный
+    ордер этой же задачи — законное основание продолжить.
+    """
+    if await document_store.consume_document_order(
+        job.payment_order_id,
+        user_key=job.user_key,
+    ):
+        return
+    order = await document_store.get_document_order(
+        job.payment_order_id,
+        user_key=job.user_key,
+    )
+    if order is not None and str(getattr(order, "status", "")) == "consumed":
+        return
+    raise RuntimeError(
+        "Подтверждённая оплата документа больше не доступна. "
+        "Повторно не платите — обратитесь в поддержку KORGAN."
+    )
+
+
 async def run_job(
     job: GenerationJob,
     *,
     identity: str,
-    state: dict[str, Any],
     store: Any,
     document_type: str,
     context: str,
@@ -288,16 +311,20 @@ async def run_job(
             case_id=job.case_id,
             on_stage=on_stage,
         )
-        case = state.get("cases", {}).get(job.case_id)
+        # Оплата списывается до публикации: одно сохранение состояния делает
+        # документ видимым обычному запросу дела, и в этот момент задача уже
+        # обязана быть оплаченной, иначе клиент увидел бы готовность, за
+        # которую никто не заплатил.
+        await _claim_payment(job)
+        # Снимок состояния из HTTP-запроса за минуту подготовки успевает
+        # устареть: пользователь мог добавить материалы, создать другое дело
+        # или удалить это. Сохранять снимок значило бы затирать всё это.
+        state = await store.load(identity)
+        case = (state.get("cases") or {}).get(job.case_id)
         if case is None:
             raise RuntimeError("Дело удалено во время подготовки документа")
         case.update(result)
         await store.save(identity, state)
-        if not await document_store.consume_document_order(
-            job.payment_order_id,
-            user_key=job.user_key,
-        ):
-            raise RuntimeError("Подтверждённая оплата больше не доступна")
         await update_job(
             job.id,
             status="succeeded",

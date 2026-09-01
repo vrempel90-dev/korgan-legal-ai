@@ -20,8 +20,12 @@ from korgan import miniapp_professional_release as release
 
 
 class FakeStore:
-    def __init__(self) -> None:
+    def __init__(self, state: dict[str, object] | None = None) -> None:
+        self.state = state if state is not None else {"cases": {}}
         self.saved: list[tuple[str, dict[str, object]]] = []
+
+    async def load(self, _identity: str) -> dict[str, object]:
+        return self.state
 
     async def save(self, identity: str, state: dict[str, object]) -> None:
         self.saved.append((identity, state))
@@ -88,8 +92,8 @@ def test_job_refuses_release_when_preliminary_delivery_is_off(monkeypatch) -> No
 def test_blocked_release_never_stores_document_and_keeps_payment(monkeypatch) -> None:
     _install_generate(monkeypatch, filing_ready=False, release_status="draft")
     monkeypatch.setenv(release.FLAG_ENV, "off")
-    store = FakeStore()
     state: dict[str, object] = {"cases": {"case-1": {"id": "case-1"}}}
+    store = FakeStore(state)
     job = jobs.GenerationJob(
         id="job-1",
         payment_order_id=91,
@@ -116,7 +120,6 @@ def test_blocked_release_never_stores_document_and_keeps_payment(monkeypatch) ->
             jobs.run_job(
                 job,
                 identity="identity",
-                state=state,
                 store=store,
                 document_type="claim",
                 context="Проверяемые факты",
