@@ -23,6 +23,10 @@ from korgan.legal_calc import (
     parse_all_amounts_kzt,
     parse_amount_kzt,
 )
+from korgan.calculation_document_gate import (
+    DocumentAmounts,
+    check_calculation_against_document,
+)
 from korgan.legal_calculation import (
     MoneyComponent,
     contractual_penalty_component,
@@ -552,6 +556,87 @@ def _contractual_penalty_request(penalty: ContractualPenalty) -> str:
     )
 
 
+def _calculation_line_amount(draft: ClaimDraft, marker: str) -> int | None:
+    """Сумма из позиции раздела расчёта, название которой содержит слово.
+
+    Слово ищется только в названии позиции — до первого двоеточия. Дальше идут
+    база, ставка и формула, где те же слова встречаются в другом значении.
+    """
+    for line in draft.calculation or []:
+        title = str(line).split(":", 1)[0].lower()
+        if marker in title:
+            return parse_amount_kzt(str(line))
+    return None
+
+
+def _enforce_calculation_gate(
+    draft: ClaimDraft,
+    calculation: PenaltyCalculation,
+    *,
+    principal: int,
+    case_context: str,
+) -> None:
+    """Сверить посчитанное с тем, что в итоге написано в документе.
+
+    Расчёт может быть верным, а документ негодным: строка неустойки, таблица
+    расчёта и просительная часть переписываются разными ветками кода, и
+    достаточно одной, чтобы в иске оказались три разных числа. Сверка берёт
+    суммы из готового текста, а не из расчёта, — иначе она сравнивала бы расчёт
+    сам с собой и пропускала ровно ту ошибку, ради которой существует.
+
+    Расхождение не исправляется подстановкой «правильного» числа: неизвестно,
+    какая часть документа устарела. Требование снимается целиком и уходит юристу.
+    """
+    components, unresolved = _property_components(draft)
+    penalties = [amount for label, amount, _ in components if "неустойк" in label]
+    principals = [amount for label, amount, _ in components if label == "основной долг"]
+    others = sum(
+        amount
+        for label, amount, _ in components
+        if "неустойк" not in label and label != "основной долг"
+    )
+    reasoning = parse_amount_kzt(draft.late_interest)
+    in_calculation = _calculation_line_amount(draft, "неустойк")
+    total = parse_amount_kzt(draft.price_of_claim)
+    principal_in_document = _calculation_line_amount(draft, "основной долг")
+
+    missing = (
+        unresolved
+        or len(penalties) != 1
+        or len(principals) != 1
+        or reasoning is None
+        or in_calculation is None
+        or total is None
+        or principal_in_document is None
+    )
+    if missing:
+        reasons = ("суммы документа не сверяются с расчётом: требование изложено неоднозначно",)
+    else:
+        reasons = check_calculation_against_document(
+            calculation,
+            DocumentAmounts(
+                principal_in_document=principal_in_document,
+                penalty_in_reasoning=reasoning,
+                penalty_in_calculation=in_calculation,
+                penalty_in_relief=penalties[0],
+                principal_in_relief=principals[0],
+                total_in_relief=total,
+                other_verified_claims=others,
+            ),
+            principal=principal,
+        ).reasons
+    if not reasons:
+        return
+
+    _drop_article_353_lines(draft)
+    _mark_penalty_for_verification(
+        draft,
+        "Расчёт неустойки не сошёлся с текстом документа (" + "; ".join(reasons) + ").",
+        case_context=case_context,
+    )
+    _recompute_claim_price_and_duty(draft, case_context)
+
+
 def _note_principal_needs_check(draft: ClaimDraft, events: tuple[PrincipalEvent, ...]) -> None:
     """Напомнить, что частичная оплата могла быть не учтена в основном долге.
 
@@ -658,6 +743,9 @@ def _apply_article_353_by_intervals(
             rate_label=rate_label,
         ),
     )
+    _enforce_calculation_gate(
+        draft, calculation, principal=principal, case_context=case_context
+    )
 
 
 def _apply_contractual_penalty_by_intervals(
@@ -737,6 +825,9 @@ def _apply_contractual_penalty_by_intervals(
             basis=clause,
             rate_label=rate_label,
         ),
+    )
+    _enforce_calculation_gate(
+        draft, calculation, principal=principal, case_context=case_context
     )
     return True
 

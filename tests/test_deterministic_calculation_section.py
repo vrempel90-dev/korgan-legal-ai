@@ -170,6 +170,53 @@ def test_contractual_penalty_after_a_partial_payment_is_charged_on_the_balance()
     assert not any("1 020 000" in item for item in draft.requests)
 
 
+def test_a_penalty_that_disagrees_with_the_document_is_withdrawn_not_patched() -> None:
+    """Расхождение сумм снимает требование, а не подставляет «правильное» число.
+
+    Строка неустойки, таблица расчёта и просительная часть переписываются
+    разными ветками кода. Если они разошлись, неизвестно, какая часть документа
+    устарела, — поэтому требование уходит юристу целиком.
+    """
+    from decimal import Decimal
+
+    from korgan.late_interest_hotfix import _enforce_calculation_gate
+    from korgan.penalty_engine import PenaltyTerms, RateType, calculate_penalty
+
+    calculation = calculate_penalty(
+        12_000_000,
+        date(2026, 5, 31),
+        date(2026, 8, 23),
+        PenaltyTerms(
+            rate=Decimal("0.1"),
+            rate_type=RateType.PER_DAY,
+            contract_basis="пункт 6.3 договора",
+            rate_source="пункт 6.3 договора",
+        ),
+    )
+    assert calculation.total == 1_020_000
+
+    draft = _supply_draft()
+    draft.late_interest = "1 020 000 тенге"
+    draft.calculation = [
+        "Основной долг: 12 000 000 тенге.",
+        "Договорная неустойка: 1 020 000 тенге.",
+        "Итого цена иска: 13 020 000 тенге.",
+    ]
+    # В просительной части осталась прежняя сумма модели.
+    draft.requests = [
+        "Взыскать основной долг 12 000 000 тенге.",
+        "Взыскать договорную неустойку по пункту 6.3 договора в размере 996 000 тенге.",
+    ]
+
+    _enforce_calculation_gate(
+        draft, calculation, principal=12_000_000, case_context=CONTRACT_CONTEXT
+    )
+
+    assert "1 020 000" not in " ".join(draft.requests)
+    assert not any("996 000" in item for item in draft.requests)
+    assert any("не сошёлся с текстом документа" in note for note in draft.verification_notes)
+
+
 # --- статья 353 ГК РК ---
 
 
