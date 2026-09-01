@@ -193,6 +193,87 @@ def test_a_date_absent_from_the_materials_is_still_detected_in_any_form() -> Non
     )
 
 
+def test_source_denying_the_demand_was_sent_does_not_authorise_asserting_it() -> None:
+    """Отрицание направления претензии — не подтверждение направления.
+
+    Досудебный порядок по ряду споров обязателен, и его несоблюдение влечёт
+    возврат иска. Шлюз искал в материалах слова «претензия … направлена», не
+    отличая утверждение от отрицания, поэтому фраза «претензия не направлялась»
+    засчитывалась как источник, и иск утверждал соблюдение порядка, которого
+    материалы прямо не подтверждают.
+    """
+    materials = (
+        "Договор поставки № 12 от 15.01.2026 на сумму 2 300 000 тенге.\n"
+        "Претензия ответчику не направлялась 05.03.2026."
+    )
+
+    findings = forbidden_fact_findings(["Претензия направлена ответчику 05.03.2026."], materials)
+
+    assert any("направления претензии" in item.lower() for item in findings), findings
+
+
+def test_dispatch_written_verb_first_in_the_materials_is_not_reported_as_invented() -> None:
+    """«Направлена претензия» и «претензия направлена» — один и тот же факт."""
+    materials = (
+        "Договор поставки № 12 от 15.01.2026 на сумму 2 300 000 тенге.\n"
+        "05.03.2026 в адрес ответчика направлена претензия с требованием оплаты."
+    )
+
+    findings = forbidden_fact_findings(["Претензия направлена ответчику 05.03.2026."], materials)
+
+    assert not any("направления претензии" in item.lower() for item in findings), findings
+
+
+def test_statement_denying_dispatch_is_not_treated_as_asserting_it() -> None:
+    """Отзыв, отрицающий получение претензии, не утверждает её направления."""
+    materials = "Договор поставки № 12 от 15.01.2026 на сумму 2 300 000 тенге."
+
+    findings = forbidden_fact_findings(["Претензия ответчику не направлялась."], materials)
+
+    assert not any("направления претензии" in item.lower() for item in findings), findings
+
+
+def test_amending_a_contract_is_not_a_payment() -> None:
+    """«Внести изменения» — не платёж.
+
+    Глагол «внести» означает оплату только тогда, когда объект — деньги.
+    Без этого различия обычная фраза об изменении договора получала жёсткий
+    блокер «факт оплаты отсутствует» и останавливала выпуск документа.
+    """
+    materials = "Договор поставки № 12 от 15.01.2026 на сумму 2 300 000 тенге."
+
+    findings = forbidden_fact_findings(["Изменения в договор внесены 15.01.2026."], materials)
+
+    assert not any("оплат" in item.lower() for item in findings), findings
+
+
+def test_listing_attachments_is_not_a_payment() -> None:
+    """«Перечислены в описи» — перечень, а не перечисление денег."""
+    materials = "Договор поставки № 12 от 15.01.2026 на сумму 2 300 000 тенге."
+
+    findings = forbidden_fact_findings(["Приложения перечислены в описи."], materials)
+
+    assert not any("оплат" in item.lower() for item in findings), findings
+
+
+def test_an_invented_transfer_of_money_is_still_detected() -> None:
+    """Сужение глаголов не должно пропустить выдуманный перевод денег."""
+    materials = "Договор поставки № 12 от 15.01.2026 на сумму 2 300 000 тенге."
+
+    assert any(
+        "оплат" in item.lower()
+        for item in forbidden_fact_findings(
+            ["Ответчик перечислил 1 100 000 тенге на счёт истца."], materials
+        )
+    )
+    assert any(
+        "оплат" in item.lower()
+        for item in forbidden_fact_findings(
+            ["Ответчик внёс денежные средства в кассу истца."], materials
+        )
+    )
+
+
 def test_derived_calculation_may_render_without_literal_presence_in_materials() -> None:
     fact = ProvenancedFact(
         value="Остаток основного долга: 1 400 000 тенге.",

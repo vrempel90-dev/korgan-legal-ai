@@ -125,8 +125,16 @@ _SENTENCE_RE = re.compile(r"(?<=[.!?;])\s+|\n+")
 # «Платёжное поручение» — вид доказательства, его проверяет _EVIDENCE_RE.
 # Здесь речь о самом событии платежа.
 _PAYMENT_EVENT_RE = re.compile(
-    r"(?i)(?<!\w)(?:оплат\w*|уплат\w*|плат[её]ж(?!н\w*\s+поручени)\w*|"
-    r"перечисл\w*|погаш\w*|погас\w*|внес(?:ен|ён|л)\w*)"
+    r"(?i)(?<!\w)(?:оплат\w*|уплат\w*|плат[её]ж(?!н\w*\s+поручени)\w*|погаш\w*|погас\w*)"
+)
+# «Внести» и «перечислить» означают платёж только тогда, когда объект — деньги.
+# «Внести изменения в договор» и «перечисленные в описи приложения» платежом не
+# являются, и без этого различия обычная фраза об изменении договора или об
+# описи приложений получала жёсткий блокер «факт оплаты отсутствует».
+_PAYMENT_TRANSFER_RE = re.compile(r"(?i)(?<!\w)(?:перечисл\w*|вн[её]с\w*|внест\w*)")
+_MONEY_OBJECT_RE = re.compile(
+    r"(?i)(?<!\w)(?:денежн\w*\s+средств\w*|средств\w*|деньг\w*|сумм\w*|оплат\w*|"
+    r"плат[её]ж\w*|аванс\w*|предоплат\w*|задатк\w*|задаток|долг\w*|задолженност\w*)"
 )
 # Утверждение «оплата не произведена» — это заявление о неисполнении, а не
 # утверждение о состоявшемся платеже. Смешивать их нельзя: первое — обычное
@@ -140,9 +148,27 @@ _PAYMENT_NEGATIVE_RE = re.compile(
     r"(?:оплат\w*|уплат\w*)[^.;]{0,40}?отсутств\w*"
     r")"
 )
+# Порядок слов в русском предложении свободный: «претензия направлена» и
+# «направлена претензия» — один и тот же факт. Односторонний шаблон объявлял
+# верно перенесённое направление претензии выдуманным лишь потому, что в
+# материалах глагол стоял перед существительным.
+_PRETRIAL_TERM = r"(?:претензи\w*|талап\s+хат\w*)"
+_PRETRIAL_ACTION = r"(?:направ\w*|отправ\w*|вруч\w*|получ\w*)"
 _PRETRIAL_SEND_RE = re.compile(
-    r"(?i)\b(?:претензи\w*|талап\s+хат\w*)[^\n.;]{0,100}?"
-    r"(?:направ\w*|отправ\w*|вруч\w*|получ\w*)"
+    rf"(?i)(?:\b{_PRETRIAL_TERM}[^\n.;]{{0,100}}?{_PRETRIAL_ACTION}"
+    rf"|\b{_PRETRIAL_ACTION}[^\n.;]{{0,100}}?{_PRETRIAL_TERM})"
+)
+# Досудебный порядок по ряду споров обязателен, и его несоблюдение влечёт
+# возврат иска. Шаблон направления не отличал утверждения от отрицания, поэтому
+# фраза «претензия не направлялась» засчитывалась и как источник факта
+# направления, и как утверждение о нём.
+_PRETRIAL_NEGATIVE_RE = re.compile(
+    r"(?i)(?:"
+    r"\bне\s+(?:\w+\s+){0,2}?(?:направ\w*|отправ\w*|вруч\w*|получ\w*|поступ\w*|предъявл\w*)|"
+    rf"{_PRETRIAL_TERM}[^.;]{{0,60}}?\bне\s+(?:\w+\s+){{0,2}}?"
+    r"(?:направ\w*|отправ\w*|вруч\w*|получ\w*|поступ\w*|предъявл\w*)|"
+    rf"{_PRETRIAL_TERM}[^.;]{{0,40}}?отсутств\w*"
+    r")"
 )
 
 
@@ -180,6 +206,28 @@ def _date_token(match: re.Match[str]) -> str:
             continue
         return f"{int(day):02d}.{month:02d}.{groups[year_key]}"
     raise ValueError(f"неизвестная форма даты: {match.group(0)!r}")
+
+
+def _asserts_payment(sentence: str) -> bool:
+    """Утверждает ли предложение, что платёж состоялся.
+
+    Отрицание платежа — обычное основание иска, а не утверждение о платеже, и
+    объём долга оно не уменьшает. Для многозначных «внести» и «перечислить»
+    дополнительно требуется денежный объект: без него это изменение договора
+    или перечень приложений.
+    """
+    if _PAYMENT_NEGATIVE_RE.search(sentence):
+        return False
+    if _PAYMENT_EVENT_RE.search(sentence):
+        return True
+    if not _PAYMENT_TRANSFER_RE.search(sentence):
+        return False
+    return bool(_MONEY_OBJECT_RE.search(sentence)) or bool(parse_all_amounts_kzt(sentence))
+
+
+def _asserts_pretrial_dispatch(sentence: str) -> bool:
+    """Утверждает ли предложение, что претензия направлена."""
+    return bool(_PRETRIAL_SEND_RE.search(sentence)) and not _PRETRIAL_NEGATIVE_RE.search(sentence)
 
 
 def _evidence_token(match: re.Match[str]) -> str:
@@ -243,19 +291,19 @@ def forbidden_fact_findings(statements: list[str] | None, materials: str) -> lis
             if value not in source_evidence:
                 findings.append(f"доказательство отсутствует во входящих материалах: {match.group(0)}")
 
+        source_sentences = _sentences(source)
+        source_payment = any(_asserts_payment(item) for item in source_sentences)
+        source_dispatch = any(_asserts_pretrial_dispatch(item) for item in source_sentences)
         for sentence in _sentences(text):
-            if _PAYMENT_NEGATIVE_RE.search(sentence) or not _PAYMENT_EVENT_RE.search(sentence):
-                continue
-            sentence_amounts = set(parse_all_amounts_kzt(sentence))
-            source_payment = any(
-                _PAYMENT_EVENT_RE.search(item) and not _PAYMENT_NEGATIVE_RE.search(item)
-                for item in _sentences(source)
-            )
-            if not source_payment or not sentence_amounts <= source_amounts:
-                findings.append("факт оплаты отсутствует во входящих материалах: " + sentence[:180])
-        if _PRETRIAL_SEND_RE.search(text):
-            statement_dates = {_date_token(item) for item in _DATE_RE.finditer(text)}
-            if not _PRETRIAL_SEND_RE.search(source) or not statement_dates <= source_dates:
-                findings.append("факт направления претензии отсутствует во входящих материалах: " + text[:180])
+            if _asserts_payment(sentence):
+                sentence_amounts = set(parse_all_amounts_kzt(sentence))
+                if not source_payment or not sentence_amounts <= source_amounts:
+                    findings.append("факт оплаты отсутствует во входящих материалах: " + sentence[:180])
+            if _asserts_pretrial_dispatch(sentence):
+                sentence_dates = {_date_token(item) for item in _DATE_RE.finditer(sentence)}
+                if not source_dispatch or not sentence_dates <= source_dates:
+                    findings.append(
+                        "факт направления претензии отсутствует во входящих материалах: " + sentence[:180]
+                    )
 
     return list(dict.fromkeys(findings))
