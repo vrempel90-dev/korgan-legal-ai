@@ -10,6 +10,7 @@ from korgan import miniapp_api_v5 as v5
 from korgan import miniapp_document_payments as document_store
 from korgan import miniapp_generation_jobs as jobs
 from korgan.asgi_lifespan import add_lifespan
+from korgan.miniapp_preliminary_delivery import client_notes
 from korgan.payment_operation_lock import payment_operation_lock
 
 LOGGER = logging.getLogger(__name__)
@@ -63,6 +64,9 @@ def _document_payload(case_id: str, case: dict[str, Any]) -> dict[str, Any]:
         "filing_ready": bool(case.get("filing_ready")),
         "release_status": case.get("release_status"),
         "filename": case.get("filename"),
+        # Единственный список, написанный для клиента: экран выпуска показывает
+        # его, а не протокол гейтов.
+        "todo_before_filing": client_notes(case),
     }
 
 
