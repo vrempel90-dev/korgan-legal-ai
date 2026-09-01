@@ -107,6 +107,37 @@ def _safe_filename(value: str) -> str:
     return cleaned[:120]
 
 
+def _unicode_filename(value: str) -> str:
+    """Имя файла как его видит пользователь, без разделителей пути и управляющих
+    символов.
+
+    Кириллица сохраняется: ASCII-вариант собирается отбрасыванием не-ASCII
+    символов, и от «Исковое заявление.docx» в нём не остаётся ничего.
+    """
+    raw = " ".join(str(value or "").split()).strip()
+    cleaned = "".join(
+        ch for ch in raw if ch.isprintable() and ch not in '"\\/\r\n\t:*?<>|'
+    ).strip(" .")
+    if not cleaned:
+        return "KORGAN_document.docx"
+    if not cleaned.lower().endswith(".docx"):
+        cleaned = f"{cleaned}.docx"
+    return cleaned[:120]
+
+
+def _content_disposition(value: str) -> str:
+    """Заголовок вложения по RFC 6266.
+
+    ``filename*`` несёт настоящее имя в UTF-8 — его берут браузеры и Telegram
+    WebView. ``filename`` остаётся запасным ASCII-вариантом для клиентов,
+    которые ``filename*`` не понимают.
+    """
+    ascii_name = _safe_filename(value)
+    unicode_name = _unicode_filename(value)
+    encoded = quote(unicode_name, safe="")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}"
+
+
 def _external_base(request: Request) -> str:
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",", 1)[0].strip()
     host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).split(",", 1)[0].strip()
@@ -204,12 +235,13 @@ async def download_document(token: str) -> Response:
     user_id, case_id = _read_token(token, _secret())
     case = await _case_for_identity(user_id, case_id)
     payload = _decode_document(case)
-    filename = _safe_filename(str(case.get("filename") or "KORGAN_document.docx"))
     return Response(
         content=payload,
         media_type=_DOCX_MIME,
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": _content_disposition(
+                str(case.get("filename") or "KORGAN_document.docx")
+            ),
             "Access-Control-Allow-Origin": "https://web.telegram.org",
             "Cache-Control": "private, no-store, max-age=0",
             "X-Content-Type-Options": "nosniff",
