@@ -37,6 +37,16 @@ function responseError(response, payload) {
   const detail = typeof payload === 'object' && payload !== null
     ? (payload.detail || payload.message)
     : payload;
+  // Отказ в подписи Telegram — не обычная ошибка запроса: её текст служебный и
+  // англоязычный, а повтор бесполезен, пока Mini App не открыт заново. Экран
+  // объясняет это сам, поэтому сюда серверная формулировка не попадает.
+  if (response.status === 401 || response.status === 403) {
+    return apiError('Подпись Telegram недействительна', {
+      code: 'KORGAN_API_UNAUTHORIZED',
+      status: response.status,
+      payload,
+    });
+  }
   return apiError(detail || `KORGAN_API_${response.status}`, {
     code: 'KORGAN_API_HTTP_ERROR',
     status: response.status,

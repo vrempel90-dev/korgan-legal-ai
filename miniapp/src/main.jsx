@@ -47,6 +47,7 @@ const L = {
     prepare: 'Подготовить документ', prepareSub: 'Production Word-документы KORGAN', myCases: 'Мои дела', casesSub: 'Материалы, консультации и готовые документы',
     privacy: 'Конфиденциальность', privacySub: 'Согласие, язык и управление данными', connected: 'KORGAN подключён', connecting: 'Проверяю соединение…', down: 'Сервис временно недоступен',
     systemReady: 'Система готова', systemProblem: 'Проблема соединения', retry: 'Повторить',
+    sessionExpired: 'Сессия Telegram истекла. Закройте и откройте KORGAN заново — данные сохранены.',
     selectDoc: 'Выбор документа', searchDoc: 'Поиск документа', documents: 'Документы', docPrice: 'Подготовка документа',
     newCase: 'Новое дело', tell: 'Расскажите, что произошло', tellSub: 'Опишите ситуацию или сразу загрузите PDF, DOCX, TXT либо фотографии. Все материалы будут привязаны к одному делу.',
     placeholder: 'Стороны, отношения/договор, даты, суммы, нарушение, доказательства, позиция и желаемый результат…', create: 'Создать дело', creating: 'Создаю дело…',
@@ -71,6 +72,7 @@ const L = {
     home: 'Басты', cases: 'Істер', lawyer: 'AI-заңгер', profile: 'Профиль', help: 'Көмек',
     consentTitle: 'KORGAN Legal AI пайдалану шарттары', consentText: 'KORGAN — Қазақстан Республикасының құқығына арналған жасанды интеллект жүйесі. Жауаптар мен құжаттар пайдаланушы деректері және тексерілетін дереккөздер бойынша жасалады. Құжатты бергенге дейін дербес деректерді, сомаларды, дәлелдемелерді, соттылықты және мемлекеттік бажды тексеріңіз.', privacyText: 'Материалдар тек кеңес беру және құжат дайындау үшін пайдаланылады. Mini App деректерін профильден жоюға болады.', accept: 'Шарттарды қабылдаймын', decline: 'Қабылдамаймын',
     heroTitle: 'Кәсіби AI-заңгер', heroText: 'Кеңес, материалдарды талдау, құжаттар және сапаны бақылау бір жұмыс кеңістігінде.', startConsult: 'Кеңесті бастау', consultation: 'Кеңес', consultationSub: 'Дереккөздерді тексеретін құқықтық талдау', prepare: 'Құжат дайындау', prepareSub: 'KORGAN production Word-құжаттары', myCases: 'Менің істерім', casesSub: 'Материалдар, кеңестер және дайын құжаттар', privacy: 'Құпиялылық', privacySub: 'Келісім, тіл және деректерді басқару', connected: 'KORGAN қосылды', connecting: 'Қосылым тексерілуде…', down: 'Қызмет уақытша қолжетімсіз', systemReady: 'Жүйе дайын', systemProblem: 'Қосылым мәселесі', retry: 'Қайталау',
+    sessionExpired: 'Telegram сессиясының мерзімі бітті. KORGAN-ды жауып, қайта ашыңыз — деректер сақталды.',
     selectDoc: 'Құжатты таңдау', searchDoc: 'Құжатты іздеу', documents: 'Құжаттар', docPrice: 'Құжат дайындау', newCase: 'Жаңа іс', tell: 'Не болғанын жазыңыз', tellSub: 'Жағдайды сипаттаңыз немесе PDF, DOCX, TXT не фотосуреттерді бірден жүктеңіз. Барлық материал бір іске бекітіледі.', placeholder: 'Тараптар, қатынас/шарт, күндер, сомалар, бұзушылық, дәлелдер, ұстаным және қажетті нәтиже…', create: 'Іс құру', creating: 'Іс құрылуда…', addFile: 'Құжаттар / фото жүктеу', processing: 'Материалдар өңделуде…', selected: 'Таңдалды', materials: 'Іс материалдары', files: 'Файлдар', consultCase: 'Іс бойынша кеңес', generate: 'Құжат дайындау', generating: 'Құқық тексеріліп, Word жасалуда…', deleteCase: 'Істі жою', caseCreated: 'Іс құрылды', materialsLoaded: 'Материалдар жүктелді', docReady: 'Құжат дайын', noCases: 'Әзірге іс жоқ', noCasesSub: 'Бірінші істі құрып, фактілер немесе құжаттар қосыңыз.', createNew: 'Жаңа іс құру', download: 'DOCX жүктеу', downloadExisting: 'Дайын DOCX жүктеу', liveReview: 'Тірі заңгердің тексеруі',
     message: 'Заңдық сұрағыңызды жазыңыз…', checking: 'Құқық пен дереккөздер тексерілуде…', sources: 'Дереккөздер', freeRemaining: 'Қалған тегін кеңес', paymentNeeded: 'Тегін лимит аяқталды', consultPaymentText: 'Kaspi арқылы бір кеңес ақысын төлеп, толық чекті жүктеңіз. Автоматты тексеруден кейін осы сұрақ бойынша жауап жалғасады.', payKaspi: 'Kaspi арқылы төлеу', uploadReceipt: 'Чекті жүктеу', checkingReceipt: 'Чек тексерілуде…', retryPaid: 'Жаңа төлемсіз жауапты қайталау', paidSaved: 'Төлем сақталды. Қайта төлеу қажет емес.',
     documentPayment: 'Құжат төлемі', documentPaymentText: 'Құқықтық талдау мен Word генерациясы әлі басталған жоқ. Құжат үшін төлеңіз, чекті жүктеп, әкімшінің Kaspi Pay бойынша қолмен тексеруін күтіңіз.', waitingAdmin: 'Чек алдын ала тексеруден өтті. Kaspi Pay тарихы бойынша қолмен растау күтілуде.', paymentApproved: 'Төлем расталды', paymentApprovedText: 'Енді құқықтық талдау мен Word генерациясын бастауға болады. Қайта төлем қажет емес.', checkPayment: 'Растауды тексеру', startPaidGeneration: 'Төленген құжатты дайындау', paymentRejected: 'Төлем расталмады. Басқа толық чекті жүктеңіз.', manualCheck: 'Қолмен растау', manualCheckSub: 'AI банк төлемін түпкілікті растамайды — әкімші нақты төлемді тексереді.', filingReady: 'Заңгердің қорытынды тексеруіне дайын', preliminary: 'Алдын ала құжат', verified: 'Автоматты тексерулер аяқталды. Пайдаланар алдында құжатты заңгер тексеруі тиіс.', needsCheck: 'Тексеру қажет', quality: 'Сапа', status: 'Мәртебе', check: 'Тексеру', pricing: 'Тарифтер мен лимиттер', freePerDay: 'Күніне тегін кеңес', consultPrice: 'Лимиттен кейінгі кеңес', language: 'Тіл', deleteAll: 'Барлық деректерімді жою', dataControl: 'Деректер бақылауда', dataControlSub: 'Mini App бөлек API қолданады және production Telegram‑агентін өзгертпейді.', runtime: 'Заңдық ядро', secure: 'Қорғалған сақтау', refresh: 'Жаңарту', support: 'Техқолдау', helpText: 'Іс құрыңыз, фактілер мен материалдарды қосыңыз, AI‑заңгерге сұрақ қойыңыз. Құжат үшін KORGAN AI‑агентпен бірдей production заңдық ядро мен quality gate-терді қолданады. Құжат төлемі қосылса, генерация төлем мен қолмен растаудан бұрын басталмайды.',
@@ -173,7 +175,7 @@ function App() {
     if (result.kind === 'stale') return;
     if (result.kind === 'error' || result.kind === 'unavailable') {
       setConnection('down');
-      setNotice(result.error?.message || t.down);
+      setNotice(clientMessage(result.error));
       return;
     }
     setRuntimeInfo(result.health);
@@ -194,7 +196,7 @@ function App() {
       orderId: docPayment.order_id,
       fetchStatus: korganApi.documentPaymentStatus,
       onPayment: setDocPayment,
-      onError: error => setNotice(error?.message || t.down),
+      onError: error => setNotice(clientMessage(error)),
     });
   }, [view, docPayment?.status, docPayment?.order_id, t.down]);
   // Опрос привязан к задаче, а не к процентам: обновление прогресса не должно
@@ -207,7 +209,7 @@ function App() {
       onProgress: setGeneration,
       onReady: document => { applyDocument(document); refreshCases().catch(() => {}); },
       onFailed: setGeneration,
-      onError: error => setNotice(error?.message || t.down),
+      onError: error => setNotice(clientMessage(error)),
     });
   }, [view, generation?.jobId, generation?.status]);
 
@@ -216,6 +218,11 @@ function App() {
     return q ? DOCUMENTS.filter(item => item[language].join(' ').toLowerCase().includes(q)) : DOCUMENTS;
   }, [query, language]);
 
+  // Служебный ответ сервера не является текстом для клиента: отказ в подписи
+  // Telegram англоязычен и ничего не объясняет, поэтому объяснение своё.
+  const clientMessage = error => (
+    error?.code === 'KORGAN_API_UNAUTHORIZED' ? t.sessionExpired : (error?.message || t.down)
+  );
   // Уведомление принадлежит экрану, на котором возникло. Смена экрана гасит его
   // всегда, каким бы способом переход ни произошёл: иначе временная ошибка
   // опроса переезжает на экран готового документа и противоречит ему.
@@ -243,7 +250,7 @@ function App() {
   const acceptTerms = async () => {
     setBusy(true); setNotice('');
     try { await korganApi.acceptConsent(TERMS_VERSION); await boot(); }
-    catch (error) { setNotice(error?.message || t.down); }
+    catch (error) { setNotice(clientMessage(error)); }
     finally { setBusy(false); }
   };
   const declineTerms = async () => {
@@ -265,7 +272,7 @@ function App() {
         await korganApi.uploadMaterials(item.id, pendingFiles, ({ result: uploaded }) => { item = uploaded.case || item; setActiveCase(item); });
       }
       setActiveCase(item); setDocumentResult(null); setDocPayment(null); resetChat(); await refreshCases(); clearLocalCaseData(); setCaseText(''); setPendingFiles([]); showScreen('case');
-    } catch (error) { setNotice(error?.message || t.down); }
+    } catch (error) { setNotice(clientMessage(error)); }
     finally { setBusy(false); }
   };
 
@@ -290,7 +297,7 @@ function App() {
         if (!mine()) return;
         if (resumed.status === 'running' || resumed.status === 'failed') { setGeneration(resumed.job); showScreen('generating'); }
       } catch { /* дело открыто; состояние подготовки узнаётся повторным запуском */ }
-    } catch (error) { setNotice(error?.message || t.down); }
+    } catch (error) { setNotice(clientMessage(error)); }
     finally { setBusy(false); }
   };
 
@@ -302,7 +309,7 @@ function App() {
       let latest = activeCase;
       await korganApi.uploadMaterials(activeCase.id, files, ({ result }) => { latest = result.case || latest; setActiveCase(latest); });
       setActiveCase(latest); setDocPayment(null); await refreshCases(); setNotice(language === 'kk' ? `${files.length} файл өңделді.` : `Обработано файлов: ${files.length}.`);
-    } catch (error) { setNotice(error?.message || t.down); }
+    } catch (error) { setNotice(clientMessage(error)); }
     finally { setBusy(false); }
   };
 
@@ -324,13 +331,13 @@ function App() {
     const file = event.target.files?.[0]; event.target.value = ''; if (!file || !consultPayment || receiptBusy) return;
     setReceiptBusy(true); setNotice('');
     try { const result = await korganApi.uploadConsultationReceipt(consultPayment.order_id, file); appendAnswer(result); setConsultPayment(null); }
-    catch (error) { if (error?.status === 503) { setConsultPayment(prev => ({ ...prev, paidPending: true })); setNotice(t.paidSaved); } else setNotice(error?.message || t.down); }
+    catch (error) { if (error?.status === 503) { setConsultPayment(prev => ({ ...prev, paidPending: true })); setNotice(t.paidSaved); } else setNotice(clientMessage(error)); }
     finally { setReceiptBusy(false); }
   };
   const retryPaidConsultation = async () => {
     if (!consultPayment?.order_id || busy) return; setBusy(true); setNotice('');
     try { const result = await korganApi.retryPaidConsultation(consultPayment.order_id); appendAnswer(result); setConsultPayment(null); }
-    catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
+    catch (error) { setNotice(clientMessage(error)); } finally { setBusy(false); }
   };
 
   // Запуск подготовки отвечает описанием задачи, а не готовым документом:
@@ -338,26 +345,26 @@ function App() {
   const generateDocument = async () => {
     if (!activeCase || busy) return; setBusy(true); setNotice('');
     try { await applyGenerationState(await korganApi.generateDocument(activeCase.id, activeCase.document_type, activeCase.language || language)); }
-    catch (error) { setNotice(error?.message || t.down); }
+    catch (error) { setNotice(clientMessage(error)); }
     finally { setBusy(false); }
   };
   // Повтор берёт ту же оплаченную задачу, поэтому второй оплаты не возникает.
   const retryGeneration = async () => {
     if (!generation?.jobId || !generation.retryable || busy) return; setBusy(true); setNotice('');
     try { await applyGenerationState(await korganApi.retryGeneration(generation.jobId)); }
-    catch (error) { setNotice(error?.message || t.down); }
+    catch (error) { setNotice(clientMessage(error)); }
     finally { setBusy(false); }
   };
   const uploadDocReceipt = async event => {
     const file = event.target.files?.[0]; event.target.value = ''; if (!file || !docPayment || receiptBusy) return;
     setReceiptBusy(true); setNotice('');
     try { const result = await korganApi.uploadDocumentReceipt(docPayment.order_id, file); setDocPayment(requireDocumentPayment(result)); setNotice(result.message || t.waitingAdmin); }
-    catch (error) { setNotice(error?.message || t.down); } finally { setReceiptBusy(false); }
+    catch (error) { setNotice(clientMessage(error)); } finally { setReceiptBusy(false); }
   };
   const refreshDocPayment = async () => {
     if (!docPayment?.order_id || busy) return; setBusy(true); setNotice('');
     try { const result = await korganApi.documentPaymentStatus(docPayment.order_id); setDocPayment(requireDocumentPayment(result)); }
-    catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
+    catch (error) { setNotice(clientMessage(error)); } finally { setBusy(false); }
   };
   const deliverActiveDocument = async () => {
     if (!activeCase || busy) return; setBusy(true); setNotice('');
@@ -369,24 +376,24 @@ function App() {
         openUrl: (url, filename) => openSignedDocument(url, filename, { telegram: null }),
       });
       if (result.message) setNotice(result.message);
-    } catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
+    } catch (error) { setNotice(clientMessage(error)); } finally { setBusy(false); }
   };
 
   const deleteCurrentCase = async () => {
     if (!activeCase || busy) return;
     if (!window.confirm(language === 'kk' ? 'Бұл істі жою керек пе?' : 'Удалить это дело и все его данные?')) return;
-    setBusy(true); try { await korganApi.deleteCase(activeCase.id); setActiveCase(null); setDocPayment(null); await refreshCases(); showScreen('cases'); } catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
+    setBusy(true); try { await korganApi.deleteCase(activeCase.id); setActiveCase(null); setDocPayment(null); await refreshCases(); showScreen('cases'); } catch (error) { setNotice(clientMessage(error)); } finally { setBusy(false); }
   };
   const deleteAllData = async () => {
     if (busy) return;
     if (!window.confirm(language === 'kk' ? 'Барлық Mini App деректерін жою керек пе?' : 'Удалить все данные Mini App и все дела?')) return;
-    setBusy(true); try { await korganApi.deleteMyData(); clearAllLocalData(); setCases([]); setActiveCase(null); setConsent(false); showScreen('home'); } catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
+    setBusy(true); try { await korganApi.deleteMyData(); clearAllLocalData(); setCases([]); setActiveCase(null); setConsent(false); showScreen('home'); } catch (error) { setNotice(clientMessage(error)); } finally { setBusy(false); }
   };
 
   const loadAdminOrders = async () => {
     setAdminBusy(true); setNotice('');
     try { const result = await korganApi.adminDocumentPayments('awaiting_admin'); setAdminOrders(result.orders || []); }
-    catch (error) { setNotice(error?.message || t.down); } finally { setAdminBusy(false); }
+    catch (error) { setNotice(clientMessage(error)); } finally { setAdminBusy(false); }
   };
   const openAdmin = async () => { showScreen('admin-payments'); await loadAdminOrders(); };
   const decideAdminOrder = async (orderId, approved) => {
@@ -394,7 +401,7 @@ function App() {
     if (!window.confirm(question)) return;
     setAdminBusy(true); setNotice('');
     try { await korganApi.adminDocumentPaymentDecision(orderId, approved, approved ? 'Kaspi Pay manually confirmed' : 'Payment not confirmed in Kaspi Pay'); await loadAdminOrders(); }
-    catch (error) { setNotice(error?.message || t.down); } finally { setAdminBusy(false); }
+    catch (error) { setNotice(clientMessage(error)); } finally { setAdminBusy(false); }
   };
 
   const Header = ({ title, back = 'home' }) => <header className="subbar"><button className="icon-btn" onClick={() => go(back)}><ArrowLeft size={20}/></button><strong>{title}</strong><span className="header-spacer"/></header>;

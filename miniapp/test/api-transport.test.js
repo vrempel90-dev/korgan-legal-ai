@@ -75,6 +75,43 @@ test('JSON-ошибка API сохраняет HTTP-статус и detail', asy
   });
 });
 
+test('просроченная подпись Telegram распознаётся отдельно от прочих отказов', async () => {
+  /*
+   * Сервер отвечает на протухший initData английской технической строкой
+   * «Telegram authentication expired». Она попадала прямо на экран клиента и
+   * ничего ему не объясняла: перезапрос не помогает, подпись обновляется только
+   * при повторном открытии Mini App.
+   */
+  for (const status of [401, 403]) {
+    const request = transport(async () => response({
+      status,
+      body: '{"detail":"Telegram authentication expired"}',
+    }));
+
+    await assert.rejects(request('/miniapp/cases'), error => {
+      assert.equal(error.code, 'KORGAN_API_UNAUTHORIZED');
+      assert.equal(error.status, status);
+      assert.ok(
+        !/Telegram authentication|Invalid Telegram/i.test(error.message),
+        'служебный текст сервера доходит до клиента как есть',
+      );
+      return true;
+    });
+  }
+});
+
+test('просроченная подпись не переспрашивается сервером повторно', async () => {
+  let calls = 0;
+  const request = transport(async () => {
+    calls += 1;
+    return response({ status: 401, body: '{"detail":"Invalid Telegram signature"}' });
+  });
+
+  await assert.rejects(request('/miniapp/cases'));
+
+  assert.equal(calls, 1, 'протухшая подпись отправляется повторно и снова отклоняется');
+});
+
 test('сетевой отказ GET повторяется один раз и затем проходит', async () => {
   let calls = 0;
   const request = transport(async () => {
