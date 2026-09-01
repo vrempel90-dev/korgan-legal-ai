@@ -24,7 +24,12 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const app = readFileSync(join(here, '..', 'src', 'main.jsx'), 'utf8');
+// Переводы строк приводятся к одному виду: на Windows git отдаёт в рабочую
+// копию CRLF, и разбор по «\n}\n» переставал находить конец функции. Молча:
+// indexOf возвращал -1, slice(0, -1) не падал, и тест считал кнопки соседних
+// компонентов вместо панели. Проверка должна зависеть от разметки, а не от
+// того, на какой системе сделан checkout.
+const app = readFileSync(join(here, '..', 'src', 'main.jsx'), 'utf8').replace(/\r\n/g, '\n');
 
 const SHELL = ['Header', 'BottomNav', 'ConnectionBanner', 'Sources'];
 
@@ -70,8 +75,15 @@ test('панель есть на каждом экране после согла
 });
 
 test('активная вкладка не меняет состав панели', () => {
-  const nav = appBody.slice(0, 0) + moduleScope.slice(moduleScope.indexOf('function BottomNav('));
-  const body = nav.slice(0, nav.indexOf('\n}\n'));
+  const start = moduleScope.indexOf('function BottomNav(');
+  assert.notEqual(start, -1, 'BottomNav не найден — тест потерял связь с разметкой');
+  const nav = moduleScope.slice(start);
+  // Конец функции обязан найтись. Без этой проверки потерянный якорь не
+  // проваливал тест, а расширял область до соседних компонентов, и кнопка
+  // «повторить» из ConnectionBanner считалась шестой вкладкой.
+  const end = nav.indexOf('\n}\n');
+  assert.notEqual(end, -1, 'конец BottomNav не найден — тест потерял связь с разметкой');
+  const body = nav.slice(0, end);
   const buttons = body.split('<button').length - 1;
   assert.equal(buttons, 5, 'набор вкладок должен быть фиксированным на всех экранах');
   assert.ok(
