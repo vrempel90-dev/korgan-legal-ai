@@ -63,6 +63,13 @@ def _install_identity(monkeypatch, *, case: dict[str, object] | None = None) -> 
 
     monkeypatch.setattr(generation_api.core.legacy, "_require_consent", require_consent)
     monkeypatch.setattr(generation_api.core.store, "user_key", lambda _identity: "user-key")
+
+    async def no_previous_job(**_kwargs):
+        return None
+
+    # Проверка «за этот состав материалов уже заплачено» живёт в отдельном
+    # наборе; здесь дело готовится впервые.
+    monkeypatch.setattr(generation_api.jobs, "latest_job_for_case", no_previous_job)
     return state
 
 

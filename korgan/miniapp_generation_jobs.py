@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS korgan_miniapp_generation_jobs (
 CREATE INDEX IF NOT EXISTS korgan_miniapp_generation_jobs_owner_idx
 ON korgan_miniapp_generation_jobs(user_key, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS korgan_miniapp_generation_jobs_case_idx
+ON korgan_miniapp_generation_jobs(user_key, case_id, created_at DESC);
+
 CREATE INDEX IF NOT EXISTS korgan_miniapp_generation_jobs_status_idx
 ON korgan_miniapp_generation_jobs(status, updated_at);
 """
@@ -161,6 +164,36 @@ async def require_job(job_id: str, *, user_key: str) -> GenerationJob:
     if row is None:
         raise HTTPException(status_code=404, detail="Задача подготовки документа не найдена")
     return _from_row(row)
+
+
+async def latest_job_for_case(
+    *,
+    user_key: str,
+    case_id: str,
+    case_fingerprint: str | None = None,
+) -> GenerationJob | None:
+    """Последняя задача подготовки документа по делу.
+
+    Клиент теряет `job_id` при любом закрытии Mini App, поэтому дело — второй,
+    устойчивый ключ к незавершённой работе. Без фильтра по составу материалов
+    запрос отвечает на вопрос «что сейчас происходит с этим делом», с фильтром —
+    на вопрос «за этот же состав материалов уже заплачено и подготовлено».
+    """
+    row = await _require_pool().fetchrow(
+        """
+        SELECT id, payment_order_id, user_key, case_id,
+               status, stage, progress, error_detail
+        FROM korgan_miniapp_generation_jobs
+        WHERE user_key=$1 AND case_id=$2
+          AND ($3::text IS NULL OR case_fingerprint=$3)
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        user_key,
+        case_id,
+        case_fingerprint,
+    )
+    return None if row is None else _from_row(row)
 
 
 async def reset_failed_job(job_id: str) -> GenerationJob:

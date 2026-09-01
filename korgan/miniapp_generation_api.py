@@ -66,6 +66,24 @@ def _document_payload(case_id: str, case: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_MISSING_DOCUMENT_DETAIL = (
+    "Задача завершена, но готовый документ не найден. "
+    "Запустите восстановление без новой оплаты."
+)
+
+
+def _ready_document(state: dict[str, Any], case_id: str) -> dict[str, Any]:
+    """Описание готового документа — или отказ признать задачу успешной.
+
+    «Успешно» без сохранённого документа означало бы READY, за которым ничего
+    нет: клиент показал бы кнопку скачивания файла, которого не существует.
+    """
+    case = (state.get("cases") or {}).get(case_id)
+    if case is None or case.get("status") != "document_ready" or not case.get("document_base64"):
+        raise HTTPException(status_code=409, detail=_MISSING_DOCUMENT_DETAIL)
+    return _document_payload(case_id, case)
+
+
 def _consume_task_result(task: asyncio.Task[None]) -> None:
     try:
         task.result()
@@ -154,6 +172,23 @@ async def generate_document_job(
         payload,
         x_telegram_init_data,
     )
+    # Готовый документ за этот же состав материалов уже оплачен. Хранилище
+    # платежей после списания переводит ордер в `consumed` и перестаёт находить
+    # его как действующий, поэтому без этой проверки повторное нажатие создало
+    # бы новый ордер и попросило заплатить второй раз за то, что уже есть.
+    finished = await jobs.latest_job_for_case(
+        user_key=user_key,
+        case_id=payload.case_id,
+        case_fingerprint=scope,
+    )
+    if finished is not None and finished.status == "succeeded":
+        return {
+            "payment_required": False,
+            "generation_started": False,
+            "job": jobs.public_job(finished),
+            "document": _ready_document(state, payload.case_id),
+        }
+
     async with payment_operation_lock(
         document_store._require_pool(),
         "miniapp-generation-start",
@@ -220,13 +255,37 @@ async def generation_status(
     job = await jobs.require_job(job_id, user_key=user_key)
     result: dict[str, Any] = {"job": jobs.public_job(job)}
     if job.status == "succeeded":
-        case = state.get("cases", {}).get(job.case_id)
-        if case is None or case.get("status") != "document_ready" or not case.get("document_base64"):
-            raise HTTPException(
-                status_code=409,
-                detail="Задача завершена, но готовый документ не найден. Запустите восстановление без новой оплаты.",
-            )
-        result["document"] = _document_payload(job.case_id, case)
+        result["document"] = _ready_document(state, job.case_id)
+    return result
+
+
+@app.get("/miniapp/cases/{case_id}/generation")
+async def case_generation_status(
+    case_id: str,
+    x_telegram_init_data: str = Header(default=""),
+) -> dict[str, Any]:
+    """Что происходит с документом этого дела прямо сейчас.
+
+    Дело переживает закрытие Mini App, а выданный при запуске `job_id` — нет.
+    Поэтому опрос по делу и есть восстановление: после перезапуска клиента
+    подготовка продолжает опрашиваться, а не начинается заново.
+    """
+    identity = core.legacy._identity(x_telegram_init_data)
+    state = await core.legacy._require_consent(identity)
+    if case_id not in (state.get("cases") or {}):
+        raise HTTPException(status_code=404, detail="Case not found")
+    if not settings.payments_enabled:
+        # Бесплатный режим готовит документ внутри запроса и хранилище задач не
+        # поднимает: незавершённых задач там не бывает по построению.
+        return {"job": None}
+
+    user_key = core.store.user_key(identity)
+    job = await jobs.latest_job_for_case(user_key=user_key, case_id=case_id)
+    if job is None:
+        return {"job": None}
+    result: dict[str, Any] = {"job": jobs.public_job(job)}
+    if job.status == "succeeded":
+        result["document"] = _ready_document(state, case_id)
     return result
 
 
