@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Any
 
+from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Типы, для которых пустая строка не является значением. Числа и флаги не
+#: имеют написания «пустотой»: «» — это не ноль и не «выключено», это отсутствие
+#: настройки. У строк наоборот: пустая строка — законное значение (так заданы
+#: незаполненные ключи и реквизиты), поэтому их здесь нет.
+_EMPTY_MEANS_UNSET = (int, float, bool)
 
 
 class Settings(BaseSettings):
@@ -63,6 +71,36 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _blank_numeric_env_means_unset(cls, value: Any, info: ValidationInfo) -> Any:
+        """Пустая переменная окружения для числа — это «не задано», а не ошибка.
+
+        Переменная, объявленная в Railway и оставленная без значения, приходит
+        как пустая строка. Для числового поля pydantic считал это неверным
+        вводом и валил построение Settings целиком — то есть весь сервис, из-за
+        двух настроек, которые никто не собирался менять и которые имеют
+        рабочие умолчания. Деплой при этом падал на predeploy-тестах, а
+        production продолжал отдавать прошлый образ: снаружи это выглядело как
+        потерянная связь с GitHub, а не как ошибка конфигурации.
+
+        Пустая строка возвращается к объявленному здесь умолчанию только для
+        чисел и флагов: у них нет написания «пустотой». Строковые настройки не
+        трогаются — для них пустое значение осмысленно и означает именно пустое
+        (незаданный ключ, незаполненный реквизит).
+
+        Обязательное числовое поле остаётся ошибкой: подставлять число, которого
+        никто не назвал, нельзя — оно ушло бы в расчёт как настоящее.
+        """
+        if not isinstance(value, str) or value.strip():
+            return value
+        field = cls.model_fields.get(info.field_name or "")
+        if field is None or field.annotation not in _EMPTY_MEANS_UNSET:
+            return value
+        if field.is_required():
+            return value
+        return field.get_default(call_default_factory=True)
 
     @property
     def active_ai_provider(self) -> str:
