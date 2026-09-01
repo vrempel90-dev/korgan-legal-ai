@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from korgan.ai_provider import FallbackClient, build_legal_client
+from korgan.ai_provider import FallbackClient, FallbackResponses, MeteredClient, build_legal_client
 from korgan.anthropic_responses import WEB_SEARCH_TOOL, AnthropicResponsesClient
 from korgan.config import Settings
 from korgan.openai_legal import OpenAILegalService
@@ -109,13 +109,21 @@ def test_active_provider_follows_key_and_request(requested: str, key: str, expec
 def test_service_without_anthropic_key_keeps_openai() -> None:
     service = OpenAILegalService(_settings())
     assert service.ai_provider == "openai"
-    assert not isinstance(service.client, FallbackClient)
+    assert not isinstance(service.client.responses._inner, FallbackResponses)
 
 
 def test_service_with_anthropic_key_gets_fallback_client() -> None:
     client, provider = build_legal_client(_settings(anthropic_api_key="anthropic-key"))
     assert provider == "anthropic"
-    assert isinstance(client, FallbackClient)
+    assert isinstance(client.responses._inner, FallbackResponses)
+
+
+def test_both_providers_are_metered() -> None:
+    """Учёт расхода стоит снаружи выбора провайдера, а не в одной из веток."""
+    with_anthropic, _ = build_legal_client(_settings(anthropic_api_key="anthropic-key"))
+    without, _ = build_legal_client(_settings())
+    assert isinstance(with_anthropic, MeteredClient)
+    assert isinstance(without, MeteredClient)
 
 
 def test_roles_of_models_survive_provider_switch() -> None:

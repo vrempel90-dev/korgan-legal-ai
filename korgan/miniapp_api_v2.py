@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 # Reuse the already isolated Mini App runtime. Importing miniapp_api imports
 # strict_bot, which installs the exact same production legal hardening layers
 # without starting Telegram polling.
+from korgan import ai_cost
 from korgan import miniapp_api as legacy
 from korgan.asgi_lifespan import add_lifespan
 from korgan.claim_docx import build_claim_docx
@@ -232,6 +233,12 @@ async def health() -> dict[str, Any]:
         # подтвердить, что запрос ушёл в Anthropic, а не тихо откатился на
         # OpenAI из-за неустановленного SDK, было бы нечем.
         "ai_provider": settings.active_ai_provider,
+        # Фактический расход, измеренный по ответам провайдера. До этого
+        # monthly_ai_budget_usd попадал только в текст лог-сообщения, и
+        # «бюджета хватит на четыре месяца» нельзя было ни подтвердить, ни
+        # опровергнуть. Поле называется «since_start», потому что счётчик
+        # живёт в памяти процесса и обнуляется при рестарте.
+        "ai_cost": ai_cost.METER.snapshot(),
     }
 
 

@@ -18,9 +18,38 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from korgan.ai_cost import METER
 from korgan.config import Settings
 
 LOGGER = logging.getLogger(__name__)
+
+
+class MeteredResponses:
+    """Считает расход на каждом ответе модели.
+
+    Обёртка стоит снаружи выбора провайдера, а не внутри одной из веток: через
+    неё проходит и Anthropic, и OpenAI, и запасной вызов после отката. Внутри
+    ветки часть расхода осталась бы неучтённой — а неучтённый расход и есть то,
+    из-за чего бюджет кончается раньше срока.
+    """
+
+    def __init__(self, inner: Any, meter: Any = METER):
+        self._inner = inner
+        self._meter = meter
+
+    async def create(self, **kwargs: Any) -> Any:
+        response = await self._inner.create(**kwargs)
+        # Имя берётся из ответа: при работе через Anthropic вызывающий код
+        # по-прежнему передаёт имя модели OpenAI, и учёт по нему считал бы
+        # расход по чужому тарифу.
+        model = str(getattr(response, "model", "") or kwargs.get("model") or "")
+        self._meter.record(model, response)
+        return response
+
+
+class MeteredClient:
+    def __init__(self, inner: Any, meter: Any = METER):
+        self.responses = MeteredResponses(inner.responses, meter)
 
 
 class FallbackResponses:
@@ -67,9 +96,10 @@ def build_legal_client(settings: Settings) -> tuple[Any, str]:
     """
     from openai import AsyncOpenAI
 
+    METER.budget_usd = settings.monthly_ai_budget_usd
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
     if settings.active_ai_provider != "anthropic":
-        return openai_client, "openai"
+        return MeteredClient(openai_client), "openai"
 
     try:
         from anthropic import AsyncAnthropic
@@ -79,7 +109,7 @@ def build_legal_client(settings: Settings) -> tuple[Any, str]:
         # Пакет не поставлен — это состояние окружения, а не выбор оператора.
         # Отказать в консультации из-за него нельзя, поэтому работает запасной.
         LOGGER.warning("KORGAN anthropic SDK unavailable (%s) — using OpenAI", error)
-        return openai_client, "openai"
+        return MeteredClient(openai_client), "openai"
 
     anthropic_client = AnthropicResponsesClient(
         AsyncAnthropic(api_key=settings.anthropic_api_key),
@@ -88,11 +118,13 @@ def build_legal_client(settings: Settings) -> tuple[Any, str]:
         max_tokens=settings.anthropic_max_output_tokens,
     )
     return (
-        FallbackClient(
-            anthropic_client,
-            openai_client,
-            primary_name="anthropic",
-            secondary_name="openai",
+        MeteredClient(
+            FallbackClient(
+                anthropic_client,
+                openai_client,
+                primary_name="anthropic",
+                secondary_name="openai",
+            )
         ),
         "anthropic",
     )
