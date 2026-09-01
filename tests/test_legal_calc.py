@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from korgan.legal_calc import (
@@ -11,6 +13,7 @@ from korgan.legal_calc import (
     claimant_is_individual,
     format_kzt,
     gosposhlina_line,
+    mrp_on,
     parse_all_amounts_kzt,
     parse_amount_kzt,
 )
@@ -41,6 +44,51 @@ def test_caps_differ_for_individual_and_legal_entity() -> None:
 
 def test_zero_claim_gives_zero_duty() -> None:
     assert calc_gosposhlina_claim(0, True) == 0
+
+
+def test_mrp_is_chosen_by_the_day_and_not_by_position_in_the_file() -> None:
+    """Будущий МРП не может считать сегодняшнюю пошлину.
+
+    МРП устанавливает закон о бюджете сразу на три года, поэтому в справочнике
+    ставок штатно появляется строка со следующим годом. Значение бралось
+    последним по списку, без учёта даты введения: добавление законной будущей
+    строки молча меняло бы пошлину по иску, подаваемому сегодня.
+    """
+    rows = [
+        {"from": "2026-01-01", "value": 4325},
+        {"from": "2027-01-01", "value": 4600},
+    ]
+
+    assert mrp_on(date(2026, 9, 1), rows=rows) == 4325
+    assert mrp_on(date(2026, 12, 31), rows=rows) == 4325
+    assert mrp_on(date(2027, 1, 1), rows=rows) == 4600
+
+
+def test_mrp_rows_out_of_order_do_not_change_the_answer() -> None:
+    """Порядок строк в файле — оформление, а не право."""
+    rows = [
+        {"from": "2027-01-01", "value": 4600},
+        {"from": "2026-01-01", "value": 4325},
+    ]
+
+    assert mrp_on(date(2026, 9, 1), rows=rows) == 4325
+
+
+def test_a_day_before_every_known_mrp_fails_closed() -> None:
+    """Отсутствие ставки — отказ считать, а не ближайшее подходящее число."""
+    rows = [{"from": "2026-01-01", "value": 4325}]
+
+    with pytest.raises(RuntimeError):
+        mrp_on(date(2025, 12, 31), rows=rows)
+
+
+def test_state_duty_cap_uses_the_mrp_effective_today() -> None:
+    huge = 10_000_000_000
+    today_mrp = mrp_on()
+
+    assert calc_gosposhlina_claim(huge, True) == CAP_MRP_INDIVIDUAL * today_mrp
+    # Половина МРП округляется вверх по ROUND_HALF_UP, а не банковским round().
+    assert calc_nonproperty_state_duty(demands=1) == (today_mrp + 1) // 2
 
 
 def test_negative_claim_is_rejected() -> None:

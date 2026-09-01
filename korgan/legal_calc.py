@@ -53,10 +53,41 @@ _STATE_DUTY_DATA = _required_mapping(_RATES_DATA, "state_duty")
 _MRP_ROWS = _required_rows(_RATES_DATA, "mrp")
 _NB_RATE_ROWS = _required_rows(_RATES_DATA, "nb_base_rate")
 
+def _rate_row_on(rows: list[dict[str, Any]], day: date, what: str) -> dict[str, Any]:
+    """Строка справочника, действующая на конкретный день.
+
+    Закон о республиканском бюджете устанавливает МРП сразу на три года, поэтому
+    строка со следующим годом появляется в справочнике штатно и задолго до его
+    наступления. Брать последнюю строку списка нельзя: законное пополнение файла
+    молча меняло бы пошлину по иску, подаваемому сегодня. Порядок строк в файле —
+    оформление, а не право, поэтому выбор идёт по дате введения.
+    """
+    current: dict[str, Any] | None = None
+    for row in sorted(rows, key=lambda item: date.fromisoformat(str(item["from"]))):
+        if day >= date.fromisoformat(str(row["from"])):
+            current = row
+    if current is None:
+        raise RuntimeError(f"{what} на {day.isoformat()} отсутствует в справочнике ставок")
+    return current
+
+
+def mrp_on(day: date | None = None, *, rows: list[dict[str, Any]] | None = None) -> int:
+    """МРП, действующий на указанный день (по умолчанию — сегодня)."""
+    return int(_rate_row_on(rows if rows is not None else _MRP_ROWS, day or date.today(), "МРП")["value"])
+
+
+def mrp_source_url_on(day: date | None = None) -> str:
+    """Источник того самого МРП, которым посчитана сумма."""
+    return str(_rate_row_on(_MRP_ROWS, day or date.today(), "МРП").get("source_url", ""))
+
+
 RATE_SOURCE_ARTICLE = str(_STATE_DUTY_DATA["source"])
 RATE_SOURCE_URL = str(_STATE_DUTY_DATA["source_url"])
-MRP_SOURCE_URL = str(_MRP_ROWS[-1]["source_url"])
-MRP_2026 = int(_MRP_ROWS[-1]["value"])
+MRP_SOURCE_URL = mrp_source_url_on()
+# Именованная константа честна ровно к своему году: она нужна текстам и тестам,
+# которые говорят именно о 2026 годе. Расчёты обязаны брать ``mrp_on()``, иначе
+# сумма застынет на годе импорта — процесс живёт дольше календарного года.
+MRP_2026 = mrp_on(date(2026, 1, 1))
 RATE_INDIVIDUAL = float(_STATE_DUTY_DATA["individual_rate"])
 RATE_LEGAL_ENTITY = float(_STATE_DUTY_DATA["legal_entity_rate"])
 CAP_MRP_INDIVIDUAL = int(_STATE_DUTY_DATA["individual_cap_mrp"])
@@ -148,7 +179,7 @@ def calc_gosposhlina_claim(amount: int, is_individual: bool) -> int:
         raise ValueError("Сумма иска не может быть отрицательной")
     rate = RATE_INDIVIDUAL if is_individual else RATE_LEGAL_ENTITY
     cap_mrp = CAP_MRP_INDIVIDUAL if is_individual else CAP_MRP_LEGAL_ENTITY
-    cap = Decimal(cap_mrp) * Decimal(MRP_2026)
+    cap = Decimal(cap_mrp) * Decimal(mrp_on())
     calculated = Decimal(amount) * Decimal(str(rate))
     return min(_round_tenge(calculated), int(cap))
 
@@ -163,7 +194,7 @@ def calc_nonproperty_state_duty(*, demands: int = 1) -> int:
     """
     if demands < 0:
         raise ValueError("Количество неимущественных требований не может быть отрицательным")
-    return _round_tenge(Decimal(MRP_2026) * Decimal(str(NONPROPERTY_DUTY_MRP)) * Decimal(demands))
+    return _round_tenge(Decimal(mrp_on()) * Decimal(str(NONPROPERTY_DUTY_MRP)) * Decimal(demands))
 
 
 def calc_mixed_state_duty(amount: int, is_individual: bool, *, nonproperty_demands: int = 1) -> int:
