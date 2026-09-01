@@ -138,10 +138,20 @@ def _content_disposition(value: str) -> str:
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}"
 
 
+def _is_local_host(host: str) -> bool:
+    """Хост машины разработчика, где сертификата нет и быть не должно."""
+    name = host.split(":", 1)[0].strip("[]").lower()
+    return name in {"localhost", "127.0.0.1", "0.0.0.0", "::1", "testserver"} or "." not in name
+
+
 def _external_base(request: Request) -> str:
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",", 1)[0].strip()
     host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).split(",", 1)[0].strip()
-    if host.endswith(".up.railway.app"):
+    # Схему соединения внутри контейнера видно как `http`, и без заголовка прокси
+    # ссылка уходила клиенту незашифрованной вместе с подписанным токеном. Mini App
+    # принимает только `https`, поэтому отказ выглядел как «ссылка не получена»
+    # при готовом и оплаченном документе. Внешний адрес — всегда https.
+    if not _is_local_host(host):
         proto = "https"
     return f"{proto}://{host}".rstrip("/")
 
