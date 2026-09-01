@@ -324,7 +324,7 @@ function App() {
       const result = await korganApi.consultation(value, activeCase?.id || null, activeCase?.language || language);
       if (result.payment_required && result.payment) { setFreeRemaining(0); setConsultPayment({ ...result.payment, paidPending: false }); }
       else appendAnswer(result);
-    } catch (error) { setChat(prev => [...prev, { from: 'ai error', text: error?.message || t.down }]); }
+    } catch (error) { setChat(prev => [...prev, { from: 'ai error', text: clientMessage(error) }]); }
     finally { setBusy(false); }
   };
   const uploadConsultReceipt = async event => {
