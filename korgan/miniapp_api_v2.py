@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from korgan import ai_cost
 from korgan import legal_calc
 from korgan import miniapp_api as legacy
+from korgan.ai_provider import openai_configured
 from korgan.asgi_lifespan import add_lifespan
 from korgan.claim_docx import build_claim_docx
 from korgan.contract_docx import build_contract_docx
@@ -235,6 +236,13 @@ async def health() -> dict[str, Any]:
         # подтвердить, что запрос ушёл в Anthropic, а не тихо откатился на
         # OpenAI из-за неустановленного SDK, было бы нечем.
         "ai_provider": settings.active_ai_provider,
+        # Есть ли куда откатиться, если основной провайдер откажет. Поле нужно
+        # потому, что до первого отказа конфигурация без запасного ключа
+        # неотличима от полной: /health отвечает «anthropic», всё работает, и
+        # выясняется недостача ровно в тот момент, когда откат понадобился, —
+        # на живом клиенте. Здесь видно состояние, а не ключ: сам ключ наружу
+        # не отдаётся ни в каком виде.
+        "ai_fallback_configured": openai_configured(settings),
         # Какой именно commit отвечает. Railway подставляет SHA сам при сборке
         # из GitHub. Без этого поля «деплой заехал» проверялось по тому, что
         # сервис вообще отвечает, — но так неотличимы новая версия и живая

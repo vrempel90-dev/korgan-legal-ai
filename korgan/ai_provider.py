@@ -23,6 +23,68 @@ from korgan.config import Settings
 
 LOGGER = logging.getLogger(__name__)
 
+#: Переменная окружения, которой задаётся ключ запасного провайдера. Названа
+#: здесь один раз, чтобы сообщение об отказе указывало, что именно заполнить, а
+#: не оставляло дежурного искать это по коду.
+OPENAI_KEY_VARIABLE = "OPENAI_API_KEY"
+
+FALLBACK_UNCONFIGURED = (
+    f"Запасной провайдер OpenAI не настроен: переменная {OPENAI_KEY_VARIABLE} "
+    "пуста. Заполните её значением ключа в переменных сервиса Railway."
+)
+
+
+def openai_configured(settings: Settings) -> bool:
+    """Есть ли у запасного провайдера ключ, которым можно ходить.
+
+    Проверяется содержимое, а не факт объявления переменной: объявленная и
+    пустая переменная — это ровно то, что стоит в Railway, и считать её
+    настройкой значит получить отказ SDK вместо внятного ответа.
+    """
+    return bool(settings.openai_api_key.strip())
+
+
+def build_openai_client(settings: Settings) -> Any:
+    """Клиент OpenAI — или точный отказ с именем незаполненной переменной.
+
+    SDK на пустой ключ отвечает «Missing credentials. Please pass an api_key…»,
+    то есть говорит о своём аргументе, а не о переменной Railway, которую нужно
+    заполнить. Разница видна не сразу, а стоила одного неверного диагноза
+    целиком, поэтому сообщение называется здесь.
+
+    Сам ключ не подставляется и не логируется ни в каком виде: в сообщении
+    только имя переменной.
+    """
+    from openai import AsyncOpenAI
+
+    if not openai_configured(settings):
+        raise RuntimeError(FALLBACK_UNCONFIGURED)
+    return AsyncOpenAI(api_key=settings.openai_api_key.strip())
+
+
+class LazyResponses:
+    """Провайдер, который собирается в момент, когда действительно нужен.
+
+    Запасной провайдер нужен только тогда, когда откажет основной. Собирать его
+    заранее — значит превращать возможную будущую деградацию в гарантированный
+    отказ прямо сейчас: приложение падало при импорте из-за клиента, к которому
+    при работающем Anthropic не обратились бы ни разу.
+    """
+
+    def __init__(self, factory: Any):
+        self._factory = factory
+        self._inner: Any = None
+
+    async def create(self, **kwargs: Any) -> Any:
+        if self._inner is None:
+            self._inner = self._factory().responses
+        return await self._inner.create(**kwargs)
+
+
+class LazyClient:
+    def __init__(self, factory: Any):
+        self.responses = LazyResponses(factory)
+
 
 class MeteredResponses:
     """Считает расход на каждом ответе модели.
@@ -94,12 +156,12 @@ def build_legal_client(settings: Settings) -> tuple[Any, str]:
     красоты: его показывает /health, и по нему видно, что именно отвечало
     клиенту, — иначе смена провайдера была бы невидимой в проде.
     """
-    from openai import AsyncOpenAI
-
     METER.budget_usd = settings.monthly_ai_budget_usd
-    openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
     if settings.active_ai_provider != "anthropic":
-        return MeteredClient(openai_client), "openai"
+        # Здесь OpenAI не запасной, а единственный. Отсутствие ключа — это не
+        # потеря запасного пути, а невозможность ответить вообще, и отказ
+        # должен быть немедленным и названным по имени переменной.
+        return MeteredClient(build_openai_client(settings)), "openai"
 
     try:
         from anthropic import AsyncAnthropic
@@ -109,7 +171,7 @@ def build_legal_client(settings: Settings) -> tuple[Any, str]:
         # Пакет не поставлен — это состояние окружения, а не выбор оператора.
         # Отказать в консультации из-за него нельзя, поэтому работает запасной.
         LOGGER.warning("KORGAN anthropic SDK unavailable (%s) — using OpenAI", error)
-        return MeteredClient(openai_client), "openai"
+        return MeteredClient(build_openai_client(settings)), "openai"
 
     # Роль различается только по имени модели OpenAI, с которым пришёл запрос.
     # Если оператор задал отдельную модель для роли, чьё имя совпало с основной,
@@ -118,6 +180,14 @@ def build_legal_client(settings: Settings) -> tuple[Any, str]:
     # применился, а счёт продолжал расти по тарифу основной модели.
     for warning in settings.unreachable_model_roles:
         LOGGER.warning("KORGAN model role is unreachable — %s", warning)
+
+    # Незаполненный запасной провайдер не мешает работать, но замалчивать его
+    # нельзя: до первого отказа Anthropic такая конфигурация неотличима от
+    # полной, а в момент отказа выясняется, что откатываться некуда — и узнаётся
+    # это на живом клиенте. Поэтому предупреждение звучит при старте, а /health
+    # показывает состояние запасного пути постоянно.
+    if not openai_configured(settings):
+        LOGGER.warning("KORGAN %s", FALLBACK_UNCONFIGURED)
 
     anthropic_client = AnthropicResponsesClient(
         AsyncAnthropic(api_key=settings.anthropic_api_key),
@@ -129,7 +199,7 @@ def build_legal_client(settings: Settings) -> tuple[Any, str]:
         MeteredClient(
             FallbackClient(
                 anthropic_client,
-                openai_client,
+                LazyClient(lambda: build_openai_client(settings)),
                 primary_name="anthropic",
                 secondary_name="openai",
             )

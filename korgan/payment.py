@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from openai import AsyncOpenAI
 
+from korgan.ai_provider import build_openai_client
 from korgan.config import Settings
 from korgan.i18n import KK
 
@@ -86,7 +86,12 @@ class ReceiptAnalyzer:
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        # Тот же отказ, что и у юридического клиента, и по той же причине:
+        # разбор чека идёт через зрение OpenAI, и на пустом ключе SDK ответил бы
+        # про свой аргумент, а не про переменную Railway. Предварительная
+        # проверка чека при этом всё равно не подтверждает оплату — подтверждает
+        # администратор, — но отказать она должна внятно.
+        self.client = build_openai_client(settings)
 
     async def analyze(self, data: bytes, filename: str, mime_type: str) -> ReceiptCheck:
         suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
