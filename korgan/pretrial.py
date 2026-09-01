@@ -6,16 +6,15 @@ import io
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Pt
 
+from korgan.claim_money_ledger import money_kind
 from korgan.document_release import review_lines
-from korgan.legal_calc import parse_all_amounts_kzt
+from korgan.legal_calc import AMOUNT_PATTERN as _AMOUNT_TOKEN_RE, format_kzt, parse_all_amounts_kzt, parse_amount_kzt
 from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.stable_legal_release import StableLegalProductionService, clean_language_labels, sanitize_research_sources
 
@@ -155,6 +154,74 @@ def has_money_demand(draft: PretrialDraft) -> bool:
     return bool(parse_all_amounts_kzt("\n".join(draft.demands)))
 
 
+_COMPONENT_LABELS: dict[str, str] = {
+    "principal": "основной долг",
+    "penalty": "неустойка/пеня",
+    "interest": "проценты",
+    "damages": "убытки",
+    "moral_damage": "моральный вред",
+    "restitution": "возврат уплаченного",
+}
+
+
+def _money_components(lines: list[str]) -> dict[str, set[int]]:
+    """Денежные компоненты текста: вид требования → заявленные по нему суммы.
+
+    Вид определяется тем же связывателем, что и в реестре исковых требований:
+    претензия задаёт объём добровольного исполнения, и она не вправе понимать
+    сумму иначе, чем последующий иск.
+    """
+    components: dict[str, set[int]] = {}
+    for line in lines or []:
+        text = str(line)
+        for match in _AMOUNT_TOKEN_RE.finditer(text):
+            amount = parse_amount_kzt(match.group(0))
+            if amount is None:
+                continue
+            kind = money_kind(text, match.start(), match.end())
+            if kind in {"other", "total"}:
+                continue
+            components.setdefault(kind, set()).add(amount)
+    return components
+
+
+def _calculation_demand_issues(draft: PretrialDraft) -> list[str]:
+    """Сверить расчёт с требованиями покомпонентно.
+
+    Совпадения итога недостаточно: у основного долга и неустойки разные
+    основания, и каждый компонент должен дожить с обеих сторон. Если неустойка
+    посчитана, но в требованиях её нет, адресат погасит долг и будет считаться
+    исполнившим претензию — посчитанная сумма пропадёт молча.
+    """
+    if not draft.calculation:
+        return []
+
+    calculated = _money_components(draft.calculation)
+    demanded = _money_components(draft.demands)
+    if not calculated or not demanded:
+        return []
+
+    issues: list[str] = []
+    for kind in sorted(set(calculated) | set(demanded)):
+        label = _COMPONENT_LABELS.get(kind, kind)
+        in_calculation = calculated.get(kind)
+        in_demands = demanded.get(kind)
+        if in_calculation and not in_demands:
+            issues.append(f"компонент расчёта «{label}» отсутствует в требованиях претензии")
+        elif in_demands and not in_calculation:
+            issues.append(f"требование «{label}» не раскрыто расчётом")
+        elif in_calculation and in_demands and in_calculation.isdisjoint(in_demands):
+            issues.append(
+                f"размер по компоненту «{label}» в расчёте ({_amounts(in_calculation)}) "
+                f"не совпадает с требованиями ({_amounts(in_demands)})"
+            )
+    return issues
+
+
+def _amounts(values: set[int]) -> str:
+    return ", ".join(format_kzt(value) for value in sorted(values))
+
+
 def pretrial_quality_issues(draft: PretrialDraft, research: LegalResearch) -> list[str]:
     issues: list[str] = []
     if not draft.sender:
@@ -172,6 +239,7 @@ def pretrial_quality_issues(draft: PretrialDraft, research: LegalResearch) -> li
     # проверить, а суд позже не сможет соотнести с иском.
     if has_money_demand(draft) and not draft.calculation:
         issues.append("денежное требование не раскрыто расчётом")
+    issues.extend(_calculation_demand_issues(draft))
 
     # Срок добровольного исполнения — то, что превращает письмо в претензию:
     # от него считается момент, с которого спор можно передать в суд.
@@ -251,8 +319,10 @@ class PretrialProductionService(StableLegalProductionService):
         return draft
 
 
-def _today() -> str:
-    return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
+# Дата претензии — процессуальный факт: от неё отсчитывается срок ответа, и она
+# должна совпадать с доказательством направления. Генератор её не знает, поэтому
+# оставляет строку отправителю, как и строку подписи.
+SIGNATURE_DATE_BLANK = "____________________"
 
 
 def _body_paragraph(doc: Document, text: str) -> None:
@@ -341,7 +411,7 @@ def build_pretrial_docx(draft: PretrialDraft, language: str = "ru") -> bytes:
             doc.add_paragraph(f"{index}. {item}")
 
     doc.add_paragraph()
-    doc.add_paragraph(("Күні: " if kk else "Дата: ") + _today())
+    doc.add_paragraph(("Күні: " if kk else "Дата: ") + SIGNATURE_DATE_BLANK)
     doc.add_paragraph("Қолы: ____________________" if kk else "Подпись: ____________________")
 
     stream = io.BytesIO()

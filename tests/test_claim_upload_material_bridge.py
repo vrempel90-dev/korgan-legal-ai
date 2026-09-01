@@ -82,6 +82,65 @@ def test_claim_aware_extractor_demands_marker_for_pretrial_documents() -> None:
     asyncio.run(scenario())
 
 
+def test_extraction_keeps_addresses_and_contacts_from_the_uploaded_document() -> None:
+    """Адрес ответчика — обязательный реквизит иска, а не второстепенная деталь.
+
+    Схема извлечения закрыта (``additionalProperties: false``), поэтому поле,
+    которого в ней нет, модель вернуть не может, каким бы подробным ни был
+    промпт. Без адреса и контактов иск строится по материалам, где их нет,
+    и реквизит либо теряется, либо появляется из ниоткуда.
+    """
+
+    async def scenario() -> None:
+        captured: dict = {}
+
+        async def structured_response(**kwargs):
+            captured.update(kwargs)
+            return (
+                {
+                    "document_type": "Договор поставки",
+                    "text_summary": "Поставка оборудования.",
+                    "parties": ["ТОО «Поставщик»", "ТОО «Покупатель»"],
+                    "identifiers": ["БИН 210987654321"],
+                    "addresses": ["г. Алматы, ул. Розыбакиева, 10"],
+                    "contacts": ["+7 700 000 00 00", "info@example.kz"],
+                    "dates": ["15.01.2026"],
+                    "amounts": ["2 300 000 тенге"],
+                    "obligations": ["Оплатить поставленный товар"],
+                    "violations": [],
+                    "evidence": [],
+                    "important_facts": [],
+                    "missing_or_unclear": [],
+                },
+                object(),
+            )
+
+        fake = SimpleNamespace(
+            settings=SimpleNamespace(openai_vision_model="test", max_case_text_chars=10000),
+            _structured_response=structured_response,
+        )
+        extracted = await bridge._claim_aware_extract_document(
+            fake,
+            "Договор поставки".encode("utf-8"),
+            "dogovor.txt",
+            "text/plain",
+        )
+
+        schema = captured["schema"]
+        assert "addresses" in schema["properties"]
+        assert "contacts" in schema["properties"]
+        assert "addresses" in schema["required"]
+        assert "contacts" in schema["required"]
+
+        assert extracted.addresses == ["г. Алматы, ул. Розыбакиева, 10"]
+        assert extracted.contacts == ["+7 700 000 00 00", "info@example.kz"]
+        context = extracted.as_context()
+        assert "г. Алматы, ул. Розыбакиева, 10" in context
+        assert "info@example.kz" in context
+
+    asyncio.run(scenario())
+
+
 def test_empty_claim_prayer_is_recovered_from_uploaded_pretrial(monkeypatch) -> None:
     async def scenario() -> None:
         async def original_draft(_self, _context, _research, language="ru"):

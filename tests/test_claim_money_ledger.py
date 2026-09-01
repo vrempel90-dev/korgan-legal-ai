@@ -102,3 +102,37 @@ def test_monetary_alternative_relief_fails_closed_instead_of_being_silently_drop
     ledger = build_claim_money_ledger([request])
     assert ledger.total == 0
     assert ledger.unresolved_requests == [request]
+
+
+def test_malformed_grouping_fails_closed_instead_of_becoming_the_claim_price():
+    """«12 34 567 тенге» — не сумма, и ценой иска она стать не вправе.
+
+    У реестра была своя мягкая регулярка суммы, которая просто вырезала пробелы
+    и читала кривую группировку как 1 234 567. Канонический парсер такую запись
+    отвергает, поэтому цена иска и госпошлина считались от числа, которого в
+    просительной части нет.
+    """
+    request = "Взыскать с ответчика основной долг 12 34 567 тенге."
+    ledger = build_claim_money_ledger([request])
+
+    assert ledger.components == []
+    assert ledger.total == 0
+    assert ledger.unresolved_requests == [request]
+
+
+def test_malformed_grouping_next_to_a_valid_amount_fails_closed():
+    request = "Взыскать основной долг 1 200 000 тенге и неустойку 1234 567 тенге."
+    ledger = build_claim_money_ledger([request])
+
+    assert ledger.total == 0
+    assert ledger.unresolved_requests == [request]
+
+
+def test_two_valid_components_survive_canonical_parsing():
+    ledger = build_claim_money_ledger([
+        "Взыскать основной долг 2 300 000 тенге и неустойку 377 200 тенге."
+    ])
+
+    assert ledger.unresolved_requests == []
+    assert [item.kind for item in ledger.components] == ["principal", "penalty"]
+    assert ledger.total == 2_677_200

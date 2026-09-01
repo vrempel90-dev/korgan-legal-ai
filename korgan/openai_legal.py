@@ -23,6 +23,11 @@ _EXTRACT_SCHEMA: dict[str, Any] = {
         "text_summary": {"type": "string"},
         "parties": {"type": "array", "items": {"type": "string"}},
         "identifiers": {"type": "array", "items": {"type": "string"}},
+        # Адрес стороны — обязательный реквизит иска и претензии. Схема закрыта,
+        # поэтому отсутствующее здесь поле модель вернуть не может: без него
+        # адрес и контакты теряются на извлечении и не попадают в материалы.
+        "addresses": {"type": "array", "items": {"type": "string"}},
+        "contacts": {"type": "array", "items": {"type": "string"}},
         "dates": {"type": "array", "items": {"type": "string"}},
         "amounts": {"type": "array", "items": {"type": "string"}},
         "obligations": {"type": "array", "items": {"type": "string"}},
@@ -32,8 +37,9 @@ _EXTRACT_SCHEMA: dict[str, Any] = {
         "missing_or_unclear": {"type": "array", "items": {"type": "string"}},
     },
     "required": [
-        "document_type", "text_summary", "parties", "identifiers", "dates", "amounts",
-        "obligations", "violations", "evidence", "important_facts", "missing_or_unclear"
+        "document_type", "text_summary", "parties", "identifiers", "addresses", "contacts",
+        "dates", "amounts", "obligations", "violations", "evidence", "important_facts",
+        "missing_or_unclear"
     ],
     "additionalProperties": False,
 }
@@ -162,8 +168,9 @@ class OpenAILegalService:
         suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
         prompt = (
             "Извлеки из документа только факты, видимые в самом документе. Не делай правовых выводов из памяти. "
-            "Особенно найди стороны, ИИН/БИН/номера, даты, суммы, обязательства, нарушения условий, доказательства, "
-            "важные факты для возможного судебного спора и явно перечисли всё нечитабельное или отсутствующее."
+            "Особенно найди стороны, ИИН/БИН/номера, адреса и контакты сторон если они видны, даты, суммы, "
+            "обязательства, нарушения условий, доказательства, важные факты для возможного судебного спора "
+            "и явно перечисли всё нечитабельное или отсутствующее."
         )
 
         if suffix in {"jpg", "jpeg", "png", "webp"} or (mime_type or "").startswith("image/"):

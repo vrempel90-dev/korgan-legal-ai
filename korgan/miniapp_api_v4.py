@@ -8,6 +8,7 @@ from fastapi import File, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from korgan import miniapp_api_v3 as runtime
+from korgan.asgi_lifespan import add_lifespan
 from korgan.consultation_quota import (
     ConsultationOrder,
     accept_consultation_receipt,
@@ -68,16 +69,17 @@ _drop_route("/miniapp/documents/generate", "POST")
 _drop_route("/miniapp/parity", "GET")
 
 
-@app.on_event("startup")
 async def _business_startup() -> None:
     await init_consultation_store(settings)
     await init_document_payment_store(settings)
 
 
-@app.on_event("shutdown")
 async def _business_shutdown() -> None:
     await close_consultation_store()
     await close_document_payment_store()
+
+
+add_lifespan(app, startup=_business_startup, shutdown=_business_shutdown)
 
 
 def _quota_user_id(identity: str) -> int:

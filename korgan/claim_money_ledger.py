@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+
+from korgan.legal_calc import parse_amount_kzt
 
 _AMOUNT_RE = re.compile(
-    r"(?<!\d)(\d[\d\s\u00a0]*(?:[.,]\d{1,2})?)\s*(?:тенге|теңге|тг\b|₸|kzt)",
+    r"(?<!\d)(\d[\d\s ]*(?:[.,]\d{1,2})?)\s*(?:тенге|теңге|тг\b|₸|kzt)",
     re.IGNORECASE,
 )
 _STATE_DUTY_RE = re.compile(
@@ -78,18 +79,25 @@ class ClaimMoneyLedger:
 
 
 def _amount(value: str) -> int:
-    raw = re.sub(r"[\s\u00a0]", "", value).replace(",", ".")
-    try:
-        parsed = Decimal(raw)
-    except (InvalidOperation, ValueError):
-        return 0
-    if parsed <= 0:
-        return 0
-    return int(parsed.to_integral_value(rounding=ROUND_HALF_UP))
+    """Прочитать сумму каноническим парсером продукта или вернуть 0.
+
+    Свой разбор здесь просто вырезал пробелы, поэтому кривая группировка
+    «12 34 567 тенге» превращалась в 1 234 567 — число, которого в
+    просительной части нет. Отсюда оно уходило в цену иска и в базу
+    госпошлины. Канонический parse_amount_kzt такую запись отвергает, а
+    нулевое значение выше по функции переводит требование в
+    unresolved_requests: fail-closed вместо выдуманной суммы.
+    """
+    return parse_amount_kzt(f"{value} тенге") or 0
 
 
-def _kind(text: str, start: int, end: int) -> str:
-    """Bind an amount to the nearest recognised remedy label."""
+def money_kind(text: str, start: int, end: int) -> str:
+    """Bind an amount to the nearest recognised remedy label.
+
+    Public because the same binding decides which component a pre-trial demand
+    line is talking about. One binder keeps the claim and the demand that
+    precedes it from disagreeing about what a number means.
+    """
     candidates: list[tuple[int, int, int, str]] = []
     for order, (code, pattern) in enumerate(_KIND_PATTERNS):
         for match in pattern.finditer(text or ""):
@@ -154,7 +162,7 @@ def _component_list(
     values: list[int],
     indices: list[int],
 ) -> list[ClaimMoneyComponent] | None:
-    kinds = [_kind(request, matches[idx].start(), matches[idx].end()) for idx in indices]
+    kinds = [money_kind(request, matches[idx].start(), matches[idx].end()) for idx in indices]
     if "other" in kinds or len(set(kinds)) != len(kinds):
         return None
     return [_component(kind, values[idx], request) for kind, idx in zip(kinds, indices, strict=True)]
@@ -188,7 +196,7 @@ def _resolved_components(request: str) -> list[ClaimMoneyComponent] | None:
         return [_component("total", values[total_index], request)]
 
     if len(matches) == 1:
-        return [_component(_kind(request, matches[0].start(), matches[0].end()), values[0], request)]
+        return [_component(money_kind(request, matches[0].start(), matches[0].end()), values[0], request)]
 
     if len(values) >= 3 and values[-1] == sum(values[:-1]):
         components = _component_list(request, matches, values, list(range(len(values) - 1)))

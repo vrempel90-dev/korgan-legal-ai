@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 # strict_bot, which installs the exact same production legal hardening layers
 # without starting Telegram polling.
 from korgan import miniapp_api as legacy
+from korgan.asgi_lifespan import add_lifespan
 from korgan.claim_docx import build_claim_docx
 from korgan.contract_docx import build_contract_docx
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
@@ -59,14 +60,15 @@ class GenerateRequest(BaseModel):
     language: str = "ru"
 
 
-@app.on_event("startup")
 async def _startup() -> None:
     await store.open()
 
 
-@app.on_event("shutdown")
 async def _shutdown() -> None:
     await store.close()
+
+
+add_lifespan(app, startup=_startup, shutdown=_shutdown)
 
 
 def _status_value(value: Any) -> str:

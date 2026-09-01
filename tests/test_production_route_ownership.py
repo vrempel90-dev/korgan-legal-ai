@@ -35,10 +35,11 @@ def test_no_miniapp_route_is_registered_twice() -> None:
     assert duplicates == {}
 
 
-def test_document_generation_cannot_bypass_the_payment_gate() -> None:
-    """Прямая генерация v2 не должна быть доступна поверх платёжного слоя."""
-    from korgan import miniapp_api_v2, miniapp_api_v5
+def test_document_generation_cannot_bypass_payment_or_persisted_jobs() -> None:
+    """Прямая генерация v2/v5 не должна обходить платёж и очередь задач."""
+    from korgan import miniapp_api_v2, miniapp_api_v5, miniapp_generation_api
 
     handler = endpoint("/miniapp/documents/generate", "POST")
-    assert handler is miniapp_api_v5.generate_document
+    assert handler is miniapp_generation_api.generate_document_job
+    assert handler is not miniapp_api_v5.generate_document
     assert handler is not miniapp_api_v2.generate_document

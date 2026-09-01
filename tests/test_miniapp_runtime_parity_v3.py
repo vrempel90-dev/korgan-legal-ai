@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from korgan import miniapp_api_v3
+from korgan import miniapp_api, miniapp_api_v3
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
 from korgan.claim_service_mux import ClaimServiceMux
 from korgan.pretrial_response import PretrialResponseProductionService
@@ -14,6 +14,7 @@ def test_miniapp_uses_exact_strict_bot_service_chain() -> None:
     assert isinstance(service.inner, ClaimServiceMux)
     assert isinstance(service.inner.stable, PretrialResponseProductionService)
     assert miniapp_api_v3.core.service is service
+    assert miniapp_api.service is service
 
 
 def test_parity_probe_exposes_required_production_capabilities() -> None:

@@ -7,11 +7,18 @@ from typing import Any, Literal
 
 from docx import Document
 
+from korgan.admission_support import unsupported_admissions
 from korgan.contract_preamble import preamble_defects
+from korgan.contract_type_safety import misclassification_blockers
 from korgan.document_release import review_lines
+from korgan.expense_support import unsupported_expense_claims
+from korgan.incoming_demand_coverage import uncovered_incoming_demands
 from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.legal_calc import parse_all_amounts_kzt
+from korgan.legal_provenance import forbidden_fact_findings
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch
+from korgan.objection_support import unsupported_objections
+from korgan.relief_norm_support import unsupported_relief
 from korgan.response_types import ResponseToClaimDraft
 from korgan.text_integrity import integrity_findings
 
@@ -144,6 +151,7 @@ def _common_hygiene(
     blockers: list[str],
     issues: list[str],
     *,
+    case_context: str = "",
     verified_claims: list[str] | None = None,
     verification_notes: list[str] | None = None,
 ) -> float:
@@ -180,6 +188,12 @@ def _common_hygiene(
         issues.append("вопросы к проверке перед подачей: " + unresolved[0][:180])
         score -= 0.35
 
+    # Ошибка в виде договора обесценивает весь раздел правового обоснования:
+    # нормы будут реальными и процитированными верно, но не о тех отношениях.
+    for finding in misclassification_blockers(case_context, lines):
+        blockers.append(finding)
+        score -= 0.6
+
     integrity = integrity_findings(text)
     if integrity:
         blockers.append("нарушена целостность текста: " + integrity[0].description)
@@ -194,53 +208,6 @@ def _common_hygiene(
         score -= 0.6
 
     return max(0.0, score)
-
-
-# Возражения, которые нельзя заявлять «на всякий случай»: исковая давность и
-# процессуальные нарушения. Каждое из них либо подтверждено конкретными датами
-# и нормой, либо не заявляется вовсе — иначе документ раздувается доводами,
-# которые оппонент разобьёт первым же абзацем.
-_UNSUPPORTABLE_OBJECTION_RE = re.compile(
-    r"(?i)(?:исков\w*\s+давност\w*|срок\w*\s+давност\w*|"
-    r"пропущен\w*\s+срок|"
-    r"нарушен\w*\s+(?:процессуальн\w*|порядок\s+подач\w*)|"
-    r"подсудност\w*\s+наруш\w*|"
-    r"талап\s+қою\s+мерзім\w*)"
-)
-
-# Опора, без которой такое возражение не проверяемо: конкретная дата, период
-# или названная норма.
-# Длительности («3 года») здесь намеренно нет: она не опора. Довод об
-# исковой давности проверяем только тогда, когда названы даты, из которых
-# срок вычисляется, либо норма, которая его устанавливает. Пока длительность
-# засчитывалась, «Истёк срок исковой давности — 3 года» проходило шлюз,
-# не сообщая ни того, ни другого.
-_OBJECTION_ANCHOR_RE = re.compile(
-    r"(?i)(?:\d{2}\.\d{2}\.\d{4}|"
-    r"\b\d{4}\s*год|"
-    r"\bстать\w*\s*\d|\bст\.\s*\d)"
-)
-
-
-def unsupported_objections(objections: list[str]) -> list[str]:
-    """Возражения об исковой давности/процессуальных нарушениях без опоры.
-
-    Опора требуется в самом возражении, а не где-то ещё в документе. Довод об
-    исковой давности профессионально всегда называет даты, из которых срок
-    вычисляется: когда началось течение и когда истекло. Дата, случайно
-    оказавшаяся в соседнем разделе, такой довод не подтверждает — иначе любое
-    возражение «на всякий случай» проходило бы за счёт чужих фактов.
-    """
-    findings: list[str] = []
-    for item in _clean_lines(objections):
-        if not _UNSUPPORTABLE_OBJECTION_RE.search(item):
-            continue
-        if _OBJECTION_ANCHOR_RE.search(item):
-            continue
-        findings.append(
-            "возражение заявлено без подтверждающих дат или нормы: " + item[:120]
-        )
-    return findings
 
 
 def _preserve_known_identifiers(case_context: str, lines: list[str], blockers: list[str]) -> float:
@@ -297,6 +264,13 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
         parties -= 0.8
     parties -= 1.0 - _preserve_known_identifiers(case_context, lines, blockers)
 
+    # Только фактическая часть: детерминированные цена, госпошлина и расчёт
+    # вправе содержать производные значения, а доказательственные факты — нет.
+    provenance_findings = forbidden_fact_findings(draft.facts, case_context)
+    if provenance_findings:
+        blockers.extend(provenance_findings)
+        parties -= min(0.8, 0.2 * len(provenance_findings))
+
     defendant_text = "\n".join(draft.defendant)
     claimant_text = "\n".join(draft.claimant)
     if _ENTITY_RE.search(defendant_text) and re.search(r"фио\s+ответчика", defendant_text, re.I):
@@ -331,6 +305,22 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
             blockers.append("правовое основание не поддерживает заявленное требование")
             issues.extend(str(item) for item in fit[:4])
             law -= min(1.5, 0.65 + 0.2 * len(fit))
+        # Санкция не выводится из нормы о надлежащем исполнении: у неустойки,
+        # убытков и морального вреда собственные основания.
+        for finding in unsupported_relief(
+            requests=draft.requests,
+            legal_basis=draft.legal_basis,
+            case_context=case_context,
+            facts=draft.facts,
+            verified_claims=research.verified_claims,
+        ):
+            blockers.append(finding)
+            law -= 0.6
+        # Издержки взыскиваются по документу, а не по утверждению о них: расход,
+        # который материалы дела не подтверждают, суд не присудит.
+        for finding in unsupported_expense_claims(draft.requests, lines, case_context):
+            blockers.append(finding)
+            law -= 0.6
         if not research.verified_claims:
             blockers.append("нет source-bound подтвержденной материально-правовой основы")
             law -= 1.2
@@ -361,6 +351,7 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
         _claim_citation_lines(draft),
         blockers,
         issues,
+        case_context=case_context,
         verified_claims=research.verified_claims,
         verification_notes=draft.verification_notes,
     )
@@ -423,6 +414,7 @@ def _score_contract(case_context: str, research: LegalResearch, draft: ContractD
         lines,
         blockers,
         issues,
+        case_context=case_context,
         verified_claims=research.verified_claims,
         verification_notes=draft.verification_notes,
     )
@@ -473,13 +465,70 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
     if not _clean_lines(draft.requests):
         blockers.append("нет процессуальной просительной части")
         position -= 0.4
+
+    # Пересказ петитума не является ответом. Каждое требование исходного иска
+    # должно получить признание, возражение, разбор расчёта либо итоговую
+    # процессуальную позицию в собственных разделах отзыва.
+    coverage_lines = _clean_lines(
+        [
+            *draft.admitted_circumstances,
+            *draft.disputed_circumstances,
+            *draft.position,
+            *(line for item in draft.objections for line in item.body_lines()),
+            *draft.calculation_review,
+            *draft.requests,
+        ]
+    )
+    uncovered = uncovered_incoming_demands(
+        case_context,
+        coverage_lines,
+        summaries=draft.claim_summary,
+    )
+    if uncovered:
+        blockers.extend(uncovered)
+        position -= min(1.2, 0.3 * len(uncovered))
+
+    # Повтор признания в position или ином model-authored разделе не создаёт
+    # волеизъявление доверителя. Для процессуально чувствительного признания
+    # внешней опорой служат только входящие материалы.
+    unsupported = unsupported_admissions(
+        draft.admitted_circumstances,
+        case_context,
+        model_authored_materials=coverage_lines,
+    )
+    if unsupported:
+        blockers.extend(unsupported)
+        position -= min(1.0, 0.4 * len(unsupported))
+
+    factual_lines = _clean_lines(
+        [
+            *draft.admitted_circumstances,
+            *draft.disputed_circumstances,
+            *(line for item in draft.objections for line in item.body_lines()),
+        ]
+    )
+    provenance_findings = forbidden_fact_findings(factual_lines, case_context)
+    if provenance_findings:
+        blockers.extend(provenance_findings)
+        position -= min(1.0, 0.25 * len(provenance_findings))
+
     # Схема разрешает вынести даты и норму в subclauses/prose, а в text
     # оставить заголовок довода. Проверять один заголовок значит блокировать
     # полностью обоснованное возражение за то, что опора лежит строкой ниже.
     objection_texts = ["\n".join(item.body_lines()) for item in draft.objections] if draft.objections else []
-    unsupported = unsupported_objections(objection_texts)
+    unsupported = unsupported_objections(
+        objection_texts,
+        case_context=case_context,
+        verified_claims=research.verified_claims,
+    )
     if unsupported:
         blockers.extend(unsupported)
+        position -= 0.6
+
+    # Свои издержки ответчик просит в просительной части — и подтверждает их
+    # так же, как истец. Разбор чужих издержек требованием не является.
+    for finding in unsupported_expense_claims(draft.requests, lines, case_context):
+        blockers.append(finding)
         position -= 0.6
 
     # Схема требует ключ calculation_review, но не его содержимое: пустой
@@ -520,6 +569,7 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
         lines,
         blockers,
         issues,
+        case_context=case_context,
         verified_claims=research.verified_claims,
         verification_notes=draft.verification_notes,
     )
@@ -566,6 +616,10 @@ def _score_pretrial(case_context: str, research: LegalResearch, draft: Any) -> D
     if not _clean_lines(draft.facts):
         blockers.append("не изложено фактическое основание требований")
         facts -= 1.5
+    provenance_findings = forbidden_fact_findings(draft.facts, case_context)
+    if provenance_findings:
+        blockers.extend(provenance_findings)
+        facts -= min(1.0, 0.25 * len(provenance_findings))
 
     law = 2.5
     basis = "\n".join(draft.legal_basis)
@@ -575,6 +629,13 @@ def _score_pretrial(case_context: str, research: LegalResearch, draft: Any) -> D
     elif research.verified_claims and not _ARTICLE_RE.search(basis):
         blockers.append("VERIFIED-нормы не перенесены в правовое обоснование претензии")
         law -= 1.0
+    for finding in unsupported_expense_claims(draft.demands, lines, case_context):
+        blockers.append(finding)
+        law -= 0.6
+
+    # Претензия проходит через remedy_support_issues (client_document_feedback_hotfix):
+    # там требование неустойки уже обязано иметь собственную VERIFIED-норму, причём
+    # строже — без договорной альтернативы. Второй такой же проверки здесь не ставим.
 
     calculation = 1.5
     if has_money_demand(draft) and not _clean_lines(draft.calculation):
@@ -598,6 +659,7 @@ def _score_pretrial(case_context: str, research: LegalResearch, draft: Any) -> D
         lines,
         blockers,
         issues,
+        case_context=case_context,
         verified_claims=research.verified_claims,
         verification_notes=draft.verification_notes,
     )
@@ -649,13 +711,61 @@ def _score_pretrial_response(case_context: str, research: LegalResearch, draft: 
         blockers.append("нет содержательного ответа на требования претензии")
         engagement -= 0.9
 
+    # Claim summary фиксирует, что потребовал контрагент, но не отвечает ему.
+    # Полноту дают только собственные признания, оспаривание, позиция, разбор
+    # расчёта, возражения и условия ответа адресата претензии.
+    coverage_lines = _clean_lines(
+        [
+            *draft.admitted_circumstances,
+            *draft.disputed_circumstances,
+            *draft.position,
+            *draft.objections,
+            *draft.calculation_review,
+            str(draft.settlement_offer or ""),
+            *draft.response_terms,
+        ]
+    )
+    uncovered = uncovered_incoming_demands(
+        case_context,
+        coverage_lines,
+        summaries=draft.claim_summary,
+    )
+    if uncovered:
+        blockers.extend(uncovered)
+        engagement -= min(1.2, 0.3 * len(uncovered))
+
+    unsupported = unsupported_admissions(
+        draft.admitted_circumstances,
+        case_context,
+        model_authored_materials=coverage_lines,
+    )
+    if unsupported:
+        blockers.extend(unsupported)
+        engagement -= min(1.0, 0.4 * len(unsupported))
+
+    factual_lines = _clean_lines(
+        [
+            *draft.admitted_circumstances,
+            *draft.disputed_circumstances,
+            *draft.objections,
+        ]
+    )
+    provenance_findings = forbidden_fact_findings(factual_lines, case_context)
+    if provenance_findings:
+        blockers.extend(provenance_findings)
+        engagement -= min(1.0, 0.25 * len(provenance_findings))
+
     law = 2.0
     basis = "\n".join(draft.legal_basis)
     if research.verified_claims and not basis.strip():
         blockers.append("VERIFIED-нормы не перенесены в правовое обоснование ответа")
         law -= 1.2
 
-    unsupported = unsupported_objections(list(draft.objections))
+    unsupported = unsupported_objections(
+        list(draft.objections),
+        case_context=case_context,
+        verified_claims=research.verified_claims,
+    )
     if unsupported:
         blockers.extend(unsupported)
         engagement -= 0.6
@@ -686,6 +796,7 @@ def _score_pretrial_response(case_context: str, research: LegalResearch, draft: 
         lines,
         blockers,
         issues,
+        case_context=case_context,
         verified_claims=research.verified_claims,
         verification_notes=draft.verification_notes,
     )

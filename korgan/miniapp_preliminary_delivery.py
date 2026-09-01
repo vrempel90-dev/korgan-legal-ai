@@ -79,6 +79,21 @@ def humanize(issues: list[str]) -> list[str]:
     return result
 
 
+def client_notes(case: dict[str, Any]) -> list[str]:
+    """Перечень задач перед подачей — тот, что можно показать клиенту.
+
+    `verification_notes` и `quality_issues` ведут внутренние гейты для самих
+    себя: там служебный префикс `FILING_ACTION:` и привязка к источнику со
+    ссылкой. Помеченный черновик уже составил человеческий перечень — он и
+    отдаётся; для остальных случаев (дело сохранено прежней версией, выпуск
+    заблокирован) перечень собирается тем же переводом, а не копией протокола.
+    """
+    stored = [text for text in (" ".join(str(item or "").split()) for item in case.get("todo_before_filing") or []) if text]
+    if stored:
+        return stored
+    return humanize(list(case.get("quality_issues") or []) + list(case.get("verification_notes") or []))
+
+
 def mark_preliminary(result: dict[str, Any], issues: list[str], case_id: str) -> dict[str, Any]:
     """Пометить уже сгенерированный документ как предварительный проект.
 

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import io
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -101,8 +99,10 @@ def _document_status(draft: ClaimDraft) -> str:
     return QA_READY
 
 
-def _kazakhstan_today() -> str:
-    return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
+# Дату иска ставит истец в момент подписания. Проект выходит с пустой строкой
+# подписи, поэтому дата рядом с ней тоже обязана быть пустой: день формирования
+# проекта не является днём, когда документ подписан и подан.
+SIGNATURE_DATE_BLANK = "____________________"
 
 
 def _kk_line(value: str) -> str:
@@ -240,7 +240,7 @@ def build_claim_docx(draft: ClaimDraft) -> bytes:
     render_blocks(doc, _body_blocks(draft, kk=kk))
 
     doc.add_paragraph()
-    doc.add_paragraph(("Күні: " if kk else "Дата: ") + _kazakhstan_today())
+    doc.add_paragraph(("Күні: " if kk else "Дата: ") + SIGNATURE_DATE_BLANK)
     doc.add_paragraph("Қолы: ____________________" if kk else "Подпись: ____________________")
 
     stream = io.BytesIO()

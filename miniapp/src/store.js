@@ -2,24 +2,35 @@ const KEY = 'korgan-miniapp-state-v1';
 
 const emptyState = {
   language: 'ru',
-  consentAccepted: false,
-  consentVersion: '2026-08-16-v1',
   draft: { documentType: null, description: '' },
   recentCases: [],
 };
 
+function browserState(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...emptyState };
+  return {
+    language: value.language === 'kk' ? 'kk' : 'ru',
+    draft: {
+      documentType: value.draft?.documentType || null,
+      description: String(value.draft?.description || ''),
+    },
+    recentCases: Array.isArray(value.recentCases) ? value.recentCases : [],
+  };
+}
+
 export function loadState() {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? { ...emptyState, ...JSON.parse(raw) } : { ...emptyState };
+    return raw ? browserState(JSON.parse(raw)) : browserState(emptyState);
   } catch {
-    return { ...emptyState };
+    return browserState(emptyState);
   }
 }
 
 export function saveState(next) {
-  localStorage.setItem(KEY, JSON.stringify(next));
-  return next;
+  const safe = browserState(next);
+  localStorage.setItem(KEY, JSON.stringify(safe));
+  return safe;
 }
 
 export function saveDraft(patch) {
@@ -30,16 +41,6 @@ export function saveDraft(patch) {
 export function setLanguage(language) {
   const state = loadState();
   return saveState({ ...state, language: language === 'kk' ? 'kk' : 'ru' });
-}
-
-export function acceptConsent(version = emptyState.consentVersion) {
-  const state = loadState();
-  return saveState({ ...state, consentAccepted: true, consentVersion: version });
-}
-
-export function revokeConsent() {
-  const state = loadState();
-  return saveState({ ...state, consentAccepted: false });
 }
 
 export function addRecentCase(item) {
@@ -59,5 +60,5 @@ export function clearLocalCaseData() {
 
 export function clearAllLocalData() {
   localStorage.removeItem(KEY);
-  return { ...emptyState };
+  return browserState(emptyState);
 }

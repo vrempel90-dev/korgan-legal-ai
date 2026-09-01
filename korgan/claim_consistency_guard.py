@@ -5,6 +5,8 @@ from typing import Pattern
 
 import korgan.senior_claim_preflight as senior_claim_preflight
 from korgan.claim_quality_gate import check_amount_consistency
+from korgan.consumer_qualification import ConsumerStatus, asserts_consumer_law, consumer_status
+from korgan.legal_calc import parse_all_amounts_kzt, parse_amount_kzt
 from korgan.legal_types import ClaimDraft, LegalResearch
 
 _PENALTY_REQUEST_RE = re.compile(
@@ -63,6 +65,22 @@ _BASE_CUE_RE = re.compile(
     re.IGNORECASE,
 )
 _SENTENCE_SPLIT_RE = re.compile(r"[.;]")
+
+_STATE_DUTY_CUE = r"(?:государственн\w*\s+пошлин\w*|госпошлин\w*|мемлекетт(?:ік|iк)\s+баж\w*)"
+_MONEY_SUM = r"(?P<amount>\d[\d\s ]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸))"
+# «пошлина в размере 360 000 тенге», «пошлина — 360 000 тенге», «пошлина на 360 000 тенге».
+_STATE_DUTY_AMOUNT_AFTER_RE = re.compile(
+    rf"{_STATE_DUTY_CUE}\s*"
+    r"(?:(?:в\s+размере|в\s+сумме|на\s+сумму|составля\w*|уплачен\w*|оплачен\w*|равн\w*|"
+    r"мөлшерінде|сомасында|на)\s*)?"
+    rf"[\s:—–\-]{{0,4}}{_MONEY_SUM}",
+    re.IGNORECASE,
+)
+# «уплачено 360 000 тенге государственной пошлины».
+_STATE_DUTY_AMOUNT_BEFORE_RE = re.compile(
+    rf"{_MONEY_SUM}\s*(?:в\s+счёт\s+|в\s+счет\s+)?{_STATE_DUTY_CUE}",
+    re.IGNORECASE,
+)
 
 _PAID_IN_FULL_RE = re.compile(
     r"(?:оплат\w*|уплат\w*|внес\w*)[^\n]{0,90}(?:полностью|в\s+полном\s+объ[её]ме|всю\s+сумм\w*)|"
@@ -205,6 +223,146 @@ def _penalty_request_without_amount(requests: list[str]) -> bool:
     return False
 
 
+def _penalty_amounts(lines: list[str] | None) -> set[int]:
+    """Amounts stated on penalty lines, parsed by the canonical fail-closed parser.
+
+    ``parse_all_amounts_kzt`` is the single money parser of the product: it
+    rejects malformed grouping such as ``12 34 567 тенге`` instead of silently
+    reading a suffix. Reconciliation must never be satisfied by a number the
+    claim-price and state-duty paths would refuse to read.
+    """
+    amounts: set[int] = set()
+    for line in lines or []:
+        text = str(line)
+        if _PENALTY_REQUEST_RE.search(text):
+            amounts.update(parse_all_amounts_kzt(text))
+    return amounts
+
+
+def _calculation_relief_errors(draft: ClaimDraft) -> list[str]:
+    """Reconcile each calculated monetary component with the court prayer.
+
+    A total alone is not enough: principal and penalty have different legal bases
+    and must survive as separately identifiable components on both sides.  The
+    structured calculation is optional for legacy/non-monetary drafts, but once it
+    is present it is authoritative and must agree with ``ПРОШУ СУД``.
+    """
+    calculation = _text(draft.calculation)
+    requests = _text(draft.requests)
+    if not calculation:
+        return []
+
+    errors: list[str] = []
+    calculation_has_penalty = bool(_PENALTY_REQUEST_RE.search(calculation))
+    prayer_has_penalty = bool(_PENALTY_REQUEST_RE.search(requests))
+    if calculation_has_penalty and not prayer_has_penalty:
+        errors.append(
+            "В структурированном расчёте есть неустойка/пеня, но соответствующий денежный компонент отсутствует в разделе «ПРОШУ СУД»."
+        )
+    elif prayer_has_penalty and not calculation_has_penalty:
+        errors.append(
+            "В разделе «ПРОШУ СУД» заявлена неустойка/пеня, но этот денежный компонент отсутствует в структурированном расчёте."
+        )
+    elif calculation_has_penalty and prayer_has_penalty:
+        calculation_amounts = _penalty_amounts(draft.calculation)
+        prayer_amounts = _penalty_amounts(draft.requests)
+        if calculation_amounts and prayer_amounts and calculation_amounts.isdisjoint(prayer_amounts):
+            calculated = ", ".join(f"{value:,}".replace(",", " ") for value in sorted(calculation_amounts))
+            prayed = ", ".join(f"{value:,}".replace(",", " ") for value in sorted(prayer_amounts))
+            errors.append(
+                "Размер неустойки в структурированном расчёте "
+                f"({calculated} тенге) не совпадает с размером в разделе «ПРОШУ СУД» ({prayed} тенге)."
+            )
+    return errors
+
+
+def _grouped(value: int) -> str:
+    return f"{value:,}".replace(",", " ")
+
+
+def _state_duty_amounts(lines: list[str]) -> set[int]:
+    """Суммы, названные в тексте именно размером государственной пошлины.
+
+    Привязка узкая и с обеих сторон от слова «пошлина»: «пошлина 120 000 тенге»
+    и «уплачено 120 000 тенге государственной пошлины». Соседняя сумма расходов
+    на представителя в том же предложении размером пошлины не считается —
+    ложная блокировка здесь так же вредна, как пропуск.
+    """
+    amounts: set[int] = set()
+    for line in lines or []:
+        text = str(line)
+        for pattern in (_STATE_DUTY_AMOUNT_AFTER_RE, _STATE_DUTY_AMOUNT_BEFORE_RE):
+            for match in pattern.finditer(text):
+                value = parse_amount_kzt(match.group("amount"))
+                if value is not None:
+                    amounts.add(value)
+    return amounts
+
+
+def _state_duty_errors(draft: ClaimDraft) -> list[str]:
+    """Детерминированный размер пошлины сильнее любого числа, написанного моделью.
+
+    Пошлину считает korgan.legal_calc по цене иска и статусу истца. Если иск
+    где-то называет другую сумму — в фактах, приложениях, расчёте или просительной
+    части — документ противоречит сам себе, а суд вернёт его как оплаченный не
+    полностью. Расхождение не «сглаживается»: оно блокирует filing-ready.
+    """
+    deterministic = parse_amount_kzt(draft.state_duty or "")
+    if deterministic is None:
+        return []
+
+    stated = _state_duty_amounts([
+        *(draft.facts or []),
+        *(draft.attachments or []),
+        *(draft.requests or []),
+        *(draft.calculation or []),
+        *(draft.legal_basis or []),
+    ])
+    conflicting = sorted(value for value in stated if value != deterministic)
+    if not conflicting:
+        return []
+
+    listed = ", ".join(_grouped(value) for value in conflicting)
+    return [
+        f"Размер государственной пошлины в тексте иска ({listed} тенге) не совпадает с детерминированным "
+        f"расчётом ({_grouped(deterministic)} тенге). "
+        "Действителен детерминированный расчёт: приведите текст иска в соответствие с ним."
+    ]
+
+
+def _consumer_qualification_errors(case_context: str, draft: ClaimDraft) -> list[str]:
+    """Иск не вправе опираться на статус потребителя, пока цель не установлена.
+
+    Подтверждённая статья ЗПП подтверждает текст нормы, но не то, что истец под
+    неё подпадает: потребитель — это физическое лицо, приобретающее для личных,
+    семейных, домашних нужд вне предпринимательской деятельности. Если цель в
+    материалах не названа или названа предпринимательской, потребительская
+    квалификация — выдуманный факт, а построенные на ней подсудность, отсрочка
+    пошлины и специальные санкции разваливаются в суде.
+    """
+    if not asserts_consumer_law(draft):
+        return []
+
+    status = consumer_status(case_context, draft)
+    if status is ConsumerStatus.ESTABLISHED:
+        return []
+
+    if status is ConsumerStatus.EXCLUDED:
+        return [
+            "Иск опирается на законодательство о защите прав потребителей, хотя по материалам дела истец "
+            "под эту квалификацию не подпадает (истец не является физическим лицом либо приобретение связано "
+            "с предпринимательской деятельностью). Исключите потребительское обоснование и постройте требование "
+            "на нормах, применимых к установленным отношениям."
+        ]
+
+    return [
+        "Иск опирается на законодательство о защите прав потребителей, но цель приобретения товара (работы, услуги) "
+        "в материалах дела не установлена. Статус потребителя — факт, а не ссылка на закон: до filing-ready в фактах "
+        "должно быть указано приобретение для личных, семейных, домашних нужд, не связанных с предпринимательской "
+        "деятельностью, либо потребительское обоснование должно быть исключено."
+    ]
+
+
 def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
     """Return deterministic claim contradictions that must survive model repair."""
     context = case_context or ""
@@ -261,6 +419,9 @@ def claim_consistency_errors(case_context: str, draft: ClaimDraft) -> list[str]:
             "Для filing-ready проекта требуется VERIFIED-норма именно о нарушении сроков начала/окончания выполнения работы (услуги) и соответствующий расчет."
         )
 
+    errors.extend(_calculation_relief_errors(draft))
+    errors.extend(_state_duty_errors(draft))
+    errors.extend(_consumer_qualification_errors(context, draft))
     amount_errors = check_amount_consistency(draft)
     errors.extend(f"AMOUNT_MISMATCH: {item}" for item in amount_errors)
     return list(dict.fromkeys(errors))
