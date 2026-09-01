@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from korgan.miniapp_preliminary_delivery import (
     FLAG_ENV,
+    humanize,
     mark_preliminary,
     preliminary_delivery_enabled,
 )
@@ -38,9 +39,16 @@ class ReleaseBlocked(Exception):
 
     def __init__(self, issues: list[str]) -> None:
         self.issues = list(issues)
+        # Замечания приходят из проверок в их собственном протоколе — с
+        # префиксами вроде FILING_ACTION и внутренними формулировками. Тот же
+        # список для помеченного черновика давно переводится на человеческий
+        # язык, и отказ пользуется тем же переводом: иначе клиент читал бы
+        # разметку проверок. Непереводимое замечание не показывается вовсе —
+        # объяснение без перечня причин честнее перечня из служебных строк.
+        reasons = humanize(self.issues)
         detail = _BLOCK_DETAIL
-        if self.issues:
-            detail += " Причина: " + "; ".join(self.issues[:4])
+        if reasons:
+            detail += " Причина: " + "; ".join(reasons[:4])
         self.detail = detail
         super().__init__(detail)
 

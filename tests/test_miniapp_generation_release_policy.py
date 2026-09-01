@@ -158,6 +158,46 @@ def test_verified_document_passes_through_untouched(monkeypatch) -> None:
     assert "preliminary" not in payload
 
 
+def test_block_reason_is_written_for_the_client_not_copied_from_the_gates() -> None:
+    """Отказ выпуска называет причину словами клиента, а не разметкой проверок.
+
+    Причина склеивалась из `quality_issues` и `verification_notes` как есть, а
+    там живёт внутренняя разметка. Оплативший пользователь читал на экране
+    подготовки строку вида «Причина: FILING_ACTION: указать банковские
+    реквизиты истца» — префикс из служебного протокола проверок, который ему
+    ничего не объясняет. Тот же список для помеченного черновика давно
+    переводится на человеческий язык; отказ обязан пользоваться тем же
+    правилом.
+    """
+    blocked = release.ReleaseBlocked(
+        [
+            "FILING_ACTION: указать банковские реквизиты истца",
+            "не определена госпошлина или подтвержденная льгота",
+        ]
+    )
+    detail = str(blocked)
+
+    assert "FILING_ACTION" not in detail
+    assert "указать банковские реквизиты истца" in detail
+    assert "государственной пошлины" in detail
+    assert "профессиональную проверку" in detail
+
+
+def test_untranslatable_gate_wording_is_not_shown_instead_of_a_reason() -> None:
+    """Замечание, которому нет человеческого перевода, не показывается сырым.
+
+    Лучше объяснение без перечня причин, чем перечень, состоящий из внутренних
+    формулировок: пользователю всё равно остаётся сказано, что документ не
+    прошёл проверку и что повторная оплата не нужна.
+    """
+    detail = str(release.ReleaseBlocked(["gate_7 assertion failed: anchors=0"]))
+
+    assert "gate_7" not in detail
+    assert "anchors" not in detail
+    assert "профессиональную проверку" in detail
+    assert "оплат" in detail.lower()
+
+
 def test_release_policy_is_one_shared_rule() -> None:
     """Прямой запрос и фоновая задача обязаны решать одинаково."""
     verified = {"filing_ready": True, "release_status": "verified"}
