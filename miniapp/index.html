@@ -3,111 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0B0F14" />
+    <meta name="theme-color" content="#090b0d" />
     <meta name="color-scheme" content="dark" />
-    <meta name="description" content="KORGAN Legal AI — ваш AI Юрист в Республике Казахстан" />
-    <title>KORGAN</title>
-    <style>
-      html, body, #root { margin: 0; min-height: 100%; background: #0B0F14; color: #F3F0E9; }
-      html, body { min-height: 100vh; }
-    </style>
-    <link rel="preload" as="image" href="/__korgan_boot?stage=parser-preload&v=telegram-postmount-ready-1" />
-    <script>
-      (function () {
-        var bootVersion = 'telegram-postmount-ready-1';
-        var readySent = false;
-
-        function bootPing(stage, detail) {
-          try {
-            var query = '?stage=' + encodeURIComponent(stage)
-              + '&detail=' + encodeURIComponent(String(detail || ''))
-              + '&v=' + encodeURIComponent(bootVersion)
-              + '&t=' + Date.now();
-            fetch('/__korgan_boot' + query, { method: 'GET', cache: 'no-store', keepalive: true }).catch(function () {});
-          } catch (_) {}
-        }
-
-        function releaseTelegramOverlay() {
-          if (readySent) return;
-          var root = document.getElementById('root');
-          if (!root || root.childElementCount < 1) return;
-          readySent = true;
-          bootPing('react-mounted', 'children=' + root.childElementCount);
-
-          setTimeout(function () {
-            try {
-              if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.ready === 'function') {
-                window.Telegram.WebApp.ready();
-                bootPing('telegram-ready-sdk-postmount', 'ok');
-                return;
-              }
-              if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
-                bootPing('telegram-ready-proxy-before', 'postmount');
-                window.TelegramWebviewProxy.postEvent('web_app_ready', JSON.stringify(''));
-                bootPing('telegram-ready-proxy-after', 'postmount');
-                return;
-              }
-              bootPing('telegram-ready-unavailable', 'postmount');
-            } catch (error) {
-              bootPing('telegram-ready-error', error && error.message ? error.message : String(error));
-            }
-          }, 0);
-        }
-
-        window.__KORGAN_BOOT_PING__ = bootPing;
-        bootPing('html-script-postmount', 'readyState=' + document.readyState);
-
-        window.addEventListener('error', function (event) {
-          var message = event && (event.message || (event.error && event.error.message)) || 'window-error';
-          bootPing('window-error', message);
-        });
-        window.addEventListener('unhandledrejection', function (event) {
-          var reason = event && event.reason;
-          bootPing('unhandled-rejection', reason && reason.message ? reason.message : String(reason || 'unknown'));
-        });
-
-        try {
-          var raw = String(location.hash || '').replace(/^#/, '');
-          var queryText = raw.indexOf('?') >= 0 ? raw.slice(raw.indexOf('?') + 1) : raw;
-          var params = new URLSearchParams(queryText);
-          var initData = params.get('tgWebAppData') || '';
-          if (initData) window.__KORGAN_TG_INIT_DATA__ = initData;
-          bootPing('telegram-params-postmount', 'init=' + (initData ? '1' : '0') + ',platform=' + (params.get('tgWebAppPlatform') || ''));
-        } catch (error) {
-          bootPing('telegram-params-error', error && error.message ? error.message : String(error));
-        }
-
-        window.addEventListener('DOMContentLoaded', function () {
-          bootPing('dom-content-loaded-postmount', 'root=' + Boolean(document.getElementById('root')));
-          var root = document.getElementById('root');
-          if (!root) return;
-          if (root.childElementCount > 0) releaseTelegramOverlay();
-          var observer = new MutationObserver(function () {
-            if (root.childElementCount > 0) {
-              observer.disconnect();
-              releaseTelegramOverlay();
-            }
-          });
-          observer.observe(root, { childList: true });
-          setTimeout(function () {
-            observer.disconnect();
-            releaseTelegramOverlay();
-          }, 5000);
-        }, { once: true });
-
-        window.addEventListener('load', function () {
-          var root = document.getElementById('root');
-          bootPing('window-load-postmount', 'children=' + (root ? root.childElementCount : -1));
-          releaseTelegramOverlay();
-        }, { once: true });
-
-        setTimeout(function () {
-          var root = document.getElementById('root');
-          bootPing('post-1500ms-postmount', 'children=' + (root ? root.childElementCount : -1));
-          releaseTelegramOverlay();
-        }, 1500);
-      })();
-    </script>
+    <meta name="description" content="KORGAN Legal AI — профессиональный AI-юрист Республики Казахстан" />
+    <title>KORGAN Legal AI</title>
     <link rel="stylesheet" href="/src/professional.css" />
     <link rel="stylesheet" href="/src/personal-lawyer.css" />
     <link rel="stylesheet" href="/src/korgan-site-typography.css" />
@@ -115,33 +14,10 @@
     <link rel="stylesheet" href="/src/ux-cleanup.css" />
     <link rel="stylesheet" href="/src/nav-cleanup.css" />
     <link rel="stylesheet" href="/src/korgan-brand.css" />
-    <link rel="stylesheet" href="/src/professional-shell.css" />
-    <link rel="stylesheet" href="/src/app-dashboard.css" />
-    <link rel="stylesheet" href="/src/viewport-shell.css" />
-    <link rel="stylesheet" href="/src/premium-app-v2.css" />
-    <link rel="stylesheet" href="/src/native-home-v3.css" />
-    <link rel="stylesheet" href="/src/profile-native-v4.css" />
-    <link rel="stylesheet" href="/src/motion-ui.css" />
-    <link rel="stylesheet" href="/src/dock-final.css" />
-    <link rel="stylesheet" href="/src/ui-motion-final.css" />
-    <link rel="stylesheet" href="/src/mobile-performance.css" />
-    <link rel="stylesheet" href="/src/ux-polish-v2.css" />
-    <link rel="stylesheet" href="/src/professional-mobile-v8.css" />
-    <link rel="stylesheet" href="/src/professional-mobile-v11.css" />
-    <link rel="stylesheet" href="/src/final-app-shell-v12.css" />
-    <link rel="stylesheet" href="/src/home-card-polish-v13.css" />
-    <script defer src="/payment-auto-ui.js"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
-    <script type="module" src="/src/home-scroll-fix.js"></script>
-    <script type="module" src="/src/motion-ui.js"></script>
-    <script src="/client-safe-ui.js?v=telegram-postmount-ready-1"></script>
-    <script type="module" src="/src/document-download-v4.js"></script>
-    <script type="module" src="/src/document-actions-v3.js"></script>
-    <script type="module" src="/src/document-inline-preview-v5.js"></script>
-    <script type="module" src="/src/ux-polish-v2.js"></script>
-    <script type="module" src="/src/professional-mobile-v8.js"></script>
   </body>
 </html>
