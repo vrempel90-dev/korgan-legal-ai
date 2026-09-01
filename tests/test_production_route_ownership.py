@@ -58,6 +58,29 @@ def test_health_names_the_commit_it_runs() -> None:
     assert health["commit"] == os.getenv("RAILWAY_GIT_COMMIT_SHA", "")
 
 
+def test_health_names_the_frontend_it_sends_users_to() -> None:
+    """`/health` обязан называть фронтенд, который открывает пользователь.
+
+    Живых копий фронтенда несколько, и собраны они из разных коммитов: одна
+    несёт исправление, другая — сборку до него. Кнопку меню бота ставит
+    ``miniapp_telegram_launcher`` именно по ``MINIAPP_PUBLIC_URL``, поэтому
+    только этот адрес и отвечает на вопрос «что видит клиент». Без поля
+    «исправление в проде» проверялось по копии, которую проверяющий открыл сам,
+    а совпадение той копии с клиентской было предположением.
+    """
+    import os
+
+    from fastapi.testclient import TestClient
+
+    from korgan.miniapp_api_recovery_cors import app
+
+    with TestClient(app) as client:
+        health = client.get("/health").json()
+
+    assert "miniapp_url" in health
+    assert health["miniapp_url"] == os.getenv("MINIAPP_PUBLIC_URL", "")
+
+
 def test_document_generation_cannot_bypass_payment_or_persisted_jobs() -> None:
     """Прямая генерация v2/v5 не должна обходить платёж и очередь задач."""
     from korgan import miniapp_api_v2, miniapp_api_v5, miniapp_generation_api
