@@ -104,3 +104,15 @@ def test_local_development_keeps_plain_http(ready_case: None) -> None:
     links = _links("127.0.0.1:8000")
 
     assert links["download_url"].startswith("http://127.0.0.1:8000/")
+
+
+def test_external_host_can_include_a_numeric_port(ready_case: None) -> None:
+    links = _links("api.korgan.kz:8443")
+
+    assert links["download_url"].startswith("https://api.korgan.kz:8443/")
+
+
+def test_local_ipv6_host_keeps_plain_http(ready_case: None) -> None:
+    links = _links("[::1]:8000")
+
+    assert links["download_url"].startswith("http://[::1]:8000/")

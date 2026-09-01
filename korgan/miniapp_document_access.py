@@ -138,15 +138,45 @@ def _content_disposition(value: str) -> str:
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}"
 
 
+def _validate_host(host: str) -> str:
+    """Только DNS/IP-хост и необязательный числовой порт из HTTP-заголовка."""
+    value = str(host or "").strip()
+    if not value or any(ch in value for ch in "/\\@?#") or any(ch.isspace() for ch in value):
+        raise ValueError("invalid host")
+
+    if value.startswith("["):
+        closing = value.find("]")
+        if closing <= 1:
+            raise ValueError("invalid host")
+        suffix = value[closing + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            raise ValueError("invalid host")
+    else:
+        if value.count(":") > 1:
+            raise ValueError("invalid host")
+        if ":" in value:
+            name, port = value.rsplit(":", 1)
+            if not name or not port.isdigit():
+                raise ValueError("invalid host")
+    return value
+
+
 def _is_local_host(host: str) -> bool:
     """Хост машины разработчика, где сертификата нет и быть не должно."""
-    name = host.split(":", 1)[0].strip("[]").lower()
+    if host.startswith("["):
+        name = host[1 : host.find("]")].lower()
+    else:
+        name = host.rsplit(":", 1)[0].lower() if ":" in host else host.lower()
     return name in {"localhost", "127.0.0.1", "0.0.0.0", "::1", "testserver"} or "." not in name
 
 
 def _external_base(request: Request) -> str:
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",", 1)[0].strip()
-    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).split(",", 1)[0].strip()
+    host = _validate_host(
+        (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc)
+        .split(",", 1)[0]
+        .strip()
+    )
     # Схему соединения внутри контейнера видно как `http`, и без заголовка прокси
     # ссылка уходила клиенту незашифрованной вместе с подписанным токеном. Mini App
     # принимает только `https`, поэтому отказ выглядел как «ссылка не получена»
