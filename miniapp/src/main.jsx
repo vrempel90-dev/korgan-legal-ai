@@ -23,6 +23,7 @@ import { createBootstrapSession } from './bootstrapSession';
 import { resolveScreen } from './screenState';
 import { createLatestAction } from './latestAction';
 import { pollingNoticeUpdate } from './pollingNotice';
+import { clientMessage as messageForClient } from './clientMessage';
 
 const TERMS_VERSION = '2026-08-16-v1';
 const WHATSAPP_URL = 'https://wa.me/77005000553';
@@ -49,6 +50,7 @@ const L = {
     privacy: 'Конфиденциальность', privacySub: 'Согласие, язык и управление данными', connected: 'KORGAN подключён', connecting: 'Проверяю соединение…', down: 'Сервис временно недоступен',
     systemReady: 'Система готова', systemProblem: 'Проблема соединения', retry: 'Повторить',
     sessionExpired: 'Сессия Telegram истекла. Закройте и откройте KORGAN заново — данные сохранены.',
+    notFound: 'Эти данные больше не найдены. Обновите список дел.',
     selectDoc: 'Выбор документа', searchDoc: 'Поиск документа', documents: 'Документы', docPrice: 'Подготовка документа',
     newCase: 'Новое дело', tell: 'Расскажите, что произошло', tellSub: 'Опишите ситуацию или сразу загрузите PDF, DOCX, TXT либо фотографии. Все материалы будут привязаны к одному делу.',
     placeholder: 'Стороны, отношения/договор, даты, суммы, нарушение, доказательства, позиция и желаемый результат…', create: 'Создать дело', creating: 'Создаю дело…',
@@ -74,6 +76,7 @@ const L = {
     consentTitle: 'KORGAN Legal AI пайдалану шарттары', consentText: 'KORGAN — Қазақстан Республикасының құқығына арналған жасанды интеллект жүйесі. Жауаптар мен құжаттар пайдаланушы деректері және тексерілетін дереккөздер бойынша жасалады. Құжатты бергенге дейін дербес деректерді, сомаларды, дәлелдемелерді, соттылықты және мемлекеттік бажды тексеріңіз.', privacyText: 'Материалдар тек кеңес беру және құжат дайындау үшін пайдаланылады. Mini App деректерін профильден жоюға болады.', accept: 'Шарттарды қабылдаймын', decline: 'Қабылдамаймын',
     heroTitle: 'Кәсіби AI-заңгер', heroText: 'Кеңес, материалдарды талдау, құжаттар және сапаны бақылау бір жұмыс кеңістігінде.', startConsult: 'Кеңесті бастау', consultation: 'Кеңес', consultationSub: 'Дереккөздерді тексеретін құқықтық талдау', prepare: 'Құжат дайындау', prepareSub: 'KORGAN production Word-құжаттары', myCases: 'Менің істерім', casesSub: 'Материалдар, кеңестер және дайын құжаттар', privacy: 'Құпиялылық', privacySub: 'Келісім, тіл және деректерді басқару', connected: 'KORGAN қосылды', connecting: 'Қосылым тексерілуде…', down: 'Қызмет уақытша қолжетімсіз', systemReady: 'Жүйе дайын', systemProblem: 'Қосылым мәселесі', retry: 'Қайталау',
     sessionExpired: 'Telegram сессиясының мерзімі бітті. KORGAN-ды жауып, қайта ашыңыз — деректер сақталды.',
+    notFound: 'Бұл деректер табылмады. Істер тізімін жаңартыңыз.',
     selectDoc: 'Құжатты таңдау', searchDoc: 'Құжатты іздеу', documents: 'Құжаттар', docPrice: 'Құжат дайындау', newCase: 'Жаңа іс', tell: 'Не болғанын жазыңыз', tellSub: 'Жағдайды сипаттаңыз немесе PDF, DOCX, TXT не фотосуреттерді бірден жүктеңіз. Барлық материал бір іске бекітіледі.', placeholder: 'Тараптар, қатынас/шарт, күндер, сомалар, бұзушылық, дәлелдер, ұстаным және қажетті нәтиже…', create: 'Іс құру', creating: 'Іс құрылуда…', addFile: 'Құжаттар / фото жүктеу', processing: 'Материалдар өңделуде…', selected: 'Таңдалды', materials: 'Іс материалдары', files: 'Файлдар', consultCase: 'Іс бойынша кеңес', generate: 'Құжат дайындау', generating: 'Құқық тексеріліп, Word жасалуда…', deleteCase: 'Істі жою', caseCreated: 'Іс құрылды', materialsLoaded: 'Материалдар жүктелді', docReady: 'Құжат дайын', noCases: 'Әзірге іс жоқ', noCasesSub: 'Бірінші істі құрып, фактілер немесе құжаттар қосыңыз.', createNew: 'Жаңа іс құру', download: 'DOCX жүктеу', downloadExisting: 'Дайын DOCX жүктеу', liveReview: 'Тірі заңгердің тексеруі',
     message: 'Заңдық сұрағыңызды жазыңыз…', checking: 'Құқық пен дереккөздер тексерілуде…', sources: 'Дереккөздер', freeRemaining: 'Қалған тегін кеңес', paymentNeeded: 'Тегін лимит аяқталды', consultPaymentText: 'Kaspi арқылы бір кеңес ақысын төлеп, толық чекті жүктеңіз. Автоматты тексеруден кейін осы сұрақ бойынша жауап жалғасады.', payKaspi: 'Kaspi арқылы төлеу', uploadReceipt: 'Чекті жүктеу', checkingReceipt: 'Чек тексерілуде…', retryPaid: 'Жаңа төлемсіз жауапты қайталау', paidSaved: 'Төлем сақталды. Қайта төлеу қажет емес.',
     documentPayment: 'Құжат төлемі', documentPaymentText: 'Құқықтық талдау мен Word генерациясы әлі басталған жоқ. Құжат үшін төлеңіз, чекті жүктеп, әкімшінің Kaspi Pay бойынша қолмен тексеруін күтіңіз.', waitingAdmin: 'Чек алдын ала тексеруден өтті. Kaspi Pay тарихы бойынша қолмен растау күтілуде.', paymentApproved: 'Төлем расталды', paymentApprovedText: 'Енді құқықтық талдау мен Word генерациясын бастауға болады. Қайта төлем қажет емес.', checkPayment: 'Растауды тексеру', startPaidGeneration: 'Төленген құжатты дайындау', paymentRejected: 'Төлем расталмады. Басқа толық чекті жүктеңіз.', manualCheck: 'Қолмен растау', manualCheckSub: 'AI банк төлемін түпкілікті растамайды — әкімші нақты төлемді тексереді.', filingReady: 'Заңгердің қорытынды тексеруіне дайын', preliminary: 'Алдын ала құжат', verified: 'Автоматты тексерулер аяқталды. Пайдаланар алдында құжатты заңгер тексеруі тиіс.', needsCheck: 'Тексеру қажет', quality: 'Сапа', status: 'Мәртебе', check: 'Тексеру', pricing: 'Тарифтер мен лимиттер', freePerDay: 'Күніне тегін кеңес', consultPrice: 'Лимиттен кейінгі кеңес', language: 'Тіл', deleteAll: 'Барлық деректерімді жою', dataControl: 'Деректер бақылауда', dataControlSub: 'Mini App бөлек API қолданады және production Telegram‑агентін өзгертпейді.', runtime: 'Заңдық ядро', secure: 'Қорғалған сақтау', refresh: 'Жаңарту', support: 'Техқолдау', helpText: 'Іс құрыңыз, фактілер мен материалдарды қосыңыз, AI‑заңгерге сұрақ қойыңыз. Құжат үшін KORGAN AI‑агентпен бірдей production заңдық ядро мен quality gate-терді қолданады. Құжат төлемі қосылса, генерация төлем мен қолмен растаудан бұрын басталмайды.',
@@ -247,11 +250,10 @@ function App() {
     return q ? DOCUMENTS.filter(item => item[language].join(' ').toLowerCase().includes(q)) : DOCUMENTS;
   }, [query, language]);
 
-  // Служебный ответ сервера не является текстом для клиента: отказ в подписи
-  // Telegram англоязычен и ничего не объясняет, поэтому объяснение своё.
-  const clientMessage = error => (
-    error?.code === 'KORGAN_API_UNAUTHORIZED' ? t.sessionExpired : (error?.message || t.down)
-  );
+  // Служебный ответ сервера не является текстом для клиента: и отказ в подписи
+  // Telegram, и «Case not found», и внутренние имена в «KORGAN generator
+  // unavailable: …» англоязычны и ничего не объясняют. Правило — в clientMessage.
+  const clientMessage = error => messageForClient(error, t);
   // Сбой опроса — сообщение самого опроса: он снимает его, как только ответ
   // снова получен, и не трогает написанного действием пользователя.
   const reportPolling = error => {

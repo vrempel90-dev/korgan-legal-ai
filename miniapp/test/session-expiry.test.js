@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, '..', 'src');
 const app = readFileSync(join(src, 'main.jsx'), 'utf8');
+const rule = readFileSync(join(src, 'clientMessage.js'), 'utf8');
 
 test('обе языковые версии объясняют просроченную сессию', () => {
   const messages = app.match(/sessionExpired: '([^']+)'/g) || [];
@@ -32,10 +33,18 @@ test('обе языковые версии объясняют просрочен
 
 test('ни один обработчик не показывает служебный текст сервера напрямую', () => {
   // Правило одно на всё приложение, поэтому и проверка одна: текст ошибки
-  // читается ровно в одном месте — там, где решается, что показать человеку.
-  const raw = app.match(/error\?\.message/g) || [];
-
-  assert.equal(raw.length, 1, 'ответ сервера попадает на экран без разбора');
+  // читается ровно в одном месте — там, где решается, что показать человеку,
+  // и это место больше не экран, а отдельный модуль.
+  assert.equal(
+    (app.match(/error\?\.message/g) || []).length,
+    0,
+    'ответ сервера попадает на экран без разбора',
+  );
+  assert.equal(
+    (rule.match(/error\?\.message/g) || []).length,
+    1,
+    'текст ошибки читается не только в общем правиле',
+  );
   assert.match(app, /const clientMessage = /, 'нет общего правила показа ошибки клиенту');
 });
 
@@ -53,9 +62,7 @@ test('сбой ответа в чате не выдаётся за реплик�
 });
 
 test('просроченная сессия распознаётся по коду, а не по тексту ошибки', () => {
-  const rule = app.slice(app.indexOf('const clientMessage = '), app.indexOf('const showScreen'));
-
   assert.match(rule, /KORGAN_API_UNAUTHORIZED/, 'просроченная сессия отличается только по тексту сервера');
-  assert.match(rule, /t\.sessionExpired/, 'просроченная сессия объясняется тем же служебным текстом');
-  assert.match(rule, /t\.down/, 'ошибка без объяснения остаётся без запасного текста');
+  assert.match(rule, /texts\.sessionExpired/, 'просроченная сессия объясняется тем же служебным текстом');
+  assert.match(rule, /texts\.down/, 'ошибка без объяснения остаётся без запасного текста');
 });
