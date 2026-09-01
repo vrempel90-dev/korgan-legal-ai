@@ -22,6 +22,7 @@ import { interpretGeneration, startGenerationPolling } from './generationJob';
 import { createBootstrapSession } from './bootstrapSession';
 import { resolveScreen } from './screenState';
 import { createLatestAction } from './latestAction';
+import { pollingNoticeUpdate } from './pollingNotice';
 
 const TERMS_VERSION = '2026-08-16-v1';
 const WHATSAPP_URL = 'https://wa.me/77005000553';
@@ -125,7 +126,7 @@ function App() {
   const [pricing, setPricing] = useState(null);
   const [telegramUser, setTelegramUser] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState('');
+  const [notice, setNoticeState] = useState('');
   const [cases, setCases] = useState([]);
   const [activeCase, setActiveCase] = useState(null);
   const [selectedDocument, setSelectedDocument] = useState(initial.draft?.documentType || 'claim');
@@ -149,6 +150,13 @@ function App() {
   // Список дел перечитывается из шести мест, и ответы возвращаются вперемешку:
   // применяется только самый свежий, иначе удалённое дело возвращается в список.
   const latestCases = useRef(createLatestAction());
+  // Показанное сообщение читается из обработчика опроса, который был создан
+  // прежним рендером: значение состояния там устарело, а ссылка — нет.
+  const shownNotice = useRef('');
+  const pollNotice = useRef('');
+  // Любая другая запись отменяет право опроса снять сообщение: показано уже не
+  // то, что он писал, и позже он снял бы чужое вместо своего.
+  const setNotice = text => { shownNotice.current = String(text || ''); pollNotice.current = ''; setNoticeState(shownNotice.current); };
   if (bootstrap.current === null) {
     bootstrap.current = createBootstrapSession({
       api: korganApi,
@@ -199,8 +207,8 @@ function App() {
     return startDocumentPaymentPolling({
       orderId: docPayment.order_id,
       fetchStatus: korganApi.documentPaymentStatus,
-      onPayment: setDocPayment,
-      onError: error => setNotice(clientMessage(error)),
+      onPayment: payment => { reportPolling(null); setDocPayment(payment); },
+      onError: reportPolling,
     });
   }, [view, docPayment?.status, docPayment?.order_id, t.down]);
   // Опрос привязан к задаче, а не к процентам: обновление прогресса не должно
@@ -210,10 +218,10 @@ function App() {
     return startGenerationPolling({
       jobId: generation.jobId,
       fetchStatus: korganApi.generationStatus,
-      onProgress: setGeneration,
-      onReady: document => { applyDocument(document); refreshCases().catch(() => {}); },
-      onFailed: setGeneration,
-      onError: error => setNotice(clientMessage(error)),
+      onProgress: job => { reportPolling(null); setGeneration(job); },
+      onReady: document => { reportPolling(null); applyDocument(document); refreshCases().catch(() => {}); },
+      onFailed: job => { reportPolling(null); setGeneration(job); },
+      onError: reportPolling,
     });
   }, [view, generation?.jobId, generation?.status]);
 
@@ -227,6 +235,17 @@ function App() {
   const clientMessage = error => (
     error?.code === 'KORGAN_API_UNAUTHORIZED' ? t.sessionExpired : (error?.message || t.down)
   );
+  // Сбой опроса — сообщение самого опроса: он снимает его, как только ответ
+  // снова получен, и не трогает написанного действием пользователя.
+  const reportPolling = error => {
+    const update = pollingNoticeUpdate({
+      shown: shownNotice.current,
+      owned: pollNotice.current,
+      text: error ? clientMessage(error) : '',
+    });
+    setNotice(update.shown);
+    pollNotice.current = update.owned;
+  };
   // Уведомление принадлежит экрану, на котором возникло. Смена экрана гасит его
   // всегда, каким бы способом переход ни произошёл: иначе временная ошибка
   // опроса переезжает на экран готового документа и противоречит ему.
