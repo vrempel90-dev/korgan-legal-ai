@@ -20,6 +20,31 @@ _POOL: asyncpg.Pool | None = None
 _HEARTBEAT_SECONDS = 20.0
 _LEASE_SECONDS = 120.0
 
+# Строка задачи доходит до экрана подготовки как есть, поэтому в неё попадает
+# только то, что написано для человека. Технический текст исключения остаётся в
+# журнале: клиенту он ничего не объясняет, а имена полей и коды чужого API
+# показывать ему нельзя.
+_TECHNICAL_FAILURE = (
+    "Не удалось подготовить документ. Нажмите повтор — новая оплата не потребуется."
+)
+
+
+class GenerationFailure(RuntimeError):
+    """Сбой, чей текст написан для клиента и доходит до него без изменений."""
+
+
+def _client_detail(exc: BaseException) -> str:
+    """Текст сбоя для экрана подготовки.
+
+    Отказ выпуска (``ReleaseBlocked``) тоже написан для человека: он объясняет,
+    что документ не прошёл проверку и что платить второй раз не нужно.
+    """
+    from korgan.miniapp_professional_release import ReleaseBlocked
+
+    written_for_client = isinstance(exc, (GenerationFailure, ReleaseBlocked))
+    message = str(exc).strip()
+    return message if written_for_client and message else _TECHNICAL_FAILURE
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS korgan_miniapp_generation_jobs (
     id UUID PRIMARY KEY,
@@ -362,7 +387,7 @@ async def _claim_payment(job: GenerationJob) -> None:
     )
     if order is not None and str(getattr(order, "status", "")) == "consumed":
         return
-    raise RuntimeError(
+    raise GenerationFailure(
         "Подтверждённая оплата документа больше не доступна. "
         "Повторно не платите — обратитесь в поддержку KORGAN."
     )
@@ -429,7 +454,7 @@ async def run_job(
         state = await store.load(identity)
         case = (state.get("cases") or {}).get(job.case_id)
         if case is None:
-            raise RuntimeError("Дело удалено во время подготовки документа")
+            raise GenerationFailure("Дело удалено во время подготовки документа")
         case.update(result)
         await store.save(identity, state)
         await update_job(
@@ -444,7 +469,7 @@ async def run_job(
             status="failed",
             stage="failed",
             progress=0,
-            error_detail=str(exc) or exc.__class__.__name__,
+            error_detail=_client_detail(exc),
         )
         LOGGER.exception("Mini App generation job failed job_id=%s", job.id)
         raise

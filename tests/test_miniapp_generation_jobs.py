@@ -254,8 +254,83 @@ def test_failed_job_keeps_payment_retryable_and_persists_error(monkeypatch) -> N
 
     assert updates[-1]["status"] == "failed"
     assert updates[-1]["stage"] == "failed"
-    assert "provider unavailable" in str(updates[-1]["error_detail"])
     assert store.saved == []
+
+
+def _failed_detail(monkeypatch, error: Exception) -> str:
+    pool = FakePool()
+    store = FakeStore({"cases": {"case-1": {"id": "case-1"}}})
+    job = jobs.GenerationJob(
+        id="job-1",
+        payment_order_id=91,
+        user_key="user-key",
+        case_id="case-1",
+        status="queued",
+        stage="queued",
+        progress=0,
+        error_detail="",
+    )
+    updates: list[dict[str, object]] = []
+
+    async def fake_update(job_id: str, **values):
+        updates.append(values)
+
+    async def fail_generate(*args, **kwargs):
+        raise error
+
+    async def fake_claim(_job_id: str):
+        return job
+
+    monkeypatch.setattr(jobs, "claim_job", fake_claim)
+    monkeypatch.setattr(jobs, "_POOL", pool)
+    monkeypatch.setattr(jobs, "update_job", fake_update)
+    monkeypatch.setattr(jobs, "_generate_payload", fail_generate)
+
+    with pytest.raises(Exception):
+        asyncio.run(
+            jobs.run_job(
+                job,
+                identity="identity",
+                store=store,
+                document_type="claim",
+                context="Факты",
+                language="ru",
+            )
+        )
+    return str(updates[-1]["error_detail"])
+
+
+def test_technical_failure_is_not_quoted_to_the_client(monkeypatch) -> None:
+    """Сбой провайдера объясняется клиенту, а не цитируется ему.
+
+    В строку задачи писался ``str(exc)`` любого исключения, и она без изменений
+    доходила до экрана подготовки. Клиент, оплативший документ, видел там
+    ответ чужого API целиком — вместе с кодом, типом ошибки и внутренними
+    именами полей.
+    """
+    detail = _failed_detail(
+        monkeypatch,
+        RuntimeError(
+            "Error code: 429 - {'error': {'message': 'Rate limit reached for gpt-4o', "
+            "'type': 'tokens', 'param': None, 'code': 'rate_limit_exceeded'}}"
+        ),
+    )
+
+    assert "rate_limit_exceeded" not in detail
+    assert "Error code" not in detail
+    assert "gpt-4o" not in detail
+    assert detail.strip(), "сбой остался вовсе без объяснения"
+    assert "повтор" in detail.lower(), f"клиенту не сказано, что делать дальше: {detail}"
+
+
+def test_failure_written_for_the_client_reaches_the_client(monkeypatch) -> None:
+    """Не всякий сбой технический: часть из них уже написана для человека."""
+    detail = _failed_detail(
+        monkeypatch,
+        jobs.GenerationFailure("Дело удалено во время подготовки документа"),
+    )
+
+    assert detail == "Дело удалено во время подготовки документа"
 
 
 def test_job_lookup_is_owner_scoped(monkeypatch) -> None:
