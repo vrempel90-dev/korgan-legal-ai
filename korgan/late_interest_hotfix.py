@@ -25,6 +25,7 @@ from korgan.legal_calc import (
     next_rate_decision_on,
     parse_all_amounts_kzt,
     parse_amount_kzt,
+    today_kz,
 )
 from korgan.calculation_document_gate import (
     DocumentAmounts,
@@ -198,7 +199,10 @@ def rate_missing_note(day: date) -> str:
 
 
 def _today_kz() -> date:
-    return datetime.now(ZoneInfo("Asia/Almaty")).date()
+    # Одна операционная дата на весь расчёт: вторая копия того же вычисления
+    # разошлась бы с первой ровно тогда, когда это важнее всего, — в ночь смены
+    # МРП. Имя оставлено прежним: его импортируют четыре модуля.
+    return today_kz()
 
 
 def _explicit_penalty_requested(case_context: str) -> bool:

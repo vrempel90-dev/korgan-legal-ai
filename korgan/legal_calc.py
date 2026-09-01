@@ -9,12 +9,31 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 _RATES_PATH = Path(__file__).resolve().parent / "data" / "rates.json"
+
+ALMATY_TZ = ZoneInfo("Asia/Almaty")
+
+
+def today_kz() -> date:
+    """Сегодняшнее число по Алматы — операционная дата всего расчёта.
+
+    ``date.today()`` берёт часовой пояс сервера, а в Railway это UTC: шесть
+    часов в сутки серверная дата на день отстаёт от казахстанской. Иск,
+    поданный в Алматы утром 1 января, на сервере ещё датирован 31 декабря — и
+    пошлина по нему посчиталась бы по прошлогоднему МРП. Показатель меняется
+    ровно в эту ночь, так что окно ошибки совпадает с единственным моментом,
+    когда ошибка возможна.
+
+    Дату документа весь остальной код уже берёт по Алматы; здесь то же самое
+    для справочника, чтобы `/health` и расчёт говорили об одном дне.
+    """
+    return datetime.now(ALMATY_TZ).date()
 
 
 def _load_rates_data() -> dict[str, Any]:
@@ -84,7 +103,7 @@ def mrp_on(day: date | None = None, *, rows: list[dict[str, Any]] | None = None)
     неверна, и суд оставляет иск без движения. Отказ считать перехватывается
     расчётом пошлины и превращается в требование ручной проверки.
     """
-    when = day or date.today()
+    when = day or today_kz()
     if rows is None and when > MRP_TABLE_VALID_THROUGH:
         raise RuntimeError(
             f"МРП на {when.isoformat()} неизвестен: справочник действует "
@@ -96,12 +115,12 @@ def mrp_on(day: date | None = None, *, rows: list[dict[str, Any]] | None = None)
 
 def mrp_source_url_on(day: date | None = None) -> str:
     """Источник того самого МРП, которым посчитана сумма."""
-    return str(_rate_row_on(_MRP_ROWS, day or date.today(), "МРП").get("source_url", ""))
+    return str(_rate_row_on(_MRP_ROWS, day or today_kz(), "МРП").get("source_url", ""))
 
 
 def nb_rate_source_url_on(day: date | None = None) -> str:
     """Источник той самой базовой ставки, которой посчитана неустойка."""
-    row = _rate_row_on(_NB_RATE_ROWS, day or date.today(), "базовая ставка НБ РК")
+    row = _rate_row_on(_NB_RATE_ROWS, day or today_kz(), "базовая ставка НБ РК")
     return str(row.get("source_url", ""))
 
 
@@ -465,7 +484,7 @@ def rates_freshness(day: date | None = None) -> dict[str, Any]:
     считается вовсе. Этот срок известен заранее, поэтому он и вынесен наружу —
     обновить файл нужно до нового года, а не после первого отказанного иска.
     """
-    today = day or date.today()
+    today = day or today_kz()
     return {
         "actual_on": str(_RATES_DATA["actual_on"]),
         "nb_base_rate_valid_through": NB_RATE_TABLE_VALID_THROUGH.isoformat(),
