@@ -1,3 +1,5 @@
+from datetime import date
+
 from korgan.claim_state_duty import apply_professional_state_duty, decide_state_duty
 from korgan.legal_calc import NEEDS_CALCULATION_MARKER
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
@@ -42,6 +44,30 @@ def test_physical_person_ordinary_property_claim_uses_one_percent():
     assert decision.mode == "property"
     assert decision.amount == 10_000
     assert decision.needs_review is False
+
+
+def test_unknown_mrp_becomes_manual_review_instead_of_an_exception(monkeypatch):
+    """Кончившийся справочник МРП обязан выглядеть как ручной расчёт.
+
+    МРП устанавливает закон о республиканском бюджете и только на один год.
+    После 31 декабря показателя на новый год в файле ещё нет, и считать пошлину
+    нечем. Продлить прошлогодний — значит выдать клиенту иск с неверной суммой
+    пошлины, а суд оставляет такой иск без движения. Уронить генерацию
+    исключением — значит не выдать ничего. Правильный исход один: решение с
+    пометкой о ручной проверке, с которой юрист работает дальше.
+    """
+    monkeypatch.setattr("korgan.legal_calc.MRP_TABLE_VALID_THROUGH", date(2020, 1, 1))
+    draft = _draft(
+        claimant=["Иванов Иван, ИИН 900101300001, адрес: г. Алматы, ул. Абая, д. 10"],
+        requests=["Взыскать задолженность 1 000 000 тенге."],
+    )
+
+    decision = decide_state_duty("Истец: Иванов Иван, ИИН 900101300001", _research(), draft)
+
+    assert decision.mode == "unknown_mrp"
+    assert decision.amount is None
+    assert decision.needs_review is True
+    assert decision.line == NEEDS_CALCULATION_MARKER
 
 
 def test_legal_entity_ordinary_property_claim_uses_three_percent():

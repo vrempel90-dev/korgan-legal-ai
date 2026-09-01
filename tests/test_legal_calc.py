@@ -6,6 +6,7 @@ from korgan.legal_calc import (
     CAP_MRP_INDIVIDUAL,
     CAP_MRP_LEGAL_ENTITY,
     MRP_2026,
+    MRP_TABLE_VALID_THROUGH,
     NB_RATE_TABLE_VALID_THROUGH,
     NEEDS_CALCULATION_MARKER,
     rates_freshness,
@@ -150,6 +151,52 @@ def test_rate_table_expiry_is_visible_before_it_reaches_a_client() -> None:
     assert expired["nb_base_rate_days_left"] == -1
     # То, о чём предупреждает поле, обязано и вправду происходить.
     assert base_rate_on(NB_RATE_TABLE_VALID_THROUGH + timedelta(days=1)) is None
+
+
+def test_mrp_after_the_budget_year_is_not_silently_extended() -> None:
+    """За пределами года МРП неизвестен, и это должно быть ошибкой.
+
+    Закон о республиканском бюджете принимается на три года, но МРП, МЗП и
+    прочие социальные показатели устанавливает только на первый из них: строки
+    на следующий год в файле заранее нет, её вводит закон о бюджете следующей
+    трёхлетки в конце текущего года. Раньше выбиралась последняя подходящая
+    строка, поэтому 1 января пошлина продолжала считаться по прошлогоднему
+    показателю — тихо, уверенно и неверно. Неверная сумма пошлины возвращает иск
+    без движения, то есть стоит клиенту срока.
+    """
+    with pytest.raises(RuntimeError):
+        mrp_on(MRP_TABLE_VALID_THROUGH + timedelta(days=1))
+
+    # Последний день действия обязан считаться как обычно.
+    assert mrp_on(MRP_TABLE_VALID_THROUGH) == MRP_2026
+
+
+def test_unknown_mrp_turns_into_manual_calculation_rather_than_a_crash(monkeypatch) -> None:
+    """Отказ считать обязан дойти до документа как требование расчёта.
+
+    Исключение из глубины расчёта, вылетевшее наружу, — это не fail-closed, а
+    упавшая генерация: клиент не получает ничего. Правильный исход — готовый
+    маркер ручного расчёта в той самой строке о госпошлине.
+    """
+    monkeypatch.setattr("korgan.legal_calc.MRP_TABLE_VALID_THROUGH", date(2020, 1, 1))
+
+    assert gosposhlina_line(DELO_2_CONTEXT, "2 400 000 тенге") == NEEDS_CALCULATION_MARKER
+
+
+def test_mrp_expiry_is_visible_before_it_reaches_a_client() -> None:
+    """Дата обрыва МРП известна заранее — её и надо показывать заранее.
+
+    В отличие от базовой ставки, срок здесь не гадательный: он всегда 31 декабря.
+    Поэтому `/health` обязан показывать остаток дней, чтобы справочник обновили
+    до новогоднего отказа, а не после первого неподанного иска.
+    """
+    fresh = rates_freshness(MRP_TABLE_VALID_THROUGH)
+    assert fresh["mrp_stale"] is False
+    assert fresh["mrp_days_left"] == 0
+
+    expired = rates_freshness(MRP_TABLE_VALID_THROUGH + timedelta(days=1))
+    assert expired["mrp_stale"] is True
+    assert expired["mrp_days_left"] == -1
 
 
 def test_state_duty_cap_uses_the_mrp_effective_today() -> None:

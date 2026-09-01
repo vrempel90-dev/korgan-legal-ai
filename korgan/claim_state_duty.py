@@ -305,11 +305,28 @@ def decide_state_duty(
             note="вид требования для расчета государственной пошлины не классифицирован детерминированно.",
         )
 
-    if has_property:
-        property_duty, property_line = _property_line(ledger.total, is_individual)
-    else:
-        property_duty, property_line = 0, ""
-    nonproperty_duty = calc_nonproperty_state_duty(demands=1) if has_nonproperty else 0
+    try:
+        if has_property:
+            property_duty, property_line = _property_line(ledger.total, is_individual)
+        else:
+            property_duty, property_line = 0, ""
+        nonproperty_duty = calc_nonproperty_state_duty(demands=1) if has_nonproperty else 0
+    except RuntimeError:
+        # МРП на день подачи неизвестен: закон о республиканском бюджете
+        # устанавливает его лишь на год вперёд, и после этого срока справочник
+        # молчит. Прошлогодний показатель дал бы неверную сумму пошлины, а
+        # неверная сумма возвращает иск без движения.
+        return StateDutyDecision(
+            mode="unknown_mrp",
+            line=NEEDS_CALCULATION_MARKER,
+            amount=None,
+            needs_review=True,
+            note=(
+                "месячный расчетный показатель на дату подачи не установлен в справочнике ставок; "
+                "размер государственной пошлины требует ручного расчета по действующему закону "
+                "о республиканском бюджете."
+            ),
+        )
 
     if has_property and has_nonproperty:
         amount = property_duty + nonproperty_duty

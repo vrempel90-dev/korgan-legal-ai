@@ -56,11 +56,9 @@ _NB_RATE_ROWS = _required_rows(_RATES_DATA, "nb_base_rate")
 def _rate_row_on(rows: list[dict[str, Any]], day: date, what: str) -> dict[str, Any]:
     """Строка справочника, действующая на конкретный день.
 
-    Закон о республиканском бюджете устанавливает МРП сразу на три года, поэтому
-    строка со следующим годом появляется в справочнике штатно и задолго до его
-    наступления. Брать последнюю строку списка нельзя: законное пополнение файла
-    молча меняло бы пошлину по иску, подаваемому сегодня. Порядок строк в файле —
-    оформление, а не право, поэтому выбор идёт по дате введения.
+    Брать последнюю строку списка нельзя: пополнение файла молча меняло бы
+    пошлину по иску, подаваемому сегодня. Порядок строк в файле — оформление,
+    а не право, поэтому выбор идёт по дате введения.
     """
     current: dict[str, Any] | None = None
     for row in sorted(rows, key=lambda item: date.fromisoformat(str(item["from"]))):
@@ -71,9 +69,29 @@ def _rate_row_on(rows: list[dict[str, Any]], day: date, what: str) -> dict[str, 
     return current
 
 
+MRP_TABLE_VALID_THROUGH = date.fromisoformat(str(_RATES_DATA["mrp_valid_through"]))
+
+
 def mrp_on(day: date | None = None, *, rows: list[dict[str, Any]] | None = None) -> int:
-    """МРП, действующий на указанный день (по умолчанию — сегодня)."""
-    return int(_rate_row_on(rows if rows is not None else _MRP_ROWS, day or date.today(), "МРП")["value"])
+    """МРП, действующий на указанный день (по умолчанию — сегодня).
+
+    За пределами срока действия справочника поднимается ошибка, а не остаётся
+    прежнее значение. Здесь это не перестраховка: закон о республиканском
+    бюджете принимается на три года, но МРП устанавливает только на первый из
+    них, и строка на следующий год заранее не появляется — её вводит закон о
+    бюджете следующей трёхлетки в конце текущего года. Пока файл не обновлён,
+    молчаливое продление означало бы пошлину по прошлогоднему показателю: сумма
+    неверна, и суд оставляет иск без движения. Отказ считать перехватывается
+    расчётом пошлины и превращается в требование ручной проверки.
+    """
+    when = day or date.today()
+    if rows is None and when > MRP_TABLE_VALID_THROUGH:
+        raise RuntimeError(
+            f"МРП на {when.isoformat()} неизвестен: справочник действует "
+            f"по {MRP_TABLE_VALID_THROUGH.isoformat()}, показатель на следующий "
+            f"год устанавливается законом о республиканском бюджете"
+        )
+    return int(_rate_row_on(rows if rows is not None else _MRP_ROWS, when, "МРП")["value"])
 
 
 def mrp_source_url_on(day: date | None = None) -> str:
@@ -355,7 +373,13 @@ def gosposhlina_line(case_context: str, price_of_claim: str) -> str:
     is_individual = claimant_is_individual(case_context)
     if is_individual is None:
         return NEEDS_CALCULATION_MARKER
-    duty = calc_gosposhlina_claim(amount, is_individual)
+    try:
+        duty = calc_gosposhlina_claim(amount, is_individual)
+    except RuntimeError:
+        # МРП на день подачи неизвестен — считать пошлину нечем. Прошлогодний
+        # показатель дал бы неверную сумму, а неверная сумма возвращает иск без
+        # движения; здесь это уже готовая дорога ручной проверки.
+        return NEEDS_CALCULATION_MARKER
     percent = f"{RATE_INDIVIDUAL * 100:g}%" if is_individual else f"{RATE_LEGAL_ENTITY * 100:g}%"
     cap_mrp = CAP_MRP_INDIVIDUAL if is_individual else CAP_MRP_LEGAL_ENTITY
     return (
@@ -382,7 +406,12 @@ def rates_freshness(day: date | None = None) -> dict[str, Any]:
     которое видно снаружи: `/health` показывает, сколько дней осталось, и
     справочник можно обновить до того, как обрыв дойдёт до людей.
 
-    Отрицательный `nb_base_rate_days_left` означает, что обрыв уже наступил.
+    Отрицательный `*_days_left` означает, что обрыв уже наступил.
+
+    У МРП обрыв тот же по смыслу, но реже и жёстче: закон о республиканском
+    бюджете устанавливает показатель на год, и после 31 декабря пошлина не
+    считается вовсе. Этот срок известен заранее, поэтому он и вынесен наружу —
+    обновить файл нужно до нового года, а не после первого отказанного иска.
     """
     today = day or date.today()
     return {
@@ -390,6 +419,9 @@ def rates_freshness(day: date | None = None) -> dict[str, Any]:
         "nb_base_rate_valid_through": NB_RATE_TABLE_VALID_THROUGH.isoformat(),
         "nb_base_rate_days_left": (NB_RATE_TABLE_VALID_THROUGH - today).days,
         "nb_base_rate_stale": today > NB_RATE_TABLE_VALID_THROUGH,
+        "mrp_valid_through": MRP_TABLE_VALID_THROUGH.isoformat(),
+        "mrp_days_left": (MRP_TABLE_VALID_THROUGH - today).days,
+        "mrp_stale": today > MRP_TABLE_VALID_THROUGH,
     }
 
 
