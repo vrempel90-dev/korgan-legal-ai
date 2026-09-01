@@ -118,6 +118,43 @@ def test_entities_present_in_materials_are_not_reported_as_invented() -> None:
     assert forbidden_fact_findings(statements, MATERIALS) == []
 
 
+def test_unrelated_word_starting_with_akt_does_not_authorise_an_invented_act() -> None:
+    """«Активы» и «актуальный» — не акт выполненных работ.
+
+    Вид доказательства опознаётся по началу слова без правой границы, поэтому
+    любое слово, начинающееся на «акт», давало в материалах тот же токен, что и
+    настоящий акт. Это опаснее ложного срабатывания: выдуманный акт выполненных
+    работ проходил шлюз, потому что в переписке встретилось слово «активы».
+    """
+    materials = "Стороны обсуждали актуальные вопросы поставки. Активы предприятия не передавались."
+
+    findings = forbidden_fact_findings(
+        ["Работы приняты, что подтверждается актом выполненных работ."], materials
+    )
+
+    assert any("доказательство" in item.lower() for item in findings), findings
+
+
+def test_unrelated_word_starting_with_akt_is_not_reported_as_invented_evidence() -> None:
+    """Обратная сторона той же ошибки: «активы» не являются доказательством."""
+    materials = "Между сторонами заключён договор. Ответчику переданы активы предприятия."
+
+    findings = forbidden_fact_findings(["По договору ответчику переданы активы предприятия."], materials)
+
+    assert not any("доказательство" in item.lower() for item in findings), findings
+
+
+def test_real_act_present_in_materials_still_passes() -> None:
+    """Сужение границы не должно ломать распознавание настоящего акта."""
+    materials = "Работы приняты по акту выполненных работ № 5 от 20.02.2026."
+
+    findings = forbidden_fact_findings(
+        ["Работы приняты, что подтверждается актом выполненных работ № 5 от 20.02.2026."], materials
+    )
+
+    assert findings == []
+
+
 def test_derived_calculation_may_render_without_literal_presence_in_materials() -> None:
     fact = ProvenancedFact(
         value="Остаток основного долга: 1 400 000 тенге.",
