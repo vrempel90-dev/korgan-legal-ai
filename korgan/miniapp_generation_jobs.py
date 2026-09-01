@@ -227,28 +227,38 @@ async def _generate_payload(
     context: str,
     language: str,
     *,
+    case_id: str,
     on_stage: Callable[[str, int], Awaitable[None]],
 ) -> dict[str, Any]:
     from korgan import miniapp_api_v2 as core
+    from korgan.miniapp_professional_release import apply_release_policy
 
     await on_stage("legal_research", 20)
     draft, file_bytes, filename, meta = await core._generate(document_type, context, language)
     # The legal runtime currently performs research, drafting, QA and rendering in
     # one bounded call. The persisted stages become authoritative at its completed
     # boundaries; no client-side timer fabricates intermediate percentages.
+    await on_stage("quality_control", 80)
+    # Фоновая задача вызывает движок ниже HTTP-обёртки, поэтому политику выпуска
+    # она обязана применить сама: иначе документ, забракованный финальной
+    # проверкой, дошёл бы до клиента только потому, что готовился в фоне.
+    payload = apply_release_policy(
+        {
+            "status": "document_ready",
+            "title": getattr(draft, "title", "") or filename,
+            "verification_status": core._status_value(getattr(draft, "status", None)),
+            "verification_notes": list(meta["verification_notes"]),
+            "quality_score": meta["quality_score"],
+            "quality_issues": list(meta["quality_issues"]),
+            "filing_ready": bool(meta["filing_ready"]),
+            "release_status": str(meta["release_status"]),
+            "document_base64": base64.b64encode(file_bytes).decode("ascii"),
+            "filename": filename,
+        },
+        case_id=case_id,
+    )
     await on_stage("document_render", 90)
-    return {
-        "status": "document_ready",
-        "title": getattr(draft, "title", "") or filename,
-        "verification_status": core._status_value(getattr(draft, "status", None)),
-        "verification_notes": list(meta["verification_notes"]),
-        "quality_score": meta["quality_score"],
-        "quality_issues": list(meta["quality_issues"]),
-        "filing_ready": bool(meta["filing_ready"]),
-        "release_status": str(meta["release_status"]),
-        "document_base64": base64.b64encode(file_bytes).decode("ascii"),
-        "filename": filename,
-    }
+    return payload
 
 
 async def run_job(
@@ -275,6 +285,7 @@ async def run_job(
             document_type,
             context,
             language,
+            case_id=job.case_id,
             on_stage=on_stage,
         )
         case = state.get("cases", {}).get(job.case_id)
