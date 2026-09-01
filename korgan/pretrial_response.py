@@ -5,9 +5,7 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -294,8 +292,9 @@ class PretrialResponseProductionService(PretrialProductionService):
         return draft
 
 
-def _today() -> str:
-    return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
+# Дату ответа на претензию ставит подписант: она доказывает, что ответ дан в
+# срок. День формирования проекта таким доказательством не является.
+SIGNATURE_DATE_BLANK = "____________________"
 
 
 def _body_paragraph(doc: Document, text: str) -> None:
@@ -426,7 +425,7 @@ def build_pretrial_response_docx(draft: PretrialResponseDraft, language: str = "
             doc.add_paragraph(f"{index}. {item}")
 
     doc.add_paragraph()
-    doc.add_paragraph(("Күні: " if kk else "Дата: ") + _today())
+    doc.add_paragraph(("Күні: " if kk else "Дата: ") + SIGNATURE_DATE_BLANK)
     doc.add_paragraph("Қолы: ____________________" if kk else "Подпись: ____________________")
 
     stream = io.BytesIO()

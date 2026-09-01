@@ -6,9 +6,7 @@ import io
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -321,8 +319,10 @@ class PretrialProductionService(StableLegalProductionService):
         return draft
 
 
-def _today() -> str:
-    return datetime.now(ZoneInfo("Asia/Almaty")).strftime("%d.%m.%Y")
+# Дата претензии — процессуальный факт: от неё отсчитывается срок ответа, и она
+# должна совпадать с доказательством направления. Генератор её не знает, поэтому
+# оставляет строку отправителю, как и строку подписи.
+SIGNATURE_DATE_BLANK = "____________________"
 
 
 def _body_paragraph(doc: Document, text: str) -> None:
@@ -411,7 +411,7 @@ def build_pretrial_docx(draft: PretrialDraft, language: str = "ru") -> bytes:
             doc.add_paragraph(f"{index}. {item}")
 
     doc.add_paragraph()
-    doc.add_paragraph(("Күні: " if kk else "Дата: ") + _today())
+    doc.add_paragraph(("Күні: " if kk else "Дата: ") + SIGNATURE_DATE_BLANK)
     doc.add_paragraph("Қолы: ____________________" if kk else "Подпись: ____________________")
 
     stream = io.BytesIO()
