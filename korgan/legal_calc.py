@@ -81,6 +81,12 @@ def mrp_source_url_on(day: date | None = None) -> str:
     return str(_rate_row_on(_MRP_ROWS, day or date.today(), "МРП").get("source_url", ""))
 
 
+def nb_rate_source_url_on(day: date | None = None) -> str:
+    """Источник той самой базовой ставки, которой посчитана неустойка."""
+    row = _rate_row_on(_NB_RATE_ROWS, day or date.today(), "базовая ставка НБ РК")
+    return str(row.get("source_url", ""))
+
+
 RATE_SOURCE_ARTICLE = str(_STATE_DUTY_DATA["source"])
 RATE_SOURCE_URL = str(_STATE_DUTY_DATA["source_url"])
 MRP_SOURCE_URL = mrp_source_url_on()
@@ -359,13 +365,8 @@ def gosposhlina_line(case_context: str, price_of_claim: str) -> str:
 
 
 ARTICLE_353_SOURCE_URL = "https://adilet.zan.kz/rus/docs/K940001000_/compare"
-NB_RATE_SOURCE_URL = str(_NB_RATE_ROWS[-1].get("source_url", ""))
 ARTICLE_353_LABEL = "статья 353 Гражданского кодекса РК (Общая часть)"
 NEEDS_RATE_MARKER = "[ТРЕБУЕТ ПРОВЕРКИ: базовая ставка Национального Банка РК]"
-NB_BASE_RATES: tuple[tuple[date, float], ...] = tuple(
-    (date.fromisoformat(str(item["from"])), float(item["value"]))
-    for item in _NB_RATE_ROWS
-)
 NB_RATE_TABLE_VALID_THROUGH = date.fromisoformat(str(_RATES_DATA["nb_base_rate_valid_through"]))
 DAYS_IN_YEAR = int(_RATES_DATA["days_in_year"])
 
