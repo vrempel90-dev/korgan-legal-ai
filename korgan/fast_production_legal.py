@@ -329,8 +329,13 @@ class ProductionOpenAILegalService(_BaseProductionOpenAILegalService):
             "max_output_tokens": 900,
             "prompt_cache_key": "korgan:consult-answer:v2",
         }
-        if self.settings.openai_model == "gpt-5.1" or self.settings.openai_model.startswith("gpt-5.1-"):
-            answer_kwargs["reasoning"] = {"effort": "none"}
+        # Единая политика вместо повторённой здесь проверки имени модели.
+        # Консультационный ответ — служебный вызов, не составление документа,
+        # поэтому решение то же, что и было; отличается лишь то, что принимает
+        # его одно место, а не восьмое по счёту условие в другом модуле.
+        reasoning = reasoning_for("consult-answer", self.settings.openai_model)
+        if reasoning is not None:
+            answer_kwargs["reasoning"] = reasoning
 
         started_answer = time.perf_counter()
         response = await self.client.responses.create(**answer_kwargs)
