@@ -83,7 +83,15 @@ EXPECTED_OWNERS: dict[tuple[str, str], str] = {
         "/miniapp/admin/document-payments/{order_id}/decision",
         "POST",
     ): "korgan.miniapp_api_v4.admin_document_payment_decision",
-    ("/miniapp/documents/generate", "POST"): "korgan.miniapp_api_v5.generate_document",
+    ("/miniapp/documents/generate", "POST"): "korgan.miniapp_generation_api.generate_document_job",
+    (
+        "/miniapp/documents/generation/{job_id}",
+        "GET",
+    ): "korgan.miniapp_generation_api.generation_status",
+    (
+        "/miniapp/documents/generation/{job_id}/retry",
+        "POST",
+    ): "korgan.miniapp_generation_api.retry_generation",
     ("/miniapp/documents/payments/{order_id}", "GET"): "korgan.miniapp_api_v5.document_payment_status",
     ("/miniapp/documents/payments/{order_id}/retry", "POST"): "korgan.miniapp_api_v5.retry_paid_document",
     (

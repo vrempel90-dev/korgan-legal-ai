@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from korgan import miniapp_api_ofd_upload as upload_runtime
 from korgan import miniapp_api_v5 as v5
+from korgan import miniapp_generation_api as generation_api
 
 
 def _route(path: str, method: str):
@@ -27,8 +28,15 @@ def test_automatic_payment_routes_use_fiscal_upload_bridge_and_v5_delivery() -> 
     верхний слой — upload_runtime, значило бы спорить с более поздним решением.
     Фактические владельцы всех маршрутов собраны в
     tests/test_production_route_ownership.
+
+    Запуск генерации поверх v5 перекрыт слоем сохраняемых задач: сама оплата
+    по-прежнему проверяется тем же хранилищем платёжных ордеров, но юридическая
+    работа вынесена из времени жизни HTTP-запроса.
     """
-    assert _route("/miniapp/documents/generate", "POST").endpoint is v5.generate_document
+    assert (
+        _route("/miniapp/documents/generate", "POST").endpoint
+        is generation_api.generate_document_job
+    )
     assert (
         _route("/miniapp/consultation/payments/{order_id}/receipt", "POST").endpoint
         is upload_runtime.consultation_receipt_upload
