@@ -155,6 +155,44 @@ def test_real_act_present_in_materials_still_passes() -> None:
     assert findings == []
 
 
+@pytest.mark.parametrize(
+    ("materials", "statement"),
+    [
+        ("Договор поставки подписан 15 января 2026 года.", "Договор заключён 15.01.2026."),
+        ("Договор поставки подписан 2026-01-15.", "Договор заключён 15.01.2026."),
+        ("Договор поставки подписан 15.01.2026.", "Договор заключён «15» января 2026 года."),
+        ("Шарт 2026 жылғы 15 қаңтарда жасалды.", "Договор заключён 15.01.2026."),
+    ],
+    ids=["словами в источнике", "ISO в источнике", "словами в документе", "казахская дата"],
+)
+def test_same_date_written_in_another_form_is_not_reported_as_invented(
+    materials: str, statement: str
+) -> None:
+    """Дата — это день, а не строка символов.
+
+    «15 января 2026 года», «2026-01-15» и «15.01.2026» обозначают один день.
+    Детектор сверял только цифровую запись, поэтому верно перенесённая из
+    договора дата объявлялась выдуманной и становилась жёстким блокером. В
+    договорах и письмах дата словами — обычная, а не исключительная форма.
+    """
+    findings = forbidden_fact_findings([statement], materials)
+
+    assert not any("дата" in item.lower() for item in findings), findings
+
+
+def test_a_date_absent_from_the_materials_is_still_detected_in_any_form() -> None:
+    """Признание форм записи не должно ослабить сам детектор."""
+    materials = "Договор поставки подписан 15 января 2026 года."
+
+    assert any(
+        "дата" in item.lower() for item in forbidden_fact_findings(["Договор заключён 16.01.2026."], materials)
+    )
+    assert any(
+        "дата" in item.lower()
+        for item in forbidden_fact_findings(["Договор заключён «16» января 2026 года."], materials)
+    )
+
+
 def test_derived_calculation_may_render_without_literal_presence_in_materials() -> None:
     fact = ProvenancedFact(
         value="Остаток основного долга: 1 400 000 тенге.",

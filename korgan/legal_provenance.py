@@ -67,9 +67,48 @@ _CONTRACT_NUMBER_RE = re.compile(
     r"(?i)\b(?:договор|контракт|соглашени\w*)[^\n.;]{0,40}?"
     r"(?:№|номер)\s*(?P<value>[A-Za-zА-Яа-я0-9/-]+)"
 )
+# Дата — это день, а не строка символов. «15.01.2026», «15 января 2026 года»,
+# «2026-01-15» и «2026 жылғы 15 қаңтар» называют один и тот же день, и договоры,
+# письма и судебные документы пользуются всеми этими формами. Сверка по одной
+# только цифровой записи давала ошибку в обе стороны: верно перенесённая из
+# договора дата объявлялась выдуманной, а дата словами не проверялась вовсе.
+_MONTHS: dict[str, int] = {}
+for _index, _names in enumerate(
+    (
+        ("январ", "қаңтар"),
+        ("феврал", "ақпан"),
+        ("март", "наурыз"),
+        ("апрел", "сәуір", "сеуір"),
+        ("мая", "май", "мамыр"),
+        ("июн", "маусым"),
+        ("июл", "шілде", "шилде"),
+        ("август", "тамыз"),
+        ("сентябр", "қыркүйек"),
+        ("октябр", "қазан"),
+        ("ноябр", "қараша"),
+        ("декабр", "желтоқсан"),
+    ),
+    start=1,
+):
+    for _name in _names:
+        _MONTHS[_name] = _index
+
+_MONTH_ALTERNATION = "|".join(
+    sorted((re.escape(name) for name in _MONTHS), key=len, reverse=True)
+)
+_DAY = r"0?[1-9]|[12]\d|3[01]"
 _DATE_RE = re.compile(
-    r"(?<!\d)(?P<day>0?[1-9]|[12]\d|3[01])[./-]"
-    r"(?P<month>0?[1-9]|1[0-2])[./-](?P<year>\d{4})(?!\d)"
+    # 15.01.2026 / 15-01-2026 / 15/01/2026
+    rf"(?<!\d)(?P<day>{_DAY})[./-](?P<month>0?[1-9]|1[0-2])[./-](?P<year>\d{{4}})(?!\d)"
+    # 2026-01-15
+    rf"|(?<!\d)(?P<iso_year>\d{{4}})-(?P<iso_month>0?[1-9]|1[0-2])-(?P<iso_day>{_DAY})(?!\d)"
+    # «15» января 2026 года / 15 қаңтар 2026 жылы
+    rf"|(?<!\d)[«\"]?(?P<text_day>{_DAY})[»\"]?\s*(?:-?\s*(?:ші|шы|ы|і))?\s+"
+    rf"(?P<text_month>{_MONTH_ALTERNATION})[а-яёәғқңөұүһі]*\s+(?P<text_year>\d{{4}})(?!\d)"
+    # 2026 жылғы 15 қаңтар
+    rf"|(?<!\d)(?P<kk_year>\d{{4}})\s+жыл\w*\s+[«\"]?(?P<kk_day>{_DAY})[»\"]?\s*"
+    rf"(?:-?\s*(?:ші|шы|ы|і))?\s+(?P<kk_month>{_MONTH_ALTERNATION})[а-яёәғқңөұүһі]*",
+    re.IGNORECASE,
 )
 # «акт» перечисляет окончания, а не берёт хвост через \w*, поэтому правая
 # граница обязательна: без неё «активы» и «актуальный» давали тот же токен, что
@@ -121,7 +160,26 @@ def _contains(materials: str, value: str) -> bool:
 
 
 def _date_token(match: re.Match[str]) -> str:
-    return f"{int(match.group('day')):02d}.{int(match.group('month')):02d}.{match.group('year')}"
+    """Свести любую форму записи к одному дню.
+
+    Токен намеренно не хранит исходное написание: сравниваются дни, а не строки.
+    """
+    groups = match.groupdict()
+    for day_key, month_key, year_key in (
+        ("day", "month", "year"),
+        ("iso_day", "iso_month", "iso_year"),
+        ("text_day", "text_month", "text_year"),
+        ("kk_day", "kk_month", "kk_year"),
+    ):
+        day = groups.get(day_key)
+        if day is None:
+            continue
+        raw_month = groups[month_key] or ""
+        month = _MONTHS.get(raw_month.lower()) if not raw_month.isdigit() else int(raw_month)
+        if month is None:
+            continue
+        return f"{int(day):02d}.{month:02d}.{groups[year_key]}"
+    raise ValueError(f"неизвестная форма даты: {match.group(0)!r}")
 
 
 def _evidence_token(match: re.Match[str]) -> str:
