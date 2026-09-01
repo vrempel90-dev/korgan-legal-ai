@@ -11,6 +11,19 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-5.1"
     openai_vision_model: str = "gpt-5.1"
     openai_validation_model: str = "gpt-5.1"
+
+    # Anthropic — основной провайдер, OpenAI остаётся запасным. Ключ не
+    # обязателен: без него `active_ai_provider` сам возвращает openai, поэтому
+    # окружение без ANTHROPIC_API_KEY (в том числе CI) работает как раньше.
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-5"
+    anthropic_vision_model: str = "claude-sonnet-5"
+    anthropic_validation_model: str = "claude-sonnet-5"
+    # Проект иска целиком уходит в один структурированный ответ, поэтому предел
+    # считается по самому длинному документу, а не по компактному research JSON.
+    anthropic_max_output_tokens: int = 16000
+    # auto | anthropic | openai. auto выбирает Anthropic при наличии ключа.
+    ai_provider: str = "auto"
     # Legal rules still come from Adilet. gov.kz / sud.gov.kz are allowed only
     # for official court-name / court-structure verification.
     official_legal_domains: str = "adilet.zan.kz,gov.kz,sud.gov.kz"
@@ -50,6 +63,37 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @property
+    def active_ai_provider(self) -> str:
+        """Провайдер, которым действительно пойдёт запрос.
+
+        Выбор объявлен здесь, а не в сервисе, потому что от него зависят и
+        клиент, и учёт стоимости, и то, что показывает /health. Ключ решает
+        спор: просить Anthropic без ключа — это отказ вместо ответа, поэтому
+        `auto` без ключа означает OpenAI, а не ошибку.
+        """
+        requested = self.ai_provider.strip().lower() or "auto"
+        has_key = bool(self.anthropic_api_key.strip())
+        if requested == "openai":
+            return "openai"
+        if requested == "anthropic":
+            return "anthropic" if has_key else "openai"
+        return "anthropic" if has_key else "openai"
+
+    @property
+    def anthropic_model_for(self) -> dict[str, str]:
+        """Какая модель Anthropic заменяет какую модель OpenAI.
+
+        Вызывающий код передаёт имя модели OpenAI из настроек — извлечение,
+        исследование и валидация ходят за разными именами. Соответствие
+        задаётся здесь, чтобы роли сохранились при смене провайдера.
+        """
+        return {
+            self.openai_model: self.anthropic_model,
+            self.openai_vision_model: self.anthropic_vision_model,
+            self.openai_validation_model: self.anthropic_validation_model,
+        }
 
     @property
     def legal_domains(self) -> list[str]:

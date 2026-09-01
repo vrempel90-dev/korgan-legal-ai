@@ -8,8 +8,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from docx import Document
-from openai import AsyncOpenAI
 
+from korgan.ai_provider import build_legal_client
 from korgan.config import Settings
 from korgan.legal_types import ClaimDraft, ExtractedDocument, LegalResearch, VerificationStatus
 from korgan.pro_claim_sections import extend_claim_schema as _extend_claim_schema
@@ -97,7 +97,11 @@ _VALIDATION_SCHEMA: dict[str, Any] = {
 class OpenAILegalService:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        # Клиента собирает korgan.ai_provider: Anthropic как основной, OpenAI
+        # как запасной. Наследники продолжают звать client.responses.create —
+        # интерфейс один, поэтому шесть переопределений ниже по цепочке
+        # остались нетронутыми.
+        self.client, self.ai_provider = build_legal_client(settings)
 
     @staticmethod
     def _json_schema(name: str, schema: dict[str, Any]) -> dict[str, Any]:

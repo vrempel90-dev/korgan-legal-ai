@@ -227,6 +227,11 @@ async def health() -> dict[str, Any]:
         "legal_runtime": "strict_bot",
         "word_quality_target": "10/10",
         "preliminary_fallback": True,
+        # Кто из провайдеров реально отвечает. Без этого поля смена провайдера
+        # была бы невидимой в проде: ключ есть в переменных окружения, а
+        # подтвердить, что запрос ушёл в Anthropic, а не тихо откатился на
+        # OpenAI из-за неустановленного SDK, было бы нечем.
+        "ai_provider": settings.active_ai_provider,
     }
 
 
