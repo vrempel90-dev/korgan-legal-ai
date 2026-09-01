@@ -111,6 +111,14 @@ def build_legal_client(settings: Settings) -> tuple[Any, str]:
         LOGGER.warning("KORGAN anthropic SDK unavailable (%s) — using OpenAI", error)
         return MeteredClient(openai_client), "openai"
 
+    # Роль различается только по имени модели OpenAI, с которым пришёл запрос.
+    # Если оператор задал отдельную модель для роли, чьё имя совпало с основной,
+    # настройка не сработает — и об этом надо сказать вслух. Молчание здесь
+    # означало бы, что выставленный ради экономии дешёвый валидатор просто не
+    # применился, а счёт продолжал расти по тарифу основной модели.
+    for warning in settings.unreachable_model_roles:
+        LOGGER.warning("KORGAN model role is unreachable — %s", warning)
+
     anthropic_client = AnthropicResponsesClient(
         AsyncAnthropic(api_key=settings.anthropic_api_key),
         model_map=settings.anthropic_model_for,

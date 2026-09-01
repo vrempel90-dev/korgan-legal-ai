@@ -133,6 +133,43 @@ def test_roles_of_models_survive_provider_switch() -> None:
         anthropic_vision_model="claude-vision",
     )
     assert settings.anthropic_model_for["gpt-5.1-vision"] == "claude-vision"
+    # Различающиеся имена OpenAI — роли достижимы, жаловаться не на что.
+    assert settings.unreachable_model_roles == []
+
+
+def test_main_model_wins_when_openai_names_coincide() -> None:
+    """`ANTHROPIC_MODEL` обязан решать, когда все роли ходят за одним именем.
+
+    По умолчанию openai_model, openai_vision_model и openai_validation_model
+    равны `gpt-5.1`, поэтому словарь ролей схлопывается в одну запись. Раньше
+    побеждала последняя, валидационная: заданная основная модель не давала
+    никакого эффекта, а дешёвый валидатор ронял на себя и составление иска.
+    """
+    settings = _settings(
+        anthropic_api_key="anthropic-key",
+        anthropic_model="claude-opus-5",
+        anthropic_validation_model="claude-haiku-4-5",
+    )
+    assert settings.anthropic_model_for["gpt-5.1"] == "claude-opus-5"
+
+
+def test_unreachable_role_is_named_rather_than_ignored() -> None:
+    """Настройка, которая ничего не изменит, должна сказать об этом."""
+    settings = _settings(
+        anthropic_api_key="anthropic-key",
+        anthropic_model="claude-opus-5",
+        anthropic_validation_model="claude-haiku-4-5",
+    )
+    unreachable = settings.unreachable_model_roles
+    assert len(unreachable) == 1
+    assert "validation" in unreachable[0]
+    assert "claude-haiku-4-5" in unreachable[0]
+    assert "claude-opus-5" in unreachable[0]
+
+
+def test_identical_role_models_are_not_reported_as_a_problem() -> None:
+    """Совпадение имён само по себе не проблема — проблема лишь потерянная настройка."""
+    assert _settings(anthropic_api_key="anthropic-key").unreachable_model_roles == []
 
 
 # --- перевод запроса -------------------------------------------------------

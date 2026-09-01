@@ -81,6 +81,10 @@ class Settings(BaseSettings):
             return "anthropic" if has_key else "openai"
         return "anthropic" if has_key else "openai"
 
+    # Роли моделей в порядке убывания важности: основная (исследование и
+    # составление документа), зрение, валидация.
+    _MODEL_ROLES = ("", "vision", "validation")
+
     @property
     def anthropic_model_for(self) -> dict[str, str]:
         """Какая модель Anthropic заменяет какую модель OpenAI.
@@ -88,12 +92,60 @@ class Settings(BaseSettings):
         Вызывающий код передаёт имя модели OpenAI из настроек — извлечение,
         исследование и валидация ходят за разными именами. Соответствие
         задаётся здесь, чтобы роли сохранились при смене провайдера.
+
+        Ключом служит имя модели OpenAI, а по умолчанию все три роли ходят за
+        одним и тем же `gpt-5.1`. Значит словарь схлопывается в одну запись, и
+        порядок решает, какая модель Anthropic достанется всем. Раньше побеждала
+        последняя, то есть валидационная: `ANTHROPIC_MODEL=claude-opus-5` не
+        давал никакого эффекта, а `ANTHROPIC_VALIDATION_MODEL=claude-haiku-4-5`,
+        выставленный ради экономии на служебных вызовах, ронял на Haiku и
+        составление иска. Обе ошибки были беззвучными. Теперь побеждает основная
+        роль, а недостижимые из-за совпадения имён настройки перечисляет
+        `unreachable_model_roles` — их показывает лог при сборке клиента.
         """
-        return {
-            self.openai_model: self.anthropic_model,
-            self.openai_vision_model: self.anthropic_vision_model,
-            self.openai_validation_model: self.anthropic_validation_model,
-        }
+        mapping: dict[str, str] = {}
+        for role in self._MODEL_ROLES:
+            mapping.setdefault(self._openai_model_for_role(role), self._anthropic_model_for_role(role))
+        return mapping
+
+    def _openai_model_for_role(self, role: str) -> str:
+        return getattr(self, f"openai_{role}_model" if role else "openai_model")
+
+    def _anthropic_model_for_role(self, role: str) -> str:
+        return getattr(self, f"anthropic_{role}_model" if role else "anthropic_model")
+
+    @property
+    def unreachable_model_roles(self) -> list[str]:
+        """Роли, чья модель Anthropic задана, но никогда не будет выбрана.
+
+        Роль различима только по имени модели OpenAI, с которым пришёл запрос.
+        Если два имени совпали, вторая роль недостижима — и оператор, выставивший
+        для неё отдельную модель, должен об этом узнать, а не гадать, почему
+        настройка ничего не изменила.
+
+        Сообщается только о том, что оператор задал сам: нетронутое умолчание
+        роли недостижимо ровно так же, но жаловаться на него значило бы писать
+        предупреждение в каждый обычный запуск, и настоящее сообщение потерялось
+        бы среди шума.
+        """
+        unreachable: list[str] = []
+        winners: dict[str, tuple[str, str]] = {}
+        for role in self._MODEL_ROLES:
+            name = role or "основная"
+            field = f"anthropic_{role}_model" if role else "anthropic_model"
+            openai_name = self._openai_model_for_role(role)
+            anthropic_name = self._anthropic_model_for_role(role)
+            winner_name, winner_model = winners.setdefault(openai_name, (name, anthropic_name))
+            if winner_name == name or anthropic_name == winner_model:
+                continue
+            if field not in self.model_fields_set:
+                continue
+            unreachable.append(
+                f"{name}: задана {anthropic_name}, но роль ходит за тем же "
+                f"{openai_name}, что и роль «{winner_name}», поэтому будет "
+                f"использована {winner_model}"
+            )
+        return unreachable
 
     @property
     def legal_domains(self) -> list[str]:
