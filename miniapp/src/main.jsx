@@ -431,10 +431,24 @@ function App() {
     } catch (error) { setNotice(clientMessage(error)); } finally { setBusy(false); }
   };
 
+  // Удаление подтверждает сервер, поэтому карточка убирается из списка сразу и
+  // своими силами. Раньше на пути к списку стояло его перечитывание: моргнувшая
+  // сеть обрывала удаление до перехода, и в списке оставалось дело, которого на
+  // сервере уже нет, — нажатие на него отвечало «дело не найдено». Сверка с
+  // сервером осталась, но теперь она уточняет, а не решает.
   const deleteCurrentCase = async () => {
     if (!activeCase || busy) return;
     if (!window.confirm(language === 'kk' ? 'Бұл істі жою керек пе?' : 'Удалить это дело и все его данные?')) return;
-    setBusy(true); try { await korganApi.deleteCase(activeCase.id); setActiveCase(null); setDocPayment(null); await refreshCases(); showScreen('cases'); } catch (error) { setNotice(clientMessage(error)); } finally { setBusy(false); }
+    const removed = activeCase.id;
+    setBusy(true);
+    try {
+      await korganApi.deleteCase(removed);
+      setActiveCase(null); setDocPayment(null);
+      latestCases.current.invalidate();
+      setCases(prev => prev.filter(item => item.id !== removed));
+      showScreen('cases');
+      refreshCases().catch(() => {});
+    } catch (error) { setNotice(clientMessage(error)); } finally { setBusy(false); }
   };
   const deleteAllData = async () => {
     if (busy) return;
