@@ -17,6 +17,7 @@ import {
 import { getTelegramUser, getTelegramWebApp, initTelegram, haptic } from './telegram';
 import { PERSONAL_LAWYER_URL, personalLawyerCopy } from './personalLawyer';
 import { deliverDocument, openSignedDocument } from './documentDelivery';
+import { startDocumentPaymentPolling } from './documentPaymentPolling';
 
 const TERMS_VERSION = '2026-08-16-v1';
 const WHATSAPP_URL = 'https://wa.me/77005000553';
@@ -134,14 +135,13 @@ function App() {
   useEffect(() => { if (consent) boot(); }, [consent]);
   useEffect(() => {
     if (screen !== 'doc-payment' || docPayment?.status !== 'awaiting_admin' || !docPayment?.order_id) return undefined;
-    const timer = window.setInterval(async () => {
-      try {
-        const result = await korganApi.documentPaymentStatus(docPayment.order_id);
-        if (result?.payment) setDocPayment(result.payment);
-      } catch {}
-    }, 8000);
-    return () => window.clearInterval(timer);
-  }, [screen, docPayment?.status, docPayment?.order_id]);
+    return startDocumentPaymentPolling({
+      orderId: docPayment.order_id,
+      fetchStatus: korganApi.documentPaymentStatus,
+      onPayment: setDocPayment,
+      onError: error => setNotice(error?.message || t.down),
+    });
+  }, [screen, docPayment?.status, docPayment?.order_id, t.down]);
 
   const filteredDocuments = useMemo(() => {
     const q = query.trim().toLowerCase();
