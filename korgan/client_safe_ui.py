@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,17 @@ _INTERNAL_TOKENS = (
     "source-bound",
 )
 
+# Служебные метки стадии готовности. Заменять их нечем: клиенту они не
+# сообщают ничего, чего не сказано в самом сообщении, — поэтому вырезаются
+# целиком. Раньше снимался только префикс «KORGAN QA STATUS», и в сообщении
+# оставалось «: LAWYER-REVIEW DRAFT» — английская метка с висящим двоеточием.
+_INTERNAL_LABEL_LINES = (
+    "KORGAN QA STATUS",
+    "READY FOR FINAL HUMAN REVIEW",
+    "LAWYER-REVIEW DRAFT",
+    "PRELIMINARY DRAFT",
+)
+
 _ACT_IDS: dict[str, tuple[str, ...]] = {
     "ГК РК": (ACT_GK_GENERAL, ACT_GK_SPECIAL),
     "ГПК РК": (ACT_GPK,),
@@ -96,11 +108,21 @@ def sanitize_client_text(value: str | None) -> str | None:
         return "✅ Проект иска сформирован в Word (.docx).\n\nПеред подачей проверьте реквизиты, суммы и приложения."
 
     # Defence in depth for help text and any future client copy.
-    text = text.replace("NEEDS_VERIFICATION", "дополнительной проверкой системы")
-    text = text.replace("source-bound", "по официальному источнику")
+    #
+    # Подстановки закавычены не для красоты. Метка попадает в произвольное
+    # место чужой фразы, и склонять её не по чему: «статус NEEDS_VERIFICATION»
+    # превращалось в «статус дополнительной проверкой системы». Название в
+    # кавычках грамматически неизменяемо и потому встаёт в любую позицию.
+    text = text.replace("NEEDS_VERIFICATION", "«требует проверки»")
+    text = text.replace("source-bound", "«со ссылкой на официальный источник»")
     text = text.replace("корпус KORGAN", "проверенная правовая база")
-    text = text.replace("KORGAN QA STATUS", "")
-    return text
+    for label in _INTERNAL_LABEL_LINES:
+        text = text.replace(label, "")
+    # После вырезанной метки остаётся ": хвост" или пустая строка — их клиент
+    # видит как поломку интерфейса, а не как отсутствие служебного текста.
+    text = re.sub(r"^[ \t]*:[ \t]*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip() or _GENERIC_CHECK_MESSAGE
 
 
 def _remove_paragraph(paragraph: Any) -> None:

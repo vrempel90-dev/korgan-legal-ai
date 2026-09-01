@@ -40,7 +40,27 @@ def test_help_copy_cannot_leak_machine_label() -> None:
     result = sanitize_client_text("Неподтверждённые данные отмечаются как NEEDS_VERIFICATION.")
     assert result is not None
     assert "NEEDS_VERIFICATION" not in result
-    assert "дополнительной проверкой системы" in result
+    assert result == "Неподтверждённые данные отмечаются как «требует проверки»."
+
+
+def test_the_substituted_label_reads_as_russian_wherever_it_lands() -> None:
+    """Метка встаёт в чужую фразу, склонять её не по чему — значит, кавычки.
+
+    Подстановка именной группой давала «статус дополнительной проверкой
+    системы»: падеж от исходного «как NEEDS_VERIFICATION» не наследуется.
+    Клиент читает это как ошибку продукта, а не как скрытый служебный текст.
+    """
+    result = sanitize_client_text("Документ получил статус NEEDS_VERIFICATION.")
+    assert result == "Документ получил статус «требует проверки»."
+
+
+def test_internal_stage_label_is_cut_out_whole_not_by_its_prefix() -> None:
+    """Снятие одного префикса оставляло «: LAWYER-REVIEW DRAFT» с двоеточием."""
+    result = sanitize_client_text("KORGAN QA STATUS: LAWYER-REVIEW DRAFT")
+    assert result is not None
+    assert "LAWYER-REVIEW" not in result
+    assert "KORGAN QA STATUS" not in result
+    assert ":" not in result
 
 
 def test_clean_docx_removes_internal_qa_status() -> None:
