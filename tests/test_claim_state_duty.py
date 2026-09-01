@@ -192,6 +192,80 @@ def test_wage_claim_is_exempt_under_article_668():
     assert "пункт 1 статьи 668" in decision.line
 
 
+def test_alimony_exemption_does_not_pay_the_duty_of_a_joined_divorce_claim():
+    """Освобождение по одному требованию не оплачивает второе.
+
+    Расторжение брака и взыскание алиментов заявляются одним иском постоянно.
+    Освобождение по пункту 4 статьи 668 НК РК относится к алиментному
+    требованию; требование о расторжении брака оно не покрывает. Проставленный
+    на весь иск ноль означал бы недоплату пошлины — то есть возврат иска судом.
+    """
+    draft = _draft(
+        claimant=["Иванова Анна, ИИН 900101300001, адрес: г. Алматы"],
+        requests=["Расторгнуть брак.", "Взыскать алименты на содержание ребенка."],
+        title="Иск о расторжении брака и взыскании алиментов",
+    )
+
+    decision = decide_state_duty("Истец: Иванова Анна, ИИН 900101300001", _research(), draft)
+
+    assert decision.exempt is False
+    assert decision.needs_review is True
+    assert decision.line == NEEDS_CALCULATION_MARKER
+    assert "освобожд" in decision.note.lower()
+
+
+def test_wage_exemption_does_not_pay_the_duty_of_an_unrelated_money_claim():
+    """Заём не вытекает из трудовых отношений и своей пошлины не теряет."""
+    draft = _draft(
+        claimant=["Иванов Иван, ИИН 900101300001, адрес: г. Алматы"],
+        requests=[
+            "Взыскать заработную плату 500 000 тенге.",
+            "Взыскать задолженность по договору займа 2 000 000 тенге.",
+        ],
+    )
+
+    decision = decide_state_duty("Истец: Иванов Иван, ИИН 900101300001", _research(), draft)
+
+    assert decision.exempt is False
+    assert decision.needs_review is True
+    assert decision.line == NEEDS_CALCULATION_MARKER
+
+
+def test_exemption_survives_state_duty_cost_and_procedural_requests():
+    """Просьба о расходах и ходатайство пошлиной не облагаются."""
+    draft = _draft(
+        claimant=["Иванова Анна, ИИН 900101300001, адрес: г. Алматы"],
+        requests=[
+            "Взыскать алименты на содержание ребенка.",
+            "Взыскать с ответчика в пользу истца документально подтвержденные судебные расходы.",
+            "Истребовать у работодателя ответчика справку о доходах.",
+        ],
+    )
+
+    decision = decide_state_duty("Истец: Иванова Анна, ИИН 900101300001", _research(), draft)
+
+    assert decision.exempt is True
+    assert decision.amount == 0
+
+
+def test_personal_disability_exemption_covers_the_whole_claim():
+    """Льгота по инвалидности принадлежит истцу, а не отдельному требованию."""
+    draft = _draft(
+        claimant=["Иванов Иван, лицо с инвалидностью, ИИН 900101300001, адрес: г. Алматы"],
+        requests=[
+            "Взыскать задолженность 1 000 000 тенге.",
+            "Признать договор недействительным.",
+        ],
+    )
+
+    decision = decide_state_duty(
+        "Истец: Иванов Иван, лицо с инвалидностью, ИИН 900101300001", _research(), draft
+    )
+
+    assert decision.exempt is True
+    assert decision.amount == 0
+
+
 def test_special_statutory_category_fails_closed_instead_of_using_ordinary_rate():
     draft = _draft(
         claimant=["Иванов Иван, ИИН 900101300001, адрес: г. Алматы, ул. Абая, д. 10"],
