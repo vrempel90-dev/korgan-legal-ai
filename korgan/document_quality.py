@@ -15,6 +15,7 @@ from korgan.expense_support import unsupported_expense_claims
 from korgan.incoming_demand_coverage import uncovered_incoming_demands
 from korgan.legal_basis_fit import enforce_legal_basis_fit
 from korgan.legal_calc import parse_all_amounts_kzt
+from korgan.legal_provenance import forbidden_fact_findings
 from korgan.legal_types import ClaimDraft, ContractDraft, LegalResearch
 from korgan.objection_support import unsupported_objections
 from korgan.relief_norm_support import unsupported_relief
@@ -263,6 +264,13 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
         parties -= 0.8
     parties -= 1.0 - _preserve_known_identifiers(case_context, lines, blockers)
 
+    # Только фактическая часть: детерминированные цена, госпошлина и расчёт
+    # вправе содержать производные значения, а доказательственные факты — нет.
+    provenance_findings = forbidden_fact_findings(draft.facts, case_context)
+    if provenance_findings:
+        blockers.extend(provenance_findings)
+        parties -= min(0.8, 0.2 * len(provenance_findings))
+
     defendant_text = "\n".join(draft.defendant)
     claimant_text = "\n".join(draft.claimant)
     if _ENTITY_RE.search(defendant_text) and re.search(r"фио\s+ответчика", defendant_text, re.I):
@@ -492,6 +500,18 @@ def _score_response(case_context: str, research: LegalResearch, draft: ResponseT
         blockers.extend(unsupported)
         position -= min(1.0, 0.4 * len(unsupported))
 
+    factual_lines = _clean_lines(
+        [
+            *draft.admitted_circumstances,
+            *draft.disputed_circumstances,
+            *(line for item in draft.objections for line in item.body_lines()),
+        ]
+    )
+    provenance_findings = forbidden_fact_findings(factual_lines, case_context)
+    if provenance_findings:
+        blockers.extend(provenance_findings)
+        position -= min(1.0, 0.25 * len(provenance_findings))
+
     # Схема разрешает вынести даты и норму в subclauses/prose, а в text
     # оставить заголовок довода. Проверять один заголовок значит блокировать
     # полностью обоснованное возражение за то, что опора лежит строкой ниже.
@@ -596,6 +616,10 @@ def _score_pretrial(case_context: str, research: LegalResearch, draft: Any) -> D
     if not _clean_lines(draft.facts):
         blockers.append("не изложено фактическое основание требований")
         facts -= 1.5
+    provenance_findings = forbidden_fact_findings(draft.facts, case_context)
+    if provenance_findings:
+        blockers.extend(provenance_findings)
+        facts -= min(1.0, 0.25 * len(provenance_findings))
 
     law = 2.5
     basis = "\n".join(draft.legal_basis)
@@ -718,6 +742,18 @@ def _score_pretrial_response(case_context: str, research: LegalResearch, draft: 
     if unsupported:
         blockers.extend(unsupported)
         engagement -= min(1.0, 0.4 * len(unsupported))
+
+    factual_lines = _clean_lines(
+        [
+            *draft.admitted_circumstances,
+            *draft.disputed_circumstances,
+            *draft.objections,
+        ]
+    )
+    provenance_findings = forbidden_fact_findings(factual_lines, case_context)
+    if provenance_findings:
+        blockers.extend(provenance_findings)
+        engagement -= min(1.0, 0.25 * len(provenance_findings))
 
     law = 2.0
     basis = "\n".join(draft.legal_basis)

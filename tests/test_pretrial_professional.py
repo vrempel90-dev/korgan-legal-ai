@@ -32,6 +32,18 @@ ARTICLE_293 = (
 )
 
 
+# Претензия опирается на материалы доверителя. Реквизит, дата и сумма в тексте
+# проверяются против них: документ пересказывает дело, а не создаёт его.
+CASE_CONTEXT = (
+    "Отправитель: ТОО «Астана Строй», БИН 123456789012, г. Астана, ул. Кенесары, 40.\n"
+    "Получатель: ТОО «Заказчик», БИН 210987654321, г. Астана, ул. Абая, 15.\n"
+    "Договор подряда № 12 от 15.01.2026; пункт 6.3 предусматривает неустойку "
+    "0.1% за каждый день просрочки.\n"
+    "Работы приняты по акту от 20.02.2026 на сумму 2 300 000 тенге, оплата не поступила.\n"
+    "Просрочка исчисляется с 01.03.2026 по 31.03.2026, начислено 71 300 тенге."
+)
+
+
 def _research(*verified: str) -> LegalResearch:
     # Договорная неустойка — самостоятельное требование, и у него должно быть
     # собственное подтверждённое основание, а не только норма об оплате работ.
@@ -153,7 +165,7 @@ def test_lawful_consequence_passes() -> None:
 
 
 def test_pretrial_has_a_numeric_quality_score() -> None:
-    report = assess_document_quality("pretrial", "материалы дела", _research(), _draft())
+    report = assess_document_quality("pretrial", CASE_CONTEXT, _research(), _draft())
     assert report.kind == "pretrial"
     assert report.score == 10.0
     assert report.ready is True
@@ -161,7 +173,7 @@ def test_pretrial_has_a_numeric_quality_score() -> None:
 
 def test_incomplete_pretrial_cannot_reach_the_ready_score() -> None:
     draft = _draft(calculation=[], recipient=[], legal_basis=[])
-    report = assess_document_quality("pretrial", "материалы дела", _research(), draft)
+    report = assess_document_quality("pretrial", CASE_CONTEXT, _research(), draft)
     assert report.ready is False
     assert report.score < 10.0
     assert report.hard_blockers
@@ -169,7 +181,7 @@ def test_incomplete_pretrial_cannot_reach_the_ready_score() -> None:
 
 def test_internal_terminology_never_reaches_the_pretrial_body() -> None:
     draft = _draft(facts=["NEEDS_VERIFICATION: уточнить дату акта."])
-    report = assess_document_quality("pretrial", "материалы дела", _research(), draft)
+    report = assess_document_quality("pretrial", CASE_CONTEXT, _research(), draft)
     assert report.ready is False
 
 
