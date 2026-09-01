@@ -1,3 +1,5 @@
+import { requireProfessionalDocument, requireProfessionalRuntime } from './runtimeReadiness.js';
+
 const API_BASE = import.meta.env.VITE_KORGAN_API_BASE || '';
 
 const LEGACY_UPLOAD_ONLY_DESCRIPTIONS = new Set([
@@ -29,40 +31,6 @@ async function request(path, options = {}) {
     error.status = response.status;
     error.payload = payload;
     throw error;
-  }
-  return payload;
-}
-
-function requireProfessionalRuntime(health, parity) {
-  if (
-    health?.status !== 'ok'
-    || health?.legal_runtime !== 'strict_bot'
-    || health?.word_quality_target !== '10/10'
-    || health?.preliminary_fallback !== true
-    || parity?.status !== 'ok'
-    || parity?.api_version !== '0.9.0'
-    || parity?.service_outer !== 'ClaimPipelineV2Adapter'
-    || parity?.service_claim_mux !== 'ClaimServiceMux'
-    || parity?.service_stable !== 'PretrialResponseProductionService'
-    || parity?.word_quality_target !== '10/10'
-    || parity?.preliminary_fallback !== true
-    || typeof parity?.consultation_limit_enabled !== 'boolean'
-    || typeof parity?.document_payments_enabled !== 'boolean'
-    || (parity?.document_payments_enabled && parity?.document_manual_confirmation !== true)
-  ) {
-    throw new Error('KORGAN professional legal runtime is not ready');
-  }
-  return { ...health, parity };
-}
-
-function requireProfessionalDocument(payload) {
-  if (
-    !payload
-    || typeof payload.filing_ready !== 'boolean'
-    || !['verified', 'preliminary'].includes(payload.release_status)
-    || !payload.document_base64
-  ) {
-    throw new Error('KORGAN document release metadata is incomplete');
   }
   return payload;
 }
