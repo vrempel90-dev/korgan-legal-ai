@@ -21,6 +21,7 @@ import { requireDocumentPayment, startDocumentPaymentPolling } from './documentP
 import { interpretGeneration, startGenerationPolling } from './generationJob';
 import { createBootstrapSession } from './bootstrapSession';
 import { resolveScreen } from './screenState';
+import { createLatestAction } from './latestAction';
 
 const TERMS_VERSION = '2026-08-16-v1';
 const WHATSAPP_URL = 'https://wa.me/77005000553';
@@ -140,6 +141,9 @@ function App() {
   const [adminOrders, setAdminOrders] = useState([]);
   const [adminBusy, setAdminBusy] = useState(false);
   const bootstrap = useRef(null);
+  // Открытие дела переживает смену экрана и повторное нажатие только как
+  // поколение: устаревший ответ ничего не меняет.
+  const latestCase = useRef(createLatestAction());
   if (bootstrap.current === null) {
     bootstrap.current = createBootstrapSession({
       api: korganApi,
@@ -215,7 +219,7 @@ function App() {
   // Уведомление принадлежит экрану, на котором возникло. Смена экрана гасит его
   // всегда, каким бы способом переход ни произошёл: иначе временная ошибка
   // опроса переезжает на экран готового документа и противоречит ему.
-  const showScreen = next => { setNotice(''); setScreen(next); };
+  const showScreen = next => { latestCase.current.invalidate(); setNotice(''); setScreen(next); };
   const go = next => { haptic(); showScreen(next); };
   const switchLanguage = next => { setLanguage(next); persistLanguage(next); };
   const refreshCases = async () => { const result = await korganApi.listCases(); setCases(result.cases || []); return result.cases || []; };
@@ -266,16 +270,24 @@ function App() {
   };
 
   const openCase = async item => {
+    // Список дел не гасит свои кнопки, поэтому от второго нажатия защищается
+    // сам обработчик: иначе ответ на дело A перезаписывал бы открытое дело B.
+    if (busy) return;
+    let mine = latestCase.current.start();
     setBusy(true); setNotice('');
     try {
-      const result = await korganApi.getCase(item.id); const detail = result.case; setActiveCase(detail); setDocumentResult(null); setDocPayment(null); setConsultPayment(null); setGeneration(null);
+      const result = await korganApi.getCase(item.id); const detail = result.case;
+      if (!mine()) return;
+      setActiveCase(detail); setDocumentResult(null); setDocPayment(null); setConsultPayment(null); setGeneration(null);
       const restored = (detail.conversation || []).map(entry => ({ from: entry.role === 'user' ? 'user' : 'ai', text: entry.text || '', sources: entry.sources || [] }));
       setChat(restored.length ? restored : [{ from: 'ai', text: language === 'kk' ? 'Осы іс бойынша сұрағыңызды жазыңыз.' : 'Задайте вопрос по этому делу.' }]); showScreen('case');
+      mine = latestCase.current.start();
       // Подготовка переживает закрытие Mini App, а выданный при запуске
       // идентификатор задачи — нет. Незавершённая работа возвращается на экран,
       // а завершённая ничего не перехватывает: дело открыли, а не документ.
       try {
         const resumed = interpretGeneration(await korganApi.caseGeneration(detail.id));
+        if (!mine()) return;
         if (resumed.status === 'running' || resumed.status === 'failed') { setGeneration(resumed.job); showScreen('generating'); }
       } catch { /* дело открыто; состояние подготовки узнаётся повторным запуском */ }
     } catch (error) { setNotice(error?.message || t.down); }
@@ -343,7 +355,7 @@ function App() {
     catch (error) { setNotice(error?.message || t.down); } finally { setReceiptBusy(false); }
   };
   const refreshDocPayment = async () => {
-    if (!docPayment?.order_id) return; setBusy(true); setNotice('');
+    if (!docPayment?.order_id || busy) return; setBusy(true); setNotice('');
     try { const result = await korganApi.documentPaymentStatus(docPayment.order_id); setDocPayment(requireDocumentPayment(result)); }
     catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
   };
@@ -361,10 +373,12 @@ function App() {
   };
 
   const deleteCurrentCase = async () => {
-    if (!activeCase || !window.confirm(language === 'kk' ? 'Бұл істі жою керек пе?' : 'Удалить это дело и все его данные?')) return;
+    if (!activeCase || busy) return;
+    if (!window.confirm(language === 'kk' ? 'Бұл істі жою керек пе?' : 'Удалить это дело и все его данные?')) return;
     setBusy(true); try { await korganApi.deleteCase(activeCase.id); setActiveCase(null); setDocPayment(null); await refreshCases(); showScreen('cases'); } catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
   };
   const deleteAllData = async () => {
+    if (busy) return;
     if (!window.confirm(language === 'kk' ? 'Барлық Mini App деректерін жою керек пе?' : 'Удалить все данные Mini App и все дела?')) return;
     setBusy(true); try { await korganApi.deleteMyData(); clearAllLocalData(); setCases([]); setActiveCase(null); setConsent(false); showScreen('home'); } catch (error) { setNotice(error?.message || t.down); } finally { setBusy(false); }
   };

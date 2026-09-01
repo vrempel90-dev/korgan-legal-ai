@@ -23,11 +23,10 @@ const src = join(here, '..', 'src');
 const app = readFileSync(join(src, 'main.jsx'), 'utf8');
 
 test('смена экрана гасит уведомление предыдущего', () => {
-  assert.match(
-    app,
-    /const showScreen = next => \{ setNotice\(''\); setScreen\(next\); \};/,
-    'у смены экрана нет общего перехода, который гасит уведомление',
-  );
+  const showScreen = app.slice(app.indexOf('const showScreen'), app.indexOf('const go ='));
+
+  assert.match(showScreen, /setNotice\(''\)/, 'общий переход не гасит уведомление предыдущего экрана');
+  assert.match(showScreen, /setScreen\(next\)/, 'общий переход не меняет экран');
 });
 
 test('ни один переход не меняет экран в обход общего правила', () => {
