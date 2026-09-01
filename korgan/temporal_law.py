@@ -21,9 +21,10 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
 from korgan.citation_audit import is_official_source
@@ -236,3 +237,66 @@ def check_applicable_law(
     )
     reasons = tuple(reason for check in checks for reason in check.reasons)
     return LawGateResult(ready=not reasons, checks=checks, reasons=reasons)
+
+
+# --- дата возникновения правоотношения по тексту документа ---
+
+_DATE_TOKEN = (
+    r"(?:\d{1,2}[./-]\d{1,2}[./-]\d{4}|"
+    r"\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|"
+    r"сентября|октября|ноября|декабря)\s+\d{4}(?:\s+года)?)"
+)
+_MONTHS = {
+    "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
+    "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11,
+    "декабря": 12,
+}
+
+# Дата берётся только рядом со словом о договоре. Просто «самая ранняя дата в
+# тексте» взяла бы дату рождения стороны или номер доверенности — и назвала бы
+# её датой возникновения правоотношения.
+_CONTRACT_DATE_PATTERNS = (
+    re.compile(rf"догово\w*[^.\n]{{0,120}}?\bот\s+(?P<date>{_DATE_TOKEN})", re.IGNORECASE),
+    re.compile(rf"(?P<date>{_DATE_TOKEN})[^.\n]{{0,60}}?заключ\w*[^.\n]{{0,60}}?догово", re.IGNORECASE),
+    re.compile(rf"заключ\w*[^.\n]{{0,80}}?догово\w*[^.\n]{{0,80}}?(?P<date>{_DATE_TOKEN})", re.IGNORECASE),
+    re.compile(rf"шарт\w*[^.\n]{{0,80}}?(?P<date>{_DATE_TOKEN})", re.IGNORECASE),
+)
+
+
+def _parse_date_token(raw: str) -> date | None:
+    text = (raw or "").strip().lower().replace(" года", "")
+    for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            pass
+    match = re.fullmatch(r"(\d{1,2})\s+([а-яё]+)\s+(\d{4})", text)
+    if not match:
+        return None
+    month = _MONTHS.get(match.group(2))
+    if not month:
+        return None
+    try:
+        return date(int(match.group(3)), month, int(match.group(1)))
+    except ValueError:
+        return None
+
+
+def relationship_date_in_text(text: str) -> date | None:
+    """Дата договора, из которого возник спор, — по тексту документа.
+
+    Нужна не сама по себе, а чтобы назвать читающему дату, на которую следует
+    сверять редакцию материальной нормы. Из нескольких договоров берётся самый
+    ранний: он определяет право, по которому оценивается всё последующее.
+
+    Ничего не найдено — возвращается ``None``, и документ получает общее
+    указание вместо конкретной даты. Догадка здесь хуже молчания: названная
+    дата выглядит установленной, и её больше никто не перепроверит.
+    """
+    found: list[date] = []
+    for pattern in _CONTRACT_DATE_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            parsed = _parse_date_token(match.group("date"))
+            if parsed is not None:
+                found.append(parsed)
+    return min(found) if found else None

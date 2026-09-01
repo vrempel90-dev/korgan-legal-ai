@@ -18,6 +18,7 @@ from korgan.temporal_law import (
     NormVersion,
     check_applicable_law,
     check_norm,
+    relationship_date_in_text,
 )
 
 ADILET = "https://adilet.zan.kz/rus/docs/K990000409_"
@@ -219,3 +220,50 @@ def test_a_verified_norm_passes_the_gate() -> None:
 
     assert result.ready is True
     assert result.reasons == ()
+
+
+# --- дата, на которую сверяется редакция, берётся из самого документа ---
+
+
+def test_the_release_note_names_the_relationship_date_not_the_filing_date() -> None:
+    """Материальную норму сверяют на дату правоотношения, а не на дату подачи.
+
+    Указание сверить статью «с действующей редакцией на дату подачи» выглядит
+    выполненным и уводит проверяющего от единственной даты, которая здесь
+    решает исход довода."""
+    from korgan.document_release import review_document
+
+    report = review_document(
+        "По договору поставки № 12 от 10 мая 2019 года ответчик обязался оплатить товар. "
+        "Требование основано на статье 353 ГК РК."
+    )
+    note = next(item for item in report.checklist() if "Сверьте каждую статью" in item)
+
+    assert "10.05.2019" in note
+    assert "дату возникновения спорного правоотношения" in note
+    assert "процессуальные нормы — в редакции на дату подачи" in note
+
+
+def test_a_document_without_a_contract_date_gets_the_general_wording() -> None:
+    """Дата не найдена — указание остаётся общим. Догадка выглядела бы
+    установленным фактом, и её больше никто не перепроверил бы."""
+    from korgan.document_release import review_document
+
+    report = review_document("Требование основано на статье 353 ГК РК.")
+    note = next(item for item in report.checklist() if "Сверьте каждую статью" in item)
+
+    assert "дату возникновения спорного правоотношения" in note
+    assert not any(char.isdigit() for char in note.split("(")[0].replace("353", ""))
+
+
+def test_a_birth_date_is_not_mistaken_for_the_relationship_date() -> None:
+    assert relationship_date_in_text("Истец родился 01.01.1980. Претензия направлена 01.06.2026.") is None
+
+
+def test_the_earliest_contract_governs_when_there_are_several() -> None:
+    text = (
+        "Между сторонами заключён договор поставки от 10.05.2019 и договор "
+        "поставки № 2 от 15.03.2021."
+    )
+
+    assert relationship_date_in_text(text) == date(2019, 5, 10)
