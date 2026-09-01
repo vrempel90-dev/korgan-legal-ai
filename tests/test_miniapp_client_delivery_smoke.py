@@ -8,11 +8,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import io
 import json
+import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -78,7 +80,8 @@ def test_paid_document_survives_reopen_and_is_delivered(monkeypatch) -> None:
     state_by_identity: dict[str, dict[str, Any]] = {}
     order: DocumentPaymentOrder | None = None
     job: GenerationJob | None = None
-    scheduled: dict[str, Any] | None = None
+    worker_release = threading.Event()
+    worker_finished = threading.Event()
     telegram: dict[str, Any] = {}
     document_bytes = _docx()
 
@@ -143,9 +146,37 @@ def test_paid_document_survives_reopen_and_is_delivered(monkeypatch) -> None:
             raise AssertionError("смоук запросил чужую или отсутствующую задачу")
         return job
 
-    async def schedule_job(**kwargs):
-        nonlocal scheduled
-        scheduled = dict(kwargs)
+    async def run_worker(started_job, **kwargs) -> None:
+        nonlocal job, order
+
+        async def wait_for_release() -> None:
+            while not worker_release.is_set():
+                await asyncio.sleep(0.001)
+
+        job = replace(started_job, status="running", stage="legal_research", progress=20)
+        try:
+            await wait_for_release()
+            state = await core.store.load(kwargs["identity"])
+            state["cases"][started_job.case_id].update(
+                {
+                    "status": "document_ready",
+                    "title": "Исковое заявление",
+                    "filename": "KORGAN_claim.docx",
+                    "document_base64": base64.b64encode(document_bytes).decode("ascii"),
+                    "filing_ready": False,
+                    "release_status": "preliminary",
+                    "verification_status": "needs_verification",
+                    "verification_notes": ["Требуется финальная проверка юристом"],
+                    "quality_score": 9.0,
+                    "quality_issues": ["Проверить приложения"],
+                }
+            )
+            await core.store.save(kwargs["identity"], state)
+            assert order is not None
+            order = replace(order, status="consumed")
+            job = replace(job, status="succeeded", stage="completed", progress=100)
+        finally:
+            worker_finished.set()
 
     async def accept_receipt(**kwargs):
         nonlocal order
@@ -248,7 +279,7 @@ def test_paid_document_survives_reopen_and_is_delivered(monkeypatch) -> None:
     monkeypatch.setattr(jobs, "create_or_get_job", create_job)
     monkeypatch.setattr(jobs, "latest_job_for_case", latest_job)
     monkeypatch.setattr(jobs, "require_job", require_job)
-    monkeypatch.setattr(generation_api, "_schedule_job", schedule_job)
+    monkeypatch.setattr(jobs, "run_job", run_worker)
 
     # Состояние хранится между HTTP-запросами и между двумя TestClient — это
     # серверная сторона refresh/reopen, а не случайно уцелевший React state.
@@ -363,7 +394,6 @@ def test_paid_document_survives_reopen_and_is_delivered(monkeypatch) -> None:
             "retryable": False,
             "error": "",
         }
-        assert scheduled is not None
 
         # Повторное нажатие не создаёт ни вторую задачу, ни вторую оплату.
         repeated = client.post(
@@ -374,8 +404,11 @@ def test_paid_document_survives_reopen_and_is_delivered(monkeypatch) -> None:
         assert repeated.status_code == 200
         assert repeated.json()["job"]["job_id"] == JOB_ID
 
-        job = replace(job, status="running", stage="legal_research", progress=20)
+        deadline = time.monotonic() + 1.0
         progress = client.get(f"/miniapp/documents/generation/{JOB_ID}", headers=owner_headers)
+        while progress.json()["job"]["status"] == "queued" and time.monotonic() < deadline:
+            time.sleep(0.001)
+            progress = client.get(f"/miniapp/documents/generation/{JOB_ID}", headers=owner_headers)
         assert progress.status_code == 200
         assert progress.json()["job"]["progress"] == 20
         assert progress.json()["job"]["document_ready"] is False
@@ -386,21 +419,8 @@ def test_paid_document_survives_reopen_and_is_delivered(monkeypatch) -> None:
         assert recovered.json()["job"]["job_id"] == JOB_ID
         assert recovered.json()["job"]["stage"] == "legal_research"
 
-        result = {
-            "status": "document_ready",
-            "title": "Исковое заявление",
-            "filename": "KORGAN_claim.docx",
-            "document_base64": base64.b64encode(document_bytes).decode("ascii"),
-            "filing_ready": False,
-            "release_status": "preliminary",
-            "verification_status": "needs_verification",
-            "verification_notes": ["Требуется финальная проверка юристом"],
-            "quality_score": 9.0,
-            "quality_issues": ["Проверить приложения"],
-        }
-        state_by_identity[str(USER_ID)]["cases"][case_id].update(result)
-        order = replace(order, status="consumed")
-        job = replace(job, status="succeeded", stage="completed", progress=100)
+        worker_release.set()
+        assert worker_finished.wait(timeout=1.0), "фоновая задача не завершилась"
 
         completed = client.get(f"/miniapp/documents/generation/{JOB_ID}", headers=owner_headers)
         assert completed.status_code == 200
