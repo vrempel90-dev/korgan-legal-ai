@@ -97,7 +97,10 @@ EXPECTED_OWNERS: dict[tuple[str, str], str] = {
         "GET",
     ): "korgan.miniapp_generation_api.case_generation_status",
     ("/miniapp/documents/payments/{order_id}", "GET"): "korgan.miniapp_api_v5.document_payment_status",
-    ("/miniapp/documents/payments/{order_id}/retry", "POST"): "korgan.miniapp_api_v5.retry_paid_document",
+    (
+        "/miniapp/documents/payments/{order_id}/retry",
+        "POST",
+    ): "korgan.miniapp_generation_api.retry_paid_document_job",
     (
         "/miniapp/consultation/payments/{order_id}",
         "GET",

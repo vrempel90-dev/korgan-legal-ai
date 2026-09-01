@@ -31,7 +31,9 @@ def test_automatic_payment_routes_use_fiscal_upload_bridge_and_v5_delivery() -> 
 
     Запуск генерации поверх v5 перекрыт слоем сохраняемых задач: сама оплата
     по-прежнему проверяется тем же хранилищем платёжных ордеров, но юридическая
-    работа вынесена из времени жизни HTTP-запроса.
+    работа вынесена из времени жизни HTTP-запроса. Повтор по номеру оплаты
+    перекрыт тем же слоем — иначе у оплаченного документа было бы два
+    исполнителя одновременно.
     """
     assert (
         _route("/miniapp/documents/generate", "POST").endpoint
@@ -46,7 +48,10 @@ def test_automatic_payment_routes_use_fiscal_upload_bridge_and_v5_delivery() -> 
         is upload_runtime.consultation_payment_status
     )
     assert _route("/miniapp/documents/payments/{order_id}", "GET").endpoint is v5.document_payment_status
-    assert _route("/miniapp/documents/payments/{order_id}/retry", "POST").endpoint is v5.retry_paid_document
+    assert (
+        _route("/miniapp/documents/payments/{order_id}/retry", "POST").endpoint
+        is generation_api.retry_paid_document_job
+    )
 
 
 def test_strict_receipt_gate_matches_agent_requirements(monkeypatch) -> None:

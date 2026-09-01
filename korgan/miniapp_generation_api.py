@@ -334,3 +334,56 @@ async def retry_generation(
         "generation_started": True,
         "job": jobs.public_job(job),
     }
+
+
+# У оплаченного документа должен быть один исполнитель. Прежний обработчик
+# готовил документ прямо внутри запроса и списывал ту же оплату мимо блокировки
+# задачи, поэтому повторное нажатие могло запустить вторую полную генерацию
+# поверх уже идущей: две работы писали разные документы в одно дело, побеждал
+# последний, а проигравший получал отказ уже после выполненной работы.
+_drop("/miniapp/documents/payments/{order_id}/retry", "POST")
+
+
+@app.post("/miniapp/documents/payments/{order_id}/retry")
+async def retry_paid_document_job(
+    order_id: int,
+    x_telegram_init_data: str = Header(default=""),
+) -> dict[str, Any]:
+    """Повторный запуск оплаченного документа — той же сохраняемой задачей."""
+    if not settings.payments_enabled:
+        # Бесплатный режим готовит документ внутри запроса и платёжных ордеров
+        # не заводит: повторять по номеру оплаты здесь нечего.
+        raise HTTPException(status_code=404, detail="Платёжный запрос не найден")
+
+    identity = core.legacy._identity(x_telegram_init_data)
+    state = await core.legacy._require_consent(identity)
+    user_key = core.store.user_key(identity)
+    order = await document_store.get_document_order(order_id, user_key=user_key)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Платёжный запрос не найден")
+    case = (state.get("cases") or {}).get(order.case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Дело для документа не найдено")
+    # Без этой проверки запуск по изменившимся материалам не нашёл бы прежний
+    # ордер по составу дела и попросил бы заплатить второй раз.
+    if v5.v4._document_scope(case, order.document_type, order.language) != order.case_fingerprint:
+        raise HTTPException(
+            status_code=409,
+            detail="Материалы дела изменились. Повторно не платите; восстановите прежний состав дела или обратитесь в техподдержку.",
+        )
+
+    job = await jobs.latest_job_for_case(
+        user_key=user_key,
+        case_id=order.case_id,
+        case_fingerprint=order.case_fingerprint,
+    )
+    if job is not None and job.status == "failed":
+        return await retry_generation(job.id, x_telegram_init_data=x_telegram_init_data)
+    return await generate_document_job(
+        core.GenerateRequest(
+            case_id=order.case_id,
+            document_type=order.document_type,
+            language=order.language,
+        ),
+        x_telegram_init_data=x_telegram_init_data,
+    )
