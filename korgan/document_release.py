@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-from korgan.citation_audit import CitationAudit, audit_citations
+from korgan.citation_audit import CitationAudit, CitationFinding, audit_citations
 from korgan.provision_corpus import corpus_checked_on
-from korgan.temporal_law import relationship_date_in_text
+from korgan.temporal_law import NormKind, kind_of_act, relationship_date_in_text
 from korgan.text_integrity import IntegrityFinding, integrity_findings
 
 LAW_CHECK_NOTE_PREFIX = "Сверьте каждую статью в разделе «Правовое обоснование»"
@@ -40,6 +40,50 @@ def law_verification_note(relationship_date: date | None = None) -> str:
     )
 
 
+SPLIT_NOTE_PREFIX = "Сверять по датам:"
+
+
+def _citation_split_note(
+    findings: list[CitationFinding], relationship_date: date | None
+) -> str:
+    """Разложить названные в документе статьи по датам, на которые их сверяют.
+
+    Общее указание «сверьте каждую статью» юрист выполняет глазами по тексту и
+    сам решает, на какую дату сверять каждую. Решение это не свободное: ГК
+    сверяется на дату правоотношения, ГПК — на дату подачи, и перепутать их
+    значит проверить норму не в той редакции, получив подтверждение, которого
+    на деле нет. Здесь та же работа уже разложена: какая статья к какой дате.
+
+    Возвращается пустая строка, если раскладывать нечего: список из одной
+    группы без второй ничего не добавляет к общему указанию, а лишняя строка
+    в чек-листе стоит внимания читающего.
+    """
+    substantive: list[str] = []
+    procedural: list[str] = []
+    for finding in findings:
+        reference = finding.reference.strip()
+        if not reference:
+            continue
+        bucket = (
+            procedural if kind_of_act(finding.act) is NormKind.PROCEDURAL else substantive
+        )
+        if reference not in bucket:
+            bucket.append(reference)
+
+    if not substantive or not procedural:
+        return ""
+
+    when = (
+        f"на {relationship_date.strftime('%d.%m.%Y')}"
+        if relationship_date is not None
+        else "на дату возникновения правоотношения"
+    )
+    return (
+        f"{SPLIT_NOTE_PREFIX} {', '.join(substantive)} — {when}; "
+        f"{', '.join(procedural)} — на дату подачи."
+    )
+
+
 @dataclass(slots=True)
 class ReleaseReport:
     citations: CitationAudit
@@ -68,6 +112,9 @@ class ReleaseReport:
             note = law_verification_note(self.relationship_date)
             if note not in notes:
                 notes.append(note)
+            split = _citation_split_note(self.citations.findings, self.relationship_date)
+            if split and split not in notes:
+                notes.append(split)
         for finding in self.citations.notes():
             if finding not in notes:
                 notes.append(finding)

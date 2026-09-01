@@ -149,6 +149,20 @@ def test_law_verification_item_states_the_corpus_provenance() -> None:
         assert "не проводилась" in note
 
 
+def test_a_reference_with_a_part_reads_as_russian() -> None:
+    """«часть 1 статьи 272», а не «часть 1 статья 272».
+
+    Ссылка уходит юристу в замечания к документу и в чек-лист сверки. Ошибка
+    в склонении там читается как небрежность ко всему остальному, что стоит
+    в том же списке, — а стоят там утверждения о применимом праве.
+    """
+    audit = audit_citations("Обязательство исполняется согласно части 1 статьи 272 ГК РК.")
+
+    references = [finding.reference for finding in audit.findings]
+    assert "часть 1 статьи 272 ГК РК" in references
+    assert not any("статья 272" in item for item in references)
+
+
 def test_document_without_citations_gets_no_law_item() -> None:
     report = review_document("Стороны согласовали порядок приёмки услуг в Приложении № 1.")
     assert not report.cites_law

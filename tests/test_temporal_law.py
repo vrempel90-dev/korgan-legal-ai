@@ -18,6 +18,7 @@ from korgan.temporal_law import (
     NormVersion,
     check_applicable_law,
     check_norm,
+    kind_of_act,
     relationship_date_in_text,
 )
 
@@ -254,6 +255,56 @@ def test_a_document_without_a_contract_date_gets_the_general_wording() -> None:
 
     assert "дату возникновения спорного правоотношения" in note
     assert not any(char.isdigit() for char in note.split("(")[0].replace("353", ""))
+
+
+def test_the_checklist_splits_the_articles_by_the_date_each_is_checked_against() -> None:
+    """Материальные и процессуальные статьи сверяются на разные даты.
+
+    Общее указание оставляло это решение читающему, а решение неочевидное:
+    в тексте иска статья 353 ГК и статья 148 ГПК стоят рядом и выглядят
+    одинаково. Сверить их на одну дату — значит для одной из них получить
+    подтверждение не той редакции, причём выглядящее полноценным.
+    """
+    from korgan.document_release import SPLIT_NOTE_PREFIX, review_document
+
+    report = review_document(
+        "По договору поставки № 12 от 10 мая 2019 года ответчик обязался оплатить товар. "
+        "Требование основано на статье 353 ГК РК. "
+        "Иск подаётся по правилам статьи 148 ГПК РК."
+    )
+    note = next(item for item in report.checklist() if item.startswith(SPLIT_NOTE_PREFIX))
+
+    substantive, procedural = note.split(";")
+    assert "353" in substantive and "10.05.2019" in substantive
+    assert "148" in procedural and "на дату подачи" in procedural
+    # Процессуальная статья не должна попасть в группу с датой договора:
+    # её редакция определяется днём подачи, и сверка на 2019 год неверна.
+    assert "148" not in substantive
+
+
+def test_a_document_citing_only_one_kind_of_norm_gets_no_extra_line() -> None:
+    """Разбивка на группы имеет смысл, только если групп две.
+
+    Список из одной группы повторяет общее указание другими словами. Лишняя
+    строка в чек-листе стоит внимания читающего, а внимание здесь — ресурс:
+    чек-лист, который длиннее нужного, начинают просматривать по диагонали.
+    """
+    from korgan.document_release import SPLIT_NOTE_PREFIX, review_document
+
+    report = review_document(
+        "Договор поставки от 10 мая 2019 года. Требование основано на статье 353 ГК РК."
+    )
+
+    assert not any(item.startswith(SPLIT_NOTE_PREFIX) for item in report.checklist())
+
+
+def test_an_unknown_act_is_treated_as_substantive() -> None:
+    """Ошибка в эту сторону велит сверить норму на более раннюю дату — лишняя
+    работа. Ошибка в другую молча подтвердила бы сегодняшнюю редакцию для
+    старого договора, и это уже неверное применимое право."""
+    assert kind_of_act("Закон РК «О товариществах»") is NormKind.SUBSTANTIVE
+    assert kind_of_act("ГК РК") is NormKind.SUBSTANTIVE
+    assert kind_of_act("ГПК РК") is NormKind.PROCEDURAL
 
 
 def test_a_birth_date_is_not_mistaken_for_the_relationship_date() -> None:

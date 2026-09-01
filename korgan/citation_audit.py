@@ -117,7 +117,12 @@ class ProvisionReference:
     part: str = ""
 
     def label(self) -> str:
-        return f"{'часть ' + self.part + ' ' if self.part else ''}статья {self.article} {self.act}".strip()
+        # «часть 1 статьи 272», а не «часть 1 статья 272»: часть — часть чего,
+        # и родительный падеж здесь обязателен. Ссылка уходит юристу в чек-лист
+        # и в замечания к документу, где ошибка в склонении читается как небрежность
+        # ко всему остальному, что в этом же списке написано.
+        part = f"часть {self.part} статьи" if self.part else "статья"
+        return f"{part} {self.article} {self.act}".strip()
 
     def genitive(self) -> str:
         return f"{'части ' + self.part + ' ' if self.part else ''}статьи {self.article} {self.act}".strip()
@@ -337,7 +342,7 @@ def audit_citations(
             continue
         seen.add(signature)
 
-        reference = f"{'часть ' + part + ' ' if part else ''}статья {article} {act}"
+        reference = ProvisionReference(act=act, article=article, part=part).label()
 
         # Live source-bound verification is more current than the static cache
         # and is scoped to this exact document.
