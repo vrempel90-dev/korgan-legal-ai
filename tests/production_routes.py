@@ -72,6 +72,7 @@ def owner(path: str, method: str) -> str:
 # сопровождаться объяснением в коммите.
 EXPECTED_OWNERS: dict[tuple[str, str], str] = {
     ("/health", "GET"): "korgan.miniapp_api_v2.health",
+    ("/miniapp/consent", "GET"): "korgan.miniapp_consent_status.get_consent_status",
     ("/miniapp/cases", "POST"): "korgan.miniapp_api_v2.create_case",
     ("/miniapp/cases/{case_id}/materials", "POST"): "korgan.miniapp_api_v2.upload_material",
     ("/miniapp/cases/{case_id}/document", "GET"): "korgan.miniapp_api_v2.get_document",

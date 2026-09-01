@@ -10,9 +10,11 @@ from korgan.miniapp_payment_idempotency import app
 # consultation payments and document idempotency.
 from korgan import miniapp_manual_payment_admin as _miniapp_manual_payment_admin  # noqa: F401
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
+from korgan import miniapp_consent_status as _miniapp_consent_status
 from korgan import miniapp_document_access as _miniapp_document_access
 from korgan import miniapp_qr_analytics as _miniapp_qr_analytics
 
+app.include_router(_miniapp_consent_status.router)
 app.include_router(_miniapp_document_access.router)
 app.include_router(_miniapp_qr_analytics.router)
 

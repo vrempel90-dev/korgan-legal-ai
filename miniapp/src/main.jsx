@@ -11,13 +11,14 @@ import {
 import './styles.css';
 import { isBackendConnected, korganApi } from './korganApi';
 import {
-  loadState, saveDraft, setLanguage as persistLanguage, acceptConsent,
+  loadState, saveDraft, setLanguage as persistLanguage,
   clearLocalCaseData, clearAllLocalData
 } from './store';
 import { getTelegramUser, getTelegramWebApp, initTelegram, haptic } from './telegram';
 import { PERSONAL_LAWYER_URL, personalLawyerCopy } from './personalLawyer';
 import { deliverDocument, openSignedDocument } from './documentDelivery';
 import { startDocumentPaymentPolling } from './documentPaymentPolling';
+import { resolveConsent } from './consentAuthority';
 
 const TERMS_VERSION = '2026-08-16-v1';
 const WHATSAPP_URL = 'https://wa.me/77005000553';
@@ -89,7 +90,7 @@ function App() {
   const initial = loadState();
   const [screen, setScreen] = useState('home');
   const [language, setLanguage] = useState(initial.language || 'ru');
-  const [consent, setConsent] = useState(Boolean(initial.consentAccepted));
+  const [consent, setConsent] = useState(null);
   const [connection, setConnection] = useState('checking');
   const [runtimeInfo, setRuntimeInfo] = useState(null);
   const [pricing, setPricing] = useState(null);
@@ -120,19 +121,28 @@ function App() {
   };
 
   const boot = async () => {
-    if (!consent || !isBackendConnected()) { setConnection('down'); return; }
+    if (!isBackendConnected()) { setConnection('down'); return; }
     setConnection('checking'); setNotice('');
     try {
-      const health = await korganApi.health();
-      await korganApi.acceptConsent(TERMS_VERSION);
+      const [health, serverConsent] = await Promise.all([
+        korganApi.health(),
+        korganApi.consentStatus(),
+      ]);
+      const decision = resolveConsent(serverConsent, TERMS_VERSION);
+      setRuntimeInfo(health);
+      if (!decision.accepted) {
+        setConsent(false); setCases([]); setPricing(null); setConnection('ok');
+        return;
+      }
       const [caseResult, priceResult] = await Promise.all([korganApi.listCases(), korganApi.pricing()]);
-      setRuntimeInfo(health); setPricing(priceResult); setCases(caseResult.cases || []); setConnection('ok');
-    } catch (error) { setConnection('down'); setNotice(error?.message || t.down); }
+      if (consent !== true) setConsent(true);
+      setPricing(priceResult); setCases(caseResult.cases || []); setConnection('ok');
+    } catch (error) { setConsent(false); setConnection('down'); setNotice(error?.message || t.down); }
   };
 
-  useEffect(() => { initTelegram(); setTelegramUser(getTelegramUser()); }, []);
+  useEffect(() => { initTelegram(); setTelegramUser(getTelegramUser()); boot(); }, []);
   useEffect(() => { if (!activeCase) resetChat(); }, [language]);
-  useEffect(() => { if (consent) boot(); }, [consent]);
+  useEffect(() => { if (consent === true) boot(); }, [consent]);
   useEffect(() => {
     if (screen !== 'doc-payment' || docPayment?.status !== 'awaiting_admin' || !docPayment?.order_id) return undefined;
     return startDocumentPaymentPolling({
@@ -154,7 +164,7 @@ function App() {
 
   const acceptTerms = async () => {
     setBusy(true); setNotice('');
-    try { await korganApi.acceptConsent(TERMS_VERSION); acceptConsent(TERMS_VERSION); setConsent(true); }
+    try { await korganApi.acceptConsent(TERMS_VERSION); setConsent(true); }
     catch (error) { setNotice(error?.message || t.down); }
     finally { setBusy(false); }
   };
@@ -298,6 +308,8 @@ function App() {
   </nav>;
   const ConnectionBanner = () => connection === 'down' ? <div className="connection-banner error-banner"><WifiOff size={18}/><div><strong>{t.systemProblem}</strong><small>{t.down}</small></div><button onClick={boot}><RefreshCw size={17}/>{t.retry}</button></div> : null;
   const Sources = ({ items = [] }) => !items.length ? null : <div className="source-list"><span>{t.sources}</span>{items.map((source, i) => { const url = safeUrl(source); return url ? <a key={`${source}-${i}`} href={url} target="_blank" rel="noreferrer"><Link2 size={13}/>{sourceLabel(url)}<ExternalLink size={12}/></a> : <span className="source-chip" key={`${source}-${i}`}><Link2 size={13}/>{source}</span>; })}</div>;
+
+  if (consent === null) return <div className="app-shell consent-shell"><main className="page consent-page"><div className="success-ring preliminary-ring"><LoaderCircle className="spin" size={38}/></div><h1>{t.connecting}</h1>{notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}</main></div>;
 
   if (!consent) return <div className="app-shell consent-shell"><main className="page consent-page">
     <div className="brand-mark large"><Scale size={28}/></div><div className="language-switch"><button className={language === 'ru' ? 'active' : ''} onClick={() => switchLanguage('ru')}>RU</button><button className={language === 'kk' ? 'active' : ''} onClick={() => switchLanguage('kk')}>KK</button></div>

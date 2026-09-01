@@ -61,6 +61,7 @@ export const korganApi = {
     ]);
     return requireProfessionalRuntime(health, parity);
   },
+  consentStatus: () => request('/miniapp/consent'),
   pricing: () => request('/miniapp/pricing'),
   consultation: (message, caseId, language = 'ru') => request('/miniapp/consultation', {
     method: 'POST',
