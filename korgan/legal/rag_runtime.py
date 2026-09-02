@@ -29,11 +29,19 @@ def start_official_corpus_task() -> asyncio.Task[None] | None:
     return asyncio.create_task(corpus_refresh_loop(), name="korgan-corpus-refresh")
 
 
-def start_legal_rag_tasks() -> list[asyncio.Task[None]]:
+def start_legal_rag_tasks(*, include_official: bool = True) -> list[asyncio.Task[None]]:
+    """Start retrieval background work once for the owning runtime.
+
+    Mini App production already owns the official Adilet/ZAN refresh lifecycle
+    in ``miniapp_api_v3``. Its outer ASGI wrapper therefore starts only the
+    broad upstream KZ bootstrap here. Telegram/standalone runtimes keep the
+    default and start both tasks.
+    """
     tasks: list[asyncio.Task[None]] = []
-    official = start_official_corpus_task()
-    if official is not None:
-        tasks.append(official)
+    if include_official:
+        official = start_official_corpus_task()
+        if official is not None:
+            tasks.append(official)
     upstream = start_upstream_rag_task()
     if upstream is not None:
         tasks.append(upstream)
@@ -48,17 +56,22 @@ async def stop_legal_rag_tasks(tasks: list[asyncio.Task[None]]) -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-def install_rag_lifespan(app: Any) -> None:
-    """Attach official refresh + broad upstream KZ bootstrap to an ASGI app once."""
+def install_rag_lifespan(app: Any, *, include_official: bool = True) -> None:
+    """Attach legal retrieval bootstrap to an ASGI app once.
+
+    ``include_official=False`` is used by the production Mini App because its
+    inner v3 runtime already owns exactly one official refresh loop.
+    """
     if getattr(app, _RUNTIME_ATTR, False):
         return
     tasks: list[asyncio.Task[None]] = []
 
     async def _startup() -> None:
-        tasks.extend(start_legal_rag_tasks())
+        tasks.extend(start_legal_rag_tasks(include_official=include_official))
         state = upstream_rag_status()
         LOGGER.info(
-            "KORGAN_RAG_START official_autoload=%s upstream_ready=%s upstream_rows=%d",
+            "KORGAN_RAG_START official_owner=%s official_autoload=%s upstream_ready=%s upstream_rows=%d",
+            "rag_runtime" if include_official else "existing-runtime",
             official_autoload_enabled(),
             state.ready,
             state.rows,
