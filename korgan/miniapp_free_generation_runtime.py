@@ -18,6 +18,16 @@ app = generation_api.app
 core = generation_api.core
 settings = generation_api.settings
 
+# Keep immutable references to the paid handlers before free mode replaces the
+# public route objects. Runtime dispatch below means import order can never turn
+# a paid request into a free-job request (or the reverse) in a long-lived
+# process/test composition.
+_PAID_GENERATE = generation_api.generate_document_job
+_PAID_STATUS = generation_api.generation_status
+_PAID_CASE_STATUS = generation_api.case_generation_status
+_PAID_RETRY = generation_api.retry_generation
+_PAID_REQUIRE_JOB = paid_jobs.require_job
+
 _POOL: asyncpg.Pool | None = None
 
 _SCHEMA = """
@@ -184,6 +194,12 @@ async def _require_free_job(job_id: str, *, user_key: str) -> FreeGenerationJob:
     if row is None:
         raise HTTPException(status_code=404, detail="Задача подготовки документа не найдена")
     return _from_row(row)
+
+
+async def _require_job_dispatch(job_id: str, *, user_key: str):
+    if settings.payments_enabled:
+        return await _PAID_REQUIRE_JOB(job_id, user_key=user_key)
+    return await _require_free_job(job_id, user_key=user_key)
 
 
 async def _latest_for_case(*, user_key: str, case_id: str) -> FreeGenerationJob | None:
@@ -367,9 +383,11 @@ def _install_free_scheduler() -> None:
 if not settings.payments_enabled:
     add_lifespan(app, startup=_startup, shutdown=_shutdown)
 
-    # Free mode must use the same asynchronous contract as paid mode. Payment
-    # decides whether generation is allowed; it must never decide whether the
-    # client receives a durable job/progress state.
+    # One route surface serves both modes. The import-time mode decides whether
+    # free durability infrastructure is installed, but every request re-checks
+    # the current mode before touching a free or paid store. This makes the
+    # composition safe when settings are monkeypatched by integration tests and
+    # avoids import-order state leaks in long-lived ASGI processes.
     generation_api._drop("/miniapp/documents/generate", "POST")
     generation_api._drop("/miniapp/documents/generation/{job_id}", "GET")
     generation_api._drop("/miniapp/cases/{case_id}/generation", "GET")
@@ -380,6 +398,8 @@ if not settings.payments_enabled:
         payload: core.GenerateRequest,
         x_telegram_init_data: str = Header(default=""),
     ) -> dict[str, Any]:
+        if settings.payments_enabled:
+            return await _PAID_GENERATE(payload, x_telegram_init_data=x_telegram_init_data)
         identity, state, case, user_key, scope, document_type, language = (
             await generation_api._generation_scope(payload, x_telegram_init_data)
         )
@@ -416,6 +436,8 @@ if not settings.payments_enabled:
         job_id: str,
         x_telegram_init_data: str = Header(default=""),
     ) -> dict[str, Any]:
+        if settings.payments_enabled:
+            return await _PAID_STATUS(job_id, x_telegram_init_data=x_telegram_init_data)
         identity = core.legacy._identity(x_telegram_init_data)
         state = await core.legacy._require_consent(identity)
         user_key = core.store.user_key(identity)
@@ -430,6 +452,8 @@ if not settings.payments_enabled:
         case_id: str,
         x_telegram_init_data: str = Header(default=""),
     ) -> dict[str, Any]:
+        if settings.payments_enabled:
+            return await _PAID_CASE_STATUS(case_id, x_telegram_init_data=x_telegram_init_data)
         identity = core.legacy._identity(x_telegram_init_data)
         state = await core.legacy._require_consent(identity)
         if case_id not in (state.get("cases") or {}):
@@ -448,6 +472,8 @@ if not settings.payments_enabled:
         job_id: str,
         x_telegram_init_data: str = Header(default=""),
     ) -> dict[str, Any]:
+        if settings.payments_enabled:
+            return await _PAID_RETRY(job_id, x_telegram_init_data=x_telegram_init_data)
         identity = core.legacy._identity(x_telegram_init_data)
         state = await core.legacy._require_consent(identity)
         user_key = core.store.user_key(identity)
@@ -480,6 +506,7 @@ if not settings.payments_enabled:
         }
 
     # Case activity may already be imported by another ASGI/test composition.
-    # Keep it outermost and swap only its scheduler delegate.
+    # Keep it outermost and swap only its scheduler delegate. Its job reloader
+    # also dispatches dynamically so paid tests/runtime never query the free DB.
     _install_free_scheduler()
-    paid_jobs.require_job = _require_free_job
+    paid_jobs.require_job = _require_job_dispatch
