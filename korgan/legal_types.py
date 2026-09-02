@@ -108,6 +108,7 @@ class ClaimDraft:
     # оставленный в документе номер статьи связан здесь с source_hash записи
     # корпуса, которая его подтвердила. Пустой словарь означает, что проверка
     # ссылок по этому черновику не выполнялась, а не что ссылок нет.
+    citation_authority: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
