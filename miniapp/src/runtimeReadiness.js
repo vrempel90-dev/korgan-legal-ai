@@ -3,13 +3,27 @@
  *
  * Проверять здесь нужно то, от чего зависит юридический результат: какой
  * движок отвечает, из каких сервисов собрана цепочка, какое целевое качество,
- * остаётся ли предварительный фолбэк и сверяет ли платёж человек. Номер версии
- * ни одного из этих свойств не выражает: пока он сверялся на равенство,
- * повышение версии на бэкенде выводило приложение из строя целиком.
+ * остаётся ли предварительный фолбэк и существует ли подтверждённый путь
+ * проверки оплаты. Номер версии ни одного из этих свойств не выражает.
  */
 
 function isFilled(value) {
   return typeof value === 'string' && value.trim() !== '';
+}
+
+function hasVerifiedDocumentPaymentPath(parity) {
+  if (!parity?.document_payments_enabled) return true;
+
+  // Legacy Kaspi flow: платёж подтверждает администратор.
+  if (parity?.document_manual_confirmation === true) return true;
+
+  // Production Tole flow: банковский факт подтверждает провайдер, а backend
+  // дополнительно сверяет durable status, сумму и валюту. Не разрешаем
+  // неизвестный automatic provider и не считаем Tole готовым без конфигурации.
+  return parity?.document_payment_provider === 'tole'
+    && parity?.document_manual_confirmation === false
+    && parity?.automatic_payment_confirmation === true
+    && parity?.tole_configured === true;
 }
 
 /** Готовность юридического рантайма; иначе — исключение. */
@@ -30,7 +44,7 @@ export function requireProfessionalRuntime(health, parity) {
     || parity?.preliminary_fallback !== true
     || typeof parity?.consultation_limit_enabled !== 'boolean'
     || typeof parity?.document_payments_enabled !== 'boolean'
-    || (parity?.document_payments_enabled && parity?.document_manual_confirmation !== true)
+    || !hasVerifiedDocumentPaymentPath(parity)
   ) {
     throw new Error('KORGAN professional legal runtime is not ready');
   }
