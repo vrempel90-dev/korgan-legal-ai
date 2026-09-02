@@ -70,7 +70,43 @@ function renderTimeline(page, progress) {
   return root;
 }
 
-function sync() {
+function navButtonByText(buttons, patterns) {
+  return buttons.find(button => patterns.some(pattern => pattern.test(String(button.textContent || '').trim()))) || null;
+}
+
+// Persistent navigation contains only Home / Help / Profile. Cases, document
+// preparation and AI-lawyer are intentionally launched from Home and their old
+// nav buttons are hidden by CSS. React may therefore mark a hidden button as
+// active while a workflow is open, leaving all three visible tabs looking
+// inactive. Keep the visible global destination truthful without changing the
+// current screen or interrupting the generation job.
+function syncVisibleNavigation() {
+  const nav = document.querySelector('.bottom-nav');
+  if (!nav) return;
+
+  nav.style.setProperty('pointer-events', 'auto', 'important');
+  nav.style.setProperty('z-index', '60', 'important');
+
+  const buttons = [...nav.querySelectorAll(':scope > button')];
+  if (!buttons.length) return;
+  for (const button of buttons) {
+    button.style.setProperty('pointer-events', 'auto', 'important');
+    button.style.setProperty('touch-action', 'manipulation');
+  }
+
+  const title = String(document.querySelector('.subbar > strong')?.textContent || '').trim();
+  const help = navButtonByText(buttons, [/^Помощь$/i, /^Көмек$/i]);
+  const profile = navButtonByText(buttons, [/^Профиль$/i]);
+  const home = navButtonByText(buttons, [/^Главная$/i, /^Басты$/i]) || buttons[0];
+
+  let target = home;
+  if (/^(Помощь|Көмек)$/i.test(title)) target = help || home;
+  else if (/^Профиль$/i.test(title)) target = profile || home;
+
+  for (const button of buttons) button.classList.toggle('active', button === target);
+}
+
+function renderGenerationTimeline() {
   const page = document.querySelector('main.ready-page');
   const progress = page?.querySelector('[role="progressbar"]');
   const root = document.getElementById(ROOT_ID);
@@ -83,8 +119,22 @@ function sync() {
   renderTimeline(page, progress);
 }
 
+function sync() {
+  renderGenerationTimeline();
+  syncVisibleNavigation();
+}
+
+// Give immediate visual feedback on pointer-down. React still owns navigation;
+// this only prevents a valid tap from looking ignored before the next render.
+document.addEventListener('pointerdown', event => {
+  const button = event.target.closest?.('.bottom-nav > button');
+  if (!button) return;
+  const nav = button.closest('.bottom-nav');
+  for (const item of nav.querySelectorAll(':scope > button')) item.classList.toggle('active', item === button);
+}, true);
+
 const observer = new MutationObserver(sync);
-observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-valuenow', 'aria-label'] });
+observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-valuenow', 'aria-label', 'class'] });
 window.addEventListener('pageshow', sync);
 window.setInterval(sync, 700);
 sync();
