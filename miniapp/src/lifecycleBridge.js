@@ -2,7 +2,7 @@ import {
   createLifecycleNotificationLedger,
   generationEvent,
 } from './lifecycleNotifications.js';
-import { playLifecycleFeedback } from './lifecycleFeedback.js';
+import { playLifecycleFeedback, unlockLifecycleAudio } from './lifecycleFeedback.js';
 
 const EVENT = 'korgan:generation-lifecycle';
 
@@ -14,6 +14,12 @@ const EVENT = 'korgan:generation-lifecycle';
 export function installLifecycleBridge({ target = globalThis.window, storage = globalThis.localStorage } = {}) {
   if (!target || typeof target.addEventListener !== 'function') return () => {};
   const ledger = createLifecycleNotificationLedger({ storage });
+  let audioUnlocked = false;
+
+  const unlock = () => {
+    if (audioUnlocked) return;
+    void unlockLifecycleAudio().then(ok => { audioUnlocked = ok; });
+  };
 
   const listener = event => {
     const detail = event?.detail || {};
@@ -25,8 +31,16 @@ export function installLifecycleBridge({ target = globalThis.window, storage = g
     void playLifecycleFeedback(eventType);
   };
 
+  // Первый обычный жест пользователя разблокирует WebAudio заранее. Никаких
+  // дополнительных кнопок или изменений дизайна для этого не требуется.
+  target.addEventListener('pointerdown', unlock, { passive: true });
+  target.addEventListener('keydown', unlock, { passive: true });
   target.addEventListener(EVENT, listener);
-  return () => target.removeEventListener(EVENT, listener);
+  return () => {
+    target.removeEventListener('pointerdown', unlock);
+    target.removeEventListener('keydown', unlock);
+    target.removeEventListener(EVENT, listener);
+  };
 }
 
 installLifecycleBridge();
