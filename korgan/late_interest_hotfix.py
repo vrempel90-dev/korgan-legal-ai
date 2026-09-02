@@ -46,6 +46,8 @@ from korgan.penalty_engine import (
     RateType,
     calculate_penalty,
 )
+from korgan.claim_calculation_contract import ClaimCalculation
+from korgan.claim_calculator import strip_unresolved_placeholders, try_calculator_authority
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.state_duty_final_hotfix import (
     ProductionOpenAILegalService as _BaseProductionOpenAILegalService,
@@ -145,6 +147,12 @@ _PAYMENT_WITHIN_FROM_RE = re.compile(
     rf"[^.\n]{{0,80}}?(?:с|от)\s+(?P<date>{_DATE_TOKEN})",
     re.IGNORECASE,
 )
+
+#: Префикс внутренних сообщений детерминированного калькулятора. Он же служит
+#: признаком, по которому release-проверки отличают дефицит входных данных от
+#: правовой оговорки: первое чинится запросом документа у клиента, второе —
+#: работой юриста.
+CALCULATOR_NOTE_PREFIX = "Детерминированный расчёт: "
 
 ARTICLE_353_MISSING_NOTE = (
     "Клиент заявил требование о неустойке за просрочку, но статья 353 ГК РК "
@@ -962,6 +970,44 @@ def _apply_contractual_penalty(
     return True
 
 
+def _drop_unresolved_placeholders(draft: ClaimDraft) -> None:
+    """Снять суммы-плейсхолдеры, которые расчёт не заполнил.
+
+    Модель обозначает денежную сумму токеном и не пишет её сама. Токен без
+    подстановки означает, что расчёт этого поля не состоялся: строка требования
+    снимается, а причина уходит юристу. Проверка стоит на каждом выходе, потому
+    что незаполненный токен в судебном тексте одинаково недопустим независимо
+    от того, какая ветка расчёта отработала.
+    """
+    removed = strip_unresolved_placeholders(draft)
+    if not removed:
+        return
+    draft.status = VerificationStatus.NEEDS_VERIFICATION
+    for message in removed:
+        note = f"{CALCULATOR_NOTE_PREFIX}{message}"
+        if note not in draft.verification_notes:
+            draft.verification_notes.append(note)
+
+
+def _record_calculator_result(draft: ClaimDraft, calculation: ClaimCalculation) -> None:
+    """Сохранить структурированный расчёт и вынести дефицит данных юристу.
+
+    Сообщение о нехватке данных идёт в ``verification_notes`` — внутренний
+    канал QA, который не печатается в судебном теле документа. В судебный текст
+    недостающее число не попадает вообще: поле остаётся незаполненным, а
+    объяснение читает человек, который решает, чего запросить у клиента.
+    """
+    draft.calculation_result = calculation.as_dict()
+    messages: list[str] = []
+    for field in calculation.insufficient_fields():
+        for reason in field.missing:
+            messages.append(f"{CALCULATOR_NOTE_PREFIX}{field.key}: {reason}")
+    messages.extend(f"{CALCULATOR_NOTE_PREFIX}{note}" for note in calculation.lawyer_notes)
+    for message in messages:
+        if message not in draft.verification_notes:
+            draft.verification_notes.append(message)
+
+
 def _apply_verified_penalty(
     case_context: str,
     research: LegalResearch,
@@ -969,9 +1015,48 @@ def _apply_verified_penalty(
     *,
     filing_date: date,
 ) -> None:
+    """Посчитать денежные требования и снять всё, что осталось непосчитанным.
+
+    Обёртка существует ради второго действия. Внутренняя функция выходит из
+    десятка разных веток — договорная неустойка, статья 353, отказ считать, —
+    и страховка от незаполненного плейсхолдера должна стоять на каждой из них.
+    Один выход надёжнее десяти одинаковых вызовов: следующая добавленная ветка
+    получит его не по внимательности автора, а по устройству кода.
+    """
+    _apply_verified_penalty_inner(case_context, research, draft, filing_date=filing_date)
+    _drop_unresolved_placeholders(draft)
+
+
+def _apply_verified_penalty_inner(
+    case_context: str,
+    research: LegalResearch,
+    draft: ClaimDraft,
+    *,
+    filing_date: date,
+) -> None:
     requested = _explicit_penalty_requested(case_context)
+
+    # Неустойку, которой клиент не просил, документ не упоминает нигде: ни в
+    # требованиях, ни в фактах, ни в приложениях, ни в заголовке. Зачистка идёт
+    # до расчёта, потому что расчёт не должен наследовать чужую позицию — он
+    # считает то, что заявлено, а не то, что придумала модель.
     if not requested:
         _strip_penalty_everywhere(draft)
+
+    # Детерминированный калькулятор идёт первым. Он берёт исходные величины из
+    # материалов дела, а не из просительной части черновика: прежний путь читал
+    # сумму основного долга из текста, который написала модель, и дальше считал
+    # верную формулу от неверной базы. Авторство берётся целиком или не берётся
+    # вовсе — половина чисел из расчёта и половина из прозы дают ровно то
+    # расхождение между разделами, которое первым замечает суд.
+    outcome = try_calculator_authority(
+        case_context, draft, filing_date=filing_date, penalty_claimed=requested
+    )
+    if outcome is not None:
+        _record_calculator_result(draft, outcome.calculation)
+        return
+
+    if not requested:
         _recompute_claim_price_and_duty(draft, case_context)
         return
 
