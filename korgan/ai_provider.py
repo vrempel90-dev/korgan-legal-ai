@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from korgan.ai_cost import METER
@@ -27,11 +28,28 @@ LOGGER = logging.getLogger(__name__)
 #: здесь один раз, чтобы сообщение об отказе указывало, что именно заполнить, а
 #: не оставляло дежурного искать это по коду.
 OPENAI_KEY_VARIABLE = "OPENAI_API_KEY"
+ANTHROPIC_WORKSPACE_VARIABLE = "ANTHROPIC_WORKSPACE_ID"
 
 FALLBACK_UNCONFIGURED = (
     f"Запасной провайдер OpenAI не настроен: переменная {OPENAI_KEY_VARIABLE} "
     "пуста. Заполните её значением ключа в переменных сервиса Railway."
 )
+
+
+def anthropic_workspace_headers(workspace_id: str | None = None) -> dict[str, str]:
+    """Заголовок workspace для identity-linked Anthropic API key.
+
+    Персональные/service-account ключи Anthropic могут иметь доступ к нескольким
+    workspace. Такой ключ без ``anthropic-workspace-id`` отвечает 400, хотя сам
+    API key валиден. Одно-workspace ключам заголовок не требуется, поэтому
+    пустая переменная сохраняет прежнее поведение.
+
+    Workspace ID не логируется и не смешивается с API key: это отдельная
+    настройка транспорта, не часть юридического pipeline.
+    """
+    value = os.getenv(ANTHROPIC_WORKSPACE_VARIABLE, "") if workspace_id is None else workspace_id
+    resolved = str(value or "").strip()
+    return {"anthropic-workspace-id": resolved} if resolved else {}
 
 
 def openai_configured(settings: Settings) -> bool:
@@ -190,7 +208,10 @@ def build_legal_client(settings: Settings) -> tuple[Any, str]:
         LOGGER.warning("KORGAN %s", FALLBACK_UNCONFIGURED)
 
     anthropic_client = AnthropicResponsesClient(
-        AsyncAnthropic(api_key=settings.anthropic_api_key),
+        AsyncAnthropic(
+            api_key=settings.anthropic_api_key,
+            default_headers=anthropic_workspace_headers(),
+        ),
         model_map=settings.anthropic_model_for,
         default_model=settings.anthropic_model,
         max_tokens=settings.anthropic_max_output_tokens,
