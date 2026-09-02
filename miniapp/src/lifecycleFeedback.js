@@ -5,6 +5,9 @@ const TONES = {
   failed: [220, 0.09],
 };
 
+let sharedAudioContext = null;
+let sharedAudioClass = null;
+
 function telegramFeedback(eventType, telegram = globalThis.window?.Telegram?.WebApp) {
   const haptic = telegram?.HapticFeedback;
   if (!haptic) return;
@@ -15,23 +18,51 @@ function telegramFeedback(eventType, telegram = globalThis.window?.Telegram?.Web
   } catch { /* haptics are best-effort */ }
 }
 
+function audioClass(value) {
+  return value || globalThis.AudioContext || globalThis.webkitAudioContext;
+}
+
+function getAudioContext(AudioContextClass) {
+  const Type = audioClass(AudioContextClass);
+  if (typeof Type !== 'function') return null;
+  if (!sharedAudioContext || sharedAudioClass !== Type || sharedAudioContext.state === 'closed') {
+    sharedAudioContext = new Type();
+    sharedAudioClass = Type;
+  }
+  return sharedAudioContext;
+}
+
 /**
- * Короткий синтезированный сигнал без внешних аудиофайлов. Браузер может
- * запретить звук до первого пользовательского жеста — это нормальный Telegram
- * WebView fallback, haptic при этом остаётся доступным.
+ * Telegram WebView, как и обычный браузер, разрешает отложенный звук только
+ * после пользовательского жеста. Bridge вызывает это на первом pointer/key
+ * event, поэтому сигнал готовности через минуты не упирается в autoplay block.
  */
+export async function unlockLifecycleAudio({ AudioContextClass } = {}) {
+  try {
+    const context = getAudioContext(AudioContextClass);
+    if (!context) return false;
+    if (context.state === 'suspended' && typeof context.resume === 'function') await context.resume();
+    return context.state !== 'suspended';
+  } catch {
+    return false;
+  }
+}
+
+/** Короткий ненавязчивый сигнал + Telegram haptic на реальный backend transition. */
 export async function playLifecycleFeedback(eventType, {
   telegram = globalThis.window?.Telegram?.WebApp,
-  AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext,
+  AudioContextClass,
 } = {}) {
   telegramFeedback(eventType, telegram);
   const tone = TONES[eventType];
-  if (!tone || typeof AudioContextClass !== 'function') return { sounded: false };
+  if (!tone) return { sounded: false };
 
-  let context;
   try {
-    context = new AudioContextClass();
+    const context = getAudioContext(AudioContextClass);
+    if (!context) return { sounded: false };
     if (context.state === 'suspended' && typeof context.resume === 'function') await context.resume();
+    if (context.state === 'suspended') return { sounded: false };
+
     const oscillator = context.createOscillator();
     const gain = context.createGain();
     oscillator.type = 'sine';
@@ -44,10 +75,8 @@ export async function playLifecycleFeedback(eventType, {
     gain.gain.exponentialRampToValueAtTime?.(0.0001, start + tone[1]);
     oscillator.start(start);
     oscillator.stop(start + tone[1]);
-    oscillator.addEventListener?.('ended', () => { context.close?.().catch?.(() => {}); }, { once: true });
     return { sounded: true };
   } catch {
-    try { await context?.close?.(); } catch {}
     return { sounded: false };
   }
 }
