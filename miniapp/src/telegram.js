@@ -1,3 +1,5 @@
+import { isVibrationEnabled } from './feedbackPreferences.js';
+
 export function getTelegramWebApp() {
   return window.Telegram?.WebApp ?? null;
 }
@@ -58,5 +60,6 @@ export function getTelegramUser() {
 }
 
 export function haptic() {
+  if (!isVibrationEnabled()) return;
   getTelegramWebApp()?.HapticFeedback?.impactOccurred?.('light');
 }
