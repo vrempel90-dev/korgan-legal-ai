@@ -19,7 +19,13 @@ class _Response(io.BytesIO):
         self.close()
 
 
-def _row(*, idx: int, jurisdiction: str = "KZ", lang: str = "ru") -> dict[str, object]:
+def _row(
+    *,
+    idx: int,
+    jurisdiction: str = "KZ",
+    lang: str = "ru",
+    url: str | None = None,
+) -> dict[str, object]:
     return {
         "id": f"{jurisdiction}-{idx}",
         "jurisdiction": jurisdiction,
@@ -29,28 +35,35 @@ def _row(*, idx: int, jurisdiction: str = "KZ", lang: str = "ru") -> dict[str, o
         "article_no": str(100 + idx),
         "article_title": f"Статья {100 + idx}. Исполнение обязательства",
         "text": "Обязательство должно исполняться надлежащим образом в соответствии с его условиями.",
-        "url": f"https://adilet.zan.kz/rus/docs/K940001000_#z{100 + idx}",
+        "url": url or f"https://adilet.zan.kz/rus/docs/K940001000_#z{100 + idx}",
     }
 
 
-def test_upstream_rows_are_isolated_from_official_act_ids(tmp_path: Path) -> None:
+def test_only_kazakhstan_official_rows_can_be_persisted(tmp_path: Path) -> None:
     db_path = tmp_path / "upstream.sqlite3"
     with LegalCorpus(db_path) as corpus:
         corpus.connection.executescript(upstream_rag._META_SCHEMA)
         assert upstream_rag._write_row(corpus.connection, _row(idx=1), loaded_at="2026-09-02")
         assert not upstream_rag._write_row(corpus.connection, _row(idx=2, jurisdiction="UZ"), loaded_at="2026-09-02")
         assert not upstream_rag._write_row(corpus.connection, _row(idx=3, lang="kk"), loaded_at="2026-09-02")
+        assert not upstream_rag._write_row(
+            corpus.connection,
+            _row(idx=4, url="https://lex.uz/docs/foreign-law"),
+            loaded_at="2026-09-02",
+        )
         corpus.connection.commit()
 
-        rows = corpus.connection.execute("SELECT act_id, article_no FROM provisions").fetchall()
+        rows = corpus.connection.execute("SELECT act_id, article_no, url FROM provisions").fetchall()
         assert len(rows) == 1
         assert str(rows[0]["act_id"]).startswith("RAGKZ_")
         assert rows[0]["article_no"] == "101"
+        assert str(rows[0]["url"]).startswith("https://adilet.zan.kz/rus/docs/")
 
 
-def test_sync_builds_pinned_kz_database_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sync_builds_strict_kz_only_database_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     lines = [json.dumps(_row(idx=i), ensure_ascii=False) for i in range(1, 4)]
     lines.append(json.dumps(_row(idx=9, jurisdiction="UZ"), ensure_ascii=False))
+    lines.append(json.dumps(_row(idx=10, url="https://lex.uz/docs/foreign-law"), ensure_ascii=False))
     payload = ("\n".join(lines) + "\n").encode("utf-8")
 
     monkeypatch.setattr(upstream_rag, "MIN_KZ_ROWS", 2)
@@ -61,6 +74,7 @@ def test_sync_builds_pinned_kz_database_atomically(tmp_path: Path, monkeypatch: 
 
     assert status.ready
     assert status.rows == 3
+    assert status.as_dict()["jurisdiction"] == "KZ"
     assert target.exists()
     assert not target.with_name(target.name + ".tmp").exists()
 
@@ -70,6 +84,11 @@ def test_sync_builds_pinned_kz_database_atomically(tmp_path: Path, monkeypatch: 
         assert corpus.count() == 3
         meta = upstream_rag._metadata(corpus)
         assert meta["commit"] == upstream_rag.UPSTREAM_COMMIT
+        assert meta["jurisdiction"] == "KZ"
+        assert meta["language"] == "ru"
+        assert meta["source_domain"] == "adilet.zan.kz"
+        assert meta["filter_mode"] == "strict-kz-only"
+        assert upstream_rag._database_is_kz_only(corpus)
     finally:
         corpus.close()
 
@@ -103,7 +122,7 @@ class _CorpusStub:
         self.closed = True
 
 
-def test_production_retrieval_fuses_official_and_upstream_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_production_retrieval_fuses_official_and_kz_only_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
     official = _CorpusStub([
         _provision("GK_RK:272", url="https://adilet.zan.kz/rus/docs/K940001000_#z272", article_no="272"),
     ])
