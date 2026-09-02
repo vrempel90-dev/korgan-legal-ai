@@ -97,3 +97,14 @@
 .home-page .hero .hero-copy > button[hidden] {
   display: none !important;
 }
+
+/* Bottom navigation is intentionally limited to the three global destinations.
+   Cases and AI lawyer stay available from the main screen, but are not persistent tabs. */
+.bottom-nav {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+.bottom-nav > button:nth-child(2),
+.bottom-nav > button:nth-child(3) {
+  display: none !important;
+}
