@@ -29,6 +29,7 @@ from typing import Any
 
 from korgan.article_authority import find_citations
 from korgan.legal_calc import parse_all_amounts_kzt
+from korgan import style_guide
 
 #: Единственная разрешённая служебная строка в отрендеренном документе —
 #: видимый QA-штамп в шапке. Он адресован клиенту, а не суду, и предусмотрен
@@ -458,8 +459,150 @@ def _check_amounts(draft: Any) -> list[LintFinding]:
     return findings
 
 
-def lint_claim_document(draft: Any) -> LintResult:
-    """Проверить собранный иск перед выдачей. PASS либо BLOCKED со списком нарушений."""
+
+# --------------------------------------------------------------------------
+# STYLE_GUIDE. Правила оформления, формализованные из STYLE_GUIDE.md
+# --------------------------------------------------------------------------
+
+
+def _style_finding(rule_id: str, location: str, message: str) -> LintFinding:
+    described = style_guide.rule(rule_id)
+    return LintFinding(
+        rule=f"style_guide:{rule_id}",
+        location=location,
+        message=f"{described.title}: {message}",
+        suggested_fix=described.fix,
+    )
+
+
+def _check_style_guide(draft: Any, *, case_context: str) -> list[LintFinding]:
+    findings: list[LintFinding] = []
+    findings.extend(_check_article_8_reference(draft))
+    findings.extend(_check_court_costs_request(draft))
+    findings.extend(_check_venue_rules(draft))
+    findings.extend(_check_party_requisites(draft, case_context=case_context))
+    findings.extend(_check_structural_sections(draft))
+    return findings
+
+
+def _check_article_8_reference(draft: Any) -> list[LintFinding]:
+    """SG-01: вступительная ссылка на статью 8 ГПК РК — только подтверждённая."""
+    authority = getattr(draft, "citation_authority", None)
+    trace = authority.get("traceability") or [] if isinstance(authority, dict) else []
+    verified = any(
+        isinstance(row, dict) and str(row.get("code")) == "ГПК РК" and str(row.get("article")) == "8"
+        for row in trace
+    )
+    for location, text in _body_lines(draft):
+        if style_guide.mentions_article_8_gpk(text) and not verified:
+            return [
+                _style_finding(
+                    "SG-01",
+                    location,
+                    "статья 8 ГПК РК названа без подтверждённой записи корпуса",
+                )
+            ]
+    return []
+
+
+def _check_court_costs_request(draft: Any) -> list[LintFinding]:
+    """SG-02: судебные расходы — самостоятельный пункт просительной части."""
+    result = getattr(draft, "calculation_result", None)
+    if not isinstance(result, dict) or _calculated(result, "state_duty") is None:
+        return []
+    requests = [str(item) for item in (getattr(draft, "requests", None) or [])]
+    if style_guide.has_separate_court_cost_request(requests):
+        return []
+    return [
+        _style_finding(
+            "SG-02",
+            "requests",
+            "госпошлина рассчитана, но отдельного требования о судебных расходах нет",
+        )
+    ]
+
+
+def _check_venue_rules(draft: Any) -> list[LintFinding]:
+    """SG-03: родовая и территориальная подсудность не смешиваются."""
+    findings: list[LintFinding] = []
+    for location, text in _body_lines(draft):
+        if style_guide.jurisdiction_mixes_venue_rules(text):
+            findings.append(
+                _style_finding(
+                    "SG-03",
+                    location,
+                    "статьи 27 и 29 ГПК РК названы в одном предложении без разделения "
+                    "на родовую и территориальную подсудность",
+                )
+            )
+    return findings
+
+
+def _check_party_requisites(draft: Any, *, case_context: str) -> list[LintFinding]:
+    """SG-04: реквизиты сторон настоящие, а не правдоподобные.
+
+    Номер, которого нет в материалах дела, в документ попасть не мог иначе как
+    от модели. Номер, не проходящий контрольную сумму, суд отклоняет первым же
+    действием, поэтому опечатка клиента — тоже основание не выпускать документ,
+    а вернуться к клиенту за уточнением.
+    """
+    findings: list[LintFinding] = []
+    context_numbers = set(style_guide.id_numbers_in(case_context)) if case_context else None
+
+    for role, label in (("claimant", "истец"), ("defendant", "ответчик")):
+        lines = [str(item) for item in (getattr(draft, role, None) or [])]
+        if not lines:
+            continue
+        joined = " ".join(lines)
+
+        for number in style_guide.id_numbers_in(joined):
+            if context_numbers is not None and number not in context_numbers:
+                findings.append(
+                    _style_finding(
+                        "SG-04",
+                        role,
+                        f"реквизит {number} ({label}) отсутствует в материалах дела",
+                    )
+                )
+                continue
+            if not style_guide.id_number_is_valid(number):
+                findings.append(
+                    _style_finding(
+                        "SG-04",
+                        role,
+                        f"номер {number} ({label}) не проходит контрольную сумму ИИН/БИН",
+                    )
+                )
+
+        if not style_guide.party_has_address(joined):
+            findings.append(
+                _style_finding("SG-04", role, f"в шапке нет адреса стороны ({label})")
+            )
+        if style_guide.party_is_legal_entity(joined) and not style_guide.party_has_bin(joined):
+            findings.append(
+                _style_finding("SG-04", role, f"юридическое лицо ({label}) указано без БИН")
+            )
+    return findings
+
+
+def _check_structural_sections(draft: Any) -> list[LintFinding]:
+    """SG-05: обязательные разделы — по структуре, а не по заголовку в тексте."""
+    result = getattr(draft, "calculation_result", None)
+    monetary = isinstance(result, dict) and _calculated(result, "claim_price") is not None
+    missing = style_guide.missing_structural_sections(draft, monetary=monetary)
+    return [
+        _style_finding("SG-05", section, f"обязательный раздел «{section}» пуст")
+        for section in missing
+    ]
+
+
+def lint_claim_document(draft: Any, *, case_context: str = "") -> LintResult:
+    """Проверить собранный иск перед выдачей. PASS либо BLOCKED со списком нарушений.
+
+    ``case_context`` — материалы дела. Без них проверка реквизитов сторон не
+    может отличить номер, пришедший от клиента, от номера, который назвала
+    модель, и ограничивается контрольной суммой.
+    """
     findings: list[LintFinding] = []
     findings.extend(_check_service_markers(draft))
     findings.extend(_check_placeholders(draft))
@@ -467,6 +610,7 @@ def lint_claim_document(draft: Any) -> LintResult:
     findings.extend(_check_articles(draft))
     findings.extend(_check_motions_against_attachments(draft))
     findings.extend(_check_amounts(draft))
+    findings.extend(_check_style_guide(draft, case_context=case_context))
 
     status = LintStatus.BLOCKED if findings else LintStatus.PASS
     return LintResult(status=status, findings=findings)

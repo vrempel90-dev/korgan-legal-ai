@@ -181,7 +181,7 @@ def _release_metadata(document_type: str, context: str, research: Any, draft: An
     # оценка качества допускает предварительную выдачу, а нарушение линтера —
     # нет, и смешивать два разных решения в одном числе нельзя.
     if document_type == "claim":
-        metadata["lint"] = lint_claim_document(draft).as_dict()
+        metadata["lint"] = lint_claim_document(draft, case_context=context).as_dict()
     return metadata
 
 
