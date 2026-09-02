@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from fastapi.middleware.cors import CORSMiddleware
 
 from korgan.miniapp_payment_idempotency import app
+from korgan import fast_professional_repair_guard as _fast_professional_repair_guard  # noqa: F401
 from korgan import miniapp_generation_api as _miniapp_generation_api  # noqa: F401
 from korgan import miniapp_free_generation_runtime as _miniapp_free_generation_runtime  # noqa: F401
 from korgan import miniapp_case_activity as _miniapp_case_activity  # noqa: F401
