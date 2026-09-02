@@ -3,22 +3,21 @@
 Модуль не меняет KORGAN UI и не вмешивается в юридическое ядро или оплату.
 Он подключается поверх уже существующего persisted generation runtime:
 
-* пишет понятные пользователю события дела в PostgreSQL;
+* пишет понятные пользователю события дела в PostgreSQL, когда хранилище доступно;
 * не дублирует одно и то же событие одного generation job;
 * после фактического ``succeeded`` отправляет короткое Telegram-уведомление;
 * предоставляет историю конкретного дела для экрана «Мои дела».
 
 Источник истины остаётся прежним: статус generation job и сохранённый документ.
-Уведомление никогда не переводит дело в READY само по себе.
+История — вспомогательный слой: её недоступность никогда не блокирует оплату,
+генерацию, READY или выдачу DOCX.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-from dataclasses import dataclass
 from typing import Any
 
 import asyncpg
@@ -73,47 +72,50 @@ _LABELS_KK = {
 }
 
 
-@dataclass(frozen=True)
-class CaseActivity:
-    id: int
-    case_id: str
-    job_id: str
-    event_type: str
-    progress: int
-    detail: str
-    notification_status: str
-    created_at: Any
-
-
-def _require_pool() -> asyncpg.Pool:
-    if _POOL is None:
-        raise RuntimeError("Mini App case activity store is not initialized")
-    return _POOL
-
-
 async def init_case_activity_store(database_url: str, *, enabled: bool) -> None:
+    """Подключить вспомогательное хранилище, не делая его startup-зависимостью.
+
+    Основной payment/generation runtime сам проверяет обязательный DATABASE_URL.
+    Этот слой намеренно слабее: локальный smoke, временный сбой отдельного пула
+    или миграции истории не должны останавливать выдачу оплаченного документа.
+    """
     global _POOL
-    if not enabled:
+    if not enabled or _POOL is not None:
         return
-    if not str(database_url or "").strip():
-        raise RuntimeError("PAYMENTS_ENABLED requires DATABASE_URL for case activity")
-    if _POOL is not None:
+    dsn = str(database_url or "").strip()
+    if not dsn:
+        LOGGER.warning("KORGAN case activity disabled: DATABASE_URL is empty")
         return
-    _POOL = await asyncpg.create_pool(
-        dsn=database_url,
-        min_size=1,
-        max_size=3,
-        command_timeout=30,
-    )
-    async with _POOL.acquire() as connection:
-        await connection.execute(_SCHEMA)
+
+    pool: asyncpg.Pool | None = None
+    try:
+        pool = await asyncpg.create_pool(
+            dsn=dsn,
+            min_size=1,
+            max_size=3,
+            command_timeout=30,
+        )
+        async with pool.acquire() as connection:
+            await connection.execute(_SCHEMA)
+    except Exception:
+        LOGGER.exception("KORGAN case activity store unavailable; core runtime continues")
+        if pool is not None:
+            try:
+                await pool.close()
+            except Exception:
+                LOGGER.warning("KORGAN case activity pool cleanup failed")
+        return
+    _POOL = pool
 
 
 async def close_case_activity_store() -> None:
     global _POOL
-    if _POOL is not None:
-        await _POOL.close()
-        _POOL = None
+    pool, _POOL = _POOL, None
+    if pool is not None:
+        try:
+            await pool.close()
+        except Exception:
+            LOGGER.exception("KORGAN case activity pool close failed")
 
 
 async def _startup() -> None:
@@ -142,25 +144,35 @@ async def record_case_activity(
     detail: str,
     notification_status: str = "not_applicable",
 ) -> bool:
-    """Записать событие один раз; ``True`` только для новой строки."""
-    if not settings.payments_enabled:
+    """Записать событие один раз; сбой истории не влияет на generation path."""
+    pool = _POOL
+    if not settings.payments_enabled or pool is None:
         return False
-    row = await _require_pool().fetchrow(
-        """
-        INSERT INTO korgan_miniapp_case_activity(
-            user_key, case_id, job_id, event_type, progress, detail, notification_status
-        ) VALUES($1,$2,$3,$4,$5,$6,$7)
-        ON CONFLICT (user_key, case_id, job_id, event_type) DO NOTHING
-        RETURNING id
-        """,
-        user_key,
-        case_id,
-        job_id,
-        event_type,
-        max(0, min(int(progress), 100)),
-        str(detail or "")[:500],
-        notification_status,
-    )
+    try:
+        row = await pool.fetchrow(
+            """
+            INSERT INTO korgan_miniapp_case_activity(
+                user_key, case_id, job_id, event_type, progress, detail, notification_status
+            ) VALUES($1,$2,$3,$4,$5,$6,$7)
+            ON CONFLICT (user_key, case_id, job_id, event_type) DO NOTHING
+            RETURNING id
+            """,
+            user_key,
+            case_id,
+            job_id,
+            event_type,
+            max(0, min(int(progress), 100)),
+            str(detail or "")[:500],
+            notification_status,
+        )
+    except Exception:
+        LOGGER.exception(
+            "KORGAN case activity write failed case_id=%s job_id=%s event=%s",
+            case_id,
+            job_id,
+            event_type,
+        )
+        return False
     return row is not None
 
 
@@ -171,19 +183,23 @@ async def _set_notification_status(
     job_id: str,
     status: str,
 ) -> None:
-    if not settings.payments_enabled:
+    pool = _POOL
+    if not settings.payments_enabled or pool is None:
         return
-    await _require_pool().execute(
-        """
-        UPDATE korgan_miniapp_case_activity
-        SET notification_status=$4, updated_at=NOW()
-        WHERE user_key=$1 AND case_id=$2 AND job_id=$3 AND event_type='ready'
-        """,
-        user_key,
-        case_id,
-        job_id,
-        status,
-    )
+    try:
+        await pool.execute(
+            """
+            UPDATE korgan_miniapp_case_activity
+            SET notification_status=$4, updated_at=NOW()
+            WHERE user_key=$1 AND case_id=$2 AND job_id=$3 AND event_type='ready'
+            """,
+            user_key,
+            case_id,
+            job_id,
+            status,
+        )
+    except Exception:
+        LOGGER.exception("KORGAN ready notification status persistence failed job_id=%s", job_id)
 
 
 def _notification_payload(identity: str, case: dict[str, Any]) -> dict[str, Any]:
@@ -277,7 +293,13 @@ async def _capture_terminal(job: jobs.GenerationJob, *, identity: str) -> None:
     if not is_new or event_type != "ready":
         return
 
-    sent = await _send_ready_notification(identity, case)
+    # Telegram — тоже вспомогательная доставка. Даже неожиданный ответ клиента
+    # Telegram не должен изменить уже подтверждённый succeeded generation job.
+    try:
+        sent = await _send_ready_notification(identity, case)
+    except Exception:
+        LOGGER.exception("KORGAN ready notification unexpected failure job_id=%s", latest.id)
+        sent = False
     await _set_notification_status(
         user_key=latest.user_key,
         case_id=latest.case_id,
@@ -294,7 +316,7 @@ async def _schedule_job_with_activity(
     context: str,
     language: str,
 ) -> None:
-    """Добавить аудит и terminal notification, не меняя scheduler semantics."""
+    """Добавить аудит, не меняя scheduler semantics и его доступность."""
     await record_case_activity(
         user_key=job.user_key,
         case_id=job.case_id,
@@ -304,6 +326,8 @@ async def _schedule_job_with_activity(
         detail=_label("queued", language),
     )
 
+    # Оригинальный scheduler остаётся единственным владельцем запуска работы.
+    # Вспомогательная история выше fail-open и не может помешать этому вызову.
     before = generation_api._TASKS.get(job.id)
     await _ORIGINAL_SCHEDULE_JOB(
         job=job,
@@ -339,22 +363,29 @@ async def case_activity(
     case = (state.get("cases") or {}).get(case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Дело не найдено")
-    if not settings.payments_enabled:
+
+    pool = _POOL
+    if not settings.payments_enabled or pool is None:
         return {"case_id": case_id, "events": []}
 
     user_key = core.store.user_key(identity)
-    rows = await _require_pool().fetch(
-        """
-        SELECT id, case_id, job_id, event_type, progress, detail,
-               notification_status, created_at
-        FROM korgan_miniapp_case_activity
-        WHERE user_key=$1 AND case_id=$2
-        ORDER BY created_at ASC, id ASC
-        LIMIT 100
-        """,
-        user_key,
-        case_id,
-    )
+    try:
+        rows = await pool.fetch(
+            """
+            SELECT id, case_id, job_id, event_type, progress, detail,
+                   notification_status, created_at
+            FROM korgan_miniapp_case_activity
+            WHERE user_key=$1 AND case_id=$2
+            ORDER BY created_at ASC, id ASC
+            LIMIT 100
+            """,
+            user_key,
+            case_id,
+        )
+    except Exception:
+        LOGGER.exception("KORGAN case activity read failed case_id=%s", case_id)
+        return {"case_id": case_id, "events": []}
+
     language = "kk" if str(case.get("language") or "") == "kk" else "ru"
     events = [
         {
