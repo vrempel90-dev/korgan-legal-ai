@@ -13,10 +13,13 @@ from korgan import miniapp_case_activity as _miniapp_case_activity  # noqa: F401
 from korgan import miniapp_case_activity_cleanup as _miniapp_case_activity_cleanup  # noqa: F401
 
 # Keep the already-tested payment/runtime stack as the owner of the ASGI app.
-# Manual payment review is installed after the deterministic receipt stack so it
-# can replace only the document-payment upload/parity surface while preserving
-# consultation payments and document idempotency.
+# Manual payment review stays available as the legacy fallback. When the three
+# server-side Tole secrets are configured, the Tole runtime imported immediately
+# afterwards replaces only the document-payment routes with signed automatic QR
+# confirmation; consultation payments and document idempotency stay untouched.
 from korgan import miniapp_manual_payment_admin as _miniapp_manual_payment_admin  # noqa: F401
+from korgan import miniapp_consultation_quota_api as _miniapp_consultation_quota_api  # noqa: F401
+from korgan import miniapp_tole_payments as _miniapp_tole_payments  # noqa: F401
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_consent_status as _miniapp_consent_status
 from korgan import miniapp_document_access as _miniapp_document_access

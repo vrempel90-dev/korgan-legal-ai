@@ -12,9 +12,29 @@ export function requireDocumentPayment(result) {
   return payment;
 }
 
+/** Tole подтверждает банковский факт сервер-сервер, без чека пользователя. */
+export function isAutomaticDocumentPayment(payment) {
+  return payment?.payment_provider === 'tole' || payment?.automatic_confirmation === true;
+}
+
 /**
- * Последовательно проверяет решение администратора по оплате документа.
- * Следующий запрос планируется только после ответа на предыдущий.
+ * Ручной legacy-платёж опрашивается только после отправки чека. Tole нужно
+ * опрашивать и до оплаты: webhook является быстрым сигналом, а этот GET —
+ * резервная reconciliation-проверка durable payment intent у провайдера.
+ */
+export function shouldPollDocumentPayment(payment) {
+  const status = String(payment?.status || '').trim();
+  if (!status) return false;
+  if (isAutomaticDocumentPayment(payment)) {
+    return status === 'pending_receipt' || status === 'awaiting_admin';
+  }
+  return status === 'awaiting_admin';
+}
+
+/**
+ * Последовательно проверяет подтверждение оплаты. Следующий запрос планируется
+ * только после ответа на предыдущий: ни Tole, ни legacy admin flow не получают
+ * параллельные polling-запросы.
  */
 export function startDocumentPaymentPolling({
   orderId,
@@ -46,7 +66,7 @@ export function startDocumentPaymentPolling({
       if (stopped) return;
       const payment = requireDocumentPayment(result);
       onPayment(payment);
-      if (payment.status !== 'awaiting_admin') return;
+      if (!shouldPollDocumentPayment(payment)) return;
     } catch (error) {
       if (stopped) return;
       onError(error instanceof Error ? error : new Error(String(error || 'Ошибка проверки оплаты')));
