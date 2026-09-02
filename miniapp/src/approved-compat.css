@@ -13,6 +13,28 @@ body,
   color: #0b1324 !important;
 }
 
+/* Exact brand wordmark from the supplied KORGAN logo. The existing vector asset
+   preserves the original K, separator and KORGAN letterforms; only the color is
+   inverted for the light MiniApp header. */
+.topbar .brand-mark {
+  width: 210px !important;
+  min-width: 210px !important;
+  height: 38px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: url('/korgan-wordmark.svg') left center / contain no-repeat !important;
+  filter: brightness(0) saturate(100%);
+}
+
+.topbar .brand-mark > svg {
+  display: none !important;
+}
+
+.topbar .brand {
+  display: none !important;
+}
+
 /* The approved home screen has four action tiles and no KPI strip. */
 .quick-stats {
   display: none !important;
@@ -356,6 +378,12 @@ body,
 }
 
 @media (max-width: 390px) {
+  .topbar .brand-mark {
+    width: 188px !important;
+    min-width: 188px !important;
+    height: 34px !important;
+  }
+
   .personal-lawyer-card {
     min-height: 156px !important;
     padding: 15px !important;
