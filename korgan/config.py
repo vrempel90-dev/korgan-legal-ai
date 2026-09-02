@@ -187,7 +187,16 @@ class Settings(BaseSettings):
 
     @property
     def legal_domains(self) -> list[str]:
-        return [item.strip().lower() for item in self.official_legal_domains.split(",") if item.strip()]
+        configured = [
+            item.strip().lower()
+            for item in self.official_legal_domains.split(",")
+            if item.strip()
+        ]
+        # Railway permits a declared string variable to be left blank. For the
+        # legal web-search allowlist that must not mean "search the whole web"
+        # and must not produce an invalid empty OpenAI filter either. Fall back
+        # to the same narrow official-source set as the Settings default.
+        return configured or ["adilet.zan.kz", "gov.kz", "sud.gov.kz"]
 
     @property
     def payment_seller_bin(self) -> str:
