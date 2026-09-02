@@ -1,6 +1,7 @@
 import { feedbackPreferences, setFeedbackPreference } from './feedbackPreferences.js';
 import { korganApi } from './korganApi.js';
 import { clearAllLocalData, loadState } from './store.js';
+import { caseProgressSnapshot } from './caseProgressState.js';
 
 const COPY = {
   ru: {
@@ -14,6 +15,7 @@ const COPY = {
     deleting: 'Удаляю данные…',
     deleteFailed: 'Не удалось удалить данные. Повторите попытку.',
     lawyerReview: 'Проверка юристом',
+    progressChecking: 'Проверяю статус подготовки…',
   },
   kk: {
     hero: 'Сіздің AI-заңгеріңіз',
@@ -26,8 +28,14 @@ const COPY = {
     deleting: 'Деректер жойылуда…',
     deleteFailed: 'Деректерді жою мүмкін болмады. Қайталап көріңіз.',
     lawyerReview: 'Заңгер тексеруі',
+    progressChecking: 'Дайындау мәртебесі тексерілуде…',
   },
 };
+
+let progressActive = false;
+let progressEpoch = 0;
+let progressTimer = null;
+let progressBusy = false;
 
 function language() {
   return loadState().language === 'kk' ? 'kk' : 'ru';
@@ -100,6 +108,114 @@ function toggleRow({ name, label, description, checked }) {
   return row;
 }
 
+function removeCaseProgressNodes() {
+  for (const node of document.querySelectorAll('[data-korgan-case-progress]')) node.remove();
+}
+
+function stopCaseProgress() {
+  if (!progressActive && progressTimer === null && !progressBusy) {
+    removeCaseProgressNodes();
+    return;
+  }
+  progressActive = false;
+  progressEpoch += 1;
+  if (progressTimer !== null) window.clearTimeout(progressTimer);
+  progressTimer = null;
+  removeCaseProgressNodes();
+}
+
+function caseIdFromButton(button) {
+  const metadata = String(button.querySelector('small')?.textContent || '').trim();
+  const separator = metadata.indexOf(' · ');
+  return String(separator >= 0 ? metadata.slice(0, separator) : metadata).trim();
+}
+
+function progressHost(button) {
+  const directDivs = [...button.children].filter(node => node.tagName === 'DIV');
+  return directDivs[1] || button;
+}
+
+function renderCaseProgress(button, snapshot) {
+  const host = progressHost(button);
+  let block = host.querySelector('[data-korgan-case-progress]');
+  if (!block) {
+    block = document.createElement('div');
+    block.className = 'case-document-progress';
+    block.dataset.korganCaseProgress = 'true';
+    block.innerHTML = `
+      <div class="case-document-progress-head"><span></span><strong></strong></div>
+      <div class="case-document-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+        <span class="case-document-progress-fill"></span>
+      </div>`;
+    host.append(block);
+  }
+
+  const progress = typeof snapshot?.progress === 'number' ? Math.max(0, Math.min(100, snapshot.progress)) : null;
+  block.dataset.progressKind = snapshot?.kind || 'pending';
+  block.querySelector('.case-document-progress-head span').textContent = snapshot?.label || text().progressChecking;
+  block.querySelector('.case-document-progress-head strong').textContent = progress === null ? '' : `${progress}%`;
+
+  const track = block.querySelector('.case-document-progress-track');
+  const fill = block.querySelector('.case-document-progress-fill');
+  if (progress === null) {
+    track.removeAttribute('aria-valuenow');
+    track.setAttribute('aria-label', snapshot?.label || text().progressChecking);
+    fill.style.width = '34%';
+  } else {
+    track.setAttribute('aria-valuenow', String(progress));
+    track.setAttribute('aria-label', `${snapshot?.label || ''} ${progress}%`.trim());
+    fill.style.width = `${progress}%`;
+  }
+}
+
+async function syncCaseProgress(epoch) {
+  if (!progressActive || !isCases() || epoch !== progressEpoch || progressBusy) return;
+  progressBusy = true;
+  const buttons = [...document.querySelectorAll('.subbar + .page .case-list-item')];
+  for (const button of buttons) {
+    if (!button.querySelector('[data-korgan-case-progress]')) {
+      renderCaseProgress(button, { kind: 'pending', progress: null, label: text().progressChecking });
+    }
+  }
+
+  let shouldContinue = false;
+  await Promise.all(buttons.map(async button => {
+    const caseId = caseIdFromButton(button);
+    if (!caseId) return;
+    try {
+      const result = await korganApi.caseGeneration(caseId);
+      if (!progressActive || !isCases() || epoch !== progressEpoch || !button.isConnected) return;
+      const snapshot = caseProgressSnapshot(result, language());
+      renderCaseProgress(button, snapshot);
+      if (snapshot.poll) shouldContinue = true;
+    } catch {
+      if (!progressActive || !isCases() || epoch !== progressEpoch || !button.isConnected) return;
+      const snapshot = caseProgressSnapshot({}, language());
+      renderCaseProgress(button, snapshot);
+      shouldContinue = true;
+    }
+  }));
+
+  progressBusy = false;
+  if (!progressActive || !isCases() || epoch !== progressEpoch) return;
+  progressTimer = window.setTimeout(() => {
+    progressTimer = null;
+    void syncCaseProgress(epoch);
+  }, shouldContinue ? 2500 : 7000);
+}
+
+function ensureCaseProgress() {
+  if (!isCases()) {
+    stopCaseProgress();
+    return;
+  }
+  if (progressActive) return;
+  progressActive = true;
+  progressEpoch += 1;
+  const epoch = progressEpoch;
+  void syncCaseProgress(epoch);
+}
+
 function cleanupInjectedUi() {
   const profile = isProfile();
   const cases = isCases();
@@ -114,6 +230,7 @@ function cleanupInjectedUi() {
       node.remove();
     }
   }
+  if (!cases) stopCaseProgress();
 
   // React can reuse a DOM button between screens. Never let the profile-only
   // visibility override leak to another screen.
@@ -208,6 +325,7 @@ function applyUi() {
   hideProfileDelete();
   ensureDeleteActions();
   ensureFeedbackSettings();
+  ensureCaseProgress();
 }
 
 applyUi();
