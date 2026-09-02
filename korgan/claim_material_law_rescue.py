@@ -44,10 +44,6 @@ _CONTRACTUAL_PENALTY_CONTEXT_RE = re.compile(
     r"(?:тұрақсыздық\s+айыб\w*|өсімпұл\w*|айыппұл\w*).{0,180}шарт\w*)"
 )
 
-# Consumer claims need a narrower detector than a generic word such as
-# "repair".  The personal/household side and the work/service side must both be
-# visible in user facts.  This prevents consumer provisions from leaking into
-# ordinary B2B construction and supply disputes.
 _CONSUMER_PERSONAL_RE = re.compile(
     r"(?is)(?:потребител\w*|физическ\w*\s+лиц\w*.{0,180}(?:личн\w*|бытов\w*|квартир\w*)|"
     r"личн\w*.{0,120}бытов\w*|бытов\w*.{0,120}нужд\w*|собственн\w*.{0,80}квартир\w*|"
@@ -192,12 +188,46 @@ def _score(provision: Provision, rule: _Rule) -> int:
     return score
 
 
+def _all_act_provisions(corpus: LegalCorpus, act_id: str) -> list[Provision]:
+    rows = corpus.connection.execute(
+        """
+        SELECT p.article_id, p.act_id, a.title_ru AS act_title, p.article_no, p.item_no,
+               p.heading, p.body, p.edition_date, p.url
+        FROM provisions p
+        JOIN acts a ON a.act_id = p.act_id
+        WHERE p.act_id = ?
+        ORDER BY p.sort_key
+        """,
+        (act_id,),
+    ).fetchall()
+    return [
+        Provision(
+            article_id=row["article_id"],
+            act_id=row["act_id"],
+            act_title=row["act_title"],
+            article_no=row["article_no"],
+            item_no=row["item_no"],
+            heading=row["heading"],
+            body=row["body"],
+            edition_date=row["edition_date"],
+            url=row["url"],
+        )
+        for row in rows
+    ]
+
+
 def _pick(corpus: LegalCorpus, rule: _Rule) -> Provision | None:
     candidates = [
         item
         for item in corpus.search(rule.query, act_id=rule.act_id, limit=30)
         if _matches_rule(item, rule)
     ]
+    if not candidates:
+        # FTS is a ranking accelerator, not a legal completeness gate.  Important
+        # paragraphs can rank below the limit when the surrounding act repeats
+        # the same vocabulary.  Fall back to the already-loaded current act and
+        # apply the exact deterministic semantic signature to every provision.
+        candidates = [item for item in _all_act_provisions(corpus, rule.act_id) if _matches_rule(item, rule)]
     if not candidates:
         return None
     return max(candidates, key=lambda item: (_score(item, rule), -len(item.body)))
