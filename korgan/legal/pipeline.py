@@ -10,6 +10,7 @@ itself; final conclusions still pass through KORGAN's official-source gates.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -17,7 +18,9 @@ from pathlib import Path
 from typing import Iterable
 
 from korgan.legal.corpus import DEFAULT_DB_PATH, LegalCorpus, Provision
-from korgan.legal.upstream_rag import open_upstream_corpus
+from korgan.legal.corpus_refresh import autoload_enabled as official_autoload_enabled
+from korgan.legal.corpus_refresh import corpus_refresh_loop
+from korgan.legal.upstream_rag import open_upstream_corpus, start_upstream_rag_task
 from korgan.legal.validator import build_offer
 
 LOGGER = logging.getLogger(__name__)
@@ -25,6 +28,7 @@ FLAG_ENV = "KORGAN_LOCAL_CORPUS"
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSEY = {"0", "false", "no", "off"}
 DEFAULT_LIMIT = 12
+_OFFICIAL_REFRESH_TASK: asyncio.Task[None] | None = None
 
 
 def local_corpus_enabled() -> bool:
@@ -34,6 +38,28 @@ def local_corpus_enabled() -> bool:
     if raw in _FALSEY:
         return False
     return raw in _TRUTHY
+
+
+def _ensure_background_bootstrap() -> None:
+    """Start both corpora lazily from any async legal request.
+
+    The live Telegram service starts `python -m korgan.bot`, so it does not share
+    the Mini App ASGI lifespan. Keeping bootstrap here makes the legal layer
+    self-starting without coupling it to one transport entrypoint.
+    """
+    global _OFFICIAL_REFRESH_TASK
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    if official_autoload_enabled() and (
+        _OFFICIAL_REFRESH_TASK is None or _OFFICIAL_REFRESH_TASK.done()
+    ):
+        _OFFICIAL_REFRESH_TASK = loop.create_task(
+            corpus_refresh_loop(), name="korgan-official-corpus-refresh"
+        )
+    start_upstream_rag_task()
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +130,8 @@ def research_from_corpus(
 ) -> CorpusResearch | None:
     if not local_corpus_enabled():
         return None
+
+    _ensure_background_bootstrap()
 
     owned_official = corpus is None
     official = corpus or open_corpus()
