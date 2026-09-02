@@ -1,12 +1,12 @@
 import './generation-stage-timeline.css';
 import {
   clampProgress,
-  isTimelineOwnedMutation,
   stageIndexForProgress,
   timelineSignature,
 } from './generationStageState.js';
 
 const ROOT_ID = 'korgan-generation-stage-timeline';
+const LIFECYCLE_EVENT = 'korgan:generation-lifecycle';
 
 const COPY = {
   ru: {
@@ -48,9 +48,6 @@ function renderTimeline(page, progress) {
   root.style.setProperty('--generation-line-progress', `${Math.min(value * 0.8, 80)}%`);
   root.dataset.progress = String(value);
 
-  // MutationObserver watches the page. Rewriting innerHTML on every observer
-  // callback creates a self-sustaining repaint loop. Only touch the subtree when
-  // the actual backend state changed.
   if (root.dataset.signature === signature) return root;
   root.dataset.signature = signature;
 
@@ -101,22 +98,17 @@ function install() {
     else window.setTimeout(run, 0);
   };
 
-  const observer = new MutationObserver(mutations => {
-    const root = document.getElementById(ROOT_ID);
-    if (root && mutations.length > 0 && mutations.every(mutation => isTimelineOwnedMutation(mutation, root))) return;
-    scheduleSync();
-  });
-
-  observer.observe(document.documentElement, {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    attributeFilter: ['aria-valuenow', 'aria-label'],
-  });
+  // generationJob publishes this event from the real backend job. Deferring one
+  // frame lets React commit the new aria-valuenow before the timeline reads it.
+  window.addEventListener(LIFECYCLE_EVENT, scheduleSync);
   window.addEventListener('pageshow', scheduleSync);
   scheduleSync();
+
+  return () => {
+    window.removeEventListener(LIFECYCLE_EVENT, scheduleSync);
+    window.removeEventListener('pageshow', scheduleSync);
+    document.getElementById(ROOT_ID)?.remove();
+  };
 }
 
-if (typeof document !== 'undefined' && typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
-  install();
-}
+if (typeof document !== 'undefined' && typeof window !== 'undefined') install();
