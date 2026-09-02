@@ -1,10 +1,10 @@
-const KEY = 'korgan-miniapp-lifecycle-events-v1';
+export const LIFECYCLE_STORAGE_KEY = 'korgan-miniapp-lifecycle-events-v1';
 const ALLOWED_EVENTS = new Set(['queued', 'running', 'ready', 'failed']);
 
 function safeRead(storage) {
   if (!storage || typeof storage.getItem !== 'function') return {};
   try {
-    const parsed = JSON.parse(storage.getItem(KEY) || '{}');
+    const parsed = JSON.parse(storage.getItem(LIFECYCLE_STORAGE_KEY) || '{}');
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
@@ -13,11 +13,16 @@ function safeRead(storage) {
 
 function safeWrite(storage, value) {
   if (!storage || typeof storage.setItem !== 'function') return;
-  try { storage.setItem(KEY, JSON.stringify(value)); } catch { /* storage is optional */ }
+  try { storage.setItem(LIFECYCLE_STORAGE_KEY, JSON.stringify(value)); } catch { /* storage is optional */ }
 }
 
 function eventKey(caseId, jobId, eventType) {
   return `${String(caseId || '').trim()}:${String(jobId || '').trim()}:${eventType}`;
+}
+
+export function clearLifecycleNotificationData(storage = globalThis.localStorage) {
+  if (!storage || typeof storage.removeItem !== 'function') return;
+  try { storage.removeItem(LIFECYCLE_STORAGE_KEY); } catch { /* storage is optional */ }
 }
 
 /**
