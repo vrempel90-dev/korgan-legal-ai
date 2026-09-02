@@ -14,6 +14,7 @@ from korgan.claim_material_law_rescue import enrich_material_law_from_corpus
 from korgan.finalized_litigation import FinalizedProductionClaimService
 from korgan.legal.corpus import ACT_LABOR
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
+from korgan.professional_claim_finalizer import apply_article_authority
 
 _LANGUAGE_LABEL_RE = re.compile(
     r"(?i)"
@@ -197,6 +198,10 @@ class StableLegalProductionService(FinalizedProductionClaimService):
     async def draft_claim(self, case_context: str, research: LegalResearch, language: str = "ru") -> ClaimDraft:
         draft = await super().draft_claim(case_context, research, language=language)
         normalize_claim_legal_basis(draft, research)
+        # Нормализация может дописать статьи из VERIFIED-исследования уже после
+        # того, как финалайзер проверил ссылки. Проверка повторяется здесь,
+        # потому что это последний слой, добавляющий в иск номера статей.
+        apply_article_authority(draft)
         return draft
 
 

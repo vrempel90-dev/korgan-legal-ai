@@ -103,6 +103,12 @@ class ClaimDraft:
     # не выполнялся, а не что он дал ноль.
     calculation_result: dict[str, Any] = field(default_factory=dict)
 
+    # Трассировка напечатанных ссылок на нормы — см.
+    # korgan.article_authority.ArticleAuthorityReport.as_dict(). Каждый
+    # оставленный в документе номер статьи связан здесь с source_hash записи
+    # корпуса, которая его подтвердила. Пустой словарь означает, что проверка
+    # ссылок по этому черновику не выполнялась, а не что ссылок нет.
+
 
 @dataclass(slots=True)
 class ArgumentClause:

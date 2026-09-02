@@ -5,6 +5,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+from korgan.article_authority import AUTHORITY_NOTE_PREFIX, enforce_article_authority
 from korgan.claim_corpus_health import enforce_claim_corpus_health
 from korgan.claim_filing_accuracy import apply_claim_filing_accuracy
 from korgan.claim_money_ledger import build_claim_money_ledger
@@ -221,6 +222,25 @@ def _recalculate_price(draft: ClaimDraft) -> None:
         draft.price_of_claim = _NONPROPERTY_PRICE_LABEL
 
 
+def apply_article_authority(draft: ClaimDraft) -> None:
+    """Оставить в документе только подтверждённые номера статей.
+
+    Проверка идёт по всему черновику, а не по разделу правового обоснования:
+    номер статьи в фактической части утверждает право ровно так же, как в
+    мотивировочной, и до сих пор там не проверялся никем. Снятая ссылка уходит
+    юристу отдельным сообщением и не превращается в пометку внутри судебного
+    текста.
+    """
+    report = enforce_article_authority(draft)
+    draft.citation_authority = report.as_dict()
+    if not report.lawyer_notes:
+        return
+    draft.status = VerificationStatus.NEEDS_VERIFICATION
+    for note in report.lawyer_notes:
+        if note not in draft.verification_notes:
+            draft.verification_notes.append(note)
+
+
 def finalize_professional_claim(
     case_context: str,
     research: LegalResearch,
@@ -235,6 +255,7 @@ def finalize_professional_claim(
     enforce_claim_corpus_health(research, draft)
     _sanitize_relief(case_context, research, draft)
     enforce_claim_release_invariants(case_context, draft, language=language)
+    apply_article_authority(draft)
     _recalculate_price(draft)
 
     draft.verification_notes = [
