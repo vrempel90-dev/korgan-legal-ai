@@ -19,7 +19,6 @@ _COSTS_INTENT_RE = re.compile(r"(?i)(?:судебн\w*\s+расход\w*|суд�
 
 _PENALTY_REQUEST_RE = re.compile(r"(?i)(?:взыск\w*|өндір\w*).{0,160}(?:неустойк\w*|пен[яию]\b|тұрақсыздық\s+айыб\w*)")
 _MORAL_REQUEST_RE = re.compile(r"(?i)(?:взыск\w*|өндір\w*|компенсир\w*).{0,160}(?:моральн\w*\s+вред\w*|моральдық\s+зиян\w*)")
-_MONEY_RE = re.compile(r"\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt)", re.IGNORECASE)
 _SUBJECTIVE_RE = re.compile(
     r"(?i)(?:переживан\w*|стресс\w*|нервн\w*|нравственн\w*\s+страдан\w*|"
     r"моральн\w*\s+страдан\w*|физическ\w*\s+страдан\w*|бессонниц\w*|"
@@ -44,6 +43,11 @@ def _append_note(draft: ClaimDraft, note: str) -> None:
     if note not in draft.verification_notes:
         draft.verification_notes.append(note)
     draft.status = VerificationStatus.NEEDS_VERIFICATION
+
+
+def _mark_penalty_calculation_pending(draft: ClaimDraft) -> None:
+    draft.price_of_claim = "[ТРЕБУЕТ РАСЧЁТА: цена иска с учетом неустойки на дату подачи]"
+    draft.state_duty = NEEDS_CALCULATION_MARKER
 
 
 def _verified_consumer_penalty(research: LegalResearch) -> bool:
@@ -79,10 +83,11 @@ def _ensure_requested_penalty(case_context: str, research: LegalResearch, draft:
         return
 
     if not _verified_consumer_penalty(research):
+        _mark_penalty_calculation_pending(draft)
         _append_note(
             draft,
             FILING_ACTION_PREFIX
-            + "пользователь просил проверить/взыскать неустойку, но действующее основание и размер не подтверждены VERIFIED-источником; требование нельзя молча исключать.",
+            + "пользователь просил проверить/взыскать неустойку, но действующее основание и размер не подтверждены VERIFIED-источником; требование нельзя молча исключать, а цену иска и госпошлину нельзя считать окончательными.",
         )
         return
 
@@ -93,8 +98,7 @@ def _ensure_requested_penalty(case_context: str, research: LegalResearch, draft:
     # Until the amount is known, both claim price and duty are necessarily
     # incomplete.  A plausible-looking 850 000 тенге must not be labelled as the
     # final claim price while an expressly requested monetary remedy is pending.
-    draft.price_of_claim = "[ТРЕБУЕТ РАСЧЁТА: цена иска с учетом неустойки на дату подачи]"
-    draft.state_duty = NEEDS_CALCULATION_MARKER
+    _mark_penalty_calculation_pending(draft)
     _append_note(
         draft,
         FILING_ACTION_PREFIX
