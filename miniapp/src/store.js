@@ -53,7 +53,6 @@ export function addRecentCase(item) {
 
 export function clearLocalCaseData() {
   const state = loadState();
-  clearLifecycleNotificationData();
   return saveState({
     ...state,
     draft: { documentType: null, description: '' },
