@@ -254,8 +254,9 @@ def _normalize_prepositions(text: str) -> str:
 
 
 #: Поля черновика, в которых номер статьи вообще может оказаться.
-_TEXT_FIELDS = ("title", "price_of_claim", "jurisdiction_reason", "limitation_period",
-                "pretrial_compliance", "reconciliation_measures", "late_interest")
+_TEXT_FIELDS = ("title", "price_of_claim", "state_duty", "jurisdiction_reason",
+                "limitation_period", "pretrial_compliance", "reconciliation_measures",
+                "late_interest")
 _LIST_FIELDS = ("facts", "legal_basis", "requests", "attachments", "calculation",
                 "motions", "anticipated_defenses")
 

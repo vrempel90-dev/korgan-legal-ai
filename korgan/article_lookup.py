@@ -221,6 +221,48 @@ def _lookup_local_corpus(code: str, article: str, part: str) -> ProvisionRecord 
     return None
 
 
+def _lookup_rate_registry(code: str, article: str, part: str) -> LookupResult | None:
+    """Норма, подтверждённая справочником ставок KORGAN.
+
+    Статья 665 Налогового кодекса попадает в документ не из текста иска, а из
+    детерминированного расчёта госпошлины: справочник ``data/rates.json`` хранит
+    саму ставку, дату её сверки и официальную страницу Adilet, с которой она
+    прочитана. Это подтверждённый источник того же класса, что и корпус, просто
+    подтверждает он ставку, а не формулировку статьи.
+
+    Поэтому ``text`` остаётся пустым, и сверка пересказа для такой ссылки не
+    выполняется: сверять нечего, текст нормы здесь не хранится. Отпечаток берётся
+    от записи справочника — он меняется, когда меняется подтверждённая ставка
+    или дата её сверки.
+    """
+    from korgan import legal_calc
+
+    registry = getattr(legal_calc, "_STATE_DUTY_DATA", None)
+    if not isinstance(registry, dict) or not registry.get("verified"):
+        return None
+
+    source = str(registry.get("source", ""))
+    match = re.search(r"стать\w*\s+(?P<article>\d+)", source, re.IGNORECASE)
+    if not match or match.group("article") != str(article).strip():
+        return None
+    if code != "НК РК":
+        return None
+
+    verified_on = str(registry.get("verified_on", ""))
+    url = str(registry.get("source_url", ""))
+    return LookupResult(
+        found=True,
+        verified=True,
+        code=code,
+        article=article,
+        part=part,
+        source_hash=source_hash(f"{source}|{url}|{verified_on}"),
+        source_url=url,
+        edition_date=verified_on,
+        origin="справочник ставок KORGAN (сверен с официальным источником)",
+    )
+
+
 def lookup_article(code: str, article: str, part: str = "") -> LookupResult:
     """Найти норму в подтверждённых источниках KORGAN.
 
@@ -239,6 +281,10 @@ def lookup_article(code: str, article: str, part: str = "") -> LookupResult:
         )
 
     from korgan import provision_corpus
+
+    from_rates = _lookup_rate_registry(normalized, article, part)
+    if from_rates is not None:
+        return from_rates
 
     record = _lookup_local_corpus(normalized, article, part)
     if record is not None:
