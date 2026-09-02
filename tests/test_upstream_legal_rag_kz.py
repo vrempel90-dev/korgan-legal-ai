@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 from korgan.legal.corpus import LegalCorpus, Provision
-from korgan.legal import upstream_rag
 from korgan.legal import pipeline
+from korgan.legal import rag_runtime
+from korgan.legal import upstream_rag
 
 
 class _Response(io.BytesIO):
@@ -176,3 +177,21 @@ def test_required_official_article_survives_fused_limit(monkeypatch: pytest.Monk
     assert required_id in [item.article_id for item in result.provisions]
     assert result.provisions[0].article_id == required_id
     assert len(result.provisions) == 4
+
+
+def test_miniapp_bootstrap_can_skip_existing_official_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"official": 0, "upstream": 0}
+
+    def _official():
+        calls["official"] += 1
+        return None
+
+    def _upstream():
+        calls["upstream"] += 1
+        return None
+
+    monkeypatch.setattr(rag_runtime, "start_official_corpus_task", _official)
+    monkeypatch.setattr(rag_runtime, "start_upstream_rag_task", _upstream)
+
+    assert rag_runtime.start_legal_rag_tasks(include_official=False) == []
+    assert calls == {"official": 0, "upstream": 1}
