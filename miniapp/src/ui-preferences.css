@@ -1,0 +1,99 @@
+/* Profile-only feedback preferences and relocated data controls. */
+.feedback-settings-card {
+  overflow: hidden;
+}
+
+.feedback-setting-row {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px 16px;
+}
+
+.feedback-setting-row + .feedback-setting-row {
+  border-top: 1px solid #edf1f6;
+}
+
+.feedback-setting-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.feedback-setting-copy strong {
+  color: #0b1324;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.feedback-setting-copy small {
+  color: #7d899d;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.feedback-switch {
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.feedback-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.feedback-switch-track {
+  width: 48px;
+  height: 28px;
+  display: block;
+  position: relative;
+  border-radius: 999px;
+  background: #d8dfe9;
+  transition: background .18s ease;
+}
+
+.feedback-switch-thumb {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  top: 3px;
+  left: 3px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 7px rgba(28,44,70,.22);
+  transition: transform .18s ease;
+}
+
+.feedback-switch input:checked + .feedback-switch-track {
+  background: #0d63ff;
+}
+
+.feedback-switch input:checked + .feedback-switch-track .feedback-switch-thumb {
+  transform: translateX(20px);
+}
+
+.feedback-switch input:focus-visible + .feedback-switch-track {
+  outline: 3px solid rgba(13,99,255,.2);
+  outline-offset: 2px;
+}
+
+.relocated-delete-all {
+  margin-top: 14px;
+  color: #b42318 !important;
+  border-color: #efc7c3 !important;
+  background: #fff !important;
+}
+
+.delete-data-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* The hero is informational now; consultation remains available from the action tile. */
+.home-page .hero .hero-copy > button[hidden] {
+  display: none !important;
+}
