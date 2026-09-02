@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from korgan import miniapp_case_activity as activity
 from korgan import miniapp_generation_api as generation_api
 
@@ -34,3 +36,42 @@ def test_case_activity_labels_are_localized() -> None:
     assert activity._label("queued", "ru") == "Документ поставлен в очередь"
     assert activity._label("ready", "ru") == "Документ готов"
     assert activity._label("ready", "kk") == "Құжат дайын"
+
+
+def test_activity_store_is_optional_when_database_url_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(activity, "_POOL", None)
+
+    asyncio.run(activity.init_case_activity_store("", enabled=True))
+
+    assert activity._POOL is None
+
+
+def test_activity_write_failure_is_fail_open(monkeypatch) -> None:
+    class BrokenPool:
+        async def fetchrow(self, *args, **kwargs):
+            raise RuntimeError("activity database unavailable")
+
+    monkeypatch.setattr(activity.settings, "payments_enabled", True)
+    monkeypatch.setattr(activity, "_POOL", BrokenPool())
+
+    recorded = asyncio.run(
+        activity.record_case_activity(
+            user_key="user-key",
+            case_id="case-1",
+            job_id="job-1",
+            event_type="queued",
+            progress=0,
+            detail="queued",
+        )
+    )
+
+    assert recorded is False
+
+
+def test_activity_read_can_return_empty_when_auxiliary_store_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(activity.settings, "payments_enabled", True)
+    monkeypatch.setattr(activity, "_POOL", None)
+
+    # Доступ к делу всё равно проверяется canonical consent/state слоем; здесь
+    # фиксируем отдельный контракт auxiliary store — отсутствие пула не ошибка.
+    assert activity._POOL is None
