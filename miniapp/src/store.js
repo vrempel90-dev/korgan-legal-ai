@@ -1,3 +1,5 @@
+import { clearLifecycleNotificationData } from './lifecycleNotifications.js';
+
 const KEY = 'korgan-miniapp-state-v1';
 
 const emptyState = {
@@ -51,6 +53,7 @@ export function addRecentCase(item) {
 
 export function clearLocalCaseData() {
   const state = loadState();
+  clearLifecycleNotificationData();
   return saveState({
     ...state,
     draft: { documentType: null, description: '' },
@@ -60,5 +63,6 @@ export function clearLocalCaseData() {
 
 export function clearAllLocalData() {
   localStorage.removeItem(KEY);
+  clearLifecycleNotificationData();
   return browserState(emptyState);
 }
