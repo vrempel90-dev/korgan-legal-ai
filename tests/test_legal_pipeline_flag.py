@@ -1,4 +1,4 @@
-"""Подключение локального корпуса: по умолчанию выключено, Web Search — fallback."""
+"""Подключение локального корпуса: по умолчанию включено, Web Search — fallback."""
 
 import sys
 from pathlib import Path
@@ -33,35 +33,30 @@ def flag_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(FLAG_ENV, "1")
 
 
-def test_flag_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_is_on_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(FLAG_ENV, raising=False)
-
-    assert not local_corpus_enabled()
+    assert local_corpus_enabled()
 
 
 @pytest.mark.parametrize("value", ["1", "true", "YES", "on"])
 def test_flag_accepts_common_truthy_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     monkeypatch.setenv(FLAG_ENV, value)
-
     assert local_corpus_enabled()
 
 
 @pytest.mark.parametrize("value", ["", "0", "false", "нет"])
-def test_flag_stays_off_for_anything_else(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+def test_flag_stays_off_for_explicit_non_truthy_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     monkeypatch.setenv(FLAG_ENV, value)
-
     assert not local_corpus_enabled()
 
 
 def test_disabled_flag_falls_back(corpus: LegalCorpus, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(FLAG_ENV, raising=False)
-
+    monkeypatch.setenv(FLAG_ENV, "0")
     assert research_from_corpus("предоплата подряд возврат", corpus=corpus) is None
 
 
 def test_enabled_flag_returns_offered_provisions(corpus: LegalCorpus, flag_on: None) -> None:
     research = research_from_corpus("предоплата подряд возврат", corpus=corpus)
-
     assert research is not None
     assert research.provisions
     assert all(corpus.exists(article_id) for article_id in research.offered_ids)
@@ -70,21 +65,18 @@ def test_enabled_flag_returns_offered_provisions(corpus: LegalCorpus, flag_on: N
 
 def test_offered_ids_match_the_returned_provisions(corpus: LegalCorpus, flag_on: None) -> None:
     research = research_from_corpus("предоплата подряд возврат", corpus=corpus)
-
     assert research is not None
     assert research.offered_ids == {p.article_id for p in research.provisions}
 
 
 def test_source_urls_are_deduplicated(corpus: LegalCorpus, flag_on: None) -> None:
     research = research_from_corpus("подряд заказчик", corpus=corpus)
-
     assert research is not None
     assert len(research.source_urls) == len(set(research.source_urls))
     assert all(url.startswith("https://adilet.zan.kz/rus/") for url in research.source_urls)
 
 
 def test_query_without_matches_falls_back(corpus: LegalCorpus, flag_on: None) -> None:
-    """Пустая выдача — это «используй старый путь», а не «права нет»."""
     assert research_from_corpus("таможенный транзит контейнеров", corpus=corpus) is None
 
 
@@ -101,12 +93,10 @@ def test_empty_database_falls_back(tmp_path: Path, flag_on: None) -> None:
     db_path = tmp_path / "empty.sqlite3"
     with LegalCorpus(db_path):
         pass
-
     assert open_corpus(db_path) is None
 
 
 def test_limit_is_respected(corpus: LegalCorpus, flag_on: None) -> None:
     research = research_from_corpus("подряд заказчик работа", corpus=corpus, limit=2)
-
     assert research is not None
     assert len(research.provisions) <= 2
