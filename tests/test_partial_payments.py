@@ -37,6 +37,19 @@ def test_several_partial_payments_are_all_found() -> None:
     ]
 
 
+def test_payment_summary_does_not_invalidate_a_real_parsed_payment() -> None:
+    scan = find_partial_payments(
+        "07 апреля 2026 года ответчик перечислил истцу 2 000 000 тенге как частичную оплату. "
+        "После частичной оплаты задолженность составила 6 750 000 тенге."
+    )
+
+    assert scan.mentioned is True
+    assert scan.unparsed == ()
+    assert [(p.on, p.delta) for p in scan.payments] == [
+        (date(2026, 4, 7), -2_000_000),
+    ]
+
+
 def test_a_payment_without_a_date_is_reported_as_unparsed_not_ignored() -> None:
     """Оплата была, а когда — неизвестно: считать по-прежнему нельзя."""
     scan = find_partial_payments(
