@@ -111,6 +111,19 @@ def corpus_checked_on() -> str:
     return _load()[1]
 
 
+def lookup_manual(act: str, article: str, part: str = "") -> ProvisionRecord | None:
+    """Return only the operator-maintained record, without SQLite fallback.
+
+    The manual registry is an explicit safety override. In particular a
+    ``REPORTED`` record means KORGAN knows this wording exists but has not yet
+    licensed it as an officially verified quotation. An automatically loaded
+    SQLite record must therefore never silently promote that same provision to
+    VERIFIED inside a long-lived process.
+    """
+    records, _ = _load()
+    return records.get(provision_key(act, article, part))
+
+
 def lookup(act: str, article: str, part: str = "") -> ProvisionRecord | None:
     """Найти норму: сначала ручной реестр, затем загруженный корпус НПА.
 
@@ -121,8 +134,7 @@ def lookup(act: str, article: str, part: str = "") -> ProvisionRecord | None:
     любая статья, кроме записей из JSON, считалась неподтверждённой и
     блокировала выпуск любого документа — см. korgan.corpus_bridge.
     """
-    records, _ = _load()
-    record = records.get(provision_key(act, article, part))
+    record = lookup_manual(act, article, part)
     if record is not None:
         return record
 
