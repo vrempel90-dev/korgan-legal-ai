@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from datetime import date
 
 from korgan.claim_corpus_health import _snapshot_issue
-from korgan.legal.corpus import ACT_GK_GENERAL, ACT_GK_SPECIAL, LegalCorpus, Provision
+from korgan.legal.corpus import (
+    ACT_CONSUMER,
+    ACT_GK_GENERAL,
+    ACT_GK_SPECIAL,
+    LegalCorpus,
+    Provision,
+)
 from korgan.legal.pipeline import local_corpus_enabled, open_corpus
 from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.provision_check import verified_claim_line
@@ -37,6 +43,30 @@ _CONTRACTUAL_PENALTY_CONTEXT_RE = re.compile(
     r"шарт\w*.{0,180}(?:тұрақсыздық\s+айыб\w*|өсімпұл\w*|айыппұл\w*)|"
     r"(?:тұрақсыздық\s+айыб\w*|өсімпұл\w*|айыппұл\w*).{0,180}шарт\w*)"
 )
+
+# Consumer claims need a narrower detector than a generic word such as
+# "repair".  The personal/household side and the work/service side must both be
+# visible in user facts.  This prevents consumer provisions from leaking into
+# ordinary B2B construction and supply disputes.
+_CONSUMER_PERSONAL_RE = re.compile(
+    r"(?is)(?:потребител\w*|физическ\w*\s+лиц\w*.{0,180}(?:личн\w*|бытов\w*|квартир\w*)|"
+    r"личн\w*.{0,120}бытов\w*|бытов\w*.{0,120}нужд\w*|собственн\w*.{0,80}квартир\w*|"
+    r"не\s+(?:связан\w*\s+с|в\s+целях)\s+предпринимательск\w*)"
+)
+_CONSUMER_WORK_RE = re.compile(
+    r"(?i)(?:подряд\w*|подрядчик\w*|исполнител\w*|ремонт\w*|отделочн\w*|"
+    r"выполнени\w*\s+работ\w*|работ\w*.{0,60}(?:квартир|дом|ремонт)|услуг\w*)"
+)
+_CONSUMER_DELAY_RE = re.compile(
+    r"(?is)(?:срок\w*.{0,180}(?:наруш|просроч|не\s+заверш|не\s+выполн)|"
+    r"(?:наруш|просроч|не\s+заверш).{0,180}срок\w*|прекратил\w*.{0,80}работ\w*)"
+)
+_CONSUMER_DEFECT_RE = re.compile(
+    r"(?i)(?:недостат\w*|некачествен\w*|ненадлежащ\w*\s+качеств\w*|дефект\w*|"
+    r"трещин\w*|расход\w*\s+по\s+шв\w*|устранени\w*\s+недостат\w*)"
+)
+_PRETRIAL_RE = re.compile(r"(?i)(?:досудебн\w*\s+претензи\w*|претензи\w*.{0,120}(?:направ|получ|ответ))")
+_MORAL_RE = re.compile(r"(?i)(?:моральн\w*\s+вред\w*|компенсац\w*.{0,80}моральн\w*)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +116,56 @@ _CONTRACTUAL_PENALTY = _Rule(
         r"должник\w*\s+обязан\w*\s+уплат",
         r"просроч\w*\s+исполн",
     ),
+)
+_CONSUMER_DELAY = _Rule(
+    name="consumer_work_delay",
+    act_id=ACT_CONSUMER,
+    query="потребитель нарушение сроков выполнения работы исполнитель отказаться договор убытки",
+    required_groups=(
+        (r"потребител",),
+        (r"работ", r"услуг"),
+        (r"срок", r"просроч"),
+        (r"отказ", r"расторг", r"убыт"),
+    ),
+    preferred=(r"нарушен\w*\s+срок", r"отказ\w*\s+от\s+договор", r"возмещен\w*\s+убыт"),
+)
+_CONSUMER_DEFECTS = _Rule(
+    name="consumer_work_defects",
+    act_id=ACT_CONSUMER,
+    query="потребитель недостатки выполненной работы уменьшение цены устранение недостатков расторжение договора",
+    required_groups=(
+        (r"потребител",),
+        (r"недостат", r"существенн\w*\s+недостат"),
+        (r"работ", r"услуг"),
+        (r"уменьшен", r"устран", r"расторг", r"отказ"),
+    ),
+    preferred=(r"существенн\w*\s+недостат", r"соразмерн\w*\s+уменьшен", r"расторжени\w*\s+договор"),
+)
+_CONSUMER_STATUTORY_PENALTY = _Rule(
+    name="consumer_work_statutory_penalty",
+    act_id=ACT_CONSUMER,
+    query="исполнитель нарушение сроков начала окончания работы неустойка один процент каждый день просрочки",
+    required_groups=(
+        (r"неустойк",),
+        (r"один\s+процент", r"1\s*(?:%|процент)"),
+        (r"кажд\w*\s+день",),
+        (r"срок",),
+    ),
+    preferred=(r"начал\w*\s+и\s+окончан", r"один\s+процент", r"кажд\w*\s+день"),
+)
+_CONSUMER_MORAL = _Rule(
+    name="consumer_moral_damage",
+    act_id=ACT_CONSUMER,
+    query="моральный вред компенсация потребитель нарушение прав",
+    required_groups=((r"моральн\w*\s+вред",), (r"компенсац",), (r"потребител", r"прав\w*\s+потребител")),
+    preferred=(r"компенсац\w*\s+моральн\w*\s+вред",),
+)
+_CONSUMER_PRETRIAL = _Rule(
+    name="consumer_pretrial_claim",
+    act_id=ACT_CONSUMER,
+    query="потребитель претензия письменный ответ десять календарных дней исполнитель",
+    required_groups=((r"претензи",), (r"письменн\w*\s+ответ", r"мотивированн\w*\s+ответ"), (r"десят\w*\s+календарн\w*\s+дн", r"10\s+календарн\w*\s+дн")),
+    preferred=(r"десят\w*\s+календарн\w*\s+дн", r"мотивированн\w*\s+ответ"),
 )
 
 
@@ -143,6 +223,11 @@ def _append_verified(research: LegalResearch, provision: Provision) -> None:
 def enrich_material_law_from_corpus(case_context: str, research: LegalResearch) -> LegalResearch:
     """Rescue missing core material law from the fresh official Adilet snapshot.
 
+    Besides ordinary contract debt, the deterministic rescue covers consumer
+    work/service disputes only when personal/household use is grounded in user
+    facts.  The current article number comes from the refreshed official corpus;
+    this module never hardcodes an article number into the filing.
+
     Contractual-penalty rescue is deliberately gated to a civil contractual
     context. Generic statutory penalties, including salary-delay penalties,
     must never pull a Civil Code contractual-penalty provision into the filing.
@@ -153,19 +238,38 @@ def enrich_material_law_from_corpus(case_context: str, research: LegalResearch) 
     context = str(case_context or "")
     employment_context = bool(_EMPLOYMENT_CONTEXT_RE.search(context))
     contract_debt = bool(_CONTRACT_DEBT_RE.search(context)) and not employment_context
+    consumer_work = bool(
+        not employment_context
+        and _CONSUMER_PERSONAL_RE.search(context)
+        and _CONSUMER_WORK_RE.search(context)
+    )
     contractual_penalty = bool(
         not employment_context
+        and not consumer_work
         and _PENALTY_RE.search(context)
         and (contract_debt or _CONTRACTUAL_PENALTY_CONTEXT_RE.search(context))
     )
 
     rules: list[_Rule] = []
-    if contract_debt:
+    if contract_debt or consumer_work:
         rules.append(_PROPER_PERFORMANCE)
-        if _SUPPLY_RE.search(context):
-            rules.append(_SUPPLY_PAYMENT)
+    if contract_debt and _SUPPLY_RE.search(context):
+        rules.append(_SUPPLY_PAYMENT)
     if contractual_penalty:
         rules.append(_CONTRACTUAL_PENALTY)
+
+    if consumer_work:
+        if _CONSUMER_DELAY_RE.search(context):
+            rules.append(_CONSUMER_DELAY)
+        if _CONSUMER_DEFECT_RE.search(context):
+            rules.append(_CONSUMER_DEFECTS)
+        if _PENALTY_RE.search(context):
+            rules.append(_CONSUMER_STATUTORY_PENALTY)
+        if _MORAL_RE.search(context):
+            rules.append(_CONSUMER_MORAL)
+        if _PRETRIAL_RE.search(context):
+            rules.append(_CONSUMER_PRETRIAL)
+
     if not rules:
         return research
 
