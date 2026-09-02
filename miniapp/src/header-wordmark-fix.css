@@ -1,0 +1,6 @@
+/* Keep the original KORGAN vector intact while giving its edge-touching
+   viewBox a small safe area inside the MiniApp header. */
+.topbar .brand-mark {
+  background-position: 8px center !important;
+  background-size: calc(100% - 16px) auto !important;
+}
