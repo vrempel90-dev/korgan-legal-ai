@@ -1,14 +1,19 @@
 """Retrieval-only Kazakhstan corpus seeded from bobur554396/legal-rag-kz-uz.
 
-The upstream project publishes an article-level KZ/UZ corpus and a dense retriever,
-but it intentionally does not publish the fine-tuned BGE-M3 weights/index. KORGAN
-therefore vendors the useful part that can run reliably on Railway without a GPU:
-a pinned KZ corpus snapshot loaded into a separate SQLite/FTS5 database.
+KORGAN persists ONLY Kazakhstan law. The upstream repository publishes a mixed
+cross-jurisdiction corpus, so this importer treats every row as untrusted input
+and accepts it only when all of the following are true:
 
-This database is *candidate-only*. It is never treated as an official-current law
-snapshot and never upgrades a citation to VERIFIED. The existing source-bound
-Adilet/ZAN pass remains the authority gate before a provision can reach a final
-document.
+* jurisdiction == KZ;
+* language is Russian;
+* the source URL is the official Kazakhstan Adilet domain;
+* the source URL points to the Russian legislation section.
+
+Rows from any other jurisdiction are discarded before any database write. The
+resulting SQLite database is therefore KZ-only and is marked with explicit
+jurisdiction metadata. This database is candidate-only: it never upgrades a
+citation to VERIFIED. KORGAN's current official Adilet/ZAN verification remains
+the authority gate before a provision can reach a final document.
 """
 
 from __future__ import annotations
@@ -38,6 +43,9 @@ UPSTREAM_CORPUS_URL = (
     "https://raw.githubusercontent.com/bobur554396/legal-rag-kz-uz/"
     f"{UPSTREAM_COMMIT}/data/corpus.jsonl"
 )
+TARGET_JURISDICTION = "KZ"
+TARGET_LANGUAGE = "ru"
+TARGET_SOURCE_DOMAIN = "adilet.zan.kz"
 AUTOLOAD_ENV = "KORGAN_UPSTREAM_RAG_AUTOLOAD"
 DB_ENV = "KORGAN_UPSTREAM_RAG_DB"
 MIN_KZ_ROWS = 500
@@ -88,6 +96,8 @@ class UpstreamRagStatus:
             "rows": self.rows,
             "path": self.path,
             "commit": self.commit,
+            "jurisdiction": TARGET_JURISDICTION,
+            "language": TARGET_LANGUAGE,
             "mode": "retrieval-candidates-only",
         }
 
@@ -111,6 +121,25 @@ def _metadata(corpus: LegalCorpus) -> dict[str, str]:
     return {str(row["key"]): str(row["value"]) for row in rows}
 
 
+def _database_is_kz_only(corpus: LegalCorpus) -> bool:
+    meta = _metadata(corpus)
+    if meta.get("jurisdiction") != TARGET_JURISDICTION:
+        return False
+    if meta.get("language") != TARGET_LANGUAGE:
+        return False
+    if meta.get("source_domain") != TARGET_SOURCE_DOMAIN:
+        return False
+    invalid = corpus.connection.execute(
+        """
+        SELECT COUNT(*) AS n
+        FROM provisions
+        WHERE url NOT LIKE 'https://adilet.zan.kz/rus/docs/%'
+          AND url NOT LIKE 'https://www.adilet.zan.kz/rus/docs/%'
+        """
+    ).fetchone()
+    return int(invalid["n"] if invalid is not None else 1) == 0
+
+
 def upstream_rag_status(path: Path | str | None = None) -> UpstreamRagStatus:
     db_path = _database_path(path)
     rows = 0
@@ -120,9 +149,13 @@ def upstream_rag_status(path: Path | str | None = None) -> UpstreamRagStatus:
         try:
             rows = corpus.count()
             meta = _metadata(corpus)
-            ready = rows >= MIN_KZ_ROWS and meta.get("commit") == UPSTREAM_COMMIT
+            ready = (
+                rows >= MIN_KZ_ROWS
+                and meta.get("commit") == UPSTREAM_COMMIT
+                and _database_is_kz_only(corpus)
+            )
         except Exception:
-            LOGGER.exception("Upstream KZ RAG status check failed")
+            LOGGER.exception("KZ-only RAG status check failed")
         finally:
             corpus.close()
     task = _ACTIVE_TASK
@@ -141,7 +174,7 @@ def open_upstream_corpus(path: Path | str | None = None) -> LegalCorpus | None:
         return None
     corpus = LegalCorpus(_database_path(path))
     try:
-        if corpus.count() < MIN_KZ_ROWS:
+        if corpus.count() < MIN_KZ_ROWS or not _database_is_kz_only(corpus):
             corpus.close()
             return None
     except Exception:
@@ -180,7 +213,7 @@ def _open_upstream(timeout: int = 90):
     request = urllib.request.Request(
         UPSTREAM_CORPUS_URL,
         headers={
-            "User-Agent": "KORGAN-legal-rag-kz/1.0",
+            "User-Agent": "KORGAN-legal-rag-kz/1.1",
             "Accept": "application/x-ndjson,text/plain;q=0.9,*/*;q=0.1",
         },
     )
@@ -219,23 +252,30 @@ def _title_ru(code_name: str, code_id: str) -> str:
     return _CODE_TITLES_RU.get(code_name) or code_name.strip() or code_id.strip() or "Нормативный акт Республики Казахстан"
 
 
-def _official_url(value: str) -> str:
+def _official_kz_url(value: str) -> str:
     text = str(value or "").strip()
     try:
         parsed = urlparse(text)
     except ValueError:
         return ""
-    if parsed.scheme != "https" or parsed.hostname not in {"adilet.zan.kz", "www.adilet.zan.kz"}:
+    if parsed.scheme != "https" or parsed.hostname not in {TARGET_SOURCE_DOMAIN, f"www.{TARGET_SOURCE_DOMAIN}"}:
+        return ""
+    if not parsed.path.startswith("/rus/docs/"):
         return ""
     return text
 
 
 def _write_row(connection, row: dict[str, object], *, loaded_at: str) -> bool:
-    if str(row.get("jurisdiction") or "").upper() != "KZ":
+    if str(row.get("jurisdiction") or "").strip().upper() != TARGET_JURISDICTION:
         return False
-    lang = str(row.get("lang") or "").lower()
+    lang = str(row.get("lang") or "").strip().lower()
     if lang not in {"ru", "rus", "russian"}:
         return False
+
+    url = _official_kz_url(str(row.get("url") or ""))
+    if not url:
+        return False
+
     article_no = str(row.get("article_no") or "").strip()
     body = " ".join(str(row.get("text") or "").split()).strip()
     if not article_no or not body:
@@ -245,7 +285,6 @@ def _write_row(connection, row: dict[str, object], *, loaded_at: str) -> bool:
     code_name = str(row.get("code_name") or "").strip()
     act_id = _act_id(code_id)
     title = _title_ru(code_name, code_id)
-    url = _official_url(str(row.get("url") or ""))
     article_id = f"{act_id}:{article_no}"
     heading = " ".join(str(row.get("article_title") or "").split()).strip()
 
@@ -291,7 +330,7 @@ def _write_row(connection, row: dict[str, object], *, loaded_at: str) -> bool:
 
 
 def sync_upstream_rag(*, path: Path | str | None = None, force: bool = False) -> UpstreamRagStatus:
-    """Build the candidate-only KZ corpus atomically from the pinned upstream snapshot."""
+    """Build an atomic KZ-only candidate corpus from the pinned upstream snapshot."""
     target = _database_path(path)
     current = upstream_rag_status(target)
     if current.ready and not force:
@@ -323,10 +362,12 @@ def sync_upstream_rag(*, path: Path | str | None = None, force: bool = False) ->
                         raise RuntimeError(f"invalid upstream JSONL at line {line_no}: {exc}") from exc
                     if isinstance(row, dict) and _write_row(connection, row, loaded_at=loaded_at):
                         written += 1
+
             if written < MIN_KZ_ROWS:
                 raise RuntimeError(
-                    f"upstream KZ corpus is unexpectedly small: {written} rows < {MIN_KZ_ROWS}"
+                    f"KZ-only corpus is unexpectedly small: {written} rows < {MIN_KZ_ROWS}"
                 )
+
             connection.executemany(
                 "INSERT OR REPLACE INTO upstream_meta(key,value) VALUES(?,?)",
                 (
@@ -335,12 +376,20 @@ def sync_upstream_rag(*, path: Path | str | None = None, force: bool = False) ->
                     ("snapshot_date", UPSTREAM_SNAPSHOT_DATE),
                     ("loaded_at", loaded_at),
                     ("rows", str(written)),
+                    ("jurisdiction", TARGET_JURISDICTION),
+                    ("language", TARGET_LANGUAGE),
+                    ("source_domain", TARGET_SOURCE_DOMAIN),
+                    ("filter_mode", "strict-kz-only"),
                 ),
             )
             connection.commit()
+
+            if not _database_is_kz_only(corpus):
+                raise RuntimeError("KZ-only invariant failed; refusing to activate candidate corpus")
+
         os.replace(temporary, target)
         LOGGER.info(
-            "UPSTREAM_KZ_RAG_SYNC_SUCCESS rows=%d bytes=%d commit=%s path=%s",
+            "UPSTREAM_KZ_ONLY_RAG_SYNC_SUCCESS rows=%d bytes=%d commit=%s path=%s",
             written,
             total_bytes,
             UPSTREAM_COMMIT,
@@ -349,7 +398,7 @@ def sync_upstream_rag(*, path: Path | str | None = None, force: bool = False) ->
         return upstream_rag_status(target)
     except Exception:
         temporary.unlink(missing_ok=True)
-        LOGGER.exception("UPSTREAM_KZ_RAG_SYNC_FAILED existing corpus remains active")
+        LOGGER.exception("UPSTREAM_KZ_ONLY_RAG_SYNC_FAILED existing corpus remains active")
         raise
 
 
@@ -359,14 +408,13 @@ async def _sync_once() -> None:
     except asyncio.CancelledError:
         raise
     except Exception:
-        # Candidate corpus failure must never prevent source-bound legal research.
-        LOGGER.exception("Upstream KZ RAG bootstrap failed safely; source-bound research remains active")
+        LOGGER.exception("KZ-only RAG bootstrap failed safely; source-bound research remains active")
 
 
 def start_upstream_rag_task() -> asyncio.Task[None] | None:
     global _ACTIVE_TASK
     if not autoload_enabled():
-        LOGGER.info("Upstream KZ RAG autoload disabled")
+        LOGGER.info("KZ-only RAG autoload disabled")
         return None
     if _ACTIVE_TASK is not None and not _ACTIVE_TASK.done():
         return _ACTIVE_TASK
