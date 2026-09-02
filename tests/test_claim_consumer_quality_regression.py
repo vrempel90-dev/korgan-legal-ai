@@ -282,4 +282,6 @@ def test_finalizer_uses_current_consumer_state_duty_rule_when_money_is_complete(
     filing_text = "\n".join([draft.state_duty, *draft.legal_basis, *draft.requests])
     assert "105-1" not in filing_text
     assert "части 3 статьи 106 ГПК РК" in draft.state_duty
-    assert "850 000" in draft.price_of_claim
+    # The ledger treats a specialist/expert expense as a cost, not as property
+    # claim price, unless the prayer explicitly grounds it as damages.
+    assert "800 000" in draft.price_of_claim
