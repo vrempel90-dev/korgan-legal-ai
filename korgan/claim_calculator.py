@@ -432,6 +432,32 @@ def claim_is_debt_and_penalty_only(draft: ClaimDraft) -> bool:
     return not any(_request_kind(item) == "other_money" for item in (draft.requests or []))
 
 
+#: Итоговая сводка просительной части. Она не самостоятельное требование, а
+#: сумма уже перечисленных, поэтому обратный разбор просительной части обязан
+#: её пропустить, а не сложить с компонентами.
+_TOTAL_SUMMARY_RE = re.compile(
+    r"общая\s+сумма\s+ко\s+взысканию", re.IGNORECASE
+)
+
+
+def _total_summary(calculation: ClaimCalculation) -> str:
+    """Строка с итоговой суммой взыскания — та, которую читает клиент.
+
+    Просительная часть без явного итога заставляет читателя складывать
+    требования самому, и первым это делает суд. Упоминание госпошлины внутри
+    строки не случайно: по нему обратный разбор просительной части опознаёт
+    сводку и не считает её ещё одним требованием — тем самым цена иска не
+    удваивается.
+    """
+    if not (calculation.total_claim.ready and calculation.claim_price.ready and calculation.state_duty.ready):
+        return ""
+    return (
+        f"Общая сумма ко взысканию с ответчика составляет {calculation.total_claim.display}, "
+        f"включая цену иска {calculation.claim_price.display} и возмещение "
+        f"государственной пошлины {calculation.state_duty.display}."
+    )
+
+
 def _principal_request(calculation: ClaimCalculation) -> str:
     return (
         "Взыскать с ответчика в пользу истца основной долг в размере "
@@ -478,11 +504,18 @@ def apply_claim_calculation(
         else ""
     )
 
-    kept = [item for item in (draft.requests or []) if _request_kind(item) in {"cost", "nonmoney"}]
+    kept = [
+        item
+        for item in (draft.requests or [])
+        if _request_kind(item) in {"cost", "nonmoney"} and not _TOTAL_SUMMARY_RE.search(str(item))
+    ]
     money_requests = [_principal_request(calculation)]
     if calculation.penalty.ready and outcome.penalty is not None:
         money_requests.append(_penalty_request(calculation, outcome.penalty, clause))
     draft.requests = money_requests + kept
+    summary = _total_summary(calculation)
+    if summary:
+        draft.requests.append(summary)
 
     draft.price_of_claim = calculation.claim_price.display
     draft.state_duty = gosposhlina_line(case_context, draft.price_of_claim)
