@@ -1,48 +1,51 @@
+import { createTelegramRuntime } from './tmaRuntime.js';
+
+let runtime = null;
+
 export function getTelegramWebApp() {
   return window.Telegram?.WebApp ?? null;
 }
 
-function isDesktopTelegram(tg) {
-  const platform = String(tg?.platform || '').toLowerCase();
-  const desktopPlatforms = new Set(['tdesktop', 'macos', 'weba', 'webk', 'unigram']);
-  const mobilePlatforms = new Set(['android', 'android_x', 'ios']);
-
-  if (desktopPlatforms.has(platform)) return true;
-  if (mobilePlatforms.has(platform)) return false;
-
-  // Fallback for future/unknown Telegram desktop clients.
-  return Boolean(window.matchMedia?.('(min-width: 900px)').matches);
-}
-
-function requestDesktopFullscreen(tg) {
-  if (!isDesktopTelegram(tg)) return;
-  if (typeof tg?.requestFullscreen !== 'function') return;
-
-  try {
-    tg.requestFullscreen();
-  } catch {
-    // Older Telegram clients may expose no fullscreen support. The responsive
-    // desktop layout remains the safe fallback in that case.
+function getRuntime() {
+  if (!runtime) {
+    runtime = createTelegramRuntime({ getWebApp: getTelegramWebApp });
   }
+  return runtime;
 }
 
+/**
+ * Initializes Telegram client chrome using the tma-shop runtime model while
+ * preserving KORGAN's existing UI, legal core and payment implementation.
+ */
 export function initTelegram() {
-  const tg = getTelegramWebApp();
-  if (!tg) return null;
+  return getRuntime().init();
+}
 
-  tg.ready();
-  tg.expand();
+export function disposeTelegram() {
+  runtime?.dispose?.();
+  runtime = null;
+}
 
-  // Keep Telegram chrome visually consistent with the KORGAN Mini App.
-  tg.setHeaderColor?.('#090b0d');
-  tg.setBackgroundColor?.('#090b0d');
-  tg.setBottomBarColor?.('#090b0d');
+export function setTelegramBackButton(onClick) {
+  getRuntime().showBackButton(onClick);
+}
 
-  // Telegram Desktop normally opens Mini Apps in a narrow WebView. Ask modern
-  // desktop clients for fullscreen without changing mobile behaviour.
-  window.setTimeout(() => requestDesktopFullscreen(tg), 80);
+export function hideTelegramBackButton() {
+  runtime?.hideBackButton?.();
+}
 
-  return tg;
+export function setTelegramMainButton(options) {
+  return getRuntime().configureMainButton(options);
+}
+
+export function hideTelegramMainButton() {
+  runtime?.hideMainButton?.();
+}
+
+export function syncTelegramChrome() {
+  runtime?.syncTheme?.();
+  runtime?.syncViewport?.();
+  runtime?.syncDomBackButton?.();
 }
 
 export function getTelegramUser() {
@@ -57,6 +60,20 @@ export function getTelegramUser() {
   };
 }
 
-export function haptic() {
-  getTelegramWebApp()?.HapticFeedback?.impactOccurred?.('light');
+export function haptic(style = 'light') {
+  const feedback = getTelegramWebApp()?.HapticFeedback;
+  try {
+    feedback?.impactOccurred?.(style);
+  } catch {
+    // Haptics are optional and must never block a legal action.
+  }
+}
+
+export function notifyTelegram(type = 'success') {
+  const feedback = getTelegramWebApp()?.HapticFeedback;
+  try {
+    feedback?.notificationOccurred?.(type);
+  } catch {
+    // Older Telegram clients may not support notification haptics.
+  }
 }
