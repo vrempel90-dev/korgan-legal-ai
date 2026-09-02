@@ -3,7 +3,7 @@ import { createApiTransport } from './apiTransport.js';
 import { clearLifecycleNotificationCase } from './lifecycleNotifications.js';
 import { recoverGenerationStart } from './generationStartRecovery.js';
 
-const API_BASE = import.meta.env.VITE_KORGAN_API_BASE || '';
+const API_BASE = import.meta.env?.VITE_KORGAN_API_BASE || '';
 const request = createApiTransport({
   baseUrl: API_BASE,
   getTelegramInitData: () => window.Telegram?.WebApp?.initData || '',
