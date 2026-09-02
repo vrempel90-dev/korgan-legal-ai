@@ -241,7 +241,11 @@ def _balance_timeline(
         same_day = [e for e in inside[index:] if e.on == moment]
         index += len(same_day)
         label = "; ".join(
-            f"{e.basis or e.kind} {abs(int(e.delta))} тенге" for e in same_day
+            # Разряды обязательны: сумма из этой строки попадает в таблицу
+            # расчёта рядом с суммами, у которых разряды есть, и «1200000»
+            # посреди них читается как другая величина.
+            f"{e.basis or e.kind} {abs(int(e.delta)):,} тенге".replace(",", " ")
+            for e in same_day
         )
         if moment > cursor:
             segments.append((cursor, moment - timedelta(days=1), balance, label))

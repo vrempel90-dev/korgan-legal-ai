@@ -136,7 +136,12 @@ def _body_blocks(draft: ClaimDraft, *, kk: bool) -> list[Block]:
         blocks.extend(Prose(_kk_line(line) if kk else line) for line in draft.calculation if line.strip())
 
     if draft.late_interest:
-        blocks.append(Heading("ҚР АК 353-бабы бойынша есеп" if kk else "Расчёт неустойки по статье 353 ГК РК"))
+        # Заголовок не называет норму. Прежний называл статью 353 ГК РК всегда,
+        # хотя раздел печатается и для договорной неустойки: тогда заголовок
+        # утверждал не то основание, по которому сделан расчёт, и делал это
+        # ссылкой, которую проверка норм не видела — она смотрит содержание
+        # черновика, а заголовок дописывает экспортёр.
+        blocks.append(Heading("Тұрақсыздық айыбының есебі" if kk else "Расчёт неустойки"))
         blocks.append(Prose(_kk_line(draft.late_interest) if kk else draft.late_interest))
 
     procedural = [

@@ -23,7 +23,7 @@ fail-closed: две несовпадающие стоимости поставк
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
@@ -302,6 +302,14 @@ def extract_case_financials(case_context: str) -> CaseFinancials:
 
     scan = find_partial_payments(text)
     payments_unclear = bool(scan.mentioned and (scan.unparsed or not scan.payments))
+    # Основание события попадает в таблицу расчёта, поэтому оно должно читаться
+    # как строка таблицы, а не как выдержка из материалов. Полное предложение,
+    # которым платёж описан у клиента, уже содержит сумму, и в таблице она
+    # печаталась дважды — второй раз без разрядов.
+    payments = tuple(
+        replace(event, basis=f"частичная оплата от {event.on:%d.%m.%Y}")
+        for event in scan.payments
+    )
     if payments_unclear:
         missing.append("частичная оплата упомянута, но её дату или размер установить не удалось")
 
@@ -342,7 +350,7 @@ def extract_case_financials(case_context: str) -> CaseFinancials:
         contract_value=contract_value,
         stated_principal=stated_principal,
         derived_principal=derived_principal,
-        payments=scan.payments,
+        payments=payments,
         payments_unclear=payments_unclear,
         penalty_rate_per_day=rate,
         penalty_clause=clause,
@@ -358,7 +366,7 @@ def extract_case_financials(case_context: str) -> CaseFinancials:
             contract_value=contract_value,
             stated_principal=stated_principal,
             derived_principal=derived_principal,
-            payments=scan.payments,
+            payments=payments,
             payments_unclear=payments_unclear,
             penalty_rate_per_day=rate,
             penalty_clause=clause,

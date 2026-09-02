@@ -44,7 +44,12 @@ from korgan.legal_calc import (
     format_kzt,
     gosposhlina_line,
 )
-from korgan.legal_calculation import interval_penalty_component, principal_component, render_calculation
+from korgan.legal_calculation import (
+    _percent as _percent_text,
+    interval_penalty_component,
+    principal_component,
+    render_calculation,
+)
 from korgan.legal_types import ClaimDraft
 from korgan.penalty_engine import (
     CalculationStatus,
@@ -528,13 +533,24 @@ def apply_claim_calculation(
                 title="Договорная неустойка",
                 basis=clause.replace("пункту", "пункт") or "условие договора о неустойке",
                 rate_label=(
-                    f"{outcome.financials.penalty_rate_per_day:g}% за каждый день просрочки"
+                    f"{_percent_text(outcome.financials.penalty_rate_per_day)}% за каждый день просрочки"
                     if outcome.financials.penalty_rate_per_day is not None
                     else ""
                 ),
             )
         )
-        draft.late_interest = components[-1].render()
+        # Полная таблица уже стоит в разделе расчёта. Печатать её второй раз в
+        # разделе о неустойке значит заставить читателя сверять два одинаковых
+        # блока: суд читает документ на предмет расхождений, и повтор он
+        # проверит целиком, прежде чем убедится, что расхождения нет.
+        period = f"с {outcome.penalty.intervals[0].period_from:%d.%m.%Y} " \
+                 f"по {outcome.penalty.intervals[-1].period_to:%d.%m.%Y}"
+        basis_label = clause.replace("пункту", "пункту") or "условию договора о неустойке"
+        draft.late_interest = (
+            f"Договорная неустойка по {basis_label} за период {period} составляет "
+            f"{calculation.penalty.display}; расчёт по периодам приведён в разделе "
+            "«Расчёт взыскиваемых сумм»."
+        )
     else:
         draft.late_interest = ""
 
@@ -548,7 +564,7 @@ def apply_claim_calculation(
         rate = outcome.financials.penalty_rate_per_day
         basis_line = (
             f"Пунктом {outcome.financials.penalty_clause} договора предусмотрена договорная неустойка"
-            + (f" в размере {rate:g}% за каждый день просрочки" if rate is not None else "")
+            + (f" в размере {_percent_text(rate)}% за каждый день просрочки" if rate is not None else "")
             + "; при частичном погашении долга неустойка начисляется на остаток задолженности."
         )
         draft.legal_basis = [item for item in draft.legal_basis if not _PENALTY_RE.search(item)]

@@ -128,7 +128,9 @@ def test_lookup_returns_a_structured_result(corpus) -> None:
     assert result.verified is True
     assert result.code == "ГК РК"
     assert result.article == "178"
-    assert result.source_hash == source_hash(ARTICLE_178)
+    # Заголовок статьи — часть нормы: без него текст статьи 27 ГПК РК не
+    # содержит слова «подсудность», и верный пересказ объявлялся дрейфом.
+    assert result.source_hash == source_hash(f"Общие сроки исковой давности. {ARTICLE_178}")
     assert result.source_url == GK_GENERAL_URL
 
 
@@ -418,7 +420,7 @@ def test_traceability_is_attached_to_the_draft(corpus) -> None:
 
     trace = draft.citation_authority["traceability"]
     assert [row["article"] for row in trace] == ["439"]
-    assert trace[0]["source_hash"] == source_hash(ARTICLE_439)
+    assert trace[0]["source_hash"] == source_hash(f"Оплата товара. {ARTICLE_439}")
 
 
 def test_printed_article_count_matches_traceability_rows(corpus) -> None:

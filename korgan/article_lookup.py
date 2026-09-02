@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from korgan.provision_corpus import ProvisionRecord, normalize_text
@@ -212,7 +212,15 @@ def _lookup_local_corpus(code: str, article: str, part: str) -> ProvisionRecord 
             for candidate_item in ([item_no, None] if item_no else [None]):
                 provision = corpus.get(make_article_id(act_id, article_no, candidate_item))
                 if provision is not None:
-                    return _to_record(code, article_no, part if candidate_item else "", provision)
+                    record = _to_record(code, article_no, part if candidate_item else "", provision)
+                    # Заголовок статьи — часть нормы, а не оформление. Без него
+                    # текст статьи 27 ГПК РК не содержит слова «подсудность», и
+                    # сверка пересказа объявляла дрейфом раздел, который эту
+                    # статью пересказывает верно.
+                    heading = " ".join(str(getattr(provision, "heading", "") or "").split())
+                    if heading and heading.lower() not in record.text.lower():
+                        record = replace(record, text=f"{heading}. {record.text}".strip())
+                    return record
     except Exception:  # pragma: no cover - сбой источника не подтверждает норму
         return None
     finally:
