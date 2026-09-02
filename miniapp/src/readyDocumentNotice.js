@@ -1,7 +1,6 @@
 import { korganApi } from './korganApi.js';
 import { openSignedDocument } from './documentDelivery.js';
 import { loadState } from './store.js';
-import './ready-document-notice.css';
 
 export const READY_DOCUMENT_ACK_KEY = 'korgan-miniapp-ready-document-opened-v1';
 
