@@ -138,8 +138,10 @@ function ensureFeedbackSettings() {
     toggleRow({ name: 'vibration', label: text().vibration, description: text().vibrationSub, checked: prefs.vibration }),
   );
 
-  // Только Профиль и именно внизу его содержимого.
-  page.append(section);
+  // Только Профиль: сразу под карточкой пользователя, выше языка и тарифов.
+  const profileCard = page.querySelector('.profile-card');
+  if (profileCard?.nextSibling) page.insertBefore(section, profileCard.nextSibling);
+  else page.prepend(section);
 }
 
 function hideProfileDelete() {
