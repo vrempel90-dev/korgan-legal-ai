@@ -41,6 +41,7 @@ export const korganApi = {
   },
   consentStatus: (options = {}) => request('/miniapp/consent', options),
   pricing: (options = {}) => request('/miniapp/pricing', options),
+  getConsultationQuota: (options = {}) => request('/miniapp/consultation/quota', options),
   consultation: (message, caseId, language = 'ru') => request('/miniapp/consultation', {
     method: 'POST',
     body: JSON.stringify({ message, case_id: caseId || null, language }),
