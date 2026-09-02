@@ -27,11 +27,10 @@ app.include_router(_miniapp_consent_status.router)
 app.include_router(_miniapp_document_access.router)
 app.include_router(_miniapp_qr_analytics.router)
 
-# Mini App imports strict_bot for the production legal stack, but it never runs
-# strict_bot.main(). Therefore the Telegram-only corpus refresh task used to be
-# absent here and local RAG could stay empty forever. Attach the same legal
-# retrieval lifecycle directly to the ASGI app.
-install_rag_lifespan(app)
+# miniapp_api_v3 already owns the one official Adilet/ZAN refresh loop. This
+# outer production wrapper only adds the broad Kazakhstan retrieval bootstrap;
+# starting another official loop would race on the same atomic refresh file.
+install_rag_lifespan(app, include_official=False)
 
 # Recovery outer CORS layer. Keep the already-working Mini App origins and
 # browser-managed Telegram WebView headers unchanged while the payment layer is
