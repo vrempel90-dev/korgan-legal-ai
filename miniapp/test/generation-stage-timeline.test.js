@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  isTimelineOwnedMutation,
   stageIndexForProgress,
   timelineSignature,
 } from '../src/generationStageState.js';
@@ -39,23 +38,16 @@ test('одинаковое состояние имеет одинаковую п
   );
 });
 
-test('мутации самого timeline не будят его observer повторно', () => {
-  const child = {};
-  const outside = {};
-  const root = {
-    contains(node) { return node === child; },
-  };
-
-  assert.equal(isTimelineOwnedMutation({ target: root }, root), true);
-  assert.equal(isTimelineOwnedMutation({ target: child }, root), true);
-  assert.equal(isTimelineOwnedMutation({ target: outside, addedNodes: [child] }, root), true);
-  assert.equal(isTimelineOwnedMutation({ target: outside, addedNodes: [outside] }, root), false);
+test('timeline слушает только lifecycle job и не наблюдает весь документ', () => {
+  assert.ok(source.includes("const LIFECYCLE_EVENT = 'korgan:generation-lifecycle'"));
+  assert.ok(source.includes('window.addEventListener(LIFECYCLE_EVENT, scheduleSync)'));
+  assert.ok(!source.includes('MutationObserver'), 'глобальный DOM observer для progress запрещён');
+  assert.ok(!source.includes('document.documentElement'), 'progress не должен подписываться на весь документ');
+  assert.ok(!source.includes('setInterval('), 'постоянный repaint-loop недопустим');
 });
 
-test('progress overlay не управляет нижней навигацией и не крутит постоянный interval', () => {
+test('progress overlay не управляет нижней навигацией', () => {
   assert.ok(!source.includes('syncVisibleNavigation'), 'progress script не должен менять active у вкладок');
   assert.ok(!source.includes("addEventListener('pointerdown'"), 'progress script не должен перехватывать pointerdown вкладок');
-  assert.ok(!source.includes("attributeFilter: ['aria-valuenow', 'aria-label', 'class']"), 'observer не должен следить за class и будить сам себя');
-  assert.ok(!source.includes('setInterval(sync'), 'постоянный repaint-loop недопустим');
   assert.ok(source.includes('root.dataset.signature === signature'), 'рендер обязан быть идемпотентным');
 });
