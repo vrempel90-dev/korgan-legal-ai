@@ -21,6 +21,7 @@ from korgan.ai_provider import openai_configured
 from korgan.asgi_lifespan import add_lifespan
 from korgan.claim_docx import build_claim_docx
 from korgan.contract_docx import build_contract_docx
+from korgan.document_linter import lint_claim_document
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
 from korgan.legal_types import VerificationStatus
 from korgan.pretrial import build_pretrial_docx
@@ -167,13 +168,21 @@ def _release_metadata(document_type: str, context: str, research: Any, draft: An
     else:
         draft.status = VerificationStatus.NEEDS_VERIFICATION
 
-    return {
+    metadata = {
         "filing_ready": filing_ready,
         "release_status": "verified" if filing_ready else "preliminary",
         "quality_score": quality_score,
         "quality_issues": quality_issues,
         "verification_notes": list(getattr(draft, "verification_notes", []) or []),
     }
+
+    # Post-generation линтер идёт последним и смотрит на собранный документ, а
+    # не на стадию сборки. Его вердикт хранится отдельно от quality_score:
+    # оценка качества допускает предварительную выдачу, а нарушение линтера —
+    # нет, и смешивать два разных решения в одном числе нельзя.
+    if document_type == "claim":
+        metadata["lint"] = lint_claim_document(draft).as_dict()
+    return metadata
 
 
 async def _generate(document_type: str, context: str, language: str) -> tuple[Any, bytes, str, dict[str, Any]]:

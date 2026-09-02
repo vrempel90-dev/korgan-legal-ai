@@ -68,6 +68,27 @@ def _issue_list(result: dict[str, Any]) -> list[str]:
     return values
 
 
+def _linter_violations(result: dict[str, Any]) -> list[str]:
+    """Нарушения post-generation линтера, если он отработал по этому документу.
+
+    Отсутствие отчёта нарушением не считается: линтер написан для иска, а через
+    ту же политику выпуска проходят договор, отзыв и претензия.
+    """
+    report = result.get("lint")
+    if not isinstance(report, dict) or str(report.get("status") or "") != "BLOCKED":
+        return []
+    violations: list[str] = []
+    for finding in report.get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        message = " ".join(str(finding.get("message") or "").split())
+        location = str(finding.get("location") or "")
+        text = f"{message} ({location})" if location else message
+        if text and text not in violations:
+            violations.append(text)
+    return violations
+
+
 def apply_release_policy(result: dict[str, Any], *, case_id: str) -> dict[str, Any]:
     """Единственное правило выпуска для всех путей генерации.
 
@@ -76,6 +97,21 @@ def apply_release_policy(result: dict[str, Any], *, case_id: str) -> dict[str, A
     прямой запрос выпустить отказался бы, и оплативший пользователь получал бы
     разный результат в зависимости от того, включены ли платежи.
     """
+    blocked_by_linter = _linter_violations(result)
+    if blocked_by_linter:
+        # Жёсткий гейт. Он стоит ДО предварительной выдачи намеренно: пометка
+        # «предварительный документ» уместна там, где документ полон, но
+        # какое-то звено не подтверждено. Служебный маркер в судебном тексте,
+        # незаполненная сумма, номер статьи без подтверждения или ходатайство,
+        # противоречащее приложениям, — это не неполнота, а дефект сборки, и
+        # штамп его не исправляет, а только делает выдаваемым.
+        LOGGER.error(
+            "MINIAPP_LINTER_BLOCK case_id=%s violations=%s",
+            case_id,
+            blocked_by_linter[:6],
+        )
+        raise ReleaseBlocked(blocked_by_linter)
+
     if professional_release_allowed(result):
         return result
 
