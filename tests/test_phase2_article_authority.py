@@ -573,3 +573,40 @@ def test_article_number_inside_a_service_marker_is_not_a_citation(corpus) -> Non
 
     assert draft.requests == [line]
     assert report.decisions == []
+
+
+def test_state_duty_article_is_verified_by_the_rate_registry() -> None:
+    """Статья 665 НК РК приходит из справочника ставок, а не из текста иска.
+
+    Строку госпошлины пишет детерминированный расчёт, и ставку он берёт из
+    ``data/rates.json`` — записи с датой сверки и официальной страницей Adilet.
+    Это подтверждённый источник того же класса, что и корпус: он подтверждает
+    ставку, а не формулировку статьи, поэтому текст нормы остаётся пустым и
+    сверка пересказа для такой ссылки не выполняется.
+    """
+    result = lookup_article("НК РК", "665")
+
+    assert result.found is True
+    assert result.verified is True
+    assert result.source_hash
+    assert result.source_url.startswith("https://adilet.zan.kz/")
+    assert result.text == ""
+
+
+def test_rate_registry_does_not_license_other_articles() -> None:
+    """Справочник ставок подтверждает одну норму, а не весь Налоговый кодекс."""
+    result = lookup_article("НК РК", "664")
+
+    assert result.verified is False
+
+
+def test_state_duty_line_keeps_its_article_and_is_traced(corpus) -> None:
+    draft = _draft(
+        state_duty="239 558 тенге (3% от цены иска; максимум 20 000 МРП; статья 665 Налогового кодекса РК)",
+        legal_basis=[],
+    )
+
+    report = enforce_article_authority(draft)
+
+    assert "665" in draft.state_duty
+    assert any(row["article"] == "665" for row in report.traceability())
