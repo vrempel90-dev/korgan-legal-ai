@@ -353,7 +353,7 @@ async def _approve_order_from_tole(order_id: int, *, provider_intent_id: str) ->
             UPDATE korgan_miniapp_document_orders
             SET status='approved', decided_at=NOW(),
                 decision_note=$2, transaction_id=$3
-            WHERE id=$1 AND status IN ('pending_receipt','awaiting_admin')
+            WHERE id=$1 AND status='pending_receipt'
             """,
             int(order_id),
             "Tole payment verified automatically",
@@ -366,7 +366,7 @@ async def _cancel_order_from_tole(order_id: int, *, provider_status: str) -> Non
         """
         UPDATE korgan_miniapp_document_orders
         SET status='cancelled', decided_at=NOW(), decision_note=$2
-        WHERE id=$1 AND status IN ('pending_receipt','awaiting_admin')
+        WHERE id=$1 AND status='pending_receipt'
         """,
         int(order_id),
         f"Tole payment {provider_status}"[:500],
@@ -411,7 +411,7 @@ async def _reconcile_pending_payments(limit: int = 50) -> int:
                t.payment_url, t.qr_token, t.provider_status, t.amount_kzt, t.currency
         FROM korgan_miniapp_tole_payments t
         JOIN korgan_miniapp_document_orders o ON o.id=t.order_id
-        WHERE o.status IN ('pending_receipt','awaiting_admin')
+        WHERE o.status='pending_receipt'
         ORDER BY t.updated_at ASC
         LIMIT $1
         """,
@@ -483,17 +483,6 @@ async def _resolve_document_order(
             amount_kzt=settings.document_price_kzt,
         )
     return identity, order
-
-
-async def _mark_waiting(order_id: int) -> None:
-    await document_store._require_pool().execute(
-        """
-        UPDATE korgan_miniapp_document_orders
-        SET status='awaiting_admin', decision_note='Waiting for automatic Tole confirmation'
-        WHERE id=$1 AND status='pending_receipt'
-        """,
-        int(order_id),
-    )
 
 
 def _require_tole_runtime() -> None:
@@ -574,7 +563,6 @@ def install_tole_payment_routes() -> bool:
         except ToleAPIError as exc:
             LOGGER.warning("TOLE_QR_CREATE_FAILED order_id=%s status=%s kind=%s", order.id, exc.status_code, exc.kind)
             raise HTTPException(status_code=502, detail="Не удалось создать безопасную оплату Tole. Повторно платить не нужно.") from exc
-        await _mark_waiting(order.id)
         order = (await document_store.get_document_order(order.id, user_key=order.user_key)) or order
         if not payment.payment_url:
             raise HTTPException(status_code=503, detail="Tole создаёт ссылку оплаты. Повторите через несколько секунд; новая заявка не создастся.")
@@ -596,7 +584,7 @@ def install_tole_payment_routes() -> bool:
         if order is None:
             raise HTTPException(status_code=404, detail="Платёжный запрос не найден")
         payment = await _get_tole_payment(order.id)
-        if payment is not None and order.status in {"pending_receipt", "awaiting_admin"}:
+        if payment is not None and order.status == "pending_receipt":
             try:
                 payment = await _reconcile_payment(payment)
             except ToleAPIError:
