@@ -96,6 +96,13 @@ class ClaimDraft:
     anticipated_defenses: list[str] = field(default_factory=list)
     motions: list[str] = field(default_factory=list)
 
+    # Структурированный результат детерминированного денежного расчёта — см.
+    # korgan.claim_calculation_contract.ClaimCalculation.as_dict(). Хранится
+    # словарём, потому что черновик уходит в состояние диалога через asdict()
+    # и возвращается обратно; пустой словарь означает, что расчёт по этому делу
+    # не выполнялся, а не что он дал ноль.
+    calculation_result: dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass(slots=True)
 class ArgumentClause:
