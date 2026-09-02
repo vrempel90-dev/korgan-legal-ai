@@ -21,10 +21,17 @@ from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # no
 from korgan import miniapp_consent_status as _miniapp_consent_status
 from korgan import miniapp_document_access as _miniapp_document_access
 from korgan import miniapp_qr_analytics as _miniapp_qr_analytics
+from korgan.legal.rag_runtime import install_rag_lifespan
 
 app.include_router(_miniapp_consent_status.router)
 app.include_router(_miniapp_document_access.router)
 app.include_router(_miniapp_qr_analytics.router)
+
+# Mini App imports strict_bot for the production legal stack, but it never runs
+# strict_bot.main(). Therefore the Telegram-only corpus refresh task used to be
+# absent here and local RAG could stay empty forever. Attach the same legal
+# retrieval lifecycle directly to the ASGI app.
+install_rag_lifespan(app)
 
 # Recovery outer CORS layer. Keep the already-working Mini App origins and
 # browser-managed Telegram WebView headers unchanged while the payment layer is
