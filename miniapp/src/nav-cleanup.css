@@ -3,8 +3,17 @@
   grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
 }
 
-/* 3 = AI-юрист, 4 = Помощь (already intentionally hidden in the current UI). */
+/* 3 = AI-юрист, 4 = Помощь (already intentionally hidden in the Aug 31 UI). */
 .bottom-nav button:nth-child(3),
 .bottom-nav button:nth-child(4) {
+  display: none !important;
+}
+
+/* In the Aug 31 design the persistent tabs were absent inside focused flows:
+   case creation, payment, generation and the final document screen. Keep the
+   modern stable React component mounted by hiding it at the visual layer only. */
+.creation-page + .bottom-nav,
+.payment-page + .bottom-nav,
+.ready-page + .bottom-nav {
   display: none !important;
 }
