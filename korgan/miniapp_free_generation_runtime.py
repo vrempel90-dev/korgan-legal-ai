@@ -28,6 +28,21 @@ _PAID_CASE_STATUS = generation_api.case_generation_status
 _PAID_RETRY = generation_api.retry_generation
 _PAID_REQUIRE_JOB = paid_jobs.require_job
 
+
+def _paid_scheduler_before_free():
+    current = generation_api._schedule_job
+    if (
+        getattr(current, "__module__", "") == "korgan.miniapp_case_activity"
+        and getattr(current, "__name__", "") == "_schedule_job_with_activity"
+    ):
+        from korgan import miniapp_case_activity as activity
+
+        return activity._ORIGINAL_SCHEDULE_JOB
+    return current
+
+
+_PAID_SCHEDULE_JOB = _paid_scheduler_before_free()
+
 _POOL: asyncpg.Pool | None = None
 
 _SCHEMA = """
@@ -342,6 +357,24 @@ async def _schedule_free_job(
     task.add_done_callback(finished)
 
 
+async def _schedule_job_dispatch(
+    *,
+    job: Any,
+    identity: str,
+    document_type: str,
+    context: str,
+    language: str,
+) -> None:
+    scheduler = _PAID_SCHEDULE_JOB if settings.payments_enabled else _schedule_free_job
+    await scheduler(
+        job=job,
+        identity=identity,
+        document_type=document_type,
+        context=context,
+        language=language,
+    )
+
+
 async def _reset_failed(job_id: str, *, user_key: str) -> FreeGenerationJob:
     row = await _require_pool().fetchrow(
         """
@@ -361,12 +394,7 @@ async def _reset_failed(job_id: str, *, user_key: str) -> FreeGenerationJob:
 
 
 def _install_free_scheduler() -> None:
-    """Install free-mode scheduler without dropping an existing activity wrapper.
-
-    Modules can be imported in either order during tests and long-lived ASGI
-    composition. If case activity already wrapped the paid scheduler, point its
-    delegate at the free scheduler and keep the activity wrapper outermost.
-    """
+    """Install runtime dispatch without dropping an existing activity wrapper."""
     current = generation_api._schedule_job
     if (
         getattr(current, "__module__", "") == "korgan.miniapp_case_activity"
@@ -374,10 +402,10 @@ def _install_free_scheduler() -> None:
     ):
         from korgan import miniapp_case_activity as activity
 
-        activity._ORIGINAL_SCHEDULE_JOB = _schedule_free_job
+        activity._ORIGINAL_SCHEDULE_JOB = _schedule_job_dispatch
         generation_api._schedule_job = activity._schedule_job_with_activity
         return
-    generation_api._schedule_job = _schedule_free_job
+    generation_api._schedule_job = _schedule_job_dispatch
 
 
 if not settings.payments_enabled:
@@ -418,7 +446,7 @@ if not settings.payments_enabled:
                 "document": generation_api._ready_document(state, payload.case_id),
             }
         if job.status == "queued":
-            await _schedule_free_job(
+            await _schedule_job_dispatch(
                 job=job,
                 identity=identity,
                 document_type=document_type,
@@ -492,7 +520,7 @@ if not settings.payments_enabled:
                 detail="Материалы дела изменились. Запустите подготовку как новую задачу.",
             )
         job = await _reset_failed(job_id, user_key=user_key)
-        await _schedule_free_job(
+        await _schedule_job_dispatch(
             job=job,
             identity=identity,
             document_type=job.document_type,
@@ -506,7 +534,7 @@ if not settings.payments_enabled:
         }
 
     # Case activity may already be imported by another ASGI/test composition.
-    # Keep it outermost and swap only its scheduler delegate. Its job reloader
-    # also dispatches dynamically so paid tests/runtime never query the free DB.
+    # Keep it outermost and swap only its scheduler delegate. Both scheduler and
+    # job lookup dispatch dynamically so paid mode never touches the free DB.
     _install_free_scheduler()
     paid_jobs.require_job = _require_job_dispatch
