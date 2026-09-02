@@ -17,14 +17,17 @@ compiled into prefix terms, and the index declares matching prefix lengths.
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "corpus.sqlite3"
+DEFAULT_DB_PATH = Path(
+    os.getenv("KORGAN_CORPUS_DB")
+    or (Path(__file__).resolve().parent.parent / "data" / "corpus.sqlite3")
+)
 
-# Acts KORGAN is allowed to load. Keys double as the act half of article_id.
 ACT_GK_GENERAL = "GK_RK_OBSHAYA"
 ACT_GK_SPECIAL = "GK_RK_OSOBENNAYA"
 ACT_GPK = "GPK_RK"
@@ -41,7 +44,6 @@ KNOWN_ACTS: dict[str, tuple[str, str]] = {
     ACT_LABOR: ("K1500000414", "Трудовой кодекс Республики Казахстан"),
 }
 
-# Abbreviations used when citing a provision inside a court document.
 ACT_SHORT_TITLES: dict[str, str] = {
     ACT_GK_GENERAL: "ГК РК (Общая часть)",
     ACT_GK_SPECIAL: "ГК РК (Особенная часть)",
@@ -118,7 +120,6 @@ class Provision:
     url: str
 
     def label(self) -> str:
-        """«ст. 630 ГК РК (Особенная часть), п. 2» — for citations in a document."""
         base = f"ст. {self.article_no} {ACT_SHORT_TITLES.get(self.act_id, self.act_title)}"
         return f"{base}, п. {self.item_no}" if self.item_no else base
 
@@ -167,7 +168,7 @@ class LegalCorpus:
             self._connection.close()
             self._connection = None
 
-    def __enter__(self) -> LegalCorpus:
+    def __enter__(self) -> "LegalCorpus":
         self.create_schema()
         return self
 
