@@ -7,7 +7,7 @@ import {
   isTimelineOwnedMutation,
   stageIndexForProgress,
   timelineSignature,
-} from '../src/generationStageTimeline.js';
+} from '../src/generationStageState.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(here, '..', 'src', 'generationStageTimeline.js'), 'utf8');
