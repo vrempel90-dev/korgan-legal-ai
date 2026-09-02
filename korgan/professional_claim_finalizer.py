@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from korgan.claim_corpus_health import enforce_claim_corpus_health
+from korgan.claim_current_law_guard import prune_noncurrent_verified_claims
 from korgan.claim_filing_accuracy import apply_claim_filing_accuracy
 from korgan.claim_material_law_rescue import enrich_material_law_from_corpus
 from korgan.claim_money_ledger import build_claim_money_ledger
@@ -231,6 +232,7 @@ def finalize_professional_claim(
     here so alternate generation/repair paths cannot bypass them.
     """
     enrich_material_law_from_corpus(case_context, research)
+    prune_noncurrent_verified_claims(research)
     _resolve_court(case_context, research, draft)
     _apply_verified_legal_basis(research, draft)
     apply_claim_filing_accuracy(case_context, research, draft)
