@@ -5,9 +5,6 @@ from typing import Any
 from korgan.fast_professional_litigation import FastProfessionalLitigationService
 
 
-_ORIGINAL_QUALITY_REPAIR = FastProfessionalLitigationService._quality_repair
-
-
 def merge_repair_payload(
     current_payload: dict[str, Any],
     repaired_payload: dict[str, Any],
@@ -32,7 +29,14 @@ async def _quality_repair_preserving_required_fields(
     **kwargs: Any,
 ) -> dict[str, Any]:
     current_payload = dict(kwargs.get("current_payload") or {})
-    repaired = await _ORIGINAL_QUALITY_REPAIR(self, *args, **kwargs)
+
+    # Resolve the next implementation dynamically instead of capturing a
+    # process-global method object at import time. This keeps the guard
+    # composable with production wrappers and with deterministic tests that
+    # replace UniversalQualityProductionService._quality_repair after this
+    # module has been imported.
+    parent_repair = super(FastProfessionalLitigationService, self)._quality_repair
+    repaired = await parent_repair(*args, **kwargs)
     if not isinstance(repaired, dict):
         return repaired
     return merge_repair_payload(current_payload, repaired)
