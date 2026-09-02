@@ -57,7 +57,7 @@ _ACT_TO_CORPUS_IDS: dict[str, tuple[str, ...]] = {
 }
 
 _ACT_ALIASES: dict[str, tuple[str, ...]] = {
-    "ГК РК": ("Гражданский кодекс Республики Казахстан", "ГК"),
+    "ГК РК": ("Гражданский кодекс Республики Казахстан", "ГПК"),
     "ГПК РК": ("Гражданский процессуальный кодекс Республики Казахстан", "ГПК"),
     "НК РК": ("Налоговый кодекс Республики Казахстан", "НК"),
     "ТК РК": ("Трудовой кодекс Республики Казахстан", "ТК"),
@@ -127,7 +127,19 @@ def _to_record(act: str, article: str, part: str, provision: Any) -> ProvisionRe
 
 
 def lookup_in_local_corpus(act: str, article: str, part: str = "") -> ProvisionRecord | None:
-    """Найти норму в SQLite-корпусе. None — если корпуса нет или нормы в нём нет."""
+    """Найти норму в SQLite-корпусе, не обходя ручной safety override.
+
+    Даже прямой вызов этого bridge обязан уважать `provisions.json`. Если
+    оператор оставил норму на уровне REPORTED, автоматическая SQLite-копия не
+    имеет права молча повысить её до VERIFIED. Source-bound проверка текущего
+    документа по-прежнему может подтвердить норму отдельным верхним слоем.
+    """
+    from korgan.provision_corpus import lookup_manual
+
+    manual = lookup_manual(act, article, part)
+    if manual is not None:
+        return manual
+
     corpus = _open_corpus()
     if corpus is None:
         return None
