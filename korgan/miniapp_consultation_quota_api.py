@@ -28,7 +28,6 @@ async def consultation_quota_status(
         return {
             "enabled": False,
             "limit": limit,
-            "used": 0,
             "remaining": None,
         }
 
