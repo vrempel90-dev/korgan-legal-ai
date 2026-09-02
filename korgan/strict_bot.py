@@ -30,7 +30,7 @@ from korgan.kazakh_article_forms import install_kazakh_article_forms
 from korgan.kazakh_legal_bridge import install_kazakh_legal_bridge
 from korgan.kazakh_ui import router as kazakh_router
 from korgan.language_context import LanguageContextMiddleware
-from korgan.legal.corpus_refresh import start_corpus_refresh_task
+from korgan.legal.rag_runtime import start_legal_rag_tasks, stop_legal_rag_tasks
 from korgan.legal_safety import ConsentMiddleware, router as safety_router
 from korgan.localized_transport import LocalizedClientSafeBot
 from korgan.menu_start import router as start_router
@@ -161,9 +161,9 @@ async def main() -> None:
     dp.include_router(consultation_quota_router)
     dp.include_router(base_bot.router)
 
-    corpus_task = start_corpus_refresh_task()
+    rag_tasks = start_legal_rag_tasks()
     LOGGER.info(
-        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + preliminary Word fallback + RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
+        "Starting KORGAN: hard document-generator ownership + payment-before-generation + fail-closed payment fallback + strict document section lock + 10/10 quality target + exact Decimal filing arithmetic + preliminary Word fallback + dual-corpus RAG + RU/KK + claims/pretrial/pretrial-response + stable citation release + receipt precheck + manual payment confirmation=%s + consultation limit=%s + claim pipeline v2=%s",
         settings.payments_enabled,
         settings.consultation_limit_enabled,
         claim_pipeline_v2_mode(),
@@ -171,10 +171,7 @@ async def main() -> None:
     try:
         await dp.start_polling(bot)
     finally:
-        if corpus_task is not None:
-            corpus_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await corpus_task
+        await stop_legal_rag_tasks(rag_tasks)
         await close_consultation_store()
         await bot.session.close()
 
