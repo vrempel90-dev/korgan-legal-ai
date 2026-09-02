@@ -42,7 +42,8 @@ function screenTitle() {
 }
 
 function isProfile() {
-  return screenTitle() === 'Профиль';
+  const title = screenTitle();
+  return title === 'Профиль';
 }
 
 function isCases() {
@@ -71,11 +72,10 @@ function simplifyLawyerReviewCopy() {
   ]);
   for (const button of document.querySelectorAll('button')) {
     const current = String(button.textContent || '').trim();
-    if (replacements.has(current)) {
-      const label = replacements.get(current);
-      const textNode = [...button.childNodes].find(node => node.nodeType === Node.TEXT_NODE && String(node.textContent || '').trim());
-      if (textNode) textNode.textContent = label;
-    }
+    if (!replacements.has(current)) continue;
+    const label = replacements.get(current);
+    const textNode = [...button.childNodes].find(node => node.nodeType === Node.TEXT_NODE && String(node.textContent || '').trim());
+    if (textNode) textNode.textContent = label;
   }
 }
 
@@ -100,6 +100,30 @@ function toggleRow({ name, label, description, checked }) {
   return row;
 }
 
+function cleanupInjectedUi() {
+  const profile = isProfile();
+  const cases = isCases();
+  const documents = isDocuments();
+
+  for (const node of document.querySelectorAll('[data-korgan-feedback-settings]')) {
+    if (!profile) node.remove();
+  }
+  for (const node of document.querySelectorAll('[data-korgan-delete-all]')) {
+    const location = node.dataset.korganDeleteAll;
+    if ((location === 'cases' && !cases) || (location === 'documents' && !documents) || !['cases', 'documents'].includes(location)) {
+      node.remove();
+    }
+  }
+
+  // React can reuse a DOM button between screens. Never let the profile-only
+  // visibility override leak to another screen.
+  for (const button of document.querySelectorAll('[data-korgan-native-profile-delete]')) {
+    button.hidden = false;
+    button.style.removeProperty('display');
+    delete button.dataset.korganNativeProfileDelete;
+  }
+}
+
 function ensureFeedbackSettings() {
   if (!isProfile()) return;
   const page = document.querySelector('.subbar + .page');
@@ -114,16 +138,20 @@ function ensureFeedbackSettings() {
     toggleRow({ name: 'vibration', label: text().vibration, description: text().vibrationSub, checked: prefs.vibration }),
   );
 
-  const languageCard = page.querySelector('.settings-card');
-  if (languageCard?.nextSibling) page.insertBefore(section, languageCard.nextSibling);
-  else page.append(section);
+  // Только Профиль и именно внизу его содержимого.
+  page.append(section);
 }
 
 function hideProfileDelete() {
   if (!isProfile()) return;
-  for (const button of document.querySelectorAll('.page button')) {
+  const page = document.querySelector('.subbar + .page');
+  if (!page) return;
+  for (const button of page.querySelectorAll('button')) {
     const value = String(button.textContent || '').trim();
-    if (value === COPY.ru.deleteAll || value === COPY.kk.deleteAll) button.hidden = true;
+    if (value !== COPY.ru.deleteAll && value !== COPY.kk.deleteAll) continue;
+    button.dataset.korganNativeProfileDelete = 'true';
+    button.hidden = true;
+    button.style.setProperty('display', 'none', 'important');
   }
 }
 
@@ -172,11 +200,12 @@ function ensureDeleteActions() {
 }
 
 function applyUi() {
+  cleanupInjectedUi();
   applyHero();
   simplifyLawyerReviewCopy();
   hideProfileDelete();
-  ensureFeedbackSettings();
   ensureDeleteActions();
+  ensureFeedbackSettings();
 }
 
 applyUi();
