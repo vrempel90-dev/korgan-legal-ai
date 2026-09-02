@@ -6,6 +6,7 @@ on:
       - hardening/payment-api-20260828
     paths:
       - 'korgan/legal/**'
+      - 'korgan/asgi_lifespan.py'
       - 'korgan/miniapp_api_recovery_cors.py'
       - 'tests/test_legal_pipeline_flag.py'
       - 'tests/test_upstream_legal_rag_kz.py'
@@ -17,9 +18,24 @@ on:
 jobs:
   legal-rag-kz:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: korgan
+          POSTGRES_PASSWORD: korgan-test
+          POSTGRES_DB: korgan_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U korgan -d korgan_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       TELEGRAM_BOT_TOKEN: test-token
       OPENAI_API_KEY: test-key
+      DATABASE_URL: postgresql://korgan:korgan-test@127.0.0.1:5432/korgan_test
       PAYMENTS_ENABLED: 'false'
       CONSULTATION_LIMIT_ENABLED: 'false'
       KORGAN_LOCAL_CORPUS: '1'
@@ -39,6 +55,7 @@ jobs:
           korgan/legal/upstream_rag.py
           korgan/legal/rag_runtime.py
           korgan/legal/pipeline.py
+          korgan/asgi_lifespan.py
           korgan/miniapp_api_recovery_cors.py
       - name: Run RAG retrieval and corpus tests
         run: >-
