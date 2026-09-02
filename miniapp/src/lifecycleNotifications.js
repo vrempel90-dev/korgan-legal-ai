@@ -25,6 +25,16 @@ export function clearLifecycleNotificationData(storage = globalThis.localStorage
   try { storage.removeItem(LIFECYCLE_STORAGE_KEY); } catch { /* storage is optional */ }
 }
 
+export function clearLifecycleNotificationCase(caseId, storage = globalThis.localStorage) {
+  const prefix = `${String(caseId || '').trim()}:`;
+  if (prefix === ':') return;
+  const seen = safeRead(storage);
+  for (const key of Object.keys(seen)) {
+    if (key.startsWith(prefix)) delete seen[key];
+  }
+  safeWrite(storage, seen);
+}
+
 /**
  * Реестр уже показанных lifecycle-событий.
  *
@@ -57,14 +67,7 @@ export function createLifecycleNotificationLedger({ storage = globalThis.localSt
     return true;
   };
 
-  const clearCase = (caseId) => {
-    const prefix = `${String(caseId || '').trim()}:`;
-    if (prefix === ':') return;
-    for (const key of Object.keys(seen)) {
-      if (key.startsWith(prefix)) delete seen[key];
-    }
-    safeWrite(storage, seen);
-  };
+  const clearCase = (caseId) => clearLifecycleNotificationCase(caseId, storage);
 
   return { claim, clearCase };
 }
