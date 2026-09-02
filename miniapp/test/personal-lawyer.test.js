@@ -1,9 +1,7 @@
 /**
- * Карточка персонального юриста принадлежит приложению, а не патчу поверх него.
- *
- * Карточка внедрялась отдельным модулем в контейнер, которым владеет React, а
- * язык определялся вычитыванием отрисованного текста страницы. Из-за этого у
- * одного узла было два владельца, а у языка — два источника истины.
+ * Плитка проверки живым юристом принадлежит React-приложению и соответствует
+ * утверждённой главной странице KORGAN. Язык берётся из состояния приложения,
+ * без DOM-патчей и второго источника истины.
  */
 
 import test from 'node:test';
@@ -18,35 +16,26 @@ const here = dirname(fileURLToPath(import.meta.url));
 const miniapp = join(here, '..');
 const src = join(miniapp, 'src');
 
-test('текст карточки выбирается по языку приложения, а не по тексту страницы', () => {
-  assert.equal(personalLawyerCopy('ru').title, 'Ваш персональный юрист');
-  assert.equal(personalLawyerCopy('kk').title, 'Сіздің жеке заңгеріңіз');
+test('текст плитки проверки выбирается по языку приложения', () => {
+  assert.equal(personalLawyerCopy('ru').title, 'Проверка юристом');
+  assert.equal(personalLawyerCopy('kk').title, 'Заңгер тексеруі');
 });
 
-test('у карточки есть доступное имя на обоих языках', () => {
+test('у плитки есть доступное имя на обоих языках', () => {
   assert.match(personalLawyerCopy('ru').aria, /WhatsApp/);
   assert.match(personalLawyerCopy('kk').aria, /WhatsApp/);
 });
 
-test('неизвестный язык не оставляет карточку без текста', () => {
-  // Язык приходит из сохранённого состояния и может оказаться любым.
+test('неизвестный язык не оставляет плитку без текста', () => {
   assert.deepEqual(personalLawyerCopy('en'), personalLawyerCopy('ru'));
   assert.deepEqual(personalLawyerCopy(undefined), personalLawyerCopy('ru'));
 });
 
-test('карточка ведёт на WhatsApp персонального юриста', () => {
+test('проверка юристом ведёт на существующий WhatsApp-контакт', () => {
   assert.equal(PERSONAL_LAWYER_URL, 'https://wa.me/77005000553');
 });
 
 test('ни один модуль не следит за изменениями всего документа', () => {
-  /*
-   * Наблюдатель за всем документом вызывал перерисовку карточки, а перерисовка
-   * меняла DOM и снова будила наблюдателя. Цикл ограничивался только кадром
-   * анимации, поэтому карточка переписывалась каждый кадр всё время работы
-   * приложения, и каждый раз выполнялось чтение innerText — принудительный
-   * пересчёт вёрстки на телефоне.
-   */
-  // Комментарий, объясняющий снятый приём, — не сам приём: сравнивается код.
   const withoutComments = (code) =>
     code.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
@@ -60,9 +49,9 @@ test('ни один модуль не следит за изменениями �
   assert.deepEqual(offenders, []);
 });
 
-test('страница не подключает патч, дописывающий DOM поверх React', () => {
+test('страница не подключает DOM-патч и грузит утверждённый presentation-layer', () => {
   const html = readFileSync(join(miniapp, 'index.html'), 'utf8');
-  assert.ok(!html.includes('personal-lawyer.js'), 'index.html всё ещё грузит патч карточки');
-  // Стиль карточки остаётся: меняется владелец разметки, а не оформление.
-  assert.ok(html.includes('personal-lawyer.css'), 'оформление карточки пропало');
+  assert.ok(!html.includes('personal-lawyer.js'), 'index.html всё ещё грузит DOM-патч карточки');
+  assert.ok(html.includes('/src/approved-compat.css'), 'утверждённый светлый presentation-layer не подключён');
+  assert.ok(!html.includes('/src/personal-lawyer.css'), 'старый graphite-стиль карточки снова подключён');
 });
