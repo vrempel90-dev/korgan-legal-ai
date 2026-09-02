@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  clearLifecycleNotificationCase,
   clearLifecycleNotificationData,
   createLifecycleNotificationLedger,
   generationEvent,
@@ -44,6 +45,19 @@ test('глобальное удаление данных стирает ledger �
 
   const afterDelete = createLifecycleNotificationLedger({ storage, now: () => 200 });
   assert.equal(afterDelete.claim({ caseId: 'case-1', jobId: 'job-1', eventType: 'ready' }), true);
+});
+
+test('удаление одного дела стирает только его lifecycle metadata', () => {
+  const storage = memoryStorage();
+  const ledger = createLifecycleNotificationLedger({ storage, now: () => 100 });
+  assert.equal(ledger.claim({ caseId: 'case-1', jobId: 'job-1', eventType: 'ready' }), true);
+  assert.equal(ledger.claim({ caseId: 'case-2', jobId: 'job-2', eventType: 'ready' }), true);
+
+  clearLifecycleNotificationCase('case-1', storage);
+
+  const reopened = createLifecycleNotificationLedger({ storage, now: () => 200 });
+  assert.equal(reopened.claim({ caseId: 'case-1', jobId: 'job-1', eventType: 'ready' }), true);
+  assert.equal(reopened.claim({ caseId: 'case-2', jobId: 'job-2', eventType: 'ready' }), false);
 });
 
 test('второе дело не наследует уведомление первого', () => {
