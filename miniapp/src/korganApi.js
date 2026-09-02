@@ -1,9 +1,8 @@
 import { requireProfessionalDocument, requireProfessionalRuntime } from './runtimeReadiness.js';
 import { createApiTransport } from './apiTransport.js';
 import { clearLifecycleNotificationCase } from './lifecycleNotifications.js';
-import { recoverGenerationStart } from './generationStartRecovery.js';
 
-const API_BASE = import.meta.env?.VITE_KORGAN_API_BASE || '';
+const API_BASE = import.meta.env.VITE_KORGAN_API_BASE || '';
 const request = createApiTransport({
   baseUrl: API_BASE,
   getTelegramInitData: () => window.Telegram?.WebApp?.initData || '',
@@ -32,27 +31,6 @@ async function uploadDocumentReceipt(orderId, file) {
   return request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
 }
 
-async function generateDocument(caseId, documentType = 'claim', language = 'ru') {
-  try {
-    // Job creation is a short server operation. If it does not answer quickly,
-    // do not tell the user to start again: the paid job may already exist.
-    return await request('/miniapp/documents/generate', {
-      method: 'POST',
-      body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
-      timeoutMs: 8000,
-    });
-  } catch (error) {
-    return recoverGenerationStart({
-      caseId,
-      error,
-      fetchCaseGeneration: (id) => request(
-        `/miniapp/cases/${encodeURIComponent(id)}/generation`,
-        { timeoutMs: 4000 },
-      ),
-    });
-  }
-}
-
 export const korganApi = {
   health: async (options = {}) => {
     const [health, parity] = await Promise.all([
@@ -63,6 +41,7 @@ export const korganApi = {
   },
   consentStatus: (options = {}) => request('/miniapp/consent', options),
   pricing: (options = {}) => request('/miniapp/pricing', options),
+  getConsultationQuota: (options = {}) => request('/miniapp/consultation/quota', options),
   consultation: (message, caseId, language = 'ru') => request('/miniapp/consultation', {
     method: 'POST',
     body: JSON.stringify({ message, case_id: caseId || null, language }),
@@ -106,9 +85,11 @@ export const korganApi = {
     return results;
   },
   // Запуск подготовки отвечает описанием задачи: сам документ готовится на
-  // сервере и приходит отдельным опросом состояния. Таймаут запуска не
-  // провоцирует второй POST: сначала восстанавливаем уже сохранённую задачу.
-  generateDocument,
+  // сервере и приходит отдельным опросом состояния.
+  generateDocument: (caseId, documentType = 'claim', language = 'ru') => request('/miniapp/documents/generate', {
+    method: 'POST',
+    body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
+  }),
   generationStatus: (jobId) => request(`/miniapp/documents/generation/${encodeURIComponent(jobId)}`),
   retryGeneration: (jobId) => request(`/miniapp/documents/generation/${encodeURIComponent(jobId)}/retry`, {
     method: 'POST',

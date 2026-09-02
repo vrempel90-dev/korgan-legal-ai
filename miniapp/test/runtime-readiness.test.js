@@ -1,16 +1,7 @@
 /**
- * Проверка готовности бэкенда не должна отказывать из-за номера версии.
- *
- * Клиент требовал parity.api_version === '0.9.0'. Развёрнутое приложение
- * (korgan.miniapp_api_recovery_cors) отдаёт '1.0.0': слой v5 поднял версию, а
- * строка в клиенте осталась прежней. Совпадали все содержательные поля —
- * legal_runtime, вся цепочка сервисов, целевое качество, предварительный
- * фолбэк, ручная сверка платежа, — и не совпадало только число.
- *
- * Последствие не косметическое: boot() ловил исключение, ставил connection
- * 'down', и мини-апп целиком показывал «нет связи» с заблокированными
- * кнопками. Равенство версий ничего не защищало и гарантировало отказ при
- * каждом повышении версии бэкенда.
+ * Проверка готовности бэкенда не должна отказывать из-за номера версии и
+ * должна различать два безопасных пути подтверждения оплаты: legacy manual и
+ * production Tole automatic confirmation.
  */
 
 import test from 'node:test';
@@ -39,6 +30,15 @@ const PARITY = {
   document_manual_confirmation: true,
 };
 
+const TOLE_PARITY = {
+  ...PARITY,
+  document_payments_enabled: true,
+  document_payment_provider: 'tole',
+  document_manual_confirmation: false,
+  automatic_payment_confirmation: true,
+  tole_configured: true,
+};
+
 test('развёрнутый бэкенд признаётся готовым', () => {
   const result = requireProfessionalRuntime(HEALTH, PARITY);
 
@@ -47,8 +47,6 @@ test('развёрнутый бэкенд признаётся готовым', 
 });
 
 test('повышение версии бэкенда не выводит приложение из строя', () => {
-  // Клиент не обязан обновляться из-за номера версии, если содержательные
-  // поля контракта на месте.
   assert.doesNotThrow(() => requireProfessionalRuntime(HEALTH, { ...PARITY, api_version: '1.4.2' }));
 });
 
@@ -63,9 +61,30 @@ test('подмена юридического движка по-прежнему
   assert.throws(() => requireProfessionalRuntime({ ...HEALTH, word_quality_target: '7/10' }, PARITY));
 });
 
-test('при платных документах ручная сверка обязана быть включена', () => {
-  // Автоматическая выдача документа за деньги без сверки платежа человеком —
-  // не то, что делает развёрнутый бэкенд.
+test('production Tole automatic confirmation признаётся безопасным платёжным путём', () => {
+  const result = requireProfessionalRuntime(HEALTH, TOLE_PARITY);
+
+  assert.equal(result.parity.document_payment_provider, 'tole');
+  assert.equal(result.parity.automatic_payment_confirmation, true);
+  assert.equal(result.parity.document_manual_confirmation, false);
+});
+
+test('автоматическая оплата fail-closed для неизвестного или недонастроенного провайдера', () => {
+  assert.throws(() => requireProfessionalRuntime(HEALTH, {
+    ...TOLE_PARITY,
+    document_payment_provider: 'unknown',
+  }));
+  assert.throws(() => requireProfessionalRuntime(HEALTH, {
+    ...TOLE_PARITY,
+    automatic_payment_confirmation: false,
+  }));
+  assert.throws(() => requireProfessionalRuntime(HEALTH, {
+    ...TOLE_PARITY,
+    tole_configured: false,
+  }));
+});
+
+test('платные документы без manual или verified Tole confirmation блокируют приложение', () => {
   assert.throws(() => requireProfessionalRuntime(HEALTH, {
     ...PARITY,
     document_payments_enabled: true,
