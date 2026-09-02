@@ -33,11 +33,13 @@ DEFAULT_LIMIT = 12
 
 
 def local_corpus_enabled() -> bool:
-    """Local retrieval is on by default; an explicit false value disables it."""
-    raw = os.getenv(FLAG_ENV, "1").strip().lower()
+    """Local retrieval is on by default; explicit non-truthy values disable it."""
+    if FLAG_ENV not in os.environ:
+        return True
+    raw = os.getenv(FLAG_ENV, "").strip().lower()
     if raw in _FALSEY:
         return False
-    return raw in _TRUTHY or not raw
+    return raw in _TRUTHY
 
 
 @dataclass(frozen=True, slots=True)
