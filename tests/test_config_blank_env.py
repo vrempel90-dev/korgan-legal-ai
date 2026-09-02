@@ -15,7 +15,9 @@ pydantic считает её неверной и валит построение
 
 Здесь зафиксировано и то, что пустое число возвращается к умолчанию, и то, где
 эта снисходительность заканчивается: опечатка, обязательное поле и строковые
-настройки остаются нетронутыми.
+настройки остаются нетронутыми. Единственное отдельное правило безопасности —
+пустой allowlist юридических источников не снимает ограничение поиска и не
+превращается в невалидный пустой фильтр провайдера.
 """
 
 from __future__ import annotations
@@ -114,6 +116,22 @@ def test_an_empty_string_setting_stays_an_empty_string(monkeypatch) -> None:
     assert settings.kaspi_seller_bin == ""
     # Умолчание `claude-sonnet-5` не возвращается: оператор стёр значение сам.
     assert settings.anthropic_model == ""
+
+
+def test_blank_legal_domains_keep_the_official_source_allowlist(monkeypatch) -> None:
+    """Пустая Railway-строка не снимает ограничение юридического поиска.
+
+    OpenAI отвергает пустой web-search filter, а удалять filters целиком нельзя:
+    это разрешило бы юридическому исследованию ходить по всему интернету.
+    Поэтому эффективный allowlist возвращается к узкому безопасному набору
+    официальных источников, даже если сырая строковая настройка осталась пустой.
+    """
+    monkeypatch.setenv("OFFICIAL_LEGAL_DOMAINS", "   ")
+
+    settings = Settings()
+
+    assert settings.official_legal_domains == "   "
+    assert settings.legal_domains == ["adilet.zan.kz", "gov.kz", "sud.gov.kz"]
 
 
 def test_a_required_number_is_never_invented(monkeypatch) -> None:
