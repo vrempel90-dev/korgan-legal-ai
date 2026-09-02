@@ -108,3 +108,89 @@
 .bottom-nav > button:nth-child(3) {
   display: none !important;
 }
+
+/* Per-document generation progress exists only inside the My Cases document cards.
+   No global progress selector is used, so this presentation cannot affect other screens. */
+.case-list-item .case-document-progress {
+  width: 100%;
+  margin-top: 9px;
+}
+
+.case-list-item .case-document-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.case-list-item .case-document-progress-head span {
+  min-width: 0;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: left;
+}
+
+.case-list-item .case-document-progress-head strong {
+  flex: 0 0 auto;
+  color: #0d63ff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.case-list-item .case-document-progress-track {
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e7edf6;
+}
+
+.case-list-item .case-document-progress-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: #0d63ff;
+  transition: width .35s ease;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='ready'] .case-document-progress-head strong {
+  color: #159454;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='ready'] .case-document-progress-fill {
+  background: #159454;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='failed'] .case-document-progress-head strong {
+  color: #b42318;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='failed'] .case-document-progress-fill {
+  background: #b42318;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='payment'] .case-document-progress-fill {
+  background: #d89200;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='pending'] .case-document-progress-fill,
+.case-list-item .case-document-progress[data-progress-kind='unavailable'] .case-document-progress-fill {
+  width: 34% !important;
+  background: #9eb7dd;
+  animation: korgan-progress-pending 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes korgan-progress-pending {
+  from { transform: translateX(-35%); opacity: .5; }
+  to { transform: translateX(190%); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .case-list-item .case-document-progress-fill {
+    transition: none;
+    animation: none !important;
+  }
+}
