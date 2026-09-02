@@ -23,6 +23,7 @@
 
 .korgan-generation-stage-timeline {
   --generation-progress: 0%;
+  --generation-line-progress: 0%;
   width: 100%;
   margin: 16px 0 4px;
   padding: 16px 14px 13px;
@@ -73,7 +74,7 @@
 
 .korgan-generation-stage-line-fill {
   right: auto;
-  width: calc(var(--generation-progress) * .8);
+  width: var(--generation-line-progress);
   max-width: 80%;
   background: #0d63ff;
   transition: width .7s cubic-bezier(.22,.61,.36,1);
