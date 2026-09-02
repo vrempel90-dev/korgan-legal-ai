@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import inspect
 import json
 
 import httpx
 
+from korgan import miniapp_tole_payments as tole_payments
 from korgan.miniapp_tole_payments import ToleClient, verify_tole_webhook_signature
 
 
@@ -121,3 +123,11 @@ def test_tole_durable_qr_status_read_is_normalized() -> None:
     assert result["data"]["status"] == "paid"
     assert result["data"]["amount"] == 1000
     assert result["data"]["currency"] == "KZT"
+
+
+def test_tole_orders_never_enter_legacy_manual_admin_state() -> None:
+    source = inspect.getsource(tole_payments)
+    assert "SET status='awaiting_admin'" not in source
+    assert "status IN ('pending_receipt','awaiting_admin')" not in source
+    approve_source = inspect.getsource(tole_payments._approve_order_from_tole)
+    assert "WHERE id=$1 AND status='pending_receipt'" in approve_source
