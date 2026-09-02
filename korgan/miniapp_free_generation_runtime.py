@@ -344,6 +344,26 @@ async def _reset_failed(job_id: str, *, user_key: str) -> FreeGenerationJob:
     return _from_row(row)
 
 
+def _install_free_scheduler() -> None:
+    """Install free-mode scheduler without dropping an existing activity wrapper.
+
+    Modules can be imported in either order during tests and long-lived ASGI
+    composition. If case activity already wrapped the paid scheduler, point its
+    delegate at the free scheduler and keep the activity wrapper outermost.
+    """
+    current = generation_api._schedule_job
+    if (
+        getattr(current, "__module__", "") == "korgan.miniapp_case_activity"
+        and getattr(current, "__name__", "") == "_schedule_job_with_activity"
+    ):
+        from korgan import miniapp_case_activity as activity
+
+        activity._ORIGINAL_SCHEDULE_JOB = _schedule_free_job
+        generation_api._schedule_job = activity._schedule_job_with_activity
+        return
+    generation_api._schedule_job = _schedule_free_job
+
+
 if not settings.payments_enabled:
     add_lifespan(app, startup=_startup, shutdown=_shutdown)
 
@@ -459,8 +479,7 @@ if not settings.payments_enabled:
             "job": _public_job(job),
         }
 
-    # Case-activity imports generation_api after this module. Give its wrapper
-    # the actual free-mode scheduler and reloader so terminal callbacks do not
-    # look in the disabled paid-job table.
-    generation_api._schedule_job = _schedule_free_job
+    # Case activity may already be imported by another ASGI/test composition.
+    # Keep it outermost and swap only its scheduler delegate.
+    _install_free_scheduler()
     paid_jobs.require_job = _require_free_job
