@@ -1,5 +1,6 @@
 import { requireProfessionalDocument, requireProfessionalRuntime } from './runtimeReadiness.js';
 import { createApiTransport } from './apiTransport.js';
+import { clearLifecycleNotificationCase } from './lifecycleNotifications.js';
 
 const API_BASE = import.meta.env.VITE_KORGAN_API_BASE || '';
 const request = createApiTransport({
@@ -60,6 +61,7 @@ export const korganApi = {
     });
   },
   getCase: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}`),
+  caseActivity: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/activity`),
   getDocument: async (caseId) => requireProfessionalDocument(
     await request(`/miniapp/cases/${encodeURIComponent(caseId)}/document`),
   ),
@@ -101,7 +103,11 @@ export const korganApi = {
     body: JSON.stringify({ approved: Boolean(approved), note }),
   }),
   listCases: (options = {}) => request('/miniapp/cases', options),
-  deleteCase: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}`, { method: 'DELETE' }),
+  deleteCase: async (caseId) => {
+    const result = await request(`/miniapp/cases/${encodeURIComponent(caseId)}`, { method: 'DELETE' });
+    clearLifecycleNotificationCase(caseId);
+    return result;
+  },
   deleteMyData: () => request('/miniapp/me', { method: 'DELETE' }),
   acceptConsent: (termsVersion) => request('/miniapp/consent', {
     method: 'POST',

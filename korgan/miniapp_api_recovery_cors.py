@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from korgan.miniapp_payment_idempotency import app
 from korgan import miniapp_generation_api as _miniapp_generation_api  # noqa: F401
+from korgan import miniapp_case_activity as _miniapp_case_activity  # noqa: F401
+from korgan import miniapp_case_activity_cleanup as _miniapp_case_activity_cleanup  # noqa: F401
 
 # Keep the already-tested payment/runtime stack as the owner of the ASGI app.
 # Manual payment review is installed after the deterministic receipt stack so it

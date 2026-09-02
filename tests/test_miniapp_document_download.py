@@ -189,8 +189,13 @@ def test_tampered_link_is_refused(ready_document: bytes) -> None:
         link = client.post(f"/miniapp/cases/{CASE_ID}/document/access", headers=headers).json()
         token = link["download_url"].split("token=", 1)[1]
         payload, signature = token.split("%2E" if "%2E" in token else ".", 1)
-        # Подпись шестнадцатеричная, поэтому «0» вместо «1» гарантированно её меняет.
-        forged = f"{payload}.{signature[:-1]}{'0' if signature[-1] != '0' else '1'}"
+        # Меняем реальный байт HMAC-подписи, затем снова кодируем URL-safe Base64.
+        # Так подделка гарантированно отличается после декодирования и тест не
+        # зависит от незначащих хвостовых битов последнего Base64-символа.
+        signature_bytes = bytearray(access._b64url_decode(signature))
+        signature_bytes[0] ^= 0x01
+        forged_signature = access._b64url_encode(bytes(signature_bytes))
+        forged = f"{payload}.{forged_signature}"
         assert forged != token
         response = client.get("/miniapp/document/download", params={"token": forged})
 

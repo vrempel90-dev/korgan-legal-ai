@@ -1,17 +1,12 @@
 /**
- * Логотип в шапке — утверждённый файл, а не набранный шрифтом текст.
+ * Визуальный контракт шапки зафиксирован по последнему снимку MiniApp до
+ * 2026-08-31 06:00 Asia/Almaty (commit 78d2384).
  *
- * Вордмарк KORGAN лежит в public/korgan-wordmark.svg и подставляется через
- * переменную --korgan-wordmark: так он выглядит одинаково на экране согласия,
- * в водяном знаке фона и в шапке. Позже шапку перевели на реконструкцию
- * средствами CSS — псевдоэлементы с буквой «K» и текстом «| KORGAN», набранные
- * Georgia. Это уже не логотип, а его пересказ: пропорции, засечки и кернинг
- * зависят от того, какой шрифт нашёлся на устройстве, а на экране согласия
- * рядом продолжал жить настоящий знак. Шапка — единственное место, где логотип
- * виден постоянно, поэтому подмена была заметнее всего.
- *
- * Здесь проверяется, что шапка берёт тот же файл, что и остальные места, и что
- * файл действительно поставляется.
+ * В том дизайне постоянная шапка KORGAN собиралась из двух CSS-псевдоэлементов:
+ * отдельной буквы «K» и подписи «| KORGAN» в Georgia. При этом настоящий
+ * public/korgan-wordmark.svg продолжал использоваться на экране согласия,
+ * в hero и как фоновый водяной знак. Эти проверки намеренно фиксируют именно
+ * тот визуальный контракт, не затрагивая lifecycle, delivery или legal runtime.
  */
 
 import test from 'node:test';
@@ -30,23 +25,32 @@ const topbarRules = brand
   .flatMap(line => line.split('}'))
   .filter(rule => rule.includes('.topbar .brand-mark'));
 
-test('шапка показывает вордмарк из файла', () => {
-  const painted = topbarRules.filter(rule => rule.includes('--korgan-wordmark'));
-  assert.ok(painted.length > 0, 'в шапке не осталось ссылки на --korgan-wordmark');
+test('шапка сохраняет композицию KORGAN из снимка 31 августа', () => {
+  const shell = topbarRules.find(
+    rule => rule.includes('width:188px') && rule.includes('background:none'),
+  );
+  assert.ok(shell, 'размер или фон шапки отличаются от снимка 31 августа');
 });
 
-test('шапка не набирает логотип шрифтом', () => {
-  for (const rule of topbarRules) {
-    assert.ok(
-      !/content\s*:\s*["'][^"']*K/.test(rule),
-      `логотип в шапке подменён текстом: ${rule.trim().slice(0, 80)}`,
-    );
-  }
+test('шапка сохраняет текстовую KORGAN-композицию снимка 31 августа', () => {
+  const letter = topbarRules.find(
+    rule => rule.includes('::before') && rule.includes('content:"K"') && rule.includes('Georgia'),
+  );
+  const word = topbarRules.find(
+    rule => rule.includes('::after') && rule.includes('content:"| KORGAN"') && rule.includes('Georgia'),
+  );
+  assert.ok(letter, 'в шапке отсутствует буква K из снимка 31 августа');
+  assert.ok(word, 'в шапке отсутствует подпись | KORGAN из снимка 31 августа');
 });
 
-test('вордмарк действительно поставляется', () => {
-  const url = brand.match(/--korgan-wordmark\s*:\s*url\(['"]?([^'")]+)/);
+test('вордмарк действительно поставляется для остальных элементов бренда', () => {
+  const url = brand.match(/--korgan-wordmark\s*:\s*url\(['"]?([^'\")]+)/);
   assert.ok(url, 'переменная --korgan-wordmark не объявлена');
+  assert.ok(
+    brand.includes('.consent-page .brand-mark.large') &&
+      brand.includes('background:var(--korgan-wordmark)'),
+    'экран согласия больше не использует фирменный вордмарк',
+  );
   const file = join(miniapp, 'public', url[1].replace(/^\//, ''));
   assert.ok(existsSync(file), `${url[1]} не найден в public/`);
   assert.ok(readFileSync(file, 'utf8').includes('<svg'), 'вордмарк не является SVG');

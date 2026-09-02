@@ -337,8 +337,9 @@ test('экран следует за состоянием задачи, а не 
   const app = readFileSync(join(src, 'main.jsx'), 'utf8');
 
   assert.match(app, /import \{ interpretGeneration, startGenerationPolling \} from '\.\/generationJob'/);
+  assert.match(app, /import \{ recoverCaseWorkspace \} from '\.\/caseRecovery'/, 'reopen не использует общий recovery-координатор');
   assert.match(app, /startGenerationPolling\(\{/, 'прогресс подготовки не опрашивается');
-  assert.match(app, /korganApi\.caseGeneration\(/, 'начатая подготовка не восстанавливается при открытии дела');
+  assert.match(app, /recoverCaseWorkspace\(item\.id, korganApi\)/, 'начатая или завершённая подготовка не восстанавливается при открытии дела');
   assert.match(app, /korganApi\.retryGeneration\(/, 'прерванную подготовку нельзя повторить без новой оплаты');
 
   const generate = app.slice(app.indexOf('const generateDocument'), app.indexOf('const retryGeneration'));
