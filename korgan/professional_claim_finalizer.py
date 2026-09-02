@@ -6,9 +6,13 @@ from functools import lru_cache
 from pathlib import Path
 
 from korgan.claim_corpus_health import enforce_claim_corpus_health
+from korgan.claim_current_law_guard import prune_noncurrent_verified_claims
 from korgan.claim_filing_accuracy import apply_claim_filing_accuracy
+from korgan.claim_material_law_rescue import enrich_material_law_from_corpus
 from korgan.claim_money_ledger import build_claim_money_ledger
 from korgan.claim_release_invariants import enforce_claim_release_invariants
+from korgan.claim_requested_remedies import enforce_requested_remedy_coverage
+from korgan.claim_state_duty import apply_professional_state_duty
 from korgan.legal_calc import format_kzt
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 
@@ -221,7 +225,14 @@ def finalize_professional_claim(
     *,
     language: str | None = None,
 ) -> None:
-    """Apply non-model professional drafting invariants before final release checks."""
+    """Apply non-model professional drafting invariants before final release checks.
+
+    This is intentionally the last common gate.  Current official material law,
+    state duty and every remedy explicitly requested by the user are enforced
+    here so alternate generation/repair paths cannot bypass them.
+    """
+    enrich_material_law_from_corpus(case_context, research)
+    prune_noncurrent_verified_claims(research)
     _resolve_court(case_context, research, draft)
     _apply_verified_legal_basis(research, draft)
     apply_claim_filing_accuracy(case_context, research, draft)
@@ -229,6 +240,19 @@ def finalize_professional_claim(
     _sanitize_relief(case_context, research, draft)
     enforce_claim_release_invariants(case_context, draft, language=language)
     _recalculate_price(draft)
+
+    # State duty is not model prose.  The deterministic router owns the final
+    # amount/exemption/deferral wording and currently uses part 3 Article 106
+    # GPK for grounded consumer claims.  Running it here also displaces stale
+    # procedural references produced by an older model pass.
+    apply_professional_state_duty(case_context, research, draft)
+
+    # Silent omission is a release defect.  If the user asked to assess a
+    # penalty, moral damage, costs or jurisdiction, the final draft must either
+    # contain an executable outcome or an explicit filing action explaining the
+    # missing fact/calculation.  No facts or amounts are invented.
+    enforce_requested_remedy_coverage(case_context, research, draft)
+    enforce_claim_release_invariants(case_context, draft, language=language)
 
     draft.verification_notes = [
         note for note in draft.verification_notes

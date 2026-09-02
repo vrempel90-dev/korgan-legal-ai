@@ -9,14 +9,22 @@ on:
       - 'korgan/legacy_agent_rag_bridge.py'
       - 'korgan/__init__.py'
       - 'korgan/openai_legal.py'
+      - 'korgan/claim_material_law_rescue.py'
+      - 'korgan/claim_current_law_guard.py'
+      - 'korgan/claim_requested_remedies.py'
+      - 'korgan/professional_claim_finalizer.py'
       - 'tests/test_legal_pipeline_flag.py'
       - 'tests/test_upstream_legal_rag_kz.py'
       - 'tests/test_legacy_agent_rag_bridge.py'
+      - 'tests/test_claim_material_law_rescue.py'
+      - 'tests/test_professional_claim_finalizer.py'
+      - 'tests/test_claim_consumer_quality_regression.py'
       - '.github/workflows/legal-rag-kz-agent-ci.yml'
   push:
     branches:
       - feat/legal-rag-kz-agent-production
       - hotfix/legal-rag-agent-direct
+      - hotfix/claim-legal-quality-20260903
 
 jobs:
   legal-rag-agent:
@@ -35,7 +43,7 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Compile agent and RAG modules
+      - name: Compile agent, RAG and claim-quality modules
         run: >-
           python -m py_compile
           korgan/legal/corpus.py
@@ -43,13 +51,26 @@ jobs:
           korgan/legal/pipeline.py
           korgan/legacy_agent_rag_bridge.py
           korgan/openai_legal.py
+          korgan/claim_material_law_rescue.py
+          korgan/claim_current_law_guard.py
+          korgan/claim_requested_remedies.py
+          korgan/professional_claim_finalizer.py
           korgan/bot.py
-      - name: Run Kazakhstan-only retrieval tests
+      - name: Run Kazakhstan-only retrieval and claim-quality tests
         run: >-
           python -m pytest -q
           tests/test_legal_pipeline_flag.py
           tests/test_upstream_legal_rag_kz.py
           tests/test_legacy_agent_rag_bridge.py
           tests/test_legal_corpus_db.py
+          tests/test_claim_material_law_rescue.py
+          tests/test_professional_claim_finalizer.py
+          tests/test_claim_consumer_quality_regression.py
+          tests/test_claim_state_duty.py
+          tests/test_state_duty_release_regression.py
       - name: Import live Telegram entrypoint
         run: python -c "import korgan.bot; from korgan.openai_legal import OpenAILegalService; assert getattr(OpenAILegalService, '_korgan_kz_local_rag_bridge_installed', False); print('korgan.bot + KZ RAG bridge import ok')"
+      - name: Full repository regression suite
+        env:
+          KORGAN_LOCAL_CORPUS: '0'
+        run: python -m pytest -q
