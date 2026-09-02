@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -35,6 +36,8 @@ REQUIRED_DOCUMENT_FIELDS: tuple[tuple[str, str], ...] = (
     ("facts", "обстоятельства дела"),
     ("requests", "требования к ответчику (просительная часть)"),
 )
+
+_PERCENT_DECIMAL_RE = re.compile(r"(?<!\d)(\d+)\.(\d+)%")
 
 
 def _is_blank(value: object) -> bool:
@@ -122,6 +125,18 @@ def _kk_line(value: str) -> str:
     return text
 
 
+def _court_line(value: str, *, kk: bool) -> str:
+    """Apply presentation-only locale rules to court-facing text.
+
+    Calculators keep ``Decimal`` values in canonical dot form. Russian and
+    Kazakh court documents use a decimal comma in percentages, so typography is
+    normalized only at the DOCX boundary. Dates and other decimal-looking text
+    are untouched because the rule requires a trailing percent sign.
+    """
+    text = _kk_line(value) if kk else (value or "")
+    return _PERCENT_DECIMAL_RE.sub(r"\1,\2%", text)
+
+
 def _body_blocks(draft: ClaimDraft, *, kk: bool) -> list[Block]:
     """Разделы иска в порядке, в котором их читает суд.
 
@@ -129,11 +144,11 @@ def _body_blocks(draft: ClaimDraft, *, kk: bool) -> list[Block]:
     Прогнозируемые возражения ответчика являются внутренней аналитикой и в
     судебный иск не выводятся.
     """
-    blocks: list[Block] = [Prose(fact) for fact in draft.facts]
+    blocks: list[Block] = [Prose(_court_line(fact, kk=kk)) for fact in draft.facts]
 
     if draft.calculation:
         blocks.append(Heading("Өндіріп алынатын сомалардың есебі" if kk else "Расчёт взыскиваемых сумм"))
-        blocks.extend(Prose(_kk_line(line) if kk else line) for line in draft.calculation if line.strip())
+        blocks.extend(Prose(_court_line(line, kk=kk)) for line in draft.calculation if line.strip())
 
     if draft.late_interest:
         # Заголовок не называет норму. Прежний называл статью 353 ГК РК всегда,
@@ -142,7 +157,7 @@ def _body_blocks(draft: ClaimDraft, *, kk: bool) -> list[Block]:
         # ссылкой, которую проверка норм не видела — она смотрит содержание
         # черновика, а заголовок дописывает экспортёр.
         blocks.append(Heading("Тұрақсыздық айыбының есебі" if kk else "Расчёт неустойки"))
-        blocks.append(Prose(_kk_line(draft.late_interest) if kk else draft.late_interest))
+        blocks.append(Prose(_court_line(draft.late_interest, kk=kk)))
 
     procedural = [
         value.strip()
@@ -156,19 +171,19 @@ def _body_blocks(draft: ClaimDraft, *, kk: bool) -> list[Block]:
     ]
     if draft.legal_basis or procedural:
         blocks.append(Heading("Құқықтық негіздеме" if kk else "Правовое обоснование"))
-        blocks.extend(Prose(basis) for basis in draft.legal_basis)
-        blocks.extend(Prose(_kk_line(value) if kk else value) for value in procedural)
+        blocks.extend(Prose(_court_line(basis, kk=kk)) for basis in draft.legal_basis)
+        blocks.extend(Prose(_court_line(value, kk=kk)) for value in procedural)
 
     blocks.append(Heading("Жоғарыда баяндалғандардың негізінде СОТТАН СҰРАЙМЫН:" if kk else "На основании изложенного ПРОШУ СУД:"))
-    blocks.append(AutoNumberedList(list(draft.requests)))
+    blocks.append(AutoNumberedList([_court_line(item, kk=kk) for item in draft.requests]))
 
-    motions = [item.strip() for item in draft.motions if item and item.strip()]
+    motions = [_court_line(item.strip(), kk=kk) for item in draft.motions if item and item.strip()]
     if motions:
         blocks.append(Heading("Өтінішхаттар:" if kk else "Ходатайства:"))
         blocks.append(AutoNumberedList(motions, restart=True))
 
     blocks.append(Heading("Қосымшалар:" if kk else "Приложения:"))
-    blocks.append(AutoNumberedList(list(draft.attachments), restart=True))
+    blocks.append(AutoNumberedList([_court_line(item, kk=kk) for item in draft.attachments], restart=True))
     return blocks
 
 
