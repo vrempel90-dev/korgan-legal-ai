@@ -19,6 +19,7 @@ import { PERSONAL_LAWYER_URL, personalLawyerCopy } from './personalLawyer';
 import { deliverDocument, openSignedDocument } from './documentDelivery';
 import { requireDocumentPayment, startDocumentPaymentPolling } from './documentPaymentPolling';
 import { interpretGeneration, startGenerationPolling } from './generationJob';
+import { recoverCaseWorkspace } from './caseRecovery';
 import { createBootstrapSession } from './bootstrapSession';
 import { resolveScreen } from './screenState';
 import { createLatestAction } from './latestAction';
@@ -371,26 +372,22 @@ function App() {
   };
 
   const openCase = async item => {
-    // Список дел не гасит свои кнопки, поэтому от второго нажатия защищается
-    // сам обработчик: иначе ответ на дело A перезаписывал бы открытое дело B.
+    // Один recovery-координатор читает серверное дело, persisted generation job
+    // и, при необходимости, уже сохранённый документ. Он не придумывает READY:
+    // готовый экран открывается только когда backend вернул реальный документ.
     if (busy) return;
-    let mine = latestCase.current.start();
+    const mine = latestCase.current.start();
     setBusy(true); setNotice('');
     try {
-      const result = await korganApi.getCase(item.id); const detail = result.case;
+      const workspace = await recoverCaseWorkspace(item.id, korganApi);
       if (!mine()) return;
+      const detail = workspace.caseData;
       setActiveCase(detail); setDocumentResult(null); setDocPayment(null); setConsultPayment(null); setGeneration(null);
       const restored = (detail.conversation || []).map(entry => ({ from: entry.role === 'user' ? 'user' : 'ai', text: entry.text || '', sources: entry.sources || [] }));
-      setChat(restored.length ? restored : [{ from: 'ai', text: language === 'kk' ? 'Осы іс бойынша сұрағыңызды жазыңыз.' : 'Задайте вопрос по этому делу.' }]); showScreen('case');
-      mine = latestCase.current.start();
-      // Подготовка переживает закрытие Mini App, а выданный при запуске
-      // идентификатор задачи — нет. Незавершённая работа возвращается на экран,
-      // а завершённая ничего не перехватывает: дело открыли, а не документ.
-      try {
-        const resumed = interpretGeneration(await korganApi.caseGeneration(detail.id));
-        if (!mine()) return;
-        if (resumed.status === 'running' || resumed.status === 'failed') { setGeneration(resumed.job); showScreen('generating'); }
-      } catch { /* дело открыто; состояние подготовки узнаётся повторным запуском */ }
+      setChat(restored.length ? restored : [{ from: 'ai', text: language === 'kk' ? 'Осы іс бойынша сұрағыңызды жазыңыз.' : 'Задайте вопрос по этому делу.' }]);
+      if (workspace.view === 'ready' && workspace.document) { applyDocument(workspace.document); return; }
+      if (workspace.view === 'generating' && workspace.generation) { setGeneration(workspace.generation); showScreen('generating'); return; }
+      showScreen('case');
     } catch (error) { setNotice(clientMessage(error)); }
     finally { setBusy(false); }
   };

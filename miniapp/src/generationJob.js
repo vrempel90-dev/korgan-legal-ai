@@ -11,6 +11,7 @@ const MISSING_JOB = 'Сервис не сообщил состояние под�
 const MISSING_DOCUMENT = 'Подготовка завершена, но документ не получен';
 const MISSING_PAYMENT = 'Сервис не сообщил условия оплаты документа';
 const JOB_STATUSES = new Set(['queued', 'running', 'succeeded', 'failed']);
+const LIFECYCLE_EVENT = 'korgan:generation-lifecycle';
 
 function normalizeJob(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -34,6 +35,16 @@ function normalizeJob(raw) {
 function normalizeDocument(raw) {
   if (!raw || typeof raw !== 'object') return null;
   return String(raw.filename || '').trim() ? raw : null;
+}
+
+function publishLifecycle(job, document = null) {
+  if (!job || !job.jobId || !job.caseId) return;
+  const target = globalThis.window;
+  const EventClass = globalThis.CustomEvent;
+  if (!target || typeof target.dispatchEvent !== 'function' || typeof EventClass !== 'function') return;
+  target.dispatchEvent(new EventClass(LIFECYCLE_EVENT, {
+    detail: { job, document },
+  }));
 }
 
 /**
@@ -114,15 +125,22 @@ export function startGenerationPolling({
       const state = interpretGeneration(result);
       if (state.status === 'ready') {
         settled = true;
+        // READY публикуется только после того, как interpretGeneration увидел
+        // реальный filename сохранённого документа.
+        publishLifecycle(state.job, state.document);
         onReady(state.document, state.job);
         return;
       }
       if (state.status === 'failed') {
         settled = true;
+        publishLifecycle(state.job);
         onFailed(state.job);
         return;
       }
-      if (state.job !== null) onProgress(state.job);
+      if (state.job !== null) {
+        publishLifecycle(state.job);
+        onProgress(state.job);
+      }
     } catch (error) {
       if (stopped) return;
       // Сетевой сбой — не приговор задаче: она продолжается на сервере.
