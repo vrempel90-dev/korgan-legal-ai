@@ -1,6 +1,29 @@
-/* Keep the original KORGAN vector intact while giving its edge-touching
-   viewBox a small safe area inside the MiniApp header. */
+/* Center the exact KORGAN vector in the MiniApp header and keep a safe area
+   around the SVG viewBox so the large K is never clipped. */
+.topbar {
+  position: sticky;
+}
+
 .topbar .brand-mark {
-  background-position: 8px center !important;
-  background-size: calc(100% - 16px) auto !important;
+  position: absolute !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(220px, calc(100% - 48px)) !important;
+  min-width: 0 !important;
+  height: 42px !important;
+  margin: 0 !important;
+  background-position: center !important;
+  background-size: calc(100% - 28px) auto !important;
+  background-repeat: no-repeat !important;
+  overflow: visible !important;
+  pointer-events: none;
+}
+
+@media (max-width: 390px) {
+  .topbar .brand-mark {
+    width: min(205px, calc(100% - 44px)) !important;
+    height: 40px !important;
+    background-size: calc(100% - 24px) auto !important;
+  }
 }
