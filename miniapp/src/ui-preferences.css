@@ -109,6 +109,11 @@
   display: none !important;
 }
 
+/* The full source narrative belongs to the legal runtime, not to the client card. */
+.analysis-card .case-description {
+  display: none !important;
+}
+
 /* Per-document generation progress exists only inside the My Cases document cards.
    No global progress selector is used, so this presentation cannot affect other screens. */
 .case-list-item .case-document-progress {
