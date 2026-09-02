@@ -1,3 +1,5 @@
+import { feedbackPreferences } from './feedbackPreferences.js';
+
 const TONES = {
   queued: [520, 0.045],
   running: [620, 0.045],
@@ -48,14 +50,17 @@ export async function unlockLifecycleAudio({ AudioContextClass } = {}) {
   }
 }
 
-/** Короткий ненавязчивый сигнал + Telegram haptic на реальный backend transition. */
+/** Короткий сигнал + Telegram haptic на реальный backend transition. */
 export async function playLifecycleFeedback(eventType, {
   telegram = globalThis.window?.Telegram?.WebApp,
   AudioContextClass,
+  storage = globalThis.localStorage,
 } = {}) {
-  telegramFeedback(eventType, telegram);
+  const preferences = feedbackPreferences(storage);
+  if (preferences.vibration) telegramFeedback(eventType, telegram);
+
   const tone = TONES[eventType];
-  if (!tone) return { sounded: false };
+  if (!tone || !preferences.sound) return { sounded: false };
 
   try {
     const context = getAudioContext(AudioContextClass);
