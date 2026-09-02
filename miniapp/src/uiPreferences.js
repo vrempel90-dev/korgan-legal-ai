@@ -35,7 +35,6 @@ const COPY = {
 let progressActive = false;
 let progressEpoch = 0;
 let progressTimer = null;
-let progressBusy = false;
 
 function language() {
   return loadState().language === 'kk' ? 'kk' : 'ru';
@@ -113,7 +112,7 @@ function removeCaseProgressNodes() {
 }
 
 function stopCaseProgress() {
-  if (!progressActive && progressTimer === null && !progressBusy) {
+  if (!progressActive && progressTimer === null) {
     removeCaseProgressNodes();
     return;
   }
@@ -169,8 +168,7 @@ function renderCaseProgress(button, snapshot) {
 }
 
 async function syncCaseProgress(epoch) {
-  if (!progressActive || !isCases() || epoch !== progressEpoch || progressBusy) return;
-  progressBusy = true;
+  if (!progressActive || !isCases() || epoch !== progressEpoch) return;
   const buttons = [...document.querySelectorAll('.subbar + .page .case-list-item')];
   for (const button of buttons) {
     if (!button.querySelector('[data-korgan-case-progress]')) {
@@ -196,7 +194,6 @@ async function syncCaseProgress(epoch) {
     }
   }));
 
-  progressBusy = false;
   if (!progressActive || !isCases() || epoch !== progressEpoch) return;
   progressTimer = window.setTimeout(() => {
     progressTimer = null;
