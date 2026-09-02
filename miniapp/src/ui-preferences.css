@@ -143,6 +143,7 @@
   width: 100%;
   height: 6px;
   overflow: hidden;
+  position: relative;
   border-radius: 999px;
   background: #e7edf6;
 }
@@ -151,9 +152,22 @@
   display: block;
   height: 100%;
   width: 0;
+  position: relative;
+  overflow: hidden;
   border-radius: inherit;
   background: #0d63ff;
-  transition: width .35s ease;
+  transition: width .8s cubic-bezier(.22,.61,.36,1);
+}
+
+/* Motion is visual only: width still comes exclusively from backend job.progress. */
+.case-list-item .case-document-progress[data-progress-kind='running'] .case-document-progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 38%;
+  transform: translateX(-150%) skewX(-18deg);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.42), transparent);
+  animation: korgan-progress-shimmer 1.35s ease-in-out infinite;
 }
 
 .case-list-item .case-document-progress[data-progress-kind='ready'] .case-document-progress-head strong {
@@ -183,6 +197,13 @@
   animation: korgan-progress-pending 1.2s ease-in-out infinite alternate;
 }
 
+@keyframes korgan-progress-shimmer {
+  0% { transform: translateX(-150%) skewX(-18deg); opacity: 0; }
+  18% { opacity: 1; }
+  72% { opacity: 1; }
+  100% { transform: translateX(360%) skewX(-18deg); opacity: 0; }
+}
+
 @keyframes korgan-progress-pending {
   from { transform: translateX(-35%); opacity: .5; }
   to { transform: translateX(190%); opacity: 1; }
@@ -191,6 +212,10 @@
 @media (prefers-reduced-motion: reduce) {
   .case-list-item .case-document-progress-fill {
     transition: none;
+    animation: none !important;
+  }
+
+  .case-list-item .case-document-progress-fill::after {
     animation: none !important;
   }
 }
