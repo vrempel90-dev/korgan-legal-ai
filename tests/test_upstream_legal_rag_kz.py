@@ -141,3 +141,38 @@ def test_production_retrieval_fuses_official_and_kz_only_candidates(monkeypatch:
     assert "RAGKZ_abcd:9" in result.prompt_block
     assert official.closed
     assert upstream.closed
+
+
+def test_required_official_article_survives_fused_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    official_rows = [
+        _provision(
+            f"GPK_RK:{article_no}",
+            url=f"https://adilet.zan.kz/rus/docs/K1500000377#z{article_no}",
+            article_no=str(article_no),
+        )
+        for article_no in range(130, 149)
+    ]
+    required_id = "GPK_RK:148"
+    official = _CorpusStub(official_rows)
+    upstream = _CorpusStub([
+        _provision(
+            f"RAGKZ_abcd:{idx}",
+            url=f"https://adilet.zan.kz/rus/docs/Z100000274_#z{idx}",
+            article_no=str(idx),
+        )
+        for idx in range(1, 10)
+    ])
+    monkeypatch.delenv(pipeline.FLAG_ENV, raising=False)
+    monkeypatch.setattr(pipeline, "open_corpus", lambda path=None: official)
+    monkeypatch.setattr(pipeline, "open_upstream_corpus", lambda path=None: upstream)
+
+    result = pipeline.research_from_corpus(
+        "форма и содержание искового заявления",
+        limit=4,
+        required_article_ids=[required_id],
+    )
+
+    assert result is not None
+    assert required_id in [item.article_id for item in result.provisions]
+    assert result.provisions[0].article_id == required_id
+    assert len(result.provisions) == 4
