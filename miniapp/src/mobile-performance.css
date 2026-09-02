@@ -1,0 +1,18 @@
+/* Mobile rendering guard for Telegram WebView.
+   Keeps the same KORGAN visual hierarchy while avoiding expensive live blur on
+   fixed surfaces, which can cause jank on Android WebView. */
+@media (max-width: 768px) {
+  .bottom-nav {
+    background: rgba(11, 15, 20, .985) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, .34), inset 0 1px 0 rgba(255, 255, 255, .025) !important;
+  }
+
+  .korgan-doc-toast {
+    background: rgba(15, 20, 26, .985) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, .36), inset 0 1px 0 rgba(255, 255, 255, .025) !important;
+  }
+}
