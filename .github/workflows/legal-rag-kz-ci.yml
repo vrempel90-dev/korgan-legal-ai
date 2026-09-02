@@ -1,0 +1,52 @@
+name: Kazakhstan legal RAG CI
+
+on:
+  pull_request:
+    branches:
+      - hardening/payment-api-20260828
+    paths:
+      - 'korgan/legal/**'
+      - 'korgan/miniapp_api_recovery_cors.py'
+      - 'tests/test_legal_pipeline_flag.py'
+      - 'tests/test_upstream_legal_rag_kz.py'
+      - '.github/workflows/legal-rag-kz-ci.yml'
+  push:
+    branches:
+      - feat/legal-rag-kz-production
+
+jobs:
+  legal-rag-kz:
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: test-token
+      OPENAI_API_KEY: test-key
+      PAYMENTS_ENABLED: 'false'
+      CONSULTATION_LIMIT_ENABLED: 'false'
+      KORGAN_LOCAL_CORPUS: '1'
+      KORGAN_CORPUS_AUTOLOAD: '0'
+      KORGAN_UPSTREAM_RAG_AUTOLOAD: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Compile RAG and production entrypoint
+        run: >-
+          python -m py_compile
+          korgan/legal/upstream_rag.py
+          korgan/legal/rag_runtime.py
+          korgan/legal/pipeline.py
+          korgan/miniapp_api_recovery_cors.py
+      - name: Run RAG retrieval and corpus tests
+        run: >-
+          python -m pytest -q
+          tests/test_legal_pipeline_flag.py
+          tests/test_upstream_legal_rag_kz.py
+          tests/test_legal_corpus_db.py
+      - name: Import production ASGI stack
+        run: python -c "from korgan.miniapp_api_recovery_cors import app; assert app is not None; print('routes', len(app.routes))"
+      - name: Run production Mini App smoke
+        run: python -m pytest -q tests/test_miniapp_api_smoke.py
