@@ -14,6 +14,7 @@ import httpx
 from fastapi import Header, HTTPException, Request
 
 from korgan import miniapp_api_v5 as v5
+from korgan import miniapp_generation_api as generation_runtime
 from korgan import miniapp_document_payments as document_store
 from korgan import miniapp_manual_payment_admin as manual_runtime
 from korgan.payment_operation_lock import payment_operation_lock
@@ -550,7 +551,7 @@ def install_tole_payment_routes() -> bool:
         x_telegram_init_data: str = Header(default=""),
     ) -> dict[str, Any]:
         if not settings.payments_enabled:
-            return await v5.generate_document(payload, x_telegram_init_data)
+            return await generation_runtime.generate_document_job(payload, x_telegram_init_data=x_telegram_init_data)
         _require_tole_runtime()
         _, order = await _resolve_document_order(payload, x_telegram_init_data)
         payment = await _get_tole_payment(order.id)
@@ -563,7 +564,11 @@ def install_tole_payment_routes() -> bool:
             if refreshed is not None:
                 order = refreshed
         if order.status == "approved":
-            return await v5._run_approved_document(order, x_telegram_init_data=x_telegram_init_data)
+            # Tole owns payment confirmation only. Durable generation remains
+            # the single executor of paid legal work.
+            return await generation_runtime.generate_document_job(
+                payload, x_telegram_init_data=x_telegram_init_data
+            )
         try:
             payment = await _ensure_tole_qr(order)
         except ToleAPIError as exc:
@@ -572,7 +577,7 @@ def install_tole_payment_routes() -> bool:
         await _mark_waiting(order.id)
         order = (await document_store.get_document_order(order.id, user_key=order.user_key)) or order
         if not payment.payment_url:
-            raise HTTPException(status_code=503, detail="Tole создаёт QR оплаты. Повторите через несколько секунд; новая заявка не создастся.")
+            raise HTTPException(status_code=503, detail="Tole создаёт ссылку оплаты. Повторите через несколько секунд; новая заявка не создастся.")
         return {
             "payment_required": True,
             "generation_started": False,
@@ -652,7 +657,7 @@ def install_tole_payment_routes() -> bool:
         return {"ok": True, "duplicate": not inserted}
 
     _ROUTES_INSTALLED = True
-    LOGGER.info("TOLE_PAYMENT_RUNTIME_INSTALLED provider=tole mode=dynamic_qr")
+    LOGGER.info("TOLE_PAYMENT_RUNTIME_INSTALLED provider=tole mode=payment_link")
     return True
 
 
