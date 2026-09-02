@@ -1,6 +1,7 @@
 /**
- * Фоновая проверка ручного подтверждения оплаты не должна молчать, пересекаться
- * сама с собой или обновлять уже закрытый экран.
+ * Фоновая проверка оплаты не должна молчать, пересекаться сама с собой или
+ * обновлять уже закрытый экран. Tole остаётся в polling до server-side
+ * подтверждения, legacy Kaspi сохраняет прежнюю ручную семантику.
  */
 
 import test from 'node:test';
@@ -9,7 +10,12 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { requireDocumentPayment, startDocumentPaymentPolling } from '../src/documentPaymentPolling.js';
+import {
+  isAutomaticDocumentPayment,
+  requireDocumentPayment,
+  shouldPollDocumentPayment,
+  startDocumentPaymentPolling,
+} from '../src/documentPaymentPolling.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, '..', 'src');
@@ -75,6 +81,56 @@ test('подтверждённый статус доезжает до интер
   assert.equal(options.clock.jobs.size, 0);
 });
 
+test('Tole pending_receipt продолжает опрашиваться до автоматического подтверждения', async () => {
+  const payments = [];
+  const options = pollingOptions({
+    fetchStatus: async () => ({
+      payment: {
+        order_id: 'DOC-42',
+        status: 'pending_receipt',
+        payment_provider: 'tole',
+        automatic_confirmation: true,
+        payment_url: 'https://pay.tole.example/42',
+      },
+    }),
+    onPayment: payment => payments.push(payment),
+  });
+  startDocumentPaymentPolling(options);
+
+  await options.clock.runNext();
+
+  assert.equal(payments.length, 1);
+  assert.equal(options.clock.jobs.size, 1, 'Tole polling остановился до подтверждения оплаты');
+});
+
+test('Tole approved завершает polling', async () => {
+  const options = pollingOptions({
+    fetchStatus: async () => ({
+      payment: {
+        order_id: 'DOC-42',
+        status: 'approved',
+        payment_provider: 'tole',
+        automatic_confirmation: true,
+      },
+    }),
+  });
+  startDocumentPaymentPolling(options);
+
+  await options.clock.runNext();
+
+  assert.equal(options.clock.jobs.size, 0);
+});
+
+test('автоматический провайдер определяется без зависимости от названия статуса', () => {
+  assert.equal(isAutomaticDocumentPayment({ payment_provider: 'tole' }), true);
+  assert.equal(isAutomaticDocumentPayment({ automatic_confirmation: true }), true);
+  assert.equal(isAutomaticDocumentPayment({ payment_provider: 'kaspi-manual' }), false);
+  assert.equal(shouldPollDocumentPayment({ status: 'pending_receipt', payment_provider: 'tole' }), true);
+  assert.equal(shouldPollDocumentPayment({ status: 'pending_receipt' }), false);
+  assert.equal(shouldPollDocumentPayment({ status: 'awaiting_admin' }), true);
+  assert.equal(shouldPollDocumentPayment({ status: 'cancelled', payment_provider: 'tole' }), false);
+});
+
 test('сетевая ошибка показывается и следующий опрос всё равно планируется', async () => {
   const errors = [];
   const options = pollingOptions({
@@ -106,9 +162,7 @@ test('неполный успешный ответ не считается ст�
 test('следующий таймер появляется только после завершения запроса', async () => {
   let release;
   const pending = new Promise(resolve => { release = resolve; });
-  const options = pollingOptions({
-    fetchStatus: () => pending,
-  });
+  const options = pollingOptions({ fetchStatus: () => pending });
   startDocumentPaymentPolling(options);
 
   const [id, job] = options.clock.jobs.entries().next().value;
@@ -122,11 +176,6 @@ test('следующий таймер появляется только посл
 });
 
 test('неполный ответ об оплате отвергается одним общим правилом', () => {
-  /*
-   * Фоновая проверка это уже делала, а ручное обновление статуса и загрузка
-   * чека — нет: они клали в состояние `undefined`, экран оплаты переставал
-   * рисоваться, и пользователь оказывался на главной без объяснения.
-   */
   const payment = { order_id: 'DOC-42', status: 'awaiting_admin' };
 
   assert.deepEqual(requireDocumentPayment({ payment }), payment);
@@ -145,9 +194,7 @@ test('ручное обновление оплаты и загрузка чек�
 
 test('остановка удаляет ожидающий таймер', () => {
   let calls = 0;
-  const options = pollingOptions({
-    fetchStatus: async () => { calls += 1; },
-  });
+  const options = pollingOptions({ fetchStatus: async () => { calls += 1; } });
   const stop = startDocumentPaymentPolling(options);
 
   stop();
