@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   full-suite:
@@ -35,7 +36,32 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Full test suite from the repository root
-        run: python -m pytest -q
+        id: full_suite
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -q --maxfail=1 2>&1 | tee /tmp/pytest-full.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail -n 100 /tmp/pytest-full.log > /tmp/pytest-failure.txt
+          fi
+          exit "$status"
+
+      - name: Publish failure details to PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = '/tmp/pytest-failure.txt';
+            if (!fs.existsSync(path)) return;
+            const text = fs.readFileSync(path, 'utf8').slice(-12000);
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `<!-- korgan-ci-failure -->\n### Full-suite failure\n\n\`\`\`text\n${text}\n\`\`\``
+            });
 
       # Денежные функции обязаны вести себя одинаково до и после установки
       # боевых слоёв. Отдельный прогон делает провал этого инварианта видимым
