@@ -17,12 +17,16 @@ compiled into prefix terms, and the index declares matching prefix lengths.
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "corpus.sqlite3"
+DEFAULT_DB_PATH = Path(
+    os.getenv("KORGAN_CORPUS_DB")
+    or (Path(__file__).resolve().parent.parent / "data" / "corpus.sqlite3")
+)
 
 # Acts KORGAN is allowed to load. Keys double as the act half of article_id.
 ACT_GK_GENERAL = "GK_RK_OBSHAYA"
@@ -167,7 +171,7 @@ class LegalCorpus:
             self._connection.close()
             self._connection = None
 
-    def __enter__(self) -> LegalCorpus:
+    def __enter__(self) -> "LegalCorpus":
         self.create_schema()
         return self
 
