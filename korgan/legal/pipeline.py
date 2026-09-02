@@ -93,6 +93,8 @@ def _merge_ranked(
     limit: int,
 ) -> list[Provision]:
     """Interleave two independently-ranked FTS lists without comparing BM25 scales."""
+    if limit <= 0:
+        return []
     result: list[Provision] = []
     seen: set[tuple[str, str, str]] = set()
     width = max(len(official), len(upstream))
@@ -109,6 +111,38 @@ def _merge_ranked(
             if len(result) >= limit:
                 return result
     return result
+
+
+def _required_official_provisions(
+    official: LegalCorpus | None,
+    official_hits: list[Provision],
+    required_article_ids: Iterable[str] | None,
+    *,
+    act_id: str | None,
+) -> list[Provision]:
+    """Resolve deterministic required article ids from the authoritative corpus.
+
+    Required rows are kept separately from ranked retrieval so fusion with the
+    broader upstream corpus can never truncate procedural must-haves such as
+    GPK articles 148/149.
+    """
+    if official is None:
+        return []
+
+    by_id = {provision.article_id: provision for provision in official_hits}
+    required: list[Provision] = []
+    seen_ids: set[str] = set()
+    for article_id in required_article_ids or ():
+        if article_id in seen_ids:
+            continue
+        provision = by_id.get(article_id) or official.get(article_id)
+        if provision is None:
+            continue
+        if act_id is not None and provision.act_id != act_id:
+            continue
+        required.append(provision)
+        seen_ids.add(article_id)
+    return required
 
 
 def research_from_corpus(
@@ -141,25 +175,36 @@ def research_from_corpus(
     official_hits: list[Provision] = []
     upstream_hits: list[Provision] = []
     try:
-        fetch_limit = max(limit * 2, limit, 12)
+        requested_limit = max(1, limit)
+        fetch_limit = max(requested_limit * 2, requested_limit, 12)
         official_hits = official.search(query, act_id=act_id, limit=fetch_limit) if official is not None else []
         upstream_hits = upstream.search(query, limit=fetch_limit) if upstream is not None else []
 
-        # Deterministic routers may require exact ids from the official corpus.
-        if official is not None:
-            seen_ids = {provision.article_id for provision in official_hits}
-            for article_id in required_article_ids or ():
-                if article_id in seen_ids:
-                    continue
-                provision = official.get(article_id)
-                if provision is None:
-                    continue
-                if act_id is not None and provision.act_id != act_id:
-                    continue
-                official_hits.append(provision)
-                seen_ids.add(article_id)
+        required = _required_official_provisions(
+            official,
+            official_hits,
+            required_article_ids,
+            act_id=act_id,
+        )
+        required_keys = {_dedupe_key(provision) for provision in required}
+        optional_official = [
+            provision for provision in official_hits if _dedupe_key(provision) not in required_keys
+        ]
+        optional_upstream = [
+            provision for provision in upstream_hits if _dedupe_key(provision) not in required_keys
+        ]
 
-        provisions = _merge_ranked(official_hits, upstream_hits, limit=max(1, limit))
+        # Required official provisions have contractual priority. Normally they
+        # fit inside ``limit`` and the remaining slots are filled by fused
+        # ranking. If a caller explicitly requires more provisions than the
+        # nominal limit, preserving all required legal rules is safer than
+        # silently dropping one.
+        optional_slots = max(0, requested_limit - len(required))
+        provisions = required + _merge_ranked(
+            optional_official,
+            optional_upstream,
+            limit=optional_slots,
+        )
     finally:
         if owned_official and official is not None:
             official.close()
@@ -172,10 +217,11 @@ def research_from_corpus(
 
     offered_ids, prompt_block = build_offer(provisions)
     LOGGER.info(
-        "KORGAN_LOCAL_RAG candidates=%d official=%d upstream=%d",
+        "KORGAN_LOCAL_RAG candidates=%d official=%d upstream=%d required=%d",
         len(provisions),
         len(official_hits),
         len(upstream_hits),
+        len(required),
     )
     return CorpusResearch(
         provisions=tuple(provisions),
