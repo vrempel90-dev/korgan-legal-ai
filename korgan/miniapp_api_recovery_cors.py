@@ -18,6 +18,7 @@ from korgan import miniapp_case_activity_cleanup as _miniapp_case_activity_clean
 # afterwards replaces only the document-payment routes with signed automatic QR
 # confirmation; consultation payments and document idempotency stay untouched.
 from korgan import miniapp_manual_payment_admin as _miniapp_manual_payment_admin  # noqa: F401
+from korgan import miniapp_consultation_quota_api as _miniapp_consultation_quota_api  # noqa: F401
 from korgan import miniapp_tole_payments as _miniapp_tole_payments  # noqa: F401
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_consent_status as _miniapp_consent_status
