@@ -96,6 +96,13 @@ class ClaimDraft:
     anticipated_defenses: list[str] = field(default_factory=list)
     motions: list[str] = field(default_factory=list)
 
+    # Трассировка напечатанных ссылок на нормы — см.
+    # korgan.article_authority.ArticleAuthorityReport.as_dict(). Каждый
+    # оставленный в документе номер статьи связан здесь с source_hash записи
+    # корпуса, которая его подтвердила. Пустой словарь означает, что проверка
+    # ссылок по этому черновику не выполнялась, а не что ссылок нет.
+    citation_authority: dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass(slots=True)
 class ArgumentClause:
