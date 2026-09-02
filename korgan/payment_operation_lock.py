@@ -10,6 +10,15 @@ from typing import Any, AsyncIterator
 # prevents lock-holder starvation under multiple concurrent paid operations.
 _LOCAL_SLOTS = asyncio.Semaphore(2)
 
+# These namespaces guard only the short, durable job enqueue/reset transaction.
+# They must not wait behind unrelated long paid operations: doing so can keep
+# POST /miniapp/documents/generate open until the client times out even though
+# the persisted generation is later started and billed by the AI provider.
+_SHORT_JOB_NAMESPACES = frozenset({
+    "miniapp-generation-start",
+    "miniapp-generation-retry",
+})
+
 
 def payment_lock_key(namespace: str, identity: object) -> int:
     payload = f"korgan-payment:{namespace}:{identity}".encode("utf-8")
@@ -26,15 +35,21 @@ async def payment_operation_lock(
     """Serialize one paid operation across processes/replicas.
 
     The PostgreSQL session advisory lock is the cross-process authority. The
-    small local semaphore only bounds how many pool connections can be held by
-    long operations so nested store calls cannot exhaust the four-connection
-    payment pool.
+    small local semaphore bounds only long operations. Durable generation job
+    enqueue/reset is intentionally exempt: it is short and must return a job to
+    the Mini App without waiting behind unrelated provider work.
     """
     key = payment_lock_key(namespace, identity)
-    async with _LOCAL_SLOTS:
+    use_local_slot = namespace not in _SHORT_JOB_NAMESPACES
+    if use_local_slot:
+        await _LOCAL_SLOTS.acquire()
+    try:
         async with pool.acquire() as connection:
             await connection.execute("SELECT pg_advisory_lock($1)", key)
             try:
                 yield
             finally:
                 await connection.execute("SELECT pg_advisory_unlock($1)", key)
+    finally:
+        if use_local_slot:
+            _LOCAL_SLOTS.release()
