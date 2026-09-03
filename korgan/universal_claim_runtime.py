@@ -16,6 +16,8 @@ from korgan.claim_core_release import core_claim_release_blockers
 from korgan.claim_docx import build_claim_docx, missing_required_fields
 from korgan.claim_failure import ClaimStage, failure_from_exception
 from korgan.claim_intent import is_claim_drafting_request
+from korgan.client_calculation_advisory import build_calculation_advisory
+from korgan.contact_handlers import WHATSAPP_URL
 from korgan.contract_intent import is_contract_drafting_request
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
 from korgan.document_release import review_lines
@@ -326,6 +328,18 @@ async def _send_claim(
         caption=fit_caption(caption),
         reply_markup=base_bot.MENU,
     )
+
+    # A successfully delivered document may still omit an optional monetary
+    # remedy when its exact inputs cannot be verified. Tell the client exactly
+    # what remains unresolved instead of hiding it or inventing a number.
+    lang = await base_bot._language(state)
+    advisory = build_calculation_advisory(draft, language=lang)
+    if advisory and await request_is_current(state, request_id, "claim"):
+        lawyer_label = "KORGAN заңгеріне жазу" if lang == "kk" else "Написать юристу KORGAN"
+        await message.answer(
+            f"{advisory}\n\n💬 {lawyer_label}: {WHATSAPP_URL}",
+            reply_markup=base_bot.MENU,
+        )
 
 
 async def _generate_now(message: Message, state: FSMContext) -> None:
