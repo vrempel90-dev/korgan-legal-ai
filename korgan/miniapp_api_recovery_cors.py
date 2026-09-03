@@ -11,6 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 os.environ.setdefault("KORGAN_LIVE_ARTICLE_VERIFY", "on")
 
 from korgan.miniapp_payment_idempotency import app
+# Bound source-bound web research before normal runtime wrappers start serving
+# requests. This preserves official-source verification while preventing one
+# provider search from consuming the entire document/consultation latency budget.
+from korgan import legal_search_latency_guard as _legal_search_latency_guard  # noqa: F401
 from korgan import fast_professional_repair_guard as _fast_professional_repair_guard  # noqa: F401
 from korgan import miniapp_generation_api as _miniapp_generation_api  # noqa: F401
 from korgan import document_truth_runtime as _document_truth_runtime  # noqa: F401
