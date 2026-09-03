@@ -8,16 +8,21 @@ import {
 
 const ROOT_ID = 'korgan-generation-stage-timeline';
 const LIFECYCLE_EVENT = 'korgan:generation-lifecycle';
+let stageKey = '';
+let stageStartedAt = Date.now();
+let elapsedTimer = null;
 
 const COPY = {
   ru: {
     title: 'Этапы подготовки',
-    live: 'Идёт реальная обработка',
+    live: 'Работа продолжается',
+    current: 'Сейчас выполняется',
     stages: ['Старт', 'Право и проект', 'Проверка качества', 'Word', 'Готово'],
   },
   kk: {
     title: 'Дайындау кезеңдері',
-    live: 'Нақты өңдеу жүріп жатыр',
+    live: 'Жұмыс жалғасуда',
+    current: 'Қазір орындалып жатыр',
     stages: ['Бастау', 'Құқық және жоба', 'Сапаны тексеру', 'Word', 'Дайын'],
   },
 };
@@ -35,6 +40,31 @@ function isClaimFlow() {
   }
 }
 
+function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function updateElapsed() {
+  const root = document.getElementById(ROOT_ID);
+  const target = root?.querySelector('[data-generation-elapsed]');
+  if (!target) return;
+  target.textContent = formatElapsed(Date.now() - stageStartedAt);
+}
+
+function ensureElapsedTimer() {
+  if (elapsedTimer) return;
+  elapsedTimer = window.setInterval(updateElapsed, 1000);
+}
+
+function stopElapsedTimer() {
+  if (!elapsedTimer) return;
+  window.clearInterval(elapsedTimer);
+  elapsedTimer = null;
+}
+
 function renderTimeline(page, progress) {
   if (!page || !progress) return null;
 
@@ -43,7 +73,13 @@ function renderTimeline(page, progress) {
   const value = clampProgress(progress.getAttribute('aria-valuenow'));
   const active = stageIndexForProgress(value);
   const failed = /Подготовка не завершилась|Дайындау аяқталмады/.test(page.textContent || '');
-  const signature = timelineSignature({ language, progress: value, failed });
+  const currentStage = String(progress.getAttribute('aria-label') || copy.stages[active] || '').trim();
+  const nextStageKey = `${language}|${active}|${currentStage}`;
+  if (nextStageKey !== stageKey) {
+    stageKey = nextStageKey;
+    stageStartedAt = Date.now();
+  }
+  const signature = `${timelineSignature({ language, progress: value, failed })}|${currentStage}`;
 
   let root = document.getElementById(ROOT_ID);
   // Never reuse a manually injected node from an old React screen. That was the
@@ -63,27 +99,35 @@ function renderTimeline(page, progress) {
   root.style.setProperty('--generation-line-progress', `${Math.min(value * 0.8, 80)}%`);
   root.dataset.progress = String(value);
 
-  if (root.dataset.signature === signature) return root;
-  root.dataset.signature = signature;
+  if (root.dataset.signature !== signature) {
+    root.dataset.signature = signature;
+    root.innerHTML = `
+      <div class="korgan-generation-stage-title">
+        <strong>${copy.title}</strong>
+        <span class="korgan-generation-live"><i aria-hidden="true"></i>${failed ? (language === 'kk' ? 'Қате' : 'Ошибка') : copy.live}</span>
+      </div>
+      <div class="korgan-generation-current">
+        <span>${copy.current}</span>
+        <strong>${currentStage || copy.stages[active]}</strong>
+        <small data-generation-elapsed>${formatElapsed(Date.now() - stageStartedAt)}</small>
+      </div>
+      <div class="korgan-generation-stage-track" aria-label="${copy.title}">
+        <span class="korgan-generation-stage-line" aria-hidden="true"></span>
+        <span class="korgan-generation-stage-line-fill" aria-hidden="true"></span>
+        ${copy.stages.map((label, index) => {
+          const state = index < active ? 'is-done' : index === active ? (failed ? 'is-failed' : 'is-active') : '';
+          const marker = index < active ? '✓' : index === active && !failed ? '•' : String(index + 1);
+          return `<div class="korgan-generation-stage ${state}">
+            <span class="korgan-generation-stage-dot">${marker}</span>
+            <span class="korgan-generation-stage-label">${label}</span>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }
 
-  root.innerHTML = `
-    <div class="korgan-generation-stage-title">
-      <strong>${copy.title}</strong>
-      <span>${failed ? (language === 'kk' ? 'Қате' : 'Ошибка') : copy.live}</span>
-    </div>
-    <div class="korgan-generation-stage-track" aria-label="${copy.title}">
-      <span class="korgan-generation-stage-line" aria-hidden="true"></span>
-      <span class="korgan-generation-stage-line-fill" aria-hidden="true"></span>
-      ${copy.stages.map((label, index) => {
-        const state = index < active ? 'is-done' : index === active ? (failed ? 'is-failed' : 'is-active') : '';
-        const marker = index < active ? '✓' : index === active && !failed ? '•' : String(index + 1);
-        return `<div class="korgan-generation-stage ${state}">
-          <span class="korgan-generation-stage-dot">${marker}</span>
-          <span class="korgan-generation-stage-label">${label}</span>
-        </div>`;
-      }).join('')}
-    </div>`;
-
+  if (!failed && value < 100) ensureElapsedTimer();
+  else stopElapsedTimer();
+  updateElapsed();
   return root;
 }
 
@@ -96,6 +140,8 @@ function sync() {
   // Home, consultation, contracts and every other document flow.
   if (!isClaimFlow() || !page || !progress) {
     root?.remove();
+    stopElapsedTimer();
+    stageKey = '';
     return;
   }
 
@@ -129,6 +175,7 @@ function install() {
     window.removeEventListener('pageshow', scheduleSync);
     document.removeEventListener('click', scheduleSync, true);
     window.removeEventListener('popstate', scheduleSync);
+    stopElapsedTimer();
     document.getElementById(ROOT_ID)?.remove();
   };
 }
