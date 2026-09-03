@@ -9,6 +9,7 @@ from korgan.miniapp_payment_idempotency import app
 from korgan import fast_professional_repair_guard as _fast_professional_repair_guard  # noqa: F401
 from korgan import miniapp_generation_api as _miniapp_generation_api  # noqa: F401
 from korgan import document_truth_runtime as _document_truth_runtime  # noqa: F401
+from korgan import senior_document_drafting_runtime as _senior_document_drafting_runtime  # noqa: F401
 from korgan import miniapp_professional_consultation_runtime as _miniapp_professional_consultation_runtime  # noqa: F401
 from korgan import miniapp_case_activity as _miniapp_case_activity  # noqa: F401
 from korgan import miniapp_case_activity_cleanup as _miniapp_case_activity_cleanup  # noqa: F401
