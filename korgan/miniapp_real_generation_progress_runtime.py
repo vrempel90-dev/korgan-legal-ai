@@ -3,8 +3,8 @@ from __future__ import annotations
 """Expose real generation stages to the Mini App job endpoint.
 
 Percentages change only when the backend crosses an actual pipeline boundary.
-No timer pretends that work is complete. The frontend may animate the active
-stage, but the authoritative stage/progress values come from this runtime.
+No timer pretends that work is complete. Stage names intentionally reuse the
+existing Mini App vocabulary so old clients still render meaningful text.
 """
 
 import base64
@@ -23,15 +23,15 @@ LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 
 
-def _wrap_async_method(name: str, start_stage: str, start_progress: int, done_progress: int) -> None:
+def _wrap_async_method(name: str, start_progress: int, done_progress: int) -> None:
     original = getattr(core.service, name, None)
     if original is None or getattr(original, "_korgan_real_progress", False):
         return
 
     async def wrapped(_self: Any, *args: Any, **kwargs: Any) -> Any:
-        generation_progress.report(start_stage, start_progress)
+        generation_progress.report("legal_research", start_progress)
         result = await original(*args, **kwargs)
-        generation_progress.report(start_stage, done_progress)
+        generation_progress.report("legal_research", done_progress)
         return result
 
     setattr(wrapped, "_korgan_real_progress", True)
@@ -74,9 +74,12 @@ def _wrap_live_verifier() -> None:
         return
 
     async def wrapped(file_bytes: bytes) -> None:
-        generation_progress.report("final_verification", 90)
+        # This is still part of final Word preparation for the client. Keep the
+        # public stage stable while the exact backend boundary is reflected by
+        # the progress jump from 90 to 96.
+        generation_progress.report("document_render", 90)
         await original(file_bytes)
-        generation_progress.report("final_verification", 96)
+        generation_progress.report("document_render", 96)
 
     setattr(wrapped, "_korgan_real_progress", True)
     live.verify_document_articles = wrapped  # type: ignore[assignment]
@@ -96,7 +99,7 @@ async def _run_free_generation(job: Any, *, context: str) -> None:
                 context,
                 job.language,
             )
-            update("saving_document", 97)
+            update("document_render", 97)
 
             from korgan.miniapp_professional_release import apply_release_policy
 
@@ -158,8 +161,11 @@ def install() -> None:
         "research_pretrial",
         "research_pretrial_response",
     ):
-        _wrap_async_method(method_name, "legal_research", 12, 42)
+        _wrap_async_method(method_name, 12, 42)
 
+    # Drafting remains in the client-facing "Право и проект" stage, but its
+    # progress range is distinct and advances only when drafting really starts
+    # and finishes.
     for method_name in (
         "draft_claim",
         "draft_contract",
@@ -167,7 +173,7 @@ def install() -> None:
         "draft_pretrial",
         "draft_pretrial_response",
     ):
-        _wrap_async_method(method_name, "drafting", 45, 70)
+        _wrap_async_method(method_name, 45, 70)
 
     _wrap_release_metadata()
     for builder in (
