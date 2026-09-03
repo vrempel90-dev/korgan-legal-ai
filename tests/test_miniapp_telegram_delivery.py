@@ -1,10 +1,9 @@
-"""Документ должен доходить до пользователя внутри Telegram.
+"""Старый маршрут отправки юридического документа через Telegram закрыт.
 
-Мини-апп открывается во встроенном браузере Telegram, а он блокирует
-сохранение файла через blob и <a download>: клик проходит, файла нет,
-ошибки тоже нет. В логах это выглядело так — документ сгенерирован,
-GET /miniapp/cases/.../document отвечает 200 подряд, а пользователь
-сказать, что скачать не может. Надёжный путь — послать файл ботом в чат.
+KORGAN выдаёт готовый Word через подписанный document-access/download контур.
+Это не позволяет устаревшему клиенту заставить backend переслать приватный
+юридический документ через бота. Совместимый endpoint остаётся только затем,
+чтобы старый WebView получил явный 410 и перешёл на актуальный download flow.
 """
 
 from __future__ import annotations
@@ -42,75 +41,45 @@ def client(monkeypatch):
     return TestClient(app)
 
 
-def _telegram_stub(monkeypatch, *, ok=True, status=200, description=""):
-    sent = {}
-
-    class _Response:
-        status_code = status
-
-        @staticmethod
-        def json():
-            return {"ok": ok, "description": description}
-
-    class _Client:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def post(self, url, data=None, files=None):
-            sent["url"] = url
-            sent["data"] = data
-            sent["files"] = files
-            return _Response()
-
-    import korgan.miniapp_telegram_delivery as delivery
-
-    monkeypatch.setattr(delivery.httpx, "AsyncClient", _Client)
-    monkeypatch.setattr(delivery, "get_settings", lambda: type("S", (), {"telegram_bot_token": "123:test"})())
-    return sent
-
-
-def test_document_is_sent_to_the_users_private_chat(client, monkeypatch):
-    sent = _telegram_stub(monkeypatch)
-    response = client.post("/miniapp/cases/KOR-TEST/document/telegram", headers={"X-Telegram-Init-Data": "x"})
-    assert response.status_code == 200, response.text
-    assert response.json()["ok"] is True
-    assert "sendDocument" in sent["url"]
-    # chat_id личного чата — это идентификатор пользователя из подписанной initData
-    assert sent["data"]["chat_id"] == "555777"
-    filename, payload, mime = sent["files"]["document"]
-    assert filename == "KORGAN_claim.docx"
-    assert payload == DOCX
-    assert "wordprocessingml" in mime
-
-
-def test_preliminary_document_is_labelled_in_the_caption(client, monkeypatch):
-    sent = _telegram_stub(monkeypatch)
-    client.post("/miniapp/cases/KOR-TEST/document/telegram", headers={"X-Telegram-Init-Data": "x"})
-    assert "предварительный проект" in sent["data"]["caption"].lower()
-
-
-def test_missing_document_is_not_reported_as_success(client, monkeypatch):
-    _telegram_stub(monkeypatch)
-    response = client.post("/miniapp/cases/KOR-UNKNOWN/document/telegram", headers={"X-Telegram-Init-Data": "x"})
-    assert response.status_code == 404
-
-
-def test_user_who_never_started_the_bot_gets_a_usable_instruction(client, monkeypatch):
-    """Бот не может написать первым — пользователю нужно понятное действие."""
-    _telegram_stub(monkeypatch, ok=False, status=403, description="Forbidden: bot can't initiate conversation with a user")
-    response = client.post("/miniapp/cases/KOR-TEST/document/telegram", headers={"X-Telegram-Init-Data": "x"})
-    assert response.status_code == 409
+def test_retired_telegram_delivery_fails_closed_even_for_ready_document(client):
+    response = client.post(
+        "/miniapp/cases/KOR-TEST/document/telegram",
+        headers={"X-Telegram-Init-Data": "x"},
+    )
+    assert response.status_code == 410
     detail = response.json()["detail"]
-    assert "Старт" in detail and "KORGAN" in detail
+    assert "Telegram отключена" in detail
+    assert "KORGAN Mini App" in detail
 
 
-def test_telegram_failure_is_not_silently_swallowed(client, monkeypatch):
-    _telegram_stub(monkeypatch, ok=False, status=400, description="Bad Request: wrong file identifier")
-    response = client.post("/miniapp/cases/KOR-TEST/document/telegram", headers={"X-Telegram-Init-Data": "x"})
-    assert response.status_code == 502
+def test_retired_telegram_delivery_never_exposes_document_bytes(client):
+    response = client.post(
+        "/miniapp/cases/KOR-TEST/document/telegram",
+        headers={"X-Telegram-Init-Data": "x"},
+    )
+    assert response.status_code == 410
+    assert "document_base64" not in response.text
+    assert base64.b64encode(DOCX).decode("ascii") not in response.text
+
+
+def test_retired_telegram_delivery_does_not_probe_case_existence(client):
+    """После согласия compatibility-route одинаково закрыт для любого case_id."""
+    response = client.post(
+        "/miniapp/cases/KOR-UNKNOWN/document/telegram",
+        headers={"X-Telegram-Init-Data": "x"},
+    )
+    assert response.status_code == 410
+
+
+def test_unsigned_retired_delivery_request_is_still_rejected(client, monkeypatch):
+    async def denied(_identity):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="Consent required")
+
+    monkeypatch.setattr(core.legacy, "_require_consent", denied)
+    response = client.post(
+        "/miniapp/cases/KOR-TEST/document/telegram",
+        headers={"X-Telegram-Init-Data": "x"},
+    )
+    assert response.status_code == 403
