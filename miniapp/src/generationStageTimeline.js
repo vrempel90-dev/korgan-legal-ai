@@ -1,4 +1,5 @@
 import './generation-stage-timeline.css';
+import { loadState } from './store.js';
 import {
   clampProgress,
   stageIndexForProgress,
@@ -26,6 +27,14 @@ function languageFor(page, progress) {
   return /Құжат|Қазақстан|Дайындық|тексерілуде/.test(text) ? 'kk' : 'ru';
 }
 
+function isClaimFlow() {
+  try {
+    return loadState()?.draft?.documentType === 'claim';
+  } catch {
+    return false;
+  }
+}
+
 function renderTimeline(page, progress) {
   if (!page || !progress) return null;
 
@@ -37,6 +46,12 @@ function renderTimeline(page, progress) {
   const signature = timelineSignature({ language, progress: value, failed });
 
   let root = document.getElementById(ROOT_ID);
+  // Never reuse a manually injected node from an old React screen. That was the
+  // reason the claim timeline could remain on Home after navigation.
+  if (root && root.parentElement !== page) {
+    root.remove();
+    root = null;
+  }
   if (!root) {
     root = document.createElement('section');
     root.id = ROOT_ID;
@@ -77,7 +92,9 @@ function sync() {
   const progress = page?.querySelector('[role="progressbar"]');
   const root = document.getElementById(ROOT_ID);
 
-  if (!page || !progress) {
+  // The stage timeline is a claim-only UI. It must disappear immediately on
+  // Home, consultation, contracts and every other document flow.
+  if (!isClaimFlow() || !page || !progress) {
     root?.remove();
     return;
   }
@@ -98,15 +115,20 @@ function install() {
     else window.setTimeout(run, 0);
   };
 
-  // generationJob publishes this event from the real backend job. Deferring one
-  // frame lets React commit the new aria-valuenow before the timeline reads it.
+  // Lifecycle events update real backend progress. A capture-phase click queues
+  // one post-React sync for navigation, so stale claim UI is removed without
+  // continuously watching or scanning the page.
   window.addEventListener(LIFECYCLE_EVENT, scheduleSync);
   window.addEventListener('pageshow', scheduleSync);
+  document.addEventListener('click', scheduleSync, true);
+  window.addEventListener('popstate', scheduleSync);
   scheduleSync();
 
   return () => {
     window.removeEventListener(LIFECYCLE_EVENT, scheduleSync);
     window.removeEventListener('pageshow', scheduleSync);
+    document.removeEventListener('click', scheduleSync, true);
+    window.removeEventListener('popstate', scheduleSync);
     document.getElementById(ROOT_ID)?.remove();
   };
 }
