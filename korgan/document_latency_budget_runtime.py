@@ -53,6 +53,9 @@ async def _bounded_generate(
                 "Материалы дела сохранены; повторите подготовку документа."
             ),
         ) from exc
+    except Exception:
+        status = "error"
+        raise
     finally:
         LOGGER.info(
             "DOCUMENT_GENERATION_LATENCY document_type=%s seconds=%.2f budget=%.0f status=%s",
