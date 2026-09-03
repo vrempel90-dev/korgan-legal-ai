@@ -56,10 +56,12 @@ from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # no
 from korgan import miniapp_consent_status as _miniapp_consent_status
 from korgan import miniapp_document_access as _miniapp_document_access
 from korgan import miniapp_qr_analytics as _miniapp_qr_analytics
+from korgan import miniapp_legal_workspace as _miniapp_legal_workspace
 
 app.include_router(_miniapp_consent_status.router)
 app.include_router(_miniapp_document_access.router)
 app.include_router(_miniapp_qr_analytics.router)
+app.include_router(_miniapp_legal_workspace.router)
 
 # Recovery outer CORS layer. Keep the already-working Mini App origins and
 # browser-managed Telegram WebView headers unchanged while the payment layer is
