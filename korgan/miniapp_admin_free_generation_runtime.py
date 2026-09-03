@@ -17,21 +17,15 @@ LOGGER = logging.getLogger(__name__)
 
 app = v5.app
 core = v5.core
-settings = v5.settings
 _TASKS: dict[str, asyncio.Task[None]] = {}
-_JOBS: dict[str, "AdminTestJob"] = {}
+_JOBS: dict[str, "FreeGenerationJob"] = {}
 _CASE_JOB: dict[tuple[str, str], str] = {}
 _INSTALLED = False
 _HUMAN_TEXT = re.compile(r"[Ѐ-ӿ]")
 
-_DISABLED_FOR_CLIENTS = (
-    "Оплата документов временно отключена. Подготовка документов для обычных "
-    "пользователей временно недоступна."
-)
-
 
 @dataclass
-class AdminTestJob:
+class FreeGenerationJob:
     id: str
     identity: str
     case_id: str
@@ -55,26 +49,13 @@ def _drop(path: str, method: str) -> None:
     ]
 
 
-def _is_admin(identity: str) -> bool:
-    try:
-        return int(identity) in settings.admin_ids
-    except (TypeError, ValueError):
-        return False
-
-
-def _require_test_admin(x_telegram_init_data: str) -> tuple[str, str]:
+def _require_free_user(x_telegram_init_data: str) -> tuple[str, str]:
+    """Resolve the authenticated Mini App user without any payment/admin gate."""
     identity = core.legacy._identity(x_telegram_init_data)
-    if settings.payments_enabled:
-        raise HTTPException(
-            status_code=503,
-            detail="Временный тестовый режим отключён, потому что платёжный контур включён.",
-        )
-    if not _is_admin(identity):
-        raise HTTPException(status_code=503, detail=_DISABLED_FOR_CLIENTS)
     return identity, core.store.user_key(identity)
 
 
-def _public_job(job: AdminTestJob) -> dict[str, Any]:
+def _public_job(job: FreeGenerationJob) -> dict[str, Any]:
     return {
         "job_id": job.id,
         "case_id": job.case_id,
@@ -101,11 +82,11 @@ def _consume_task_result(task: asyncio.Task[None]) -> None:
     except asyncio.CancelledError:
         pass
     except Exception:
-        # _run_admin_generation already stores a client-safe failed state.
+        # _run_free_generation already stores a client-safe failed state.
         pass
 
 
-async def _run_admin_generation(job: AdminTestJob, *, context: str) -> None:
+async def _run_free_generation(job: FreeGenerationJob, *, context: str) -> None:
     job.status = "running"
     job.stage = "legal_research"
     job.progress = 20
@@ -148,7 +129,7 @@ async def _run_admin_generation(job: AdminTestJob, *, context: str) -> None:
         job.progress = 100
         job.error = ""
         LOGGER.info(
-            "ADMIN_FREE_DOCUMENT_COMPLETED case_id=%s document_type=%s",
+            "FREE_DOCUMENT_COMPLETED case_id=%s document_type=%s",
             job.case_id,
             job.document_type,
         )
@@ -158,20 +139,20 @@ async def _run_admin_generation(job: AdminTestJob, *, context: str) -> None:
         job.progress = 0
         job.error = _client_error(exc)
         LOGGER.exception(
-            "ADMIN_FREE_DOCUMENT_FAILED case_id=%s document_type=%s",
+            "FREE_DOCUMENT_FAILED case_id=%s document_type=%s",
             job.case_id,
             job.document_type,
         )
         raise
 
 
-def _schedule(job: AdminTestJob, *, context: str) -> None:
+def _schedule(job: FreeGenerationJob, *, context: str) -> None:
     existing = _TASKS.get(job.id)
     if existing is not None and not existing.done():
         return
     task = asyncio.create_task(
-        _run_admin_generation(job, context=context),
-        name=f"korgan-admin-free-{job.id}",
+        _run_free_generation(job, context=context),
+        name=f"korgan-free-{job.id}",
     )
     _TASKS[job.id] = task
 
@@ -206,13 +187,11 @@ async def _document_if_ready(identity: str, case_id: str) -> dict[str, Any]:
 
 
 def install_admin_free_generation_runtime() -> None:
-    """Temporary admin-only legal-document testing while all payments are OFF.
+    """Install payment-free document generation for every authenticated Mini App user.
 
-    No document order, QR, Tole intent or synthetic payment is created. The
-    commercial payment switch stays disabled. Only Telegram ids already present
-    in ADMIN_TELEGRAM_IDS receive this direct test route; every other user is
-    blocked. When PAYMENTS_ENABLED becomes true, this route also fails closed so
-    it cannot accidentally become a production free-generation bypass.
+    No document order, QR, Tole intent or synthetic payment is created. Generation
+    starts directly after the user presses the document preparation button. The
+    normal case ownership and consent checks remain in force.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -227,11 +206,11 @@ def install_admin_free_generation_runtime() -> None:
         _drop(path, method)
 
     @app.post("/miniapp/documents/generate")
-    async def admin_free_generate(
+    async def free_generate(
         payload: core.GenerateRequest,
         x_telegram_init_data: str = Header(default=""),
     ) -> dict[str, Any]:
-        identity, _ = _require_test_admin(x_telegram_init_data)
+        identity, _ = _require_free_user(x_telegram_init_data)
         _, document_type, language, context = await _case_scope(identity, payload)
         key = (identity, payload.case_id)
         old_id = _CASE_JOB.get(key)
@@ -251,8 +230,8 @@ def install_admin_free_generation_runtime() -> None:
                     "document": await _document_if_ready(identity, payload.case_id),
                 }
 
-        job = AdminTestJob(
-            id=f"admin-{uuid.uuid4()}",
+        job = FreeGenerationJob(
+            id=f"free-{uuid.uuid4()}",
             identity=identity,
             case_id=payload.case_id,
             document_type=document_type,
@@ -268,11 +247,11 @@ def install_admin_free_generation_runtime() -> None:
         }
 
     @app.get("/miniapp/documents/generation/{job_id}")
-    async def admin_generation_status(
+    async def free_generation_status(
         job_id: str,
         x_telegram_init_data: str = Header(default=""),
     ) -> dict[str, Any]:
-        identity, _ = _require_test_admin(x_telegram_init_data)
+        identity, _ = _require_free_user(x_telegram_init_data)
         job = _JOBS.get(job_id)
         if job is None or job.identity != identity:
             raise HTTPException(status_code=404, detail="Задача подготовки документа не найдена")
@@ -282,11 +261,11 @@ def install_admin_free_generation_runtime() -> None:
         return result
 
     @app.get("/miniapp/cases/{case_id}/generation")
-    async def admin_case_generation_status(
+    async def free_case_generation_status(
         case_id: str,
         x_telegram_init_data: str = Header(default=""),
     ) -> dict[str, Any]:
-        identity, _ = _require_test_admin(x_telegram_init_data)
+        identity, _ = _require_free_user(x_telegram_init_data)
         state = await core.legacy._require_consent(identity)
         case = (state.get("cases") or {}).get(case_id)
         if case is None:
@@ -301,11 +280,11 @@ def install_admin_free_generation_runtime() -> None:
         return result
 
     @app.post("/miniapp/documents/generation/{job_id}/retry")
-    async def admin_retry_generation(
+    async def free_retry_generation(
         job_id: str,
         x_telegram_init_data: str = Header(default=""),
     ) -> dict[str, Any]:
-        identity, _ = _require_test_admin(x_telegram_init_data)
+        identity, _ = _require_free_user(x_telegram_init_data)
         old = _JOBS.get(job_id)
         if old is None or old.identity != identity:
             raise HTTPException(status_code=404, detail="Задача подготовки документа не найдена")
@@ -318,8 +297,8 @@ def install_admin_free_generation_runtime() -> None:
             language=old.language,
         )
         _, document_type, language, context = await _case_scope(identity, payload)
-        job = AdminTestJob(
-            id=f"admin-{uuid.uuid4()}",
+        job = FreeGenerationJob(
+            id=f"free-{uuid.uuid4()}",
             identity=identity,
             case_id=old.case_id,
             document_type=document_type,
@@ -335,11 +314,7 @@ def install_admin_free_generation_runtime() -> None:
         }
 
     _INSTALLED = True
-    LOGGER.info(
-        "Installed admin-only free document testing payments_enabled=%s admins=%s",
-        settings.payments_enabled,
-        len(settings.admin_ids),
-    )
+    LOGGER.info("Installed payment-free document generation for all Mini App users")
 
 
 install_admin_free_generation_runtime()
