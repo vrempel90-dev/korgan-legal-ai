@@ -72,9 +72,6 @@ install_kazakh_article_forms()
 install_professional_rag_bridge()
 install_stable_legal_release()
 install_professional_consultation_guard()
-# Consultations use the same local verified-corpus fast path as documents. Any
-# missing/ambiguous legal coverage delegates to the existing source-bound web
-# consultation guard unchanged.
 install_local_first_consultation()
 install_universal_word_quality_guard()
 install_universal_word_final_hardening()
@@ -82,8 +79,6 @@ install_client_safe_runtime()
 install_pretrial_response_transport()
 install_response_voice_guard()
 install_payment_pdf_hotfix()
-# Transport fallback remains fail-closed. Normal requests are paid before
-# generation and pass only inside a verified paid-delivery context.
 install_payment_gate()
 install_payment_delivery_bridge()
 install_upload_followup_guard()
@@ -97,11 +92,14 @@ from korgan.universal_document_runtime import router as universal_document_route
 install_document_generator_ownership_guard()
 install_generation_prepayment_gate()
 install_client_document_runtime_guidance()
-# Installed last so the progress ContextVar wraps the canonical prepayment
-# generator and can report the actual research -> draft transition.
 install_claim_generation_progress()
 
 LOGGER = logging.getLogger(__name__)
+_DISABLE_VALUES = {"1", "true", "yes", "on", "disabled"}
+
+
+def telegram_agent_disabled() -> bool:
+    return str(os.getenv("KORGAN_TELEGRAM_AGENT_DISABLED", "") or "").strip().lower() in _DISABLE_VALUES
 
 
 async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
@@ -120,6 +118,15 @@ async def configure_telegram_menu(bot: LocalizedClientSafeBot) -> None:
 
 
 async def main() -> None:
+    # Production kill switch is evaluated before reading credentials, touching
+    # Telegram, opening DB-backed bot stores or starting background jobs. This
+    # keeps the Mini App operational while making the separate polling agent a
+    # true no-op. The standard Procfile stays unchanged so accidental entrypoint
+    # drift remains covered by the existing production tests.
+    if telegram_agent_disabled():
+        LOGGER.warning("KORGAN_TELEGRAM_AGENT_DISABLED polling_not_started=true")
+        return
+
     settings = get_settings()
     apply_token_budget_guard(settings)
     stable_service = PretrialResponseProductionService(settings)
@@ -143,9 +150,6 @@ async def main() -> None:
     dp.include_router(start_router)
     dp.include_router(safety_router)
     dp.include_router(document_menu_entry_router)
-    # Legacy callbacks stay first only for already-issued old payment cards.
-    # New payment requests proceed only after deterministic Kaspi OFD fiscal
-    # receipt verification; no administrator action is part of the normal flow.
     dp.include_router(prepayment_router)
     dp.include_router(payment_router)
     dp.include_router(contact_router)
