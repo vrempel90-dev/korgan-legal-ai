@@ -52,6 +52,7 @@ def test_paid_order_schedules_generation_without_second_client_request(monkeypat
             error_detail="",
         )
         scheduled: list[tuple[int, str]] = []
+        release = asyncio.Event()
 
         async def get_order(order_id: int):
             assert order_id == 71
@@ -77,6 +78,7 @@ def test_paid_order_schedules_generation_without_second_client_request(monkeypat
 
         async def fake_run(job_arg, *, order, context):
             scheduled.append((order.id, context))
+            await release.wait()
 
         monkeypatch.setattr(runtime.document_store, "get_document_order", get_order)
         monkeypatch.setattr(runtime.jobs, "create_or_get_job", create_job)
@@ -90,12 +92,17 @@ def test_paid_order_schedules_generation_without_second_client_request(monkeypat
         await asyncio.sleep(0)
         assert scheduled == [(71, "trusted case context")]
 
-        # A duplicate webhook/reconcile sees the same durable job. The in-memory
-        # scheduler must not create a second concurrent legal generation.
+        # A duplicate webhook/reconcile that arrives while the durable job is
+        # running must reuse that same task instead of scheduling another legal
+        # generation.
         result_again = await runtime.start_paid_generation(71)
         assert result_again == job
         await asyncio.sleep(0)
         assert scheduled == [(71, "trusted case context")]
+
+        release.set()
+        await asyncio.gather(*list(runtime._AUTO_TASKS.values()), return_exceptions=True)
+        await asyncio.sleep(0)
 
     asyncio.run(scenario())
 
