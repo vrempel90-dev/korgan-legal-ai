@@ -57,16 +57,16 @@ _CONTRACT_HIGH_RISK_PREFIXES = (
     "сумма отсутствует",
 )
 
-# These are high-risk factual particulars irrespective of tense. Evidence names
-# are intentionally NOT here: an attachment list may legitimately name a filing
-# document to be added before submission, without asserting that it already
-# existed in the source materials.
+# Whole-document claim/response/pretrial scanning cannot treat every date as a
+# new case fact: attachment titles may legitimately contain dates and have their
+# own evidence gate. Dates attached to completed payment/dispatch assertions are
+# still protected by the past-event checks below, while fact-bearing sections
+# retain the existing document-specific provenance checks.
 _GENERAL_HIGH_RISK_PREFIXES = (
     "ФИО отсутствует",
     "ИИН/БИН отсутствует",
     "адрес отсутствует",
     "номер договора отсутствует",
-    "дата отсутствует",
 )
 
 # Event findings from legal_provenance are broader by design because that module
@@ -79,7 +79,12 @@ _PAST_PAYMENT_RE = re.compile(
     r"перечислил|перечислила|перечислили|внес|внесла|внесли|"
     r"списал|списала|списали|получил|получила|получили)\b|"
     r"(?:оплата|плат[её]ж|денежн\w*\s+средств\w*)[^.;]{0,70}"
-    r"\b(?:был[аои]?\s+)?(?:произведен\w*|перечислен\w*|внесен\w*|уплачен\w*|получен\w*)\b"
+    r"\b(?:был[аои]?\s+)?(?:"
+    r"произведен|произведена|произведено|произведены|"
+    r"перечислен|перечислена|перечислено|перечислены|"
+    r"внесен|внесена|внесено|внесены|"
+    r"уплачен|уплачена|уплачено|уплачены|"
+    r"получен|получена|получено|получены)\b"
     r")"
 )
 _PAST_DISPATCH_RE = re.compile(
@@ -88,7 +93,11 @@ _PAST_DISPATCH_RE = re.compile(
     r"вручил|вручила|вручили|получил|получила|получили)\b[^.;]{0,90}"
     r"(?:претензи\w*|требован\w*|уведомлен\w*)|"
     r"(?:претензи\w*|требован\w*|уведомлен\w*)[^.;]{0,90}"
-    r"\b(?:был[аои]?\s+)?(?:направлен\w*|отправлен\w*|вручен\w*|получен\w*)\b"
+    r"\b(?:был[аои]?\s+)?(?:"
+    r"направлен|направлена|направлено|направлены|"
+    r"отправлен|отправлена|отправлено|отправлены|"
+    r"вручен|вручена|вручено|вручены|"
+    r"получен|получена|получено|получены)\b"
     r")"
 )
 
@@ -215,7 +224,7 @@ def general_truth_findings(
     """Catch invented case facts without treating law/future acts as history.
 
     Whole-document scanning is stricter than the existing per-section checks but
-    must remain tense-aware. We therefore always enforce identity/document/date
+    must remain tense-aware. We therefore always enforce identity/document
     particulars, while payment/dispatch events are blockers only when the final
     prose states that the event already happened. Filing instructions, future
     duties and conditional deadlines remain legal drafting, not invented facts.
@@ -236,9 +245,9 @@ def general_truth_findings(
             if _PAST_DISPATCH_RE.search(_finding_tail(finding)):
                 findings.append(finding)
             continue
-        # Evidence-token findings are already handled by document-specific QA.
-        # A universal whole-document block would incorrectly reject attachment
-        # names and filing documents that are to be obtained before submission.
+        # Evidence-token and bare-date findings are already handled by the
+        # document-specific fact/evidence gates. A universal whole-document block
+        # would incorrectly reject attachment titles and filing documents.
     return list(dict.fromkeys(findings))
 
 
