@@ -1,4 +1,4 @@
-// Contract tests for the client-visible Tole payment-link flow. No provider or AI calls.
+// Contract tests for the client-visible document payment flow. No provider or AI calls.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -8,20 +8,21 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const main = readFileSync(join(here, '..', 'src', 'main.jsx'), 'utf8');
 
-test('Tole document payment exposes a link and hides receipt controls', () => {
+test('automatic document payment exposes a link and hides receipt controls', () => {
   assert.match(main, /const automatic = isAutomaticDocumentPayment\(docPayment\)/);
   assert.match(main, /const paymentUrl = safeUrl\(docPayment\.payment_url \|\| docPayment\.kaspi_url\)/);
   assert.match(main, /automaticPending && paymentUrl/);
   assert.match(main, /!automatic && !approved && !awaiting/);
 });
 
-test('Tole payment screen says confirmation is automatic', () => {
-  assert.match(main, /Tole автоматически подтвердит платёж/);
-  assert.match(main, /чек загружать не нужно/);
-  assert.match(main, /automaticPaymentSecurity/);
+test('payment screen does not expose provider or technical confirmation mechanics', () => {
+  assert.doesNotMatch(main, /Tole автоматически подтвердит платёж/);
+  assert.doesNotMatch(main, /TOLE · SECURITY/);
+  assert.doesNotMatch(main, /KORGAN PREPAY/);
+  assert.match(main, /documentPaymentText: 'Оплатите документ через Kaspi\.'/);
 });
 
-test('approved Tole payment auto-starts the existing generation path once', () => {
+test('approved automatic payment auto-starts the existing generation path once', () => {
   assert.match(main, /autoStartedPayment = useRef\(''\)/);
   assert.match(main, /docPayment\?\.status === 'approved'/);
   assert.match(main, /autoStartedPayment\.current = approvedOrder;\s*generateDocument\(\)/);
