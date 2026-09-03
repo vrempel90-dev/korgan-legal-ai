@@ -34,8 +34,6 @@ async function uploadDocumentReceipt(orderId, file) {
 
 async function generateDocument(caseId, documentType = 'claim', language = 'ru') {
   try {
-    // Job creation is a short server operation. If it does not answer quickly,
-    // do not tell the user to start again: the paid job may already exist.
     return await request('/miniapp/documents/generate', {
       method: 'POST',
       body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
@@ -63,9 +61,14 @@ export const korganApi = {
   },
   consentStatus: (options = {}) => request('/miniapp/consent', options),
   pricing: (options = {}) => request('/miniapp/pricing', options),
-  consultation: (message, caseId, language = 'ru') => request('/miniapp/consultation', {
+  consultation: (message, caseId, language = 'ru', documentRevision = '') => request('/miniapp/consultation', {
     method: 'POST',
-    body: JSON.stringify({ message, case_id: caseId || null, language }),
+    body: JSON.stringify({
+      message,
+      case_id: caseId || null,
+      language,
+      document_revision: documentRevision || null,
+    }),
   }),
   uploadConsultationReceipt,
   retryPaidConsultation: (orderId) => request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/retry`, {
@@ -90,9 +93,6 @@ export const korganApi = {
   documentAccess: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/document/access`, {
     method: 'POST',
   }),
-  sendDocumentToTelegram: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/document/telegram`, {
-    method: 'POST',
-  }),
   uploadMaterial,
   uploadMaterials: async (caseId, files, onProgress) => {
     const list = Array.from(files || []);
@@ -105,15 +105,11 @@ export const korganApi = {
     }
     return results;
   },
-  // Запуск подготовки отвечает описанием задачи: сам документ готовится на
-  // сервере и приходит отдельным опросом состояния. Таймаут запуска не
-  // провоцирует второй POST: сначала восстанавливаем уже сохранённую задачу.
   generateDocument,
   generationStatus: (jobId) => request(`/miniapp/documents/generation/${encodeURIComponent(jobId)}`),
   retryGeneration: (jobId) => request(`/miniapp/documents/generation/${encodeURIComponent(jobId)}/retry`, {
     method: 'POST',
   }),
-  // Дело переживает закрытие Mini App, а идентификатор задачи — нет.
   caseGeneration: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/generation`),
   uploadDocumentReceipt,
   documentPaymentStatus: (orderId) => request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}`),
