@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 import korgan.contract_generation_hotfix as contract_hotfix
+import korgan.fast_professional_repair_guard as repair_guard
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
 from korgan.contract_generation_hotfix import ProductionOpenAILegalService as ContractHotfixService
 from korgan.contract_repair_state import (
@@ -90,6 +91,20 @@ def _production_adapter() -> ClaimPipelineV2Adapter:
     return ClaimPipelineV2Adapter(inner)
 
 
+def _patch_outer_repair(monkeypatch, replacement) -> None:
+    """Patch both the class API and the already-installed preserving guard.
+
+    ``fast_professional_repair_guard`` intentionally captures the production
+    repair function when it is installed. Once the assembled Mini App has been
+    imported, patching only the class method no longer changes that captured
+    call boundary. These latency tests are about whether an outer repair runs,
+    not about making a provider call, so patch the actual installed boundary as
+    well as the public method.
+    """
+    monkeypatch.setattr(UniversalQualityProductionService, "_quality_repair", replacement)
+    monkeypatch.setattr(repair_guard, "_ORIGINAL_QUALITY_REPAIR", replacement)
+
+
 def test_outer_repair_is_skipped_only_after_lower_repair_completed(monkeypatch):
     """A completed lower repair must consume the only repair budget for the request."""
     draft = _incomplete_contract()
@@ -105,7 +120,7 @@ def test_outer_repair_is_skipped_only_after_lower_repair_completed(monkeypatch):
         raise AssertionError("a second contract repair must not run")
 
     monkeypatch.setattr(InstantClaimProductionService, "draft_contract", lower_contract)
-    monkeypatch.setattr(UniversalQualityProductionService, "_quality_repair", forbidden_outer_repair)
+    _patch_outer_repair(monkeypatch, forbidden_outer_repair)
 
     adapter = _production_adapter()
     result = asyncio.run(adapter.draft_contract("case-a", _research(), language="ru"))
@@ -130,7 +145,7 @@ def test_outer_repair_is_preserved_when_lower_pipeline_did_not_repair(monkeypatc
         return _complete_contract_payload()
 
     monkeypatch.setattr(InstantClaimProductionService, "draft_contract", lower_contract)
-    monkeypatch.setattr(UniversalQualityProductionService, "_quality_repair", outer_repair)
+    _patch_outer_repair(monkeypatch, outer_repair)
 
     adapter = _production_adapter()
     result = asyncio.run(adapter.draft_contract("case-b", _research(), language="ru"))
@@ -227,7 +242,7 @@ def test_concurrent_contract_requests_keep_repair_state_isolated(monkeypatch):
         return _complete_contract_payload(str(kwargs["case_context"]))
 
     monkeypatch.setattr(InstantClaimProductionService, "draft_contract", lower_contract)
-    monkeypatch.setattr(UniversalQualityProductionService, "_quality_repair", outer_repair)
+    _patch_outer_repair(monkeypatch, outer_repair)
 
     async def exercise() -> tuple[ContractDraft, ContractDraft]:
         first = _production_adapter()
