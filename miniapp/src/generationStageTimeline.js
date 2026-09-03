@@ -116,8 +116,8 @@ function install() {
   };
 
   // Lifecycle events update real backend progress. A capture-phase click queues
-  // one post-React sync for navigation, so stale claim UI is removed without a
-  // global MutationObserver or continuous DOM scanning.
+  // one post-React sync for navigation, so stale claim UI is removed without
+  // continuously watching or scanning the page.
   window.addEventListener(LIFECYCLE_EVENT, scheduleSync);
   window.addEventListener('pageshow', scheduleSync);
   document.addEventListener('click', scheduleSync, true);
