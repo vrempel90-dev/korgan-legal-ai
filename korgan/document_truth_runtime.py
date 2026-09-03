@@ -18,14 +18,18 @@ from korgan.strict_openai import StrictOpenAILegalService
 # filing-ready document.
 _TRUTH_PREFIX = "TRUTH_GUARD: "
 
-# For the core acts KORGAN handles deterministically, the cited act and the
-# opened Adilet document must agree.  Merely opening *some* Adilet page is not
-# enough to prove that Article 166 is Article 166 of the GPK, for example.
+# Current official Adilet document ids.  A model opening an Adilet page is not
+# enough: for acts with a deterministic id below, the cited act must be bound to
+# the correct current document.  This also prevents an obsolete/foreign act from
+# being used under a correct-looking article number.
 _CORE_ACT_SOURCE_IDS: dict[str, tuple[str, ...]] = {
     "ГПК РК": ("K1500000377",),
     "ГК РК": ("K940001000_", "K990000409_"),
     "НК РК": ("K2500000214",),
     "ТК РК": ("K1500000414",),
+    "КАС РК": ("K2000000350",),
+    "КоАП РК": ("K1400000235",),
+    "ЗПП РК": ("Z100000274_",),
 }
 
 _PERCENT_OR_RATE_RE = re.compile(
@@ -53,6 +57,16 @@ _HIGH_RISK_FACT_PREFIXES = (
 _INSTALLED = False
 _ORIGINAL_COMMON_HYGIENE = quality._common_hygiene
 _ORIGINAL_CURRENT_SOURCE = StrictOpenAILegalService._is_current_official_source
+
+# citation_audit historically covered codes but not the consumer act by its
+# common filing name.  Add that act to the same deterministic parser so a
+# consumer-law citation cannot evade the live-source guard merely by naming the
+# statute instead of a code abbreviation.
+if not any(act == "ЗПП РК" for _, act in citation_audit._ACT_PATTERNS):
+    citation_audit._ACT_PATTERNS = (
+        *citation_audit._ACT_PATTERNS,
+        (r"закон\w*\s+(?:рк\s+)?[«\"]?о\s+защит\w*\s+прав\w*\s+потребител\w*", "ЗПП РК"),
+    )
 
 
 def _norm(value: str) -> str:
@@ -147,9 +161,9 @@ def _finding_supported_by_verified(finding: str, verified_text: str) -> bool:
     tail = str(finding or "").split(":", 1)[-1].strip()
     if not tail:
         return False
-    digits = re.sub(r"\D", "", tail)
-    if digits and digits in re.sub(r"\D", "", verified_text):
-        return True
+    # Literal compact matching is safer than concatenating every digit in the
+    # whole VERIFIED block: the latter could accidentally manufacture a match
+    # from an article number plus an unrelated date/amount.
     return _norm(tail) in _norm(verified_text)
 
 
