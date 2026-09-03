@@ -11,21 +11,21 @@ function read(name) {
   return readFileSync(join(src, name), 'utf8');
 }
 
-test('консультация по готовому документу привязана к делу и передаёт revision', () => {
+test('консультация по готовому документу перечитывает текущий revision дела', () => {
   const ui = read('documentConsultationUi.js');
   const api = read('korganApi.js');
-  assert.match(ui, /documentCaseId/);
-  assert.match(ui, /caseId/);
-  assert.match(api, /scope\.caseId\s*===\s*String\(safeCaseId\)/);
-  assert.match(api, /currentCase\?\.document_revision/);
-  assert.match(api, /document_revision:\s*documentRevision/);
+  assert.match(ui, /Консультация по документу:/);
+  assert.match(api, /\/miniapp\/cases\/\$\{encodeURIComponent\(id\)\}/);
+  assert.match(api, /result\?\.case\?\.document_revision/);
+  assert.match(api, /document_revision:\s*documentRevision\s*\|\|\s*null/);
 });
 
 test('Stress Test берёт язык из сохранённого языка приложения', () => {
   const code = read('legalWorkspaceUi.js');
   assert.match(code, /korgan-miniapp-state-v1/);
   assert.match(code, /function selectedLanguage/);
-  assert.match(code, /language:\s*selectedLanguage\(\)/);
+  assert.match(code, /const language = selectedLanguage\(\)/);
+  assert.match(code, /body:\s*JSON\.stringify\(\{[^}]*language\s*\}\)/s);
   assert.doesNotMatch(code, /document\.documentElement\.lang\s*===\s*['"]kk['"]/);
 });
 
