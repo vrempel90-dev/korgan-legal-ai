@@ -20,12 +20,12 @@ test('консультация по готовому документу пере
   assert.match(api, /document_revision:\s*documentRevision\s*\|\|\s*null/);
 });
 
-test('Stress Test берёт язык из сохранённого языка приложения', () => {
+test('Stress Test читает текущий сохранённый язык непосредственно при запросе', () => {
   const code = read('legalWorkspaceUi.js');
   assert.match(code, /korgan-miniapp-state-v1/);
   assert.match(code, /function selectedLanguage/);
   assert.match(code, /const language = selectedLanguage\(\)/);
-  assert.match(code, /body:\s*JSON\.stringify\(\{[^}]*language\s*\}\)/s);
+  assert.match(code, /language:\s*selectedLanguage\(\)/);
   assert.doesNotMatch(code, /document\.documentElement\.lang\s*===\s*['"]kk['"]/);
 });
 
