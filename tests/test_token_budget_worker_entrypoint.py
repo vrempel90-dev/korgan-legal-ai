@@ -10,8 +10,14 @@ def test_strict_runtime_applies_budget_guard_before_legal_service() -> None:
     script = textwrap.dedent(
         r'''
         import asyncio
+        import os
         from types import SimpleNamespace
         from korgan import strict_bot
+
+        # This subprocess intentionally exercises the enabled worker startup.
+        # Railway production may carry a kill switch, which must not disable the
+        # behavior this unit test is designed to inspect.
+        os.environ.pop("KORGAN_TELEGRAM_AGENT_DISABLED", None)
 
         events = []
         settings = SimpleNamespace(
