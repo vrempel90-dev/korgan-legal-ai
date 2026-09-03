@@ -1,4 +1,5 @@
 import { createApiTransport } from './apiTransport.js';
+import { safeHttpsUrl } from './safeExternalUrl.js';
 
 const API_BASE = String(import.meta.env.VITE_KORGAN_API_BASE || '').replace(/\/$/, '');
 const APP_STATE_KEY = 'korgan-miniapp-state-v1';
@@ -44,15 +45,6 @@ const api = createApiTransport({
   getTelegramInitData: initData,
   timeoutMs: 30000,
 });
-
-export function safeHttpsUrl(value) {
-  try {
-    const parsed = new URL(String(value || ''));
-    return parsed.protocol === 'https:' ? parsed.href : '';
-  } catch {
-    return '';
-  }
-}
 
 function money(value, language) {
   return new Intl.NumberFormat(language === 'kk' ? 'kk-KZ' : 'ru-RU').format(Number(value || 0)) + ' ₸';
