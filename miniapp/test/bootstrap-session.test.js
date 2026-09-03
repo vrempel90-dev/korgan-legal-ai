@@ -1,7 +1,7 @@
 /**
- * Startup Mini App должен иметь одного владельца: один запуск проверяет серверное
- * согласие и ровно один раз загружает workspace. Ответ завершившегося старого
- * запуска не должен возвращать интерфейс к устаревшей сессии.
+ * Startup Mini App должен иметь одного сетевого владельца. Повторный вход,
+ * remount или retry во время медленного consent не должны порождать вторую
+ * волну /health + /parity + /consent и не должны обрывать первый запрос.
  */
 
 import test from 'node:test';
@@ -66,9 +66,8 @@ test('непринятые условия не открывают и не зап
 test('отсутствующий API возвращает явное unavailable-состояние без запросов', async () => {
   let calls = 0;
   const api = acceptedApi();
-  for (const name of Object.keys(api)) {
-    api[name] = async () => { calls += 1; };
-  }
+  for (const name of Object.keys(api)) api[name] = async () => { calls += 1; };
+
   const session = createBootstrapSession({
     api,
     isBackendConnected: () => false,
@@ -76,13 +75,12 @@ test('отсутствующий API возвращает явное unavailable
   });
 
   const result = await session.run();
-
   assert.equal(result.kind, 'unavailable');
   assert.equal(result.error.code, 'KORGAN_API_NOT_CONNECTED');
   assert.equal(calls, 0);
 });
 
-test('cleanup отменяет startup и помечает поздний ответ устаревшим', async () => {
+test('cleanup делает ответ устаревшим, но не обрывает сетевой startup', async () => {
   let resolveHealth;
   let startupSignal;
   const api = acceptedApi();
@@ -90,69 +88,69 @@ test('cleanup отменяет startup и помечает поздний отв
     startupSignal = options.signal;
     return new Promise(resolve => { resolveHealth = resolve; });
   };
-  const session = createBootstrapSession({
-    api,
-    isBackendConnected: () => true,
-    termsVersion: TERMS_VERSION,
-  });
+  const session = createBootstrapSession({ api, isBackendConnected: () => true, termsVersion: TERMS_VERSION });
 
   const pending = session.run();
   assert.equal(typeof resolveHealth, 'function');
   session.cancel();
+  assert.equal(startupSignal.aborted, false);
   resolveHealth({ status: 'ok' });
-  const result = await pending;
 
-  assert.equal(startupSignal.aborted, true);
-  assert.deepEqual(result, { kind: 'stale' });
+  assert.deepEqual(await pending, { kind: 'stale' });
+  assert.equal(startupSignal.aborted, false);
 });
 
-test('новый startup выигрывает у позднего ответа предыдущего', async () => {
-  let resolveFirstHealth;
-  let healthCall = 0;
-  let consentCall = 0;
-  const api = {
-    health: async () => {
-      healthCall += 1;
-      if (healthCall === 1) return new Promise(resolve => { resolveFirstHealth = resolve; });
-      return { status: 'new' };
-    },
-    consentStatus: async () => {
-      consentCall += 1;
-      return consentCall === 1
-        ? { accepted: true, terms_version: TERMS_VERSION }
-        : { accepted: false, terms_version: TERMS_VERSION };
-    },
-    listCases: async () => ({ cases: [{ id: 'STALE' }] }),
-    pricing: async () => ({ document_price_kzt: 1 }),
+test('повторный startup ждёт тот же запрос вместо второй сетевой волны', async () => {
+  let resolveHealth;
+  const calls = [];
+  const api = acceptedApi(calls);
+  api.health = options => {
+    calls.push(['health', options]);
+    return new Promise(resolve => { resolveHealth = resolve; });
   };
-  const session = createBootstrapSession({
-    api,
-    isBackendConnected: () => true,
-    termsVersion: TERMS_VERSION,
-  });
+  const session = createBootstrapSession({ api, isBackendConnected: () => true, termsVersion: TERMS_VERSION });
 
   const first = session.run();
-  assert.equal(typeof resolveFirstHealth, 'function');
-  const second = await session.run();
-  resolveFirstHealth({ status: 'old' });
+  const second = session.run();
+  assert.equal(typeof resolveHealth, 'function');
+  assert.deepEqual(calls.map(([name]) => name).sort(), ['consent', 'health']);
+  resolveHealth({ status: 'ok' });
 
-  assert.equal(second.kind, 'ready');
-  assert.equal(second.consent, false);
   assert.deepEqual(await first, { kind: 'stale' });
+  const latest = await second;
+  assert.equal(latest.kind, 'ready');
+  assert.equal(latest.consent, true);
+  assert.deepEqual(calls.map(([name]) => name).sort(), ['cases', 'consent', 'health', 'pricing']);
+});
+
+test('два React экземпляра делят один bootstrap flight', async () => {
+  let releaseConsent;
+  const calls = [];
+  const api = acceptedApi(calls);
+  api.consentStatus = options => {
+    calls.push(['consent', options]);
+    return new Promise(resolve => { releaseConsent = resolve; });
+  };
+  const one = createBootstrapSession({ api, isBackendConnected: () => true, termsVersion: TERMS_VERSION });
+  const two = createBootstrapSession({ api, isBackendConnected: () => true, termsVersion: TERMS_VERSION });
+
+  const first = one.run();
+  const second = two.run();
+  assert.deepEqual(calls.map(([name]) => name).sort(), ['consent', 'health']);
+  releaseConsent({ accepted: true, terms_version: TERMS_VERSION });
+
+  assert.equal((await first).kind, 'ready');
+  assert.equal((await second).kind, 'ready');
+  assert.deepEqual(calls.map(([name]) => name).sort(), ['cases', 'consent', 'health', 'pricing']);
 });
 
 test('ошибка startup возвращается отдельно и не становится отказом от условий', async () => {
   const failure = new Error('Failed to fetch');
   const api = acceptedApi();
   api.health = async () => { throw failure; };
-  const session = createBootstrapSession({
-    api,
-    isBackendConnected: () => true,
-    termsVersion: TERMS_VERSION,
-  });
+  const session = createBootstrapSession({ api, isBackendConnected: () => true, termsVersion: TERMS_VERSION });
 
   const result = await session.run();
-
   assert.equal(result.kind, 'error');
   assert.equal(result.error, failure);
   assert.equal('consent' in result, false);
