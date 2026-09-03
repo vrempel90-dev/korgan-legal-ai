@@ -14,15 +14,20 @@ from the monetary claims that are actually included.
 
 import re
 
+from korgan import claim_docx
 from korgan import fast_professional_litigation as fast
 from korgan import finalized_litigation as finalized
 from korgan import late_interest_hotfix as late
+from korgan.docx_blocks import Heading
+from korgan.i18n import KK
+from korgan.language_context import current_language
 from korgan.legal_types import ClaimDraft, VerificationStatus
 
 _INSTALLED = False
 _ORIGINAL_RESEARCH_PROMPT = fast._professional_research_prompt
 _ORIGINAL_FAST_RESEARCH = fast.FastProfessionalLitigationService.research_case
 _ORIGINAL_EXPLICIT = late._explicit_penalty_requested
+_ORIGINAL_BODY_BLOCKS = claim_docx._body_blocks
 
 _CIVIL_MONEY_RE = re.compile(
     r"(?i)(?:договор\w*|поставк\w*|подряд\w*|услуг\w*|аренд\w*|займ\w*|за[её]м\w*|"
@@ -79,6 +84,23 @@ def _clarification_reason(reason: str) -> str:
     return value[:1].lower() + value[1:] if value else "нужны дополнительные исходные данные для точного расчёта"
 
 
+def _clarification_reason_kk(reason: str) -> str:
+    value = " ".join(str(reason or "").split()).strip().rstrip(".")
+    if value in {late.DUE_DATE_MISSING_NOTE.rstrip("."), late.CONTRACT_DUE_DATE_MISSING_NOTE.rstrip(".")}:
+        return "мерзімнің басталу күнін бірмәнді анықтау мүмкін болмады"
+    if value == late.PARTIAL_PAYMENT_UNCLEAR_NOTE.rstrip("."):
+        return "ішінара төлем көрсетілген, бірақ оның күні мен сомасын бірмәнді анықтау мүмкін болмады"
+    if value == late.PARTIAL_PAYMENT_NOTE.rstrip("."):
+        return "ішінара төлемдер бойынша күндер мен сомаларды нақтылау қажет"
+    if value == late.CONTRACT_TERMS_MISSING_NOTE.rstrip("."):
+        return "тұрақсыздық айыбының қолданылатын негізі мен мөлшерлемесін растау мүмкін болмады"
+    if value == late.ARTICLE_353_MISSING_NOTE.rstrip("."):
+        return "осы талап бойынша ҚР АК 353-бабының қолданылуы ресми дереккөзбен расталмады"
+    if value.startswith(late.RATE_MISSING_NOTE.rstrip(".")):
+        return "есептеу күніне ҚР Ұлттық Банкінің базалық мөлшерлемесі расталмады"
+    return "нақты есептеу үшін қосымша бастапқы деректер қажет"
+
+
 def soft_penalty_clarification(
     draft: ClaimDraft,
     reason: str,
@@ -109,11 +131,16 @@ def soft_penalty_clarification(
         if not _penalty_only_note(str(item))
     ]
     late._drop_penalty_calculation(draft)
-    clarification = _clarification_reason(reason)
-    draft.late_interest = (
-        "Неустойка в цену иска и просительную часть не включена. "
-        f"Требует уточнения: {clarification}."
-    )
+    if current_language() == KK:
+        draft.late_interest = (
+            "Тұрақсыздық айыбы талап қою бағасына және талап қою бөліміне енгізілмеді. "
+            f"Нақтылау қажет: {_clarification_reason_kk(reason)}."
+        )
+    else:
+        draft.late_interest = (
+            "Неустойка в цену иска и просительную часть не включена. "
+            f"Требует уточнения: {_clarification_reason(reason)}."
+        )
     # `detail` is deliberately not copied into filing-facing text: it can contain
     # internal comparison diagnostics. The client needs the missing fact, not QA internals.
 
@@ -156,6 +183,29 @@ async def _research_case(self, case_context: str, language: str = "ru"):
     return research
 
 
+def _claim_body_blocks(draft: ClaimDraft, *, kk: bool):
+    """Use a filing-facing heading that matches what was actually established."""
+    blocks = _ORIGINAL_BODY_BLOCKS(draft, kk=kk)
+    if not (draft.late_interest or "").strip():
+        return blocks
+
+    current = "ҚР АК 353-бабы бойынша есеп" if kk else "Расчёт неустойки по статье 353 ГК РК"
+    text = str(draft.late_interest)
+    lowered = text.lower()
+    if "требует уточнения" in lowered or "нақтылау қажет" in lowered:
+        replacement = "Тұрақсыздық айыбы — нақтылау қажет" if kk else "Неустойка — требует уточнения"
+    elif "договорн" in lowered or "шарт" in lowered:
+        replacement = "Шарттық тұрақсыздық айыбын есептеу" if kk else "Расчёт договорной неустойки"
+    else:
+        replacement = current
+
+    for block in blocks:
+        if isinstance(block, Heading) and block.text == current:
+            block.text = replacement
+            break
+    return blocks
+
+
 def install() -> None:
     global _INSTALLED
     if _INSTALLED:
@@ -171,6 +221,7 @@ def install() -> None:
     finalized._apply_verified_article_353 = late._apply_verified_penalty
     fast._professional_research_prompt = _research_prompt
     fast.FastProfessionalLitigationService.research_case = _research_case
+    claim_docx._body_blocks = _claim_body_blocks
     _INSTALLED = True
 
 
