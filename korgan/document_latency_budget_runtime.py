@@ -13,12 +13,13 @@ from korgan import miniapp_api_v2 as core
 LOGGER = logging.getLogger(__name__)
 
 _TIMEOUT_ENV = "KORGAN_DOCUMENT_GENERATION_TIMEOUT_SECONDS"
-_DEFAULT_TIMEOUT_SECONDS = 110.0
-# The product promise is a one-to-two minute preparation window. Keep a few
-# seconds outside the legal pipeline for state persistence and the final status
-# response; an operator cannot accidentally configure a five-minute request.
-_MAX_TIMEOUT_SECONDS = 115.0
-_MIN_TIMEOUT_SECONDS = 30.0
+# Document generation is an asynchronous job with real stage reporting. The
+# timeout is therefore only a runaway-task safety ceiling, not a customer-facing
+# speed promise. Old Railway values such as 110 seconds must not cancel a valid
+# document while research/drafting is still making progress.
+_DEFAULT_TIMEOUT_SECONDS = 600.0
+_MIN_TIMEOUT_SECONDS = 600.0
+_MAX_TIMEOUT_SECONDS = 900.0
 _INSTALLED = False
 _ORIGINAL_GENERATE = core._generate
 
@@ -48,9 +49,9 @@ async def _bounded_generate(
         raise HTTPException(
             status_code=504,
             detail=(
-                "KORGAN остановил подготовку, потому что юридический конвейер не уложился "
-                f"в {int(timeout)} секунд. Непроверенный или незавершённый Word не выдан. "
-                "Материалы дела сохранены; повторите подготовку документа."
+                "KORGAN не уложился в технический лимит подготовки документа. "
+                "Непроверенный или незавершённый Word не выдан. Материалы дела сохранены — "
+                "подготовку можно повторить без потери данных."
             ),
         ) from exc
     except Exception:
@@ -73,7 +74,7 @@ def install_document_latency_budget_runtime() -> None:
     core._generate = _bounded_generate  # type: ignore[assignment]
     _INSTALLED = True
     LOGGER.info(
-        "Installed bounded document generation latency budget seconds=%.0f",
+        "Installed document generation safety ceiling seconds=%.0f",
         document_generation_timeout_seconds(),
     )
 
