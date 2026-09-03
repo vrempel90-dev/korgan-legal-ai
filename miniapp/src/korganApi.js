@@ -37,7 +37,6 @@ async function generateDocument(caseId, documentType = 'claim', language = 'ru')
     return await request('/miniapp/documents/generate', {
       method: 'POST',
       body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
-      timeoutMs: 8000,
     });
   } catch (error) {
     return recoverGenerationStart({
