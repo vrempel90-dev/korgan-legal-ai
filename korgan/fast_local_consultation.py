@@ -13,7 +13,7 @@ unavailable or the fast model call itself fails.
 import logging
 from typing import Any, Awaitable, Callable
 
-from korgan.legal.pipeline import research_from_corpus
+from korgan.legal.pipeline import open_corpus
 from korgan.professional_consultation import _NORMATIVE_ADVICE_RE
 from korgan.provision_check import paraphrase_defects
 from korgan.robust_production_legal import _is_adilet_source
@@ -169,18 +169,23 @@ class FastLocalConsultationAdapter:
         language: str = "ru",
     ) -> tuple[str, list[str]]:
         query = (str(question or "") + "\n" + str(case_context or "")[:8000]).strip()
+        corpus = None
         try:
-            offered = research_from_corpus(query, limit=8)
+            corpus = open_corpus()
+            if corpus is None:
+                LOGGER.warning("FAST_LOCAL_CONSULT corpus unavailable; using web fallback")
+                return await self.fallback(question, case_context=case_context, language=language)
+            offered = corpus.search(query, limit=8)
         except Exception:
             LOGGER.exception("FAST_LOCAL_CONSULT corpus lookup failed; using web fallback")
             return await self.fallback(question, case_context=case_context, language=language)
-        if offered is None or not offered.provisions:
-            LOGGER.warning("FAST_LOCAL_CONSULT corpus unavailable; using web fallback")
-            return await self.fallback(question, case_context=case_context, language=language)
+        finally:
+            if corpus is not None:
+                corpus.close()
 
         provisions = {
             provision.article_id: provision
-            for provision in offered.provisions
+            for provision in offered
             if _is_adilet_source(str(provision.url or ""))
         }
         if not provisions:
