@@ -1,7 +1,17 @@
 const API_BASE = String(import.meta.env.VITE_KORGAN_API_BASE || '').replace(/\/$/, '');
+const APP_STATE_KEY = 'korgan-miniapp-state-v1';
 
 function initData() {
   return String(window.Telegram?.WebApp?.initData || '');
+}
+
+function selectedLanguage() {
+  try {
+    const parsed = JSON.parse(globalThis.localStorage?.getItem(APP_STATE_KEY) || '{}');
+    return parsed?.language === 'kk' ? 'kk' : 'ru';
+  } catch {
+    return 'ru';
+  }
 }
 
 async function api(path, options = {}) {
@@ -190,7 +200,7 @@ function mount() {
         body: JSON.stringify({
           case_id: document.getElementById('klt-stress-case').value,
           focus: document.getElementById('klt-stress-focus').value,
-          language: document.documentElement.lang === 'kk' ? 'kk' : 'ru',
+          language: selectedLanguage(),
         }),
       });
       const sources = (payload.sources || []).length ? `\n\nИсточники:\n${payload.sources.join('\n')}` : '';
