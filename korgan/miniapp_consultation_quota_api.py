@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import Header
 
 from korgan import miniapp_api_v4 as v4
+from korgan import miniapp_document_consultation as _miniapp_document_consultation  # noqa: F401
 from korgan.consultation_quota import consultation_usage
 
 app = v4.app
