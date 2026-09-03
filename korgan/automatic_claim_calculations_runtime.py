@@ -6,10 +6,11 @@ The client describes the facts. KORGAN decides whether a civil/commercial money
 claim appears overdue, verifies the legal basis in the *existing* source-bound
 research pass, then lets deterministic calculators own the numbers.
 
-A calculation uncertainty never blocks the whole Word document. The uncertain
-penalty is excluded from the claim price and prayer, while the document contains
-an explicit human-readable clarification note. State duty is then recalculated
-from the monetary claims that are actually included.
+For a penalty introduced automatically by KORGAN, calculation uncertainty does
+not block the whole Word document: the uncertain penalty is excluded from the
+claim price and prayer and a filing-facing clarification is shown instead. An
+explicit penalty request from the client keeps the pre-existing blocking
+verification behaviour and is never silently removed.
 """
 
 import re
@@ -27,6 +28,7 @@ _INSTALLED = False
 _ORIGINAL_RESEARCH_PROMPT = fast._professional_research_prompt
 _ORIGINAL_FAST_RESEARCH = fast.FastProfessionalLitigationService.research_case
 _ORIGINAL_EXPLICIT = late._explicit_penalty_requested
+_ORIGINAL_MARK = late._mark_penalty_for_verification
 _ORIGINAL_BODY_BLOCKS = claim_docx._body_blocks
 
 _CIVIL_MONEY_RE = re.compile(
@@ -44,6 +46,15 @@ _PENALTY_RISK_RE = re.compile(
     r"тұрақсыздық\s+айыб\w*|пользован\w*\s+чужими\s+деньг\w*|"
     r"процент\w*\s+за\s+просроч\w*)"
 )
+_PRINCIPAL_VERIFICATION_RE = re.compile(
+    r"(?i)(?:"
+    r"основн\w*\s+(?:долг\w*|требован\w*|обязательств\w*)|"
+    r"основан\w*[^.\n]{0,80}основн\w*[^.\n]{0,40}(?:долг\w*|требован\w*|обязательств\w*)|"
+    r"материал[ьн]*о?-?правов\w*\s+основан\w*|"
+    r"(?:факт|налич|размер)\w*[^.\n]{0,40}(?:основн\w*\s+)?(?:долг\w*|задолженн\w*)|"
+    r"прав\w*\s+на\s+взыскан\w*[^.\n]{0,40}(?:основн\w*|долг\w*|задолженн\w*)"
+    r")"
+)
 
 
 def automatic_penalty_candidate(case_context: str) -> bool:
@@ -51,20 +62,28 @@ def automatic_penalty_candidate(case_context: str) -> bool:
 
     Explicit requests keep their old behaviour. Automatic mode is deliberately
     limited to a fact pattern that looks like an overdue civil/commercial money
-    obligation: a money amount, a civil obligation marker and a breach marker.
-    The legal research still decides whether Article 353 is actually applicable.
+    obligation: a money amount, a civil-obligation marker and a breach marker.
+    A contractual penalty clause alone is not evidence that a breach occurred.
     """
     text = str(case_context or "")
     if _ORIGINAL_EXPLICIT(text):
         return True
-    if late.parse_contractual_penalty_terms(text) is not None:
-        return True
-    return bool(late._MONEY_TOKEN_RE.search(text) and _CIVIL_MONEY_RE.search(text) and _BREACH_RE.search(text))
+    civil_marker = bool(_CIVIL_MONEY_RE.search(text) or late.parse_contractual_penalty_terms(text) is not None)
+    return bool(late._MONEY_TOKEN_RE.search(text) and civil_marker and _BREACH_RE.search(text))
 
 
 def _penalty_only_note(text: str) -> bool:
+    """True only when an unverified note is demonstrably limited to penalty.
+
+    Never infer "penalty-only" merely from the presence of the word penalty:
+    one model note can mention an unsupported principal and penalty together.
+    """
     value = " ".join(str(text or "").split()).strip()
-    return bool(value and _PENALTY_RISK_RE.search(value))
+    return bool(
+        value
+        and _PENALTY_RISK_RE.search(value)
+        and not _PRINCIPAL_VERIFICATION_RE.search(value)
+    )
 
 
 def _clarification_reason(reason: str) -> str:
@@ -108,12 +127,16 @@ def soft_penalty_clarification(
     case_context: str,
     detail: str = "",
 ) -> None:
-    """Do not turn one uncertain monetary component into a blocked Word file.
+    """Keep automatic uncertainty local, but preserve explicit-client gates."""
+    if _ORIGINAL_EXPLICIT(case_context):
+        _ORIGINAL_MARK(
+            draft,
+            reason,
+            case_context=case_context,
+            detail=detail,
+        )
+        return
 
-    The questionable penalty is removed from the prayer and deterministic total.
-    The clarification remains visible in the document but is intentionally not a
-    verification_note and does not change the draft's overall verification status.
-    """
     draft.requests = [
         str(item) for item in list(draft.requests or [])
         if not late._PENALTY_LINE_RE.search(str(item))
@@ -123,9 +146,8 @@ def soft_penalty_clarification(
         if not late._PENALTY_LINE_RE.search(str(item))
         and not late._ARTICLE_353_LINE_RE.search(str(item))
     ]
-    # The model may have emitted a local risk note before deterministic cleanup.
-    # Once the same uncertainty is shown in the filing-facing calculation section,
-    # keeping that note would incorrectly downgrade the entire claim.
+    # Remove only notes that are demonstrably limited to the optional automatic
+    # penalty. Any note that also questions principal remains blocking.
     draft.verification_notes = [
         str(item) for item in list(draft.verification_notes or [])
         if not _penalty_only_note(str(item))
@@ -168,9 +190,13 @@ def _research_prompt(case_context: str, *, max_chars: int, checked_on: str, **kw
 
 
 async def _research_case(self, case_context: str, language: str = "ru"):
-    """Keep optional penalty uncertainty local to the optional monetary remedy."""
+    """Keep optional automatic-penalty uncertainty local to that remedy."""
     research = await _ORIGINAL_FAST_RESEARCH(self, case_context, language=language)
     if not automatic_penalty_candidate(case_context):
+        return research
+    # If the client explicitly asked for the penalty, preserve the old blocking
+    # semantics: an unresolved requested remedy must not disappear silently.
+    if _ORIGINAL_EXPLICIT(case_context):
         return research
 
     original_status = research.status
@@ -179,8 +205,8 @@ async def _research_case(self, case_context: str, language: str = "ru"):
     research.unverified_claims = remaining
 
     # Promote back to VERIFIED only when the original downgrade was demonstrably
-    # caused *solely* by penalty-specific unverified notes. Never erase a status
-    # whose cause is not represented in unverified_claims.
+    # caused solely by penalty-specific notes and the principal has source-bound
+    # support. Never erase an unknown or mixed-cause downgrade.
     penalty_only_downgrade = (
         original_status == VerificationStatus.NEEDS_VERIFICATION
         and bool(original_unverified)
