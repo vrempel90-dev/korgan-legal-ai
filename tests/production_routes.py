@@ -34,8 +34,6 @@ def all_routes() -> list[Any]:
     while pending:
         item = pending.pop(0)
         if getattr(item, "path", None) is None:
-            # fastapi.routing._IncludedRouter хранит подключённый роутер в
-            # original_router; у обычных Mount вложенные маршруты лежат в routes.
             nested = getattr(item, "original_router", None)
             nested_routes = getattr(nested, "routes", None) or getattr(item, "routes", None)
             if nested_routes:
@@ -67,16 +65,16 @@ def owner(path: str, method: str) -> str:
     return f"{handler.__module__}.{handler.__name__}"
 
 
-# Владельцы, зафиксированные по собранному боевому приложению. Изменение этой
-# таблицы — сознательное решение о том, какой слой обслуживает запрос, и должно
-# сопровождаться объяснением в коммите.
 EXPECTED_OWNERS: dict[tuple[str, str], str] = {
     ("/health", "GET"): "korgan.miniapp_api_v2.health",
     ("/miniapp/consent", "GET"): "korgan.miniapp_consent_status.get_consent_status",
     ("/miniapp/cases", "POST"): "korgan.miniapp_api_v2.create_case",
     ("/miniapp/cases/{case_id}/materials", "POST"): "korgan.miniapp_api_v2.upload_material",
     ("/miniapp/cases/{case_id}/document", "GET"): "korgan.miniapp_api_v2.get_document",
-    ("/miniapp/consultation", "POST"): "korgan.miniapp_api_v4.consultation",
+    # consultation_quota_api intentionally imports miniapp_document_consultation,
+    # which replaces v4 so questions can be pinned to an exact generated DOCX
+    # revision while preserving the same quota/payment service underneath.
+    ("/miniapp/consultation", "POST"): "korgan.miniapp_document_consultation.consultation",
     ("/miniapp/consultation/payments/{order_id}/retry", "POST"): "korgan.miniapp_api_v4.retry_paid_consultation",
     ("/miniapp/admin/document-payments", "GET"): "korgan.miniapp_api_v4.admin_document_payments",
     (
@@ -113,7 +111,6 @@ EXPECTED_OWNERS: dict[tuple[str, str], str] = {
         "/miniapp/consultation/payments/{order_id}/receipt-url",
         "POST",
     ): "korgan.miniapp_api_ofd.consultation_receipt_url",
-    # Ручное подтверждение платежа за документ — самый внешний слой оплаты.
     (
         "/miniapp/documents/payments/{order_id}/receipt",
         "POST",
