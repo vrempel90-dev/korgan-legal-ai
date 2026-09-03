@@ -63,6 +63,15 @@ test('госпошлина и неустойка добавляются в contr
   assert.match(bridge, /Добавить в иск/);
 });
 
+test('повторный расчёт заменяет старую сумму того же типа, а не дублирует её', () => {
+  assert.match(bridge, /const CALCULATION_LINE\s*=\s*\{/);
+  assert.match(bridge, /function upsertClaimCalculation/);
+  assert.match(bridge, /current\.replace\(pattern, line\)/);
+  assert.match(bridge, /appendToClaim\(line, kind\)/);
+  assert.match(bridge, /duty:\s*\/\^\(\?:Рассчитанная госпошлина/);
+  assert.match(bridge, /penalty:\s*\/\^\(\?:Рассчитанная неустойка/);
+});
+
 test('период неустойки фиксируется в момент запуска расчёта', () => {
   assert.match(bridge, /const submitted\s*=\s*\{/);
   assert.match(bridge, /start:\s*document\.getElementById\('klt-penalty-start'\)/);
