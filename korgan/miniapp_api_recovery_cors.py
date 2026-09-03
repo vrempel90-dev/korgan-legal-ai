@@ -36,15 +36,12 @@ from korgan import miniapp_paid_autostart_runtime as _miniapp_paid_autostart_run
 # approved/consumed payment recovery idempotent without enabling payments.
 from korgan import miniapp_payment_hardening_runtime as _miniapp_payment_hardening_runtime  # noqa: F401
 
-# Temporary administrator-only document-quality testing is a separate explicit
-# switch. PAYMENTS_ENABLED=false by itself must preserve the ordinary fail-closed
-# production routes (and their regression contract). Only when BOTH conditions
-# hold do we replace those routes with the no-payment admin test worker.
+# Payments are intentionally disabled for the current Mini App release. When the
+# payment switch is OFF, replace the document-generation routes with the direct
+# free-generation runtime for every authenticated user. No admin-only gate and no
+# separate test feature flag are required.
 from korgan.miniapp_api_v5 import settings as _miniapp_settings
-_admin_test_enabled = str(os.getenv("KORGAN_ADMIN_FREE_DOCUMENT_TEST", "") or "").strip().lower() in {
-    "1", "true", "yes", "on"
-}
-if not _miniapp_settings.payments_enabled and _admin_test_enabled:
+if not _miniapp_settings.payments_enabled:
     from korgan import miniapp_admin_free_generation_runtime as _miniapp_admin_free_generation_runtime  # noqa: F401
 
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
