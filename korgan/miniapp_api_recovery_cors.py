@@ -31,6 +31,10 @@ from korgan import miniapp_tole_payments as _miniapp_tole_payments  # noqa: F401
 # Install only after Tole owns its routes: the wrapper turns a verified `paid`
 # transition into the durable generation job without requiring another client tap.
 from korgan import miniapp_paid_autostart_runtime as _miniapp_paid_autostart_runtime  # noqa: F401
+# Replace only the document-payment/generation routes after Tole + autostart are
+# installed. This removes the legacy KASPI_PAYMENT_URL dependency and makes
+# approved/consumed payment recovery idempotent without enabling payments.
+from korgan import miniapp_payment_hardening_runtime as _miniapp_payment_hardening_runtime  # noqa: F401
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_consent_status as _miniapp_consent_status
 from korgan import miniapp_document_access as _miniapp_document_access
