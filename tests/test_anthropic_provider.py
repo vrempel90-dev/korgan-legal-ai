@@ -18,7 +18,11 @@ from types import SimpleNamespace
 import pytest
 
 from korgan.ai_provider import FallbackClient, FallbackResponses, MeteredClient, build_legal_client
-from korgan.anthropic_responses import WEB_SEARCH_TOOL, AnthropicResponsesClient
+from korgan.anthropic_responses import (
+    DEFAULT_WEB_SEARCH_MAX_USES,
+    WEB_SEARCH_TOOL,
+    AnthropicResponsesClient,
+)
 from korgan.config import Settings
 from korgan.openai_legal import OpenAILegalService
 from korgan.verified_openai import _actual_response_urls
@@ -215,6 +219,7 @@ async def test_allowed_domains_survive_the_translation() -> None:
     search = [tool for tool in messages.request["tools"] if tool.get("type") == WEB_SEARCH_TOOL]
     assert len(search) == 1
     assert search[0]["allowed_domains"] == ["adilet.zan.kz", "gov.kz"]
+    assert search[0]["max_uses"] == DEFAULT_WEB_SEARCH_MAX_USES == 4
     # Обязательный вызов схемы отключил бы поиск, поэтому выбор остаётся за моделью.
     assert messages.request["tool_choice"] == {"type": "auto"}
     assert "korgan_legal_research" in messages.request["system"]

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import korgan.contract_generation_hotfix as contract_hotfix
 import korgan.fast_professional_repair_guard as repair_guard
+from korgan.fast_professional_litigation import claim_repair_has_actionable_issue
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
 from korgan.contract_generation_hotfix import ProductionOpenAILegalService as ContractHotfixService
 from korgan.contract_repair_state import (
@@ -18,6 +19,7 @@ from korgan.instant_claim_runtime import InstantClaimProductionService
 from korgan.legal_types import ContractDraft, LegalResearch, VerificationStatus
 from korgan.pretrial_response import PretrialResponseProductionService
 from korgan.universal_quality_service import UniversalQualityProductionService
+from korgan.robust_production_legal import STRUCTURED_OUTPUT_LIMITS
 
 
 def _research() -> LegalResearch:
@@ -269,3 +271,25 @@ def test_production_service_mro_and_adapter_expose_quality_contract_path():
 
     adapter = _production_adapter()
     assert adapter.draft_contract.__func__ is UniversalQualityProductionService.draft_contract
+
+
+def test_fact_locked_claim_gaps_do_not_spend_a_model_repair_round() -> None:
+    issues = [
+        "Точное наименование суда не подтверждено материалами пользователя или source-bound записью VERIFIED_COURT.",
+        "не определена госпошлина или подтвержденная льгота",
+        "вопросы к проверке перед подачей: уточнить статус потребителя",
+    ]
+
+    assert claim_repair_has_actionable_issue(issues) is False
+
+
+def test_removable_claim_defect_keeps_one_repair_opportunity() -> None:
+    assert claim_repair_has_actionable_issue(
+        ["В фактическую часть добавлены переживания, которых пользователь не сообщал."]
+    ) is True
+
+
+def test_fast_professional_steps_have_explicit_output_budgets() -> None:
+    assert STRUCTURED_OUTPUT_LIMITS["korgan_fast_professional_rk_research"] == 6000
+    assert STRUCTURED_OUTPUT_LIMITS["korgan_fast_professional_claim"] == 4300
+    assert STRUCTURED_OUTPUT_LIMITS["korgan_fast_professional_repair"] == 4300

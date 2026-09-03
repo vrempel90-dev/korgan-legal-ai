@@ -1,4 +1,5 @@
 from korgan.professional_service import (
+    _PROFESSIONAL_RESEARCH_SCHEMA,
     _claim_strategy_block,
     _professional_research_prompt,
     _strategy_notes,
@@ -62,3 +63,19 @@ def test_claim_strategy_block_uses_research_strategy_without_changing_runtime_ty
     assert "CASE_THEORY: Договорное требование" in block
     assert "REMEDY: Взыскание задолженности" in block
     assert "EVIDENCE_MAP: Обязательство -> договор" in block
+
+
+def test_professional_research_schema_is_bounded_for_interactive_generation() -> None:
+    properties = _PROFESSIONAL_RESEARCH_SCHEMA["properties"]
+    assert properties["verified_points"]["maxItems"] == 10
+    for name in (
+        "applicable_law",
+        "procedural_requirements",
+        "case_theory",
+        "remedies",
+        "evidence_map",
+        "risks",
+        "unverified_claims",
+        "notes",
+    ):
+        assert 1 <= properties[name]["maxItems"] <= 8

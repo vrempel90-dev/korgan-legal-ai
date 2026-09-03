@@ -22,12 +22,12 @@ LOGGER = logging.getLogger(__name__)
 _PROFESSIONAL_RESEARCH_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "applicable_law": {"type": "array", "items": {"type": "string"}},
-        "procedural_requirements": {"type": "array", "items": {"type": "string"}},
-        "case_theory": {"type": "array", "items": {"type": "string"}},
-        "remedies": {"type": "array", "items": {"type": "string"}},
-        "evidence_map": {"type": "array", "items": {"type": "string"}},
-        "risks": {"type": "array", "items": {"type": "string"}},
+        "applicable_law": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        "procedural_requirements": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+        "case_theory": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+        "remedies": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+        "evidence_map": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        "risks": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
         "verified_points": {
             "type": "array",
             "items": {
@@ -41,9 +41,10 @@ _PROFESSIONAL_RESEARCH_SCHEMA: dict[str, Any] = {
                 "required": ["statement", "article", "provision_text", "source_url"],
                 "additionalProperties": False,
             },
+            "maxItems": 10,
         },
-        "unverified_claims": {"type": "array", "items": {"type": "string"}},
-        "notes": {"type": "array", "items": {"type": "string"}},
+        "unverified_claims": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        "notes": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
     },
     "required": [
         "applicable_law",

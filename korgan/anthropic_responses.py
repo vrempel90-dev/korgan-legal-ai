@@ -41,6 +41,12 @@ LOGGER = logging.getLogger(__name__)
 # версии меняет форму ответа, а из неё извлекаются URL источников.
 WEB_SEARCH_TOOL = "web_search_20250305"
 
+# Four official-source searches are enough for the focused KORGAN pass
+# (material rule, remedy, jurisdiction and duty). Anthropic's max_uses is a
+# server-enforced cap, unlike prompt wording, and prevents one research step
+# from consuming the entire two-minute document budget.
+DEFAULT_WEB_SEARCH_MAX_USES = 4
+
 # Anthropic требует max_tokens в каждом запросе. Значение по умолчанию должно
 # вмещать полный проект иска, а не только компактный research JSON.
 DEFAULT_MAX_TOKENS = 16000
@@ -184,7 +190,11 @@ def _search_tools(tools: Any, ) -> list[dict[str, Any]]:
     for tool in tools or []:
         if not isinstance(tool, dict) or not str(tool.get("type", "")).startswith("web_search"):
             continue
-        translated: dict[str, Any] = {"type": WEB_SEARCH_TOOL, "name": "web_search"}
+        translated: dict[str, Any] = {
+            "type": WEB_SEARCH_TOOL,
+            "name": "web_search",
+            "max_uses": DEFAULT_WEB_SEARCH_MAX_USES,
+        }
         filters = tool.get("filters")
         if isinstance(filters, dict):
             allowed = [str(domain) for domain in filters.get("allowed_domains", []) or []]

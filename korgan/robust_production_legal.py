@@ -27,6 +27,24 @@ from korgan.verified_openai import (
 LOGGER = logging.getLogger(__name__)
 
 
+# First-pass output budgets. Drafting schemas are expanded by
+# ``output_limit_for`` below, while research/validation stay compact.
+STRUCTURED_OUTPUT_LIMITS: dict[str, int] = {
+    "korgan_consult_research": 1600,
+    "korgan_verified_legal_research": 2300,
+    "korgan_fast_professional_rk_research": 6000,
+    "korgan_court_ready_validation": 1300,
+    "korgan_court_ready_claim": 4300,
+    "korgan_repaired_claim": 4300,
+    "korgan_fast_professional_claim": 4300,
+    "korgan_fast_professional_repair": 4300,
+    "korgan_contract_research": 2200,
+    "korgan_contract_draft": 5200,
+    "korgan_contract_validation": 1300,
+    "korgan_contract_repair": 5200,
+}
+
+
 _CONTRACT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -187,17 +205,7 @@ class ProductionOpenAILegalService(_FastV2):
             kwargs["reasoning"] = reasoning
 
         # Normal path stays compact. Only a genuinely truncated JSON retries.
-        output_limits = {
-            "korgan_consult_research": 1600,
-            "korgan_verified_legal_research": 2300,
-            "korgan_court_ready_validation": 1300,
-            "korgan_court_ready_claim": 4300,
-            "korgan_repaired_claim": 4300,
-            "korgan_contract_research": 2200,
-            "korgan_contract_draft": 5200,
-            "korgan_contract_validation": 1300,
-            "korgan_contract_repair": 5200,
-        }
+        output_limits = STRUCTURED_OUTPUT_LIMITS
         if schema_name in output_limits:
             # Схемы составления получают расширенный лимит: иск и договор в
             # прежние 4300/5200 токенов не помещались и обрывались.
