@@ -13,14 +13,14 @@ from korgan.legal_provenance import forbidden_fact_findings
 from korgan.strict_openai import StrictOpenAILegalService
 
 # The final document may cite a provision only when the same provision survived
-# source-bound research for THIS request.  The local corpus remains useful as a
+# source-bound research for THIS request. The local corpus remains useful as a
 # validator/cache, but it cannot by itself promote a model citation to a final
 # filing-ready document.
 _TRUTH_PREFIX = "TRUTH_GUARD: "
 
-# Current official Adilet document ids.  A model opening an Adilet page is not
+# Current official Adilet document ids. A model opening an Adilet page is not
 # enough: for acts with a deterministic id below, the cited act must be bound to
-# the correct current document.  This also prevents an obsolete/foreign act from
+# the correct current document. This also prevents an obsolete/foreign act from
 # being used under a correct-looking article number.
 _CORE_ACT_SOURCE_IDS: dict[str, tuple[str, ...]] = {
     "ГПК РК": ("K1500000377",),
@@ -56,15 +56,40 @@ _CONTRACT_HIGH_RISK_PREFIXES = (
     "дата отсутствует",
     "сумма отсутствует",
 )
+
+# These are high-risk factual particulars irrespective of tense. Evidence names
+# are intentionally NOT here: an attachment list may legitimately name a filing
+# document to be added before submission, without asserting that it already
+# existed in the source materials.
 _GENERAL_HIGH_RISK_PREFIXES = (
     "ФИО отсутствует",
     "ИИН/БИН отсутствует",
     "адрес отсутствует",
     "номер договора отсутствует",
     "дата отсутствует",
-    "доказательство отсутствует",
-    "факт оплаты отсутствует",
-    "факт направления претензии отсутствует",
+)
+
+# Event findings from legal_provenance are broader by design because that module
+# normally receives only fact-bearing fields. Here we scan whole final documents,
+# including remedies, legal rules and filing instructions, so we keep an event
+# finding only when the sentence actually asserts a completed/past event.
+_PAST_PAYMENT_RE = re.compile(
+    r"(?i)(?:"
+    r"\b(?:оплатил|оплатила|оплатили|уплатил|уплатила|уплатили|"
+    r"перечислил|перечислила|перечислили|внес|внесла|внесли|"
+    r"списал|списала|списали|получил|получила|получили)\b|"
+    r"(?:оплата|плат[её]ж|денежн\w*\s+средств\w*)[^.;]{0,70}"
+    r"\b(?:был[аои]?\s+)?(?:произведен\w*|перечислен\w*|внесен\w*|уплачен\w*|получен\w*)\b"
+    r")"
+)
+_PAST_DISPATCH_RE = re.compile(
+    r"(?i)(?:"
+    r"\b(?:направил|направила|направили|отправил|отправила|отправили|"
+    r"вручил|вручила|вручили|получил|получила|получили)\b[^.;]{0,90}"
+    r"(?:претензи\w*|требован\w*|уведомлен\w*)|"
+    r"(?:претензи\w*|требован\w*|уведомлен\w*)[^.;]{0,90}"
+    r"\b(?:был[аои]?\s+)?(?:направлен\w*|отправлен\w*|вручен\w*|получен\w*)\b"
+    r")"
 )
 
 _INSTALLED = False
@@ -72,7 +97,7 @@ _ORIGINAL_COMMON_HYGIENE = quality._common_hygiene
 _ORIGINAL_CURRENT_SOURCE = StrictOpenAILegalService._is_current_official_source
 
 # citation_audit historically covered codes but not the consumer act by its
-# common filing name.  Add that act to the same deterministic parser so a
+# common filing name. Add that act to the same deterministic parser so a
 # consumer-law citation cannot evade the live-source guard merely by naming the
 # statute instead of a code abbreviation.
 if not any(act == "ЗПП РК" for _, act in citation_audit._ACT_PATTERNS):
@@ -122,7 +147,7 @@ def _source_matches_reference(record: citation_audit.RuntimeProvision) -> bool:
     expected = _CORE_ACT_SOURCE_IDS.get(record.reference.act)
     if not expected:
         # For acts outside the deterministic core, source-bound live Adilet is
-        # still required.  We do not guess an act id that the code does not own.
+        # still required. We do not guess an act id that the code does not own.
         return True
     return any(marker in record.source_url for marker in expected)
 
@@ -134,7 +159,7 @@ def live_citation_findings(
     """Every article named in client-facing text must come from live VERIFIED.
 
     citation_audit may use the local corpus as a fallback when reviewing a
-    preliminary draft.  Filing-ready release is intentionally stricter: a
+    preliminary draft. Filing-ready release is intentionally stricter: a
     concrete article number must also have a source-bound runtime provision from
     the current document research pass.
     """
@@ -167,17 +192,18 @@ def _number_tokens(text: str) -> list[str]:
 def _finding_supported_by_verified(finding: str, verified_text: str) -> bool:
     """Allow a high-risk value only if its literal value is in VERIFIED law.
 
-    This is deliberately narrow.  It does not let a legal rule invent a party,
+    This is deliberately narrow. It does not let a legal rule invent a party,
     address or commercial amount; it merely prevents a statutory date/number
     repeated verbatim from being mistaken for a model-created fact.
     """
     tail = str(finding or "").split(":", 1)[-1].strip()
     if not tail:
         return False
-    # Literal compact matching is safer than concatenating every digit in the
-    # whole VERIFIED block: the latter could accidentally manufacture a match
-    # from an article number plus an unrelated date/amount.
     return _norm(tail) in _norm(verified_text)
+
+
+def _finding_tail(finding: str) -> str:
+    return str(finding or "").split(":", 1)[-1].strip()
 
 
 def general_truth_findings(
@@ -186,21 +212,33 @@ def general_truth_findings(
     case_context: str,
     verified_claims: list[str] | None,
 ) -> list[str]:
-    """Catch invented litigation/correspondence facts anywhere in final prose.
+    """Catch invented case facts without treating law/future acts as history.
 
-    Existing per-document QA checks the main fact arrays.  This final pass also
-    covers legal-basis, objection and request paragraphs, where a model could
-    otherwise smuggle in an invented payment, dispatch, document, date or party
-    particular while sounding like legal analysis.
+    Whole-document scanning is stricter than the existing per-section checks but
+    must remain tense-aware. We therefore always enforce identity/document/date
+    particulars, while payment/dispatch events are blockers only when the final
+    prose states that the event already happened. Filing instructions, future
+    duties and conditional deadlines remain legal drafting, not invented facts.
     """
     verified_text = "\n".join(str(x) for x in (verified_claims or []))
     findings: list[str] = []
     for finding in forbidden_fact_findings(lines, case_context):
-        if not finding.startswith(_GENERAL_HIGH_RISK_PREFIXES):
-            continue
         if _finding_supported_by_verified(finding, verified_text):
             continue
-        findings.append(finding)
+        if finding.startswith(_GENERAL_HIGH_RISK_PREFIXES):
+            findings.append(finding)
+            continue
+        if finding.startswith("факт оплаты отсутствует"):
+            if _PAST_PAYMENT_RE.search(_finding_tail(finding)):
+                findings.append(finding)
+            continue
+        if finding.startswith("факт направления претензии отсутствует"):
+            if _PAST_DISPATCH_RE.search(_finding_tail(finding)):
+                findings.append(finding)
+            continue
+        # Evidence-token findings are already handled by document-specific QA.
+        # A universal whole-document block would incorrectly reject attachment
+        # names and filing documents that are to be obtained before submission.
     return list(dict.fromkeys(findings))
 
 
@@ -212,8 +250,8 @@ def contract_truth_findings(
 ) -> list[str]:
     """Block model-created commercial numbers and party/document particulars.
 
-    A contract is allowed to *structure* missing terms with placeholders.  It is
-    not allowed to fill them with plausible values.  Percentages and durations
+    A contract is allowed to structure missing terms with placeholders. It is
+    not allowed to fill them with plausible values. Percentages and durations
     may come from the user or a VERIFIED mandatory rule; monetary amounts come
     from the user's materials (or an explicitly VERIFIED statutory threshold).
     """
@@ -313,7 +351,7 @@ def install_document_truth_runtime() -> None:
 
     # Patch the Mini App's final release function rather than route ownership.
     # UniversalQualityProductionService has already had one bounded repair chance
-    # by this stage.  If a fabricated fact/term or non-live citation survives,
+    # by this stage. If a fabricated fact/term or non-live citation survives,
     # returning a PRELIMINARY Word file would still expose false legal content.
     from korgan import miniapp_api_v2 as core
 
