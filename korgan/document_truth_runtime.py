@@ -46,6 +46,26 @@ _DURATION_RE = re.compile(
 )
 _MRP_RE = re.compile(r"(?<!\d)(?:\d+(?:[.,]\d+)?)\s*МРП\b", re.IGNORECASE)
 
+# Generic article references to special statutes are source-bound too.  The
+# core citation parser has deterministic abbreviations for the principal codes;
+# this second path covers laws such as "Об арбитраже", "О ТОО", etc.  It only
+# activates when the nearby text explicitly identifies a legal act, so a clause
+# such as "статья 5 договора" is not mistaken for legislation.
+_LEGAL_ACT_WORD_RE = re.compile(
+    r"(?i)\b(?:закон\w*|кодекс\w*|конституц\w*|постановлен\w*|правил\w*)\b"
+)
+_VERIFIED_BASIS_RE = re.compile(
+    r"\[основание:\s*(?P<basis>.*?);\s*текст\s+нормы\s*:\s*«.*?»\s*;\s*"
+    r"источник\s*:\s*(?P<url>https?://[^\]\s]+)\]",
+    re.IGNORECASE | re.DOTALL,
+)
+_ACT_SIGNATURE_STOP = {
+    "статья", "статьи", "статье", "статью", "часть", "части", "пункт", "пункта",
+    "закон", "закона", "законе", "кодекс", "кодекса", "кодексе", "республика",
+    "республики", "казахстан", "казахстана", "настоящий", "настоящего", "согласно",
+    "соответствии", "который", "которая", "которые", "правило", "правила",
+}
+
 # A contract may prescribe future evidence/payment mechanics, so its high-risk
 # provenance pass is deliberately narrower than litigation correspondence.
 _CONTRACT_HIGH_RISK_PREFIXES = (
@@ -161,6 +181,76 @@ def _source_matches_reference(record: citation_audit.RuntimeProvision) -> bool:
     return any(marker in record.source_url for marker in expected)
 
 
+def _act_signature(value: str) -> set[str]:
+    """Distinctive word stems for matching an uncommon act name.
+
+    Russian inflection changes endings ("арбитраже"/"арбитража"), therefore the
+    first seven letters are enough for act-title comparison while stop words and
+    generic legal vocabulary are discarded.  Two statutes with the same article
+    number are not considered the same merely because both are "laws of RK".
+    """
+    words = re.findall(r"[a-zа-яё]{5,}", str(value or "").lower().replace("ё", "е"))
+    return {
+        word[:7]
+        for word in words
+        if word not in _ACT_SIGNATURE_STOP and not word.startswith(("стать", "пункт", "част"))
+    }
+
+
+def _special_live_basis_matches(
+    *,
+    article: str,
+    citation_window: str,
+    verified_claims: list[str] | None,
+) -> bool:
+    expected_signature = _act_signature(citation_window)
+    if not expected_signature:
+        return False
+
+    for raw in verified_claims or []:
+        claim = str(raw or "")
+        meta = _VERIFIED_BASIS_RE.search(claim)
+        if not meta or not _is_russian_adilet(meta.group("url")):
+            continue
+        basis = meta.group("basis")
+        basis_ref = citation_audit._REFERENCE_RE.search(basis)
+        if basis_ref is None or basis_ref.group("article") != article:
+            continue
+        candidate_signature = _act_signature(basis)
+        # The final citation window is usually shorter than the research basis;
+        # require every distinctive token we can see in the final act name to be
+        # present in the VERIFIED basis. This is stricter than article-number
+        # equality and prevents same-number citations to another statute.
+        if expected_signature <= candidate_signature:
+            return True
+    return False
+
+
+def _special_law_citation_findings(
+    text: str,
+    verified_claims: list[str] | None,
+) -> list[str]:
+    findings: list[str] = []
+    for match in citation_audit._REFERENCE_RE.finditer(text or ""):
+        paragraph = citation_audit._paragraph_around(text, match.start())
+        window = (match.group(0) + " " + paragraph).strip()
+        if citation_audit._detect_act(window):
+            continue
+        if not _LEGAL_ACT_WORD_RE.search(window):
+            continue
+        article = match.group("article")
+        if _special_live_basis_matches(
+            article=article,
+            citation_window=match.group(0),
+            verified_claims=verified_claims,
+        ):
+            continue
+        findings.append(
+            f"статья {article} специального НПА не связана с тем же актом в live VERIFIED текущего документа"
+        )
+    return list(dict.fromkeys(findings))
+
+
 def live_citation_findings(
     text: str,
     verified_claims: list[str] | None,
@@ -170,12 +260,10 @@ def live_citation_findings(
     citation_audit may use the local corpus as a fallback when reviewing a
     preliminary draft. Filing-ready release is intentionally stricter: a
     concrete article number must also have a source-bound runtime provision from
-    the current document research pass.
+    the current document research pass. Special statutes not known to the core
+    abbreviation table are matched by article number plus distinctive act name.
     """
     references = citation_audit.extract_references(text or "")
-    if not references:
-        return []
-
     runtime = [
         record
         for record in citation_audit.runtime_provisions(verified_claims)
@@ -188,6 +276,7 @@ def live_citation_findings(
         findings.append(
             f"{reference.label()} отсутствует в live source-bound VERIFIED текущего документа"
         )
+    findings.extend(_special_law_citation_findings(text, verified_claims))
     return list(dict.fromkeys(findings))
 
 
