@@ -36,13 +36,9 @@ from korgan import miniapp_paid_autostart_runtime as _miniapp_paid_autostart_run
 # approved/consumed payment recovery idempotent without enabling payments.
 from korgan import miniapp_payment_hardening_runtime as _miniapp_payment_hardening_runtime  # noqa: F401
 
-# Payments are intentionally disabled for the current Mini App release. When the
-# payment switch is OFF, replace the document-generation routes with the direct
-# free-generation runtime for every authenticated user. No admin-only gate and no
-# separate test feature flag are required.
-from korgan.miniapp_api_v5 import settings as _miniapp_settings
-if not _miniapp_settings.payments_enabled:
-    from korgan import miniapp_admin_free_generation_runtime as _miniapp_admin_free_generation_runtime  # noqa: F401
+# Payment-off generation is handled by the canonical generation owner. Keeping
+# one route set avoids import-time route replacement and lets the same process
+# exercise paid and free behavior without changing ASGI route identity.
 
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_consent_status as _miniapp_consent_status

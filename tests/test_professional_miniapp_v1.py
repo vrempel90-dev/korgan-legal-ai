@@ -11,10 +11,11 @@ from korgan.professional_consultation import _render_consultation
 def test_recovery_runtime_has_no_free_document_generation_import() -> None:
     source = Path("korgan/miniapp_api_recovery_cors.py").read_text(encoding="utf-8")
     assert "miniapp_free_generation_runtime" not in source
+    assert "miniapp_admin_free_generation_runtime" not in source
     assert "miniapp_document_payment_required" not in source
 
 
-def test_generation_owner_fails_closed_when_payments_are_disabled(monkeypatch) -> None:
+def test_paid_only_guard_fails_closed_when_payments_are_disabled(monkeypatch) -> None:
     from korgan import miniapp_generation_api as generation_api
 
     monkeypatch.setattr(generation_api.settings, "payments_enabled", False)

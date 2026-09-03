@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
+import re
+import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import Header, HTTPException
@@ -18,6 +22,17 @@ app = v5.app
 core = v5.core
 settings = v5.settings
 _TASKS: dict[str, asyncio.Task[None]] = {}
+_FREE_JOBS: dict[str, "FreeGenerationJob"] = {}
+_FREE_CASE_JOB: dict[tuple[str, str], str] = {}
+_HUMAN_TEXT = re.compile(r"[Ѐ-ӿ]")
+_FREE_SCOPE_FIELD = "_free_generation_scope"
+_FREE_JOB_FIELD = "_free_generation_job_id"
+
+# The public promise is a one-to-two minute document. A provider request that
+# outlives the complete document budget must not leave an immortal background
+# job behind. The faster research/drafting policy normally finishes before this
+# guard; the guard is the final containment boundary for provider stalls.
+FREE_GENERATION_TIMEOUT_SECONDS = 120
 
 _PAYMENT_REQUIRED_DETAIL = (
     "Подготовка документов доступна только после подтвержденной оплаты. "
@@ -25,8 +40,30 @@ _PAYMENT_REQUIRED_DETAIL = (
 )
 
 
+@dataclass
+class FreeGenerationJob:
+    """Process-local job used only while the payment switch is off.
+
+    Completed document metadata is also stored with the encrypted case, so a
+    finished free document survives an application restart. In-flight work is
+    deliberately not reported as durable: after a restart the client can start
+    it again without a charge.
+    """
+
+    id: str
+    identity: str
+    case_id: str
+    case_fingerprint: str
+    document_type: str
+    language: str
+    status: str = "queued"
+    stage: str = "queued"
+    progress: int = 0
+    error: str = ""
+
+
 def _require_paid_document_runtime() -> None:
-    """Fail closed: disabling payments must never enable free generation."""
+    """Reject operations that only make sense for an existing paid order."""
     if not settings.payments_enabled:
         raise HTTPException(status_code=503, detail=_PAYMENT_REQUIRED_DETAIL)
 
@@ -57,6 +94,8 @@ async def _shutdown() -> None:
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     _TASKS.clear()
+    _FREE_JOBS.clear()
+    _FREE_CASE_JOB.clear()
     await jobs.close_generation_job_store()
 
 
@@ -97,6 +136,165 @@ def _ready_document(state: dict[str, Any], case_id: str) -> dict[str, Any]:
     if case is None or case.get("status") != "document_ready" or not case.get("document_base64"):
         raise HTTPException(status_code=409, detail=_MISSING_DOCUMENT_DETAIL)
     return _document_payload(case_id, case)
+
+
+def _public_free_job(job: FreeGenerationJob) -> dict[str, Any]:
+    return {
+        "job_id": job.id,
+        "case_id": job.case_id,
+        "status": job.status,
+        "stage": job.stage,
+        "progress": max(0, min(int(job.progress), 100)),
+        "document_ready": job.status == "succeeded",
+        "retryable": job.status == "failed",
+        "error": job.error if job.status == "failed" else "",
+    }
+
+
+def _free_client_error(exc: BaseException) -> str:
+    if isinstance(exc, TimeoutError):
+        return (
+            "Подготовка превысила две минуты и безопасно остановлена. "
+            "Повторите попытку — оплата не требуется."
+        )
+    detail = getattr(exc, "detail", "")
+    message = str(detail or str(exc) or "").strip()
+    if message and _HUMAN_TEXT.search(message):
+        return message[:1000]
+    return "Не удалось подготовить документ. Повторите попытку — оплата не требуется."
+
+
+def _persisted_free_job(
+    *,
+    identity: str,
+    case_id: str,
+    case: dict[str, Any],
+    case_fingerprint: str,
+) -> FreeGenerationJob | None:
+    """Rebuild the completed free job stored with an encrypted case."""
+    if (
+        case.get("status") != "document_ready"
+        or not case.get("document_base64")
+        or str(case.get(_FREE_SCOPE_FIELD) or "") != case_fingerprint
+    ):
+        return None
+    job_id = str(case.get(_FREE_JOB_FIELD) or "").strip()
+    if not job_id:
+        return None
+    return FreeGenerationJob(
+        id=job_id,
+        identity=identity,
+        case_id=case_id,
+        case_fingerprint=case_fingerprint,
+        document_type=str(case.get("document_type") or "claim"),
+        language="kk" if str(case.get("language")) == "kk" else "ru",
+        status="succeeded",
+        stage="completed",
+        progress=100,
+    )
+
+
+def _remember_free_job(job: FreeGenerationJob) -> None:
+    _FREE_JOBS[job.id] = job
+    _FREE_CASE_JOB[(job.identity, job.case_id)] = job.id
+
+
+async def _run_free_generation(job: FreeGenerationJob, *, context: str) -> None:
+    job.status = "running"
+    job.stage = "legal_research"
+    job.progress = 20
+    try:
+        async with asyncio.timeout(FREE_GENERATION_TIMEOUT_SECONDS):
+            draft, file_bytes, filename, meta = await core._generate(
+                job.document_type,
+                context,
+                job.language,
+            )
+            job.stage = "quality_control"
+            job.progress = 80
+
+            # Imported here because the release runtime wraps the same core
+            # during application assembly. Keeping the import lazy avoids a
+            # circular import while preserving the final professional gate.
+            from korgan.miniapp_professional_release import apply_release_policy
+
+            payload = apply_release_policy(
+                {
+                    "status": "document_ready",
+                    "title": getattr(draft, "title", "") or filename,
+                    "verification_status": core._status_value(getattr(draft, "status", None)),
+                    "verification_notes": list(meta["verification_notes"]),
+                    "quality_score": meta["quality_score"],
+                    "quality_issues": list(meta["quality_issues"]),
+                    "filing_ready": bool(meta["filing_ready"]),
+                    "release_status": str(meta["release_status"]),
+                    "document_base64": base64.b64encode(file_bytes).decode("ascii"),
+                    "filename": filename,
+                },
+                case_id=job.case_id,
+            )
+            job.stage = "document_render"
+            job.progress = 90
+
+            # Generation can take long enough for a user to add a material.
+            # Never publish an old draft over a newer factual scope.
+            state = await core.store.load(job.identity)
+            case = (state.get("cases") or {}).get(job.case_id)
+            if case is None:
+                raise HTTPException(status_code=404, detail="Дело удалено во время подготовки документа")
+            current_scope = v5.v4._document_scope(case, job.document_type, job.language)
+            if current_scope != job.case_fingerprint:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Материалы дела изменились во время подготовки. "
+                        "Запустите документ заново — оплата не требуется."
+                    ),
+                )
+
+            case.update(payload)
+            case[_FREE_SCOPE_FIELD] = job.case_fingerprint
+            case[_FREE_JOB_FIELD] = job.id
+            await core.store.save(job.identity, state)
+
+        job.status = "succeeded"
+        job.stage = "completed"
+        job.progress = 100
+        job.error = ""
+        LOGGER.info(
+            "FREE_DOCUMENT_COMPLETED case_id=%s document_type=%s",
+            job.case_id,
+            job.document_type,
+        )
+    except Exception as exc:
+        job.status = "failed"
+        job.stage = "failed"
+        job.progress = 0
+        job.error = _free_client_error(exc)
+        LOGGER.exception(
+            "FREE_DOCUMENT_FAILED case_id=%s document_type=%s",
+            job.case_id,
+            job.document_type,
+        )
+        raise
+
+
+def _schedule_free_job(job: FreeGenerationJob, *, context: str) -> None:
+    existing = _TASKS.get(job.id)
+    if existing is not None and not existing.done():
+        return
+    task = asyncio.create_task(
+        _run_free_generation(job, context=context),
+        name=f"korgan-free-{job.id}",
+    )
+    _TASKS[job.id] = task
+
+    def finished(done: asyncio.Task[None]) -> None:
+        _consume_task_result(done)
+        if _TASKS.get(job.id) is done:
+            _TASKS.pop(job.id, None)
+
+    task.add_done_callback(finished)
 
 
 def _consume_task_result(task: asyncio.Task[None]) -> None:
@@ -166,6 +364,144 @@ async def _generation_scope(
     return identity, state, case, user_key, scope, document_type, language
 
 
+async def _start_free_generation(
+    *,
+    identity: str,
+    state: dict[str, Any],
+    case: dict[str, Any],
+    case_id: str,
+    case_fingerprint: str,
+    document_type: str,
+    language: str,
+) -> dict[str, Any]:
+    """Start or recover the one free job for the current material scope."""
+    persisted = _persisted_free_job(
+        identity=identity,
+        case_id=case_id,
+        case=case,
+        case_fingerprint=case_fingerprint,
+    )
+    if persisted is not None:
+        _remember_free_job(persisted)
+        return {
+            "payment_required": False,
+            "generation_started": False,
+            "job": _public_free_job(persisted),
+            "document": _ready_document(state, case_id),
+        }
+
+    key = (identity, case_id)
+    old = _FREE_JOBS.get(_FREE_CASE_JOB.get(key, ""))
+    if old is not None and old.case_fingerprint == case_fingerprint:
+        if old.status in {"queued", "running"}:
+            return {
+                "payment_required": False,
+                "generation_started": True,
+                "job": _public_free_job(old),
+            }
+        if old.status == "succeeded":
+            return {
+                "payment_required": False,
+                "generation_started": False,
+                "job": _public_free_job(old),
+                "document": _ready_document(state, case_id),
+            }
+    elif old is not None and old.status in {"queued", "running"}:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Материалы дела изменились во время уже запущенной подготовки. "
+                "Дождитесь её завершения и запустите документ заново."
+            ),
+        )
+
+    job = FreeGenerationJob(
+        id=f"free-{uuid.uuid4()}",
+        identity=identity,
+        case_id=case_id,
+        case_fingerprint=case_fingerprint,
+        document_type=document_type,
+        language=language,
+    )
+    _remember_free_job(job)
+    _schedule_free_job(job, context=core._case_context(case))
+    return {
+        "payment_required": False,
+        "generation_started": True,
+        "job": _public_free_job(job),
+    }
+
+
+def _free_job_from_state(
+    *,
+    identity: str,
+    state: dict[str, Any],
+    job_id: str,
+) -> FreeGenerationJob | None:
+    job = _FREE_JOBS.get(job_id)
+    if job is not None and job.identity == identity:
+        return job
+    for case_id, case in (state.get("cases") or {}).items():
+        if str(case.get(_FREE_JOB_FIELD) or "") != job_id:
+            continue
+        scope = str(case.get(_FREE_SCOPE_FIELD) or "")
+        rebuilt = _persisted_free_job(
+            identity=identity,
+            case_id=str(case_id),
+            case=case,
+            case_fingerprint=scope,
+        )
+        if rebuilt is not None:
+            _remember_free_job(rebuilt)
+            return rebuilt
+    return None
+
+
+async def _retry_free_generation(
+    *,
+    job_id: str,
+    x_telegram_init_data: str,
+) -> dict[str, Any]:
+    identity = core.legacy._identity(x_telegram_init_data)
+    state = await core.legacy._require_consent(identity)
+    old = _free_job_from_state(identity=identity, state=state, job_id=job_id)
+    if old is None:
+        raise HTTPException(status_code=404, detail="Задача подготовки документа не найдена")
+    if old.status != "failed":
+        raise HTTPException(status_code=409, detail="Эту задачу нельзя запустить повторно")
+
+    case = (state.get("cases") or {}).get(old.case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Дело для документа не найдено")
+    payload = core.GenerateRequest(
+        case_id=old.case_id,
+        document_type=old.document_type,
+        language=old.language,
+    )
+    resolved_identity, _, fresh_case, _, scope, document_type, language = await _generation_scope(
+        payload,
+        x_telegram_init_data,
+    )
+    if resolved_identity != identity:  # pragma: no cover - defensive adapter invariant
+        raise HTTPException(status_code=403, detail="Недоступная задача подготовки документа")
+
+    job = FreeGenerationJob(
+        id=f"free-{uuid.uuid4()}",
+        identity=identity,
+        case_id=old.case_id,
+        case_fingerprint=scope,
+        document_type=document_type,
+        language=language,
+    )
+    _remember_free_job(job)
+    _schedule_free_job(job, context=core._case_context(fresh_case))
+    return {
+        "payment_required": False,
+        "generation_started": True,
+        "job": _public_free_job(job),
+    }
+
+
 # This is the final owner of generation. Payment gating remains in the same
 # document-order store, while legal work is moved out of the request lifecycle.
 _drop("/miniapp/documents/generate", "POST")
@@ -176,14 +512,24 @@ async def generate_document_job(
     payload: core.GenerateRequest,
     x_telegram_init_data: str = Header(default=""),
 ) -> dict[str, Any]:
-    _require_paid_document_runtime()
-    if not settings.kaspi_payment_url.strip():
+    if settings.payments_enabled and not settings.kaspi_payment_url.strip():
         raise HTTPException(status_code=503, detail="Kaspi-оплата временно не настроена. Документ не запущен.")
 
     identity, state, case, user_key, scope, document_type, language = await _generation_scope(
         payload,
         x_telegram_init_data,
     )
+    if not settings.payments_enabled:
+        return await _start_free_generation(
+            identity=identity,
+            state=state,
+            case=case,
+            case_id=payload.case_id,
+            case_fingerprint=scope,
+            document_type=document_type,
+            language=language,
+        )
+
     # Готовый документ за этот же состав материалов уже оплачен. Хранилище
     # платежей после списания переводит ордер в `consumed` и перестаёт находить
     # его как действующий, поэтому без этой проверки повторное нажатие создало
@@ -263,6 +609,15 @@ async def generation_status(
 ) -> dict[str, Any]:
     identity = core.legacy._identity(x_telegram_init_data)
     state = await core.legacy._require_consent(identity)
+    if not settings.payments_enabled:
+        free_job = _free_job_from_state(identity=identity, state=state, job_id=job_id)
+        if free_job is None:
+            raise HTTPException(status_code=404, detail="Задача подготовки документа не найдена")
+        result: dict[str, Any] = {"job": _public_free_job(free_job)}
+        if free_job.status == "succeeded":
+            result["document"] = _ready_document(state, free_job.case_id)
+        return result
+
     user_key = core.store.user_key(identity)
     job = await jobs.require_job(job_id, user_key=user_key)
     result: dict[str, Any] = {"job": jobs.public_job(job)}
@@ -284,11 +639,31 @@ async def case_generation_status(
     """
     identity = core.legacy._identity(x_telegram_init_data)
     state = await core.legacy._require_consent(identity)
-    if case_id not in (state.get("cases") or {}):
+    case = (state.get("cases") or {}).get(case_id)
+    if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
     if not settings.payments_enabled:
-        # При отключённом платёжном контуре новые задачи не создаются.
-        return {"job": None}
+        document_type = str(case.get("document_type") or "claim")
+        language = "kk" if str(case.get("language")) == "kk" else "ru"
+        current_scope = v5.v4._document_scope(case, document_type, language)
+        free_job = _FREE_JOBS.get(_FREE_CASE_JOB.get((identity, case_id), ""))
+        if free_job is None:
+            free_job = _persisted_free_job(
+                identity=identity,
+                case_id=case_id,
+                case=case,
+                case_fingerprint=current_scope,
+            )
+            if free_job is not None:
+                _remember_free_job(free_job)
+        if free_job is None:
+            return {"job": None}
+        if free_job.case_fingerprint != current_scope and free_job.status not in {"queued", "running"}:
+            return {"job": None}
+        result: dict[str, Any] = {"job": _public_free_job(free_job)}
+        if free_job.status == "succeeded":
+            result["document"] = _ready_document(state, case_id)
+        return result
 
     user_key = core.store.user_key(identity)
     job = await jobs.latest_job_for_case(user_key=user_key, case_id=case_id)
@@ -305,6 +680,11 @@ async def retry_generation(
     job_id: str,
     x_telegram_init_data: str = Header(default=""),
 ) -> dict[str, Any]:
+    if not settings.payments_enabled:
+        return await _retry_free_generation(
+            job_id=job_id,
+            x_telegram_init_data=x_telegram_init_data,
+        )
     _require_paid_document_runtime()
     identity = core.legacy._identity(x_telegram_init_data)
     state = await core.legacy._require_consent(identity)

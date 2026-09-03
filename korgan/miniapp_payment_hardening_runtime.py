@@ -20,12 +20,6 @@ core = tole_runtime.core
 settings = tole_runtime.settings
 _INSTALLED = False
 
-_PAYMENT_DISABLED = (
-    "Оплата документов временно отключена. Новая оплата не создаётся и генерация "
-    "не запускается. Уже подтверждённый платёж сохраняется; повторно платить не нужно."
-)
-
-
 def _drop(path: str, method: str) -> None:
     wanted = method.upper()
     app.router.routes = [
@@ -111,11 +105,14 @@ def install_payment_hardening_runtime() -> None:
         payload: core.GenerateRequest,
         x_telegram_init_data: str = Header(default=""),
     ) -> dict[str, Any]:
-        # PAYMENTS_ENABLED is the production kill switch. It blocks creation of
-        # new payment intents and legal work while the payment system is under
-        # maintenance; it must never become a free-generation switch.
+        # The payment switch is currently off by product decision. Delegate to
+        # the canonical owner so no order, QR or provider call is created while
+        # document generation remains available.
         if not settings.payments_enabled:
-            raise HTTPException(status_code=503, detail=_PAYMENT_DISABLED)
+            return await generation_runtime.generate_document_job(
+                payload,
+                x_telegram_init_data=x_telegram_init_data,
+            )
 
         tole_runtime._require_tole_runtime()
         identity, order = await tole_runtime._resolve_document_order(payload, x_telegram_init_data)
@@ -203,7 +200,10 @@ def install_payment_hardening_runtime() -> None:
         x_telegram_init_data: str = Header(default=""),
     ) -> dict[str, Any]:
         if not settings.payments_enabled:
-            raise HTTPException(status_code=503, detail=_PAYMENT_DISABLED)
+            return await generation_runtime.retry_generation(
+                job_id,
+                x_telegram_init_data=x_telegram_init_data,
+            )
 
         identity = core.legacy._identity(x_telegram_init_data)
         state = await core.legacy._require_consent(identity)
