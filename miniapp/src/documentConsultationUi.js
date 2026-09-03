@@ -39,10 +39,11 @@ function storedScope() {
     const parsed = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || '{}');
     return {
       title: clean(parsed.title),
+      caseId: clean(parsed.caseId),
       language: parsed.language === 'kk' ? 'kk' : 'ru',
     };
   } catch {
-    return { title: '', language: 'ru' };
+    return { title: '', caseId: '', language: 'ru' };
   }
 }
 
@@ -52,6 +53,7 @@ export function applyDocumentConsultationUi(root = document.getElementById('root
   const casePage = root.querySelector('main.page');
   if (casePage && isReadyDocumentPage(casePage)) {
     const title = clean(casePage.querySelector('.analysis-card h2')?.textContent);
+    const caseId = clean(root.querySelector('header.subbar strong')?.textContent);
     for (const button of casePage.querySelectorAll('button')) {
       const current = clean(button.textContent);
       if (current !== 'Консультация по делу' && current !== 'Іс бойынша кеңес') continue;
@@ -60,6 +62,7 @@ export function applyDocumentConsultationUi(root = document.getElementById('root
       replaceButtonText(button, label);
       button.dataset.documentConsultation = 'true';
       button.dataset.documentTitle = title;
+      button.dataset.documentCaseId = caseId;
       button.dataset.documentLanguage = language;
       button.setAttribute('aria-label', label);
     }
@@ -84,8 +87,9 @@ function rememberClickedDocument(event) {
   const button = event.target?.closest?.('button[data-document-consultation="true"]');
   if (!button) return;
   const title = clean(button.dataset.documentTitle);
+  const caseId = clean(button.dataset.documentCaseId);
   const language = button.dataset.documentLanguage === 'kk' ? 'kk' : 'ru';
-  if (title) sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ title, language }));
+  if (title && caseId) sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ title, caseId, language }));
 }
 
 let applyQueued = false;

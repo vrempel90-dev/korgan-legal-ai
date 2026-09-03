@@ -1,0 +1,35 @@
+name: Telegram MiniApp legal workspace CI
+
+on:
+  pull_request:
+    branches:
+      - recovery/miniapp-web-1600-sg
+    paths:
+      - 'miniapp/**'
+      - '.github/workflows/telegram-miniapp-legal-workspace-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  telegram-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: miniapp
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: miniapp/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Run frontend regression suite
+        run: npm test
+      - name: Build production MiniApp
+        run: npm run build
