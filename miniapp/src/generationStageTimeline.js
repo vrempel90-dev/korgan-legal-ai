@@ -115,22 +115,20 @@ function install() {
     else window.setTimeout(run, 0);
   };
 
-  // generationJob publishes this event from the real backend job. React screen
-  // changes themselves do not publish it, so observe DOM navigation too; this
-  // guarantees an injected timeline is removed as soon as the user leaves the
-  // claim generation screen.
+  // Lifecycle events update real backend progress. A capture-phase click queues
+  // one post-React sync for navigation, so stale claim UI is removed without a
+  // global MutationObserver or continuous DOM scanning.
   window.addEventListener(LIFECYCLE_EVENT, scheduleSync);
   window.addEventListener('pageshow', scheduleSync);
-  const observer = typeof MutationObserver === 'function'
-    ? new MutationObserver(scheduleSync)
-    : null;
-  observer?.observe(document.body, { childList: true, subtree: true });
+  document.addEventListener('click', scheduleSync, true);
+  window.addEventListener('popstate', scheduleSync);
   scheduleSync();
 
   return () => {
-    observer?.disconnect();
     window.removeEventListener(LIFECYCLE_EVENT, scheduleSync);
     window.removeEventListener('pageshow', scheduleSync);
+    document.removeEventListener('click', scheduleSync, true);
+    window.removeEventListener('popstate', scheduleSync);
     document.getElementById(ROOT_ID)?.remove();
   };
 }
