@@ -114,3 +114,39 @@ def test_general_guard_allows_date_when_it_is_in_user_materials() -> None:
         verified_claims=[],
     )
     assert findings == []
+
+
+def test_general_guard_blocks_invented_completed_payment() -> None:
+    findings = general_truth_findings(
+        ["Истец перечислил ответчику 500 000 тенге 15.08.2026."],
+        case_context="Сумма и дата платежа в материалах отсутствуют.",
+        verified_claims=[],
+    )
+    assert any("500 000" in item or "факт оплаты" in item for item in findings)
+
+
+def test_general_guard_does_not_treat_future_payment_instruction_as_fact() -> None:
+    findings = general_truth_findings(
+        ["Оплатить государственную пошлину до подачи иска."],
+        case_context="Размер и факт оплаты государственной пошлины не сообщены.",
+        verified_claims=[],
+    )
+    assert findings == []
+
+
+def test_general_guard_does_not_treat_filing_attachment_name_as_existing_fact() -> None:
+    findings = general_truth_findings(
+        ["Квитанция об уплате государственной пошлины"],
+        case_context="Квитанция пока не приложена.",
+        verified_claims=[],
+    )
+    assert findings == []
+
+
+def test_general_guard_does_not_treat_conditional_pretrial_deadline_as_past_dispatch() -> None:
+    findings = general_truth_findings(
+        ["Исполнить требования в течение 10 календарных дней с даты получения настоящей претензии."],
+        case_context="Составляется первая досудебная претензия.",
+        verified_claims=[],
+    )
+    assert findings == []
