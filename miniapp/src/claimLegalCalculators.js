@@ -45,6 +45,11 @@ const COPY = {
   },
 };
 
+const CALCULATION_LINE = {
+  duty: /^(?:Рассчитанная госпошлина для иска|Талап үшін есептелген мемлекеттік баж):[^\n]*$/m,
+  penalty: /^(?:Рассчитанная неустойка по статье 353 ГК РК|ҚР АК 353-бабы бойынша есептелген тұрақсыздық айыбы):[^\n]*$/m,
+};
+
 function state() {
   try {
     return JSON.parse(globalThis.localStorage?.getItem(APP_STATE_KEY) || '{}');
@@ -82,15 +87,20 @@ function setControlledTextarea(textarea, value) {
   textarea.dispatchEvent(event);
 }
 
-function appendToClaim(line) {
+function upsertClaimCalculation(current, line, kind) {
+  const pattern = CALCULATION_LINE[kind];
+  if (pattern?.test(current)) return current.replace(pattern, line);
+  return `${current}${current ? '\n\n' : ''}${line}`;
+}
+
+function appendToClaim(line, kind) {
   const form = claimForm();
   if (!form) return false;
   const current = String(form.textarea.value || '').trimEnd();
-  if (current.includes(line)) return true;
-  const next = `${current}${current ? '\n\n' : ''}${line}`;
+  const next = upsertClaimCalculation(current, line, kind);
   const max = Number(form.textarea.maxLength || 8000);
   if (max > 0 && next.length > max) return false;
-  setControlledTextarea(form.textarea, next);
+  if (next !== form.textarea.value) setControlledTextarea(form.textarea, next);
   return true;
 }
 
@@ -113,7 +123,7 @@ function resultDays(text) {
   return String(text || '').match(/(?:Дней|Күндер):\s*(\d+)/i)?.[1] || '';
 }
 
-function addResultAction(box, line, lang) {
+function addResultAction(box, line, lang, kind) {
   if (!box || !line || box.classList.contains('error')) return;
   box.querySelector('.claim-calculator-add')?.remove();
   box.querySelector('.claim-calculator-add-status')?.remove();
@@ -125,7 +135,7 @@ function addResultAction(box, line, lang) {
   const status = document.createElement('div');
   status.className = 'claim-calculator-add-status';
   button.addEventListener('click', () => {
-    if (!appendToClaim(line)) {
+    if (!appendToClaim(line, kind)) {
       status.textContent = copy.cannotAdd;
       status.classList.add('error');
       return;
@@ -158,13 +168,13 @@ function waitForCalculation(kind, submitted = {}) {
     const amount = resultAmount(text, kind);
     if (!amount) return;
     if (kind === 'duty') {
-      addResultAction(currentBox, COPY[lang].dutyLine(amount), lang);
+      addResultAction(currentBox, COPY[lang].dutyLine(amount), lang, kind);
       return;
     }
     const start = formatDate(submitted.start);
     const end = formatDate(submitted.end);
     const days = resultDays(text);
-    addResultAction(currentBox, COPY[lang].penaltyLine({ amount, start, end, days }), lang);
+    addResultAction(currentBox, COPY[lang].penaltyLine({ amount, start, end, days }), lang, kind);
   }, 120);
 }
 
