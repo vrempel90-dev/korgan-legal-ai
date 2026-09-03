@@ -13,13 +13,13 @@ from korgan import miniapp_api_v2 as core
 LOGGER = logging.getLogger(__name__)
 
 _TIMEOUT_ENV = "KORGAN_DOCUMENT_GENERATION_TIMEOUT_SECONDS"
-# The previous 110-second product target became a hard failure mode: valid
-# documents were cancelled exactly while legal research was still running. The
-# UI now reports real stages, so the server budget is a safety ceiling rather
-# than a customer-facing promise.
-_DEFAULT_TIMEOUT_SECONDS = 360.0
-_MIN_TIMEOUT_SECONDS = 240.0
-_MAX_TIMEOUT_SECONDS = 600.0
+# Document generation is an asynchronous job with real stage reporting. The
+# timeout is therefore only a runaway-task safety ceiling, not a customer-facing
+# speed promise. Old Railway values such as 110 seconds must not cancel a valid
+# document while research/drafting is still making progress.
+_DEFAULT_TIMEOUT_SECONDS = 600.0
+_MIN_TIMEOUT_SECONDS = 600.0
+_MAX_TIMEOUT_SECONDS = 900.0
 _INSTALLED = False
 _ORIGINAL_GENERATE = core._generate
 
@@ -30,8 +30,6 @@ def document_generation_timeout_seconds() -> float:
         configured = float(raw) if raw else _DEFAULT_TIMEOUT_SECONDS
     except ValueError:
         configured = _DEFAULT_TIMEOUT_SECONDS
-    # Existing Railway values such as 110 seconds are deliberately lifted to
-    # the new safety floor so an old variable cannot keep killing generation.
     return min(_MAX_TIMEOUT_SECONDS, max(_MIN_TIMEOUT_SECONDS, configured))
 
 
