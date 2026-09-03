@@ -1,0 +1,20 @@
+/* Visible navigation contract.
+   React still owns navigation state; this layer only maps hidden internal
+   destinations (Cases / AI lawyer / nested case flows) to the visible Home tab.
+   It never changes clicks, pointer events, screen state, or generation polling. */
+
+/* Cases and AI lawyer are intentionally hidden by ui-preferences.css. When one
+   of them owns React's active state, Home is the visible parent destination. */
+.bottom-nav:has(> button:nth-child(2).active) > button:nth-child(1),
+.bottom-nav:has(> button:nth-child(3).active) > button:nth-child(1) {
+  color: #0d63ff;
+}
+
+/* Nested flows such as case / generation / ready may have no direct bottom-nav
+   button at all. In that state Home remains the visible parent destination. */
+.bottom-nav:not(:has(> button.active)) > button:nth-child(1) {
+  color: #0d63ff;
+}
+
+/* Help and Profile are visible first-class destinations. Their own React
+   active class always wins naturally through the existing .active rule. */
