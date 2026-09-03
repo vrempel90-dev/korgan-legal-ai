@@ -72,10 +72,14 @@ function renderTimeline(page, progress) {
   if (root.dataset.signature === signature) return root;
   root.dataset.signature = signature;
 
+  const statusClass = failed ? 'korgan-generation-state is-failed' : 'korgan-generation-live';
+  const statusIcon = failed ? '' : '<i aria-hidden="true"></i>';
+  const statusText = failed ? (language === 'kk' ? 'Қате' : 'Ошибка') : copy.live;
+
   root.innerHTML = `
     <div class="korgan-generation-stage-title">
       <strong>${copy.title}</strong>
-      <span class="korgan-generation-live"><i aria-hidden="true"></i>${failed ? (language === 'kk' ? 'Қате' : 'Ошибка') : copy.live}</span>
+      <span class="${statusClass}">${statusIcon}${statusText}</span>
     </div>
     <div class="korgan-generation-current">
       <span>${copy.current}</span>
