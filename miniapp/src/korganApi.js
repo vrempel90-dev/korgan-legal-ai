@@ -9,6 +9,13 @@ const request = createApiTransport({
   getTelegramInitData: () => window.Telegram?.WebApp?.initData || '',
 });
 
+// Professional consultation can legitimately take longer than the ordinary
+// Mini App transport because the backend performs source-bound legal research
+// and verifies the cited Kazakhstan law before returning the answer. Keep the
+// global 30s timeout for normal API calls, but do not let the browser abort a
+// valid consultation while the backend is still checking sources.
+const CONSULTATION_TIMEOUT_MS = 90000;
+
 const LEGACY_UPLOAD_ONLY_DESCRIPTIONS = new Set([
   'Дело создано на основании загруженных материалов. Факты следует брать только из документов, загруженных пользователем.',
   'Іс жүктелген материалдар негізінде құрылды. Фактілерді тек пайдаланушы жүктеген құжаттардан алу керек.',
@@ -63,6 +70,7 @@ async function consultation(message, caseId, language = 'ru') {
   }
   return request('/miniapp/consultation', {
     method: 'POST',
+    timeoutMs: CONSULTATION_TIMEOUT_MS,
     body: JSON.stringify({
       message,
       case_id: id || null,
