@@ -34,6 +34,12 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Paid document autostart regressions
+        run: python -m pytest -q tests/test_paid_document_autostart_runtime.py
+
+      - name: Live Adilet article release regressions
+        run: python -m pytest -q tests/test_live_article_release_runtime.py
+
       - name: Full test suite from the repository root
         run: python -m pytest -q
 

@@ -19,6 +19,17 @@ core = v5.core
 settings = v5.settings
 _TASKS: dict[str, asyncio.Task[None]] = {}
 
+_PAYMENT_REQUIRED_DETAIL = (
+    "Подготовка документов доступна только после подтвержденной оплаты. "
+    "Платежный контур временно не настроен, поэтому генерация не запущена."
+)
+
+
+def _require_paid_document_runtime() -> None:
+    """Fail closed: disabling payments must never enable free generation."""
+    if not settings.payments_enabled:
+        raise HTTPException(status_code=503, detail=_PAYMENT_REQUIRED_DETAIL)
+
 
 def _drop(path: str, method: str) -> None:
     wanted = method.upper()
@@ -165,10 +176,7 @@ async def generate_document_job(
     payload: core.GenerateRequest,
     x_telegram_init_data: str = Header(default=""),
 ) -> dict[str, Any]:
-    if not settings.payments_enabled:
-        # The development/free mode has no PostgreSQL payment order to bind a
-        # durable job to, so preserve the already-tested synchronous behavior.
-        return await core.generate_document(payload, x_telegram_init_data)
+    _require_paid_document_runtime()
     if not settings.kaspi_payment_url.strip():
         raise HTTPException(status_code=503, detail="Kaspi-оплата временно не настроена. Документ не запущен.")
 
@@ -279,8 +287,7 @@ async def case_generation_status(
     if case_id not in (state.get("cases") or {}):
         raise HTTPException(status_code=404, detail="Case not found")
     if not settings.payments_enabled:
-        # Бесплатный режим готовит документ внутри запроса и хранилище задач не
-        # поднимает: незавершённых задач там не бывает по построению.
+        # При отключённом платёжном контуре новые задачи не создаются.
         return {"job": None}
 
     user_key = core.store.user_key(identity)
@@ -298,6 +305,7 @@ async def retry_generation(
     job_id: str,
     x_telegram_init_data: str = Header(default=""),
 ) -> dict[str, Any]:
+    _require_paid_document_runtime()
     identity = core.legacy._identity(x_telegram_init_data)
     state = await core.legacy._require_consent(identity)
     user_key = core.store.user_key(identity)
@@ -354,10 +362,7 @@ async def retry_paid_document_job(
     x_telegram_init_data: str = Header(default=""),
 ) -> dict[str, Any]:
     """Повторный запуск оплаченного документа — той же сохраняемой задачей."""
-    if not settings.payments_enabled:
-        # Бесплатный режим готовит документ внутри запроса и платёжных ордеров
-        # не заводит: повторять по номеру оплаты здесь нечего.
-        raise HTTPException(status_code=404, detail="Платёжный запрос не найден")
+    _require_paid_document_runtime()
 
     identity = core.legacy._identity(x_telegram_init_data)
     state = await core.legacy._require_consent(identity)

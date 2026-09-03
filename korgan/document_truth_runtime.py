@@ -1,0 +1,479 @@
+from __future__ import annotations
+
+import re
+from urllib.parse import urlparse
+from typing import Any
+
+from fastapi import HTTPException
+
+from korgan import citation_audit
+from korgan import document_quality as quality
+from korgan.legal_calc import parse_all_amounts_kzt
+from korgan.legal_provenance import forbidden_fact_findings
+from korgan.strict_openai import StrictOpenAILegalService
+
+# The final document may cite a provision only when the same provision survived
+# source-bound research for THIS request. The local corpus remains useful as a
+# validator/cache, but it cannot by itself promote a model citation to a final
+# filing-ready document.
+_TRUTH_PREFIX = "TRUTH_GUARD: "
+
+# Current official Adilet document ids. A model opening an Adilet page is not
+# enough: for acts with a deterministic id below, the cited act must be bound to
+# the correct current document. This also prevents an obsolete/foreign act from
+# being used under a correct-looking article number.
+_CORE_ACT_SOURCE_IDS: dict[str, tuple[str, ...]] = {
+    "ГПК РК": ("K1500000377",),
+    "ГК РК": ("K940001000_", "K990000409_"),
+    "НК РК": ("K2500000214",),
+    "ТК РК": ("K1500000414",),
+    "КАС РК": ("K2000000350",),
+    "КоАП РК": ("K1400000235",),
+    "ЗПП РК": ("Z100000274_",),
+}
+
+_PERCENT_OR_RATE_RE = re.compile(
+    r"(?<!\d)(?:\d+(?:[.,]\d+)?)\s*(?:%|процент\w*|пайыз\w*)",
+    re.IGNORECASE,
+)
+_DURATION_RE = re.compile(
+    r"(?<!\d)(?:\d+(?:[.,]\d+)?)\s*(?:"
+    r"(?:рабоч\w*|календарн\w*)\s+дн\w*|дн\w*|сут\w*|"
+    r"недел\w*|месяц\w*|год\w*|лет\b|"
+    r"(?:жұмыс|күнтізбелік)\s+күн\w*|күн\w*|апта\w*|ай\w*|жыл\w*"
+    r")",
+    re.IGNORECASE,
+)
+_MRP_RE = re.compile(r"(?<!\d)(?:\d+(?:[.,]\d+)?)\s*МРП\b", re.IGNORECASE)
+
+# Generic article references to special statutes are source-bound too.  The
+# core citation parser has deterministic abbreviations for the principal codes;
+# this second path covers laws such as "Об арбитраже", "О ТОО", etc.  It only
+# activates when the nearby text explicitly identifies a legal act, so a clause
+# such as "статья 5 договора" is not mistaken for legislation.
+_LEGAL_ACT_WORD_RE = re.compile(
+    r"(?i)\b(?:закон\w*|кодекс\w*|конституц\w*|постановлен\w*|правил\w*)\b"
+)
+_VERIFIED_BASIS_RE = re.compile(
+    r"\[основание:\s*(?P<basis>.*?);\s*текст\s+нормы\s*:\s*«.*?»\s*;\s*"
+    r"источник\s*:\s*(?P<url>https?://[^\]\s]+)\]",
+    re.IGNORECASE | re.DOTALL,
+)
+_ACT_SIGNATURE_STOP = {
+    "статья", "статьи", "статье", "статью", "часть", "части", "пункт", "пункта",
+    "закон", "закона", "законе", "кодекс", "кодекса", "кодексе", "республика",
+    "республики", "казахстан", "казахстана", "настоящий", "настоящего", "согласно",
+    "соответствии", "который", "которая", "которые", "правило", "правила",
+}
+
+# A contract may prescribe future evidence/payment mechanics, so its high-risk
+# provenance pass is deliberately narrower than litigation correspondence.
+_CONTRACT_HIGH_RISK_PREFIXES = (
+    "ФИО отсутствует",
+    "ИИН/БИН отсутствует",
+    "адрес отсутствует",
+    "номер договора отсутствует",
+    "дата отсутствует",
+    "сумма отсутствует",
+)
+
+# Whole-document claim/response/pretrial scanning cannot treat every date as a
+# new case fact: attachment titles may legitimately contain dates and have their
+# own evidence gate. Dates attached to completed payment/dispatch assertions are
+# still protected by the past-event checks below, while fact-bearing sections
+# retain the existing document-specific provenance checks.
+_GENERAL_HIGH_RISK_PREFIXES = (
+    "ФИО отсутствует",
+    "ИИН/БИН отсутствует",
+    "адрес отсутствует",
+    "номер договора отсутствует",
+)
+
+# Event findings from legal_provenance are broader by design because that module
+# normally receives only fact-bearing fields. Here we scan whole final documents,
+# including remedies, legal rules and filing instructions, so we keep an event
+# finding only when the sentence actually asserts a completed/past event.
+_PAST_PAYMENT_RE = re.compile(
+    r"(?i)(?:"
+    r"\b(?:оплатил|оплатила|оплатили|уплатил|уплатила|уплатили|"
+    r"перечислил|перечислила|перечислили|внес|внесла|внесли|"
+    r"списал|списала|списали|получил|получила|получили)\b|"
+    r"(?:оплата|плат[её]ж|денежн\w*\s+средств\w*)[^.;]{0,70}"
+    r"\b(?:был[аои]?\s+)?(?:"
+    r"произведен|произведена|произведено|произведены|"
+    r"перечислен|перечислена|перечислено|перечислены|"
+    r"внесен|внесена|внесено|внесены|"
+    r"уплачен|уплачена|уплачено|уплачены|"
+    r"получен|получена|получено|получены)\b"
+    r")"
+)
+_PAST_DISPATCH_RE = re.compile(
+    r"(?i)(?:"
+    r"\b(?:направил|направила|направили|отправил|отправила|отправили|"
+    r"вручил|вручила|вручили|получил|получила|получили)\b[^.;]{0,90}"
+    r"(?:претензи\w*|требован\w*|уведомлен\w*)|"
+    r"(?:претензи\w*|требован\w*|уведомлен\w*)[^.;]{0,90}"
+    r"\b(?:был[аои]?\s+)?(?:"
+    r"направлен|направлена|направлено|направлены|"
+    r"отправлен|отправлена|отправлено|отправлены|"
+    r"вручен|вручена|вручено|вручены|"
+    r"получен|получена|получено|получены)\b"
+    r")"
+)
+
+_INSTALLED = False
+_ORIGINAL_COMMON_HYGIENE = quality._common_hygiene
+_ORIGINAL_CURRENT_SOURCE = StrictOpenAILegalService._is_current_official_source
+
+# citation_audit historically covered codes but not the consumer act by its
+# common filing name. Add that act to the same deterministic parser so a
+# consumer-law citation cannot evade the live-source guard merely by naming the
+# statute instead of a code abbreviation.
+if not any(act == "ЗПП РК" for _, act in citation_audit._ACT_PATTERNS):
+    citation_audit._ACT_PATTERNS = (
+        *citation_audit._ACT_PATTERNS,
+        (r"закон\w*\s+(?:рк\s+)?[«\"]?о\s+защит\w*\s+прав\w*\s+потребител\w*", "ЗПП РК"),
+    )
+
+
+def _norm(value: str) -> str:
+    return re.sub(r"\s+", "", str(value or "").replace("ё", "е").lower())
+
+
+def _is_russian_adilet(url: str) -> bool:
+    try:
+        parsed = urlparse(str(url or ""))
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    if host not in {"adilet.zan.kz", "www.adilet.zan.kz"}:
+        return False
+    return parsed.path.startswith("/rus/docs/")
+
+
+def _current_source_strict(self: StrictOpenAILegalService, url: str) -> bool:
+    """Keep the existing obsolete-act denylist and reject wrong Adilet locale.
+
+    Court directories (gov.kz/sud.gov.kz) are left to the original policy; only
+    legislation pages are constrained to the Russian official text used by the
+    document/citation pipeline.
+    """
+    if not _ORIGINAL_CURRENT_SOURCE(self, url):
+        return False
+    try:
+        parsed = urlparse(str(url or ""))
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    if host in {"adilet.zan.kz", "www.adilet.zan.kz"}:
+        return parsed.path.startswith("/rus/docs/")
+    return True
+
+
+def _source_matches_reference(record: citation_audit.RuntimeProvision) -> bool:
+    if not _is_russian_adilet(record.source_url):
+        return False
+    expected = _CORE_ACT_SOURCE_IDS.get(record.reference.act)
+    if not expected:
+        # For acts outside the deterministic core, source-bound live Adilet is
+        # still required. We do not guess an act id that the code does not own.
+        return True
+    return any(marker in record.source_url for marker in expected)
+
+
+def _act_signature(value: str) -> set[str]:
+    """Distinctive word stems for matching an uncommon act name.
+
+    Russian inflection changes endings ("арбитраже"/"арбитража"), therefore the
+    first seven letters are enough for act-title comparison while stop words and
+    generic legal vocabulary are discarded.  Two statutes with the same article
+    number are not considered the same merely because both are "laws of RK".
+    """
+    words = re.findall(r"[a-zа-яё]{5,}", str(value or "").lower().replace("ё", "е"))
+    return {
+        word[:7]
+        for word in words
+        if word not in _ACT_SIGNATURE_STOP and not word.startswith(("стать", "пункт", "част"))
+    }
+
+
+def _special_live_basis_matches(
+    *,
+    article: str,
+    citation_window: str,
+    verified_claims: list[str] | None,
+) -> bool:
+    expected_signature = _act_signature(citation_window)
+    if not expected_signature:
+        return False
+
+    for raw in verified_claims or []:
+        claim = str(raw or "")
+        meta = _VERIFIED_BASIS_RE.search(claim)
+        if not meta or not _is_russian_adilet(meta.group("url")):
+            continue
+        basis = meta.group("basis")
+        basis_ref = citation_audit._REFERENCE_RE.search(basis)
+        if basis_ref is None or basis_ref.group("article") != article:
+            continue
+        candidate_signature = _act_signature(basis)
+        # The final citation window is usually shorter than the research basis;
+        # require every distinctive token we can see in the final act name to be
+        # present in the VERIFIED basis. This is stricter than article-number
+        # equality and prevents same-number citations to another statute.
+        if expected_signature <= candidate_signature:
+            return True
+    return False
+
+
+def _special_law_citation_findings(
+    text: str,
+    verified_claims: list[str] | None,
+) -> list[str]:
+    findings: list[str] = []
+    for match in citation_audit._REFERENCE_RE.finditer(text or ""):
+        paragraph = citation_audit._paragraph_around(text, match.start())
+        window = (match.group(0) + " " + paragraph).strip()
+        if citation_audit._detect_act(window):
+            continue
+        if not _LEGAL_ACT_WORD_RE.search(window):
+            continue
+        article = match.group("article")
+        if _special_live_basis_matches(
+            article=article,
+            citation_window=match.group(0),
+            verified_claims=verified_claims,
+        ):
+            continue
+        findings.append(
+            f"статья {article} специального НПА не связана с тем же актом в live VERIFIED текущего документа"
+        )
+    return list(dict.fromkeys(findings))
+
+
+def live_citation_findings(
+    text: str,
+    verified_claims: list[str] | None,
+) -> list[str]:
+    """Every article named in client-facing text must come from live VERIFIED.
+
+    citation_audit may use the local corpus as a fallback when reviewing a
+    preliminary draft. Filing-ready release is intentionally stricter: a
+    concrete article number must also have a source-bound runtime provision from
+    the current document research pass. Special statutes not known to the core
+    abbreviation table are matched by article number plus distinctive act name.
+    """
+    references = citation_audit.extract_references(text or "")
+    runtime = [
+        record
+        for record in citation_audit.runtime_provisions(verified_claims)
+        if _source_matches_reference(record)
+    ]
+    findings: list[str] = []
+    for reference in references:
+        if any(reference.matches(record.reference) for record in runtime):
+            continue
+        findings.append(
+            f"{reference.label()} отсутствует в live source-bound VERIFIED текущего документа"
+        )
+    findings.extend(_special_law_citation_findings(text, verified_claims))
+    return list(dict.fromkeys(findings))
+
+
+def _number_tokens(text: str) -> list[str]:
+    values: list[str] = []
+    for pattern in (_PERCENT_OR_RATE_RE, _DURATION_RE, _MRP_RE):
+        values.extend(match.group(0).strip() for match in pattern.finditer(text or ""))
+    return list(dict.fromkeys(values))
+
+
+def _finding_supported_by_verified(finding: str, verified_text: str) -> bool:
+    """Allow a high-risk value only if its literal value is in VERIFIED law.
+
+    This is deliberately narrow. It does not let a legal rule invent a party,
+    address or commercial amount; it merely prevents a statutory date/number
+    repeated verbatim from being mistaken for a model-created fact.
+    """
+    tail = str(finding or "").split(":", 1)[-1].strip()
+    if not tail:
+        return False
+    return _norm(tail) in _norm(verified_text)
+
+
+def _finding_tail(finding: str) -> str:
+    return str(finding or "").split(":", 1)[-1].strip()
+
+
+def general_truth_findings(
+    lines: list[str],
+    *,
+    case_context: str,
+    verified_claims: list[str] | None,
+) -> list[str]:
+    """Catch invented case facts without treating law/future acts as history.
+
+    Whole-document scanning is stricter than the existing per-section checks but
+    must remain tense-aware. We therefore always enforce identity/document
+    particulars, while payment/dispatch events are blockers only when the final
+    prose states that the event already happened. Filing instructions, future
+    duties and conditional deadlines remain legal drafting, not invented facts.
+    """
+    verified_text = "\n".join(str(x) for x in (verified_claims or []))
+    findings: list[str] = []
+    for finding in forbidden_fact_findings(lines, case_context):
+        if _finding_supported_by_verified(finding, verified_text):
+            continue
+        if finding.startswith(_GENERAL_HIGH_RISK_PREFIXES):
+            findings.append(finding)
+            continue
+        if finding.startswith("факт оплаты отсутствует"):
+            if _PAST_PAYMENT_RE.search(_finding_tail(finding)):
+                findings.append(finding)
+            continue
+        if finding.startswith("факт направления претензии отсутствует"):
+            if _PAST_DISPATCH_RE.search(_finding_tail(finding)):
+                findings.append(finding)
+            continue
+        # Evidence-token and bare-date findings are already handled by the
+        # document-specific fact/evidence gates. A universal whole-document block
+        # would incorrectly reject attachment titles and filing documents.
+    return list(dict.fromkeys(findings))
+
+
+def contract_truth_findings(
+    lines: list[str],
+    *,
+    case_context: str,
+    verified_claims: list[str] | None,
+) -> list[str]:
+    """Block model-created commercial numbers and party/document particulars.
+
+    A contract is allowed to structure missing terms with placeholders. It is
+    not allowed to fill them with plausible values. Percentages and durations
+    may come from the user or a VERIFIED mandatory rule; monetary amounts come
+    from the user's materials (or an explicitly VERIFIED statutory threshold).
+    """
+    text = "\n".join(str(line or "") for line in lines if str(line or "").strip())
+    verified_text = "\n".join(str(x) for x in (verified_claims or []))
+    allowed_text = f"{case_context}\n{verified_text}"
+    allowed_norm = _norm(allowed_text)
+    findings: list[str] = []
+
+    for token in _number_tokens(text):
+        if _norm(token) not in allowed_norm:
+            findings.append(f"числовое условие договора не подтверждено материалами/VERIFIED: {token}")
+
+    allowed_amounts = set(parse_all_amounts_kzt(case_context)) | set(parse_all_amounts_kzt(verified_text))
+    for amount in parse_all_amounts_kzt(text):
+        if amount not in allowed_amounts:
+            findings.append(
+                "денежное условие договора не подтверждено материалами/VERIFIED: "
+                + f"{amount:,} тенге".replace(",", " ")
+            )
+
+    # Reuse the mature provenance parser for the highest-risk factual entities,
+    # but ignore evidence-event findings because a contract may legitimately
+    # prescribe a future act/invoice without asserting that it already exists.
+    for finding in forbidden_fact_findings(lines, case_context):
+        if not finding.startswith(_CONTRACT_HIGH_RISK_PREFIXES):
+            continue
+        if _finding_supported_by_verified(finding, verified_text):
+            continue
+        findings.append(finding)
+
+    return list(dict.fromkeys(findings))
+
+
+def _truth_common_hygiene(
+    kind: quality.DocumentKind,
+    lines: list[str],
+    blockers: list[str],
+    issues: list[str],
+    *,
+    case_context: str = "",
+    verified_claims: list[str] | None = None,
+    verification_notes: list[str] | None = None,
+) -> float:
+    score = _ORIGINAL_COMMON_HYGIENE(
+        kind,
+        lines,
+        blockers,
+        issues,
+        case_context=case_context,
+        verified_claims=verified_claims,
+        verification_notes=verification_notes,
+    )
+
+    text = "\n".join(str(line or "") for line in lines if str(line or "").strip())
+    truth_findings = live_citation_findings(text, verified_claims)
+    if kind == "contract":
+        truth_findings.extend(
+            contract_truth_findings(
+                lines,
+                case_context=case_context,
+                verified_claims=verified_claims,
+            )
+        )
+    else:
+        truth_findings.extend(
+            general_truth_findings(
+                lines,
+                case_context=case_context,
+                verified_claims=verified_claims,
+            )
+        )
+
+    for finding in list(dict.fromkeys(truth_findings)):
+        marker = _TRUTH_PREFIX + finding
+        if marker not in blockers:
+            blockers.append(marker)
+        score -= 0.6
+    return max(0.0, score)
+
+
+def _truth_blockers(meta: dict[str, Any]) -> list[str]:
+    return [
+        str(issue)
+        for issue in list(meta.get("quality_issues") or [])
+        if str(issue).startswith(_TRUTH_PREFIX)
+    ]
+
+
+def install_document_truth_runtime() -> None:
+    global _INSTALLED
+    if _INSTALLED:
+        return
+
+    StrictOpenAILegalService._is_current_official_source = _current_source_strict
+    quality._common_hygiene = _truth_common_hygiene
+
+    # Patch the Mini App's final release function rather than route ownership.
+    # UniversalQualityProductionService has already had one bounded repair chance
+    # by this stage. If a fabricated fact/term or non-live citation survives,
+    # returning a PRELIMINARY Word file would still expose false legal content.
+    from korgan import miniapp_api_v2 as core
+
+    if not getattr(core, "_korgan_truth_release_installed", False):
+        original_release = core._release_metadata
+
+        def truth_release_metadata(document_type: str, context: str, research: Any, draft: Any) -> dict[str, Any]:
+            meta = original_release(document_type, context, research, draft)
+            blockers = _truth_blockers(meta)
+            if blockers:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "KORGAN не выпустил документ: финальная проверка обнаружила "
+                        "неподтвержденную статью либо выдуманный реквизит/условие. "
+                        + blockers[0].removeprefix(_TRUTH_PREFIX)
+                    ),
+                )
+            return meta
+
+        core._release_metadata = truth_release_metadata
+        core._korgan_truth_release_installed = True
+
+    _INSTALLED = True
+
+
+install_document_truth_runtime()

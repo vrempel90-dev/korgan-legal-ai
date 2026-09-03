@@ -129,5 +129,14 @@ def test_tole_orders_never_enter_legacy_manual_admin_state() -> None:
     source = inspect.getsource(tole_payments)
     assert "SET status='awaiting_admin'" not in source
     assert "status IN ('pending_receipt','awaiting_admin')" not in source
-    approve_source = inspect.getsource(tole_payments._approve_order_from_tole)
+
+    # The production stack may wrap approval to auto-start generation after a
+    # verified paid state. The SQL transition itself must remain the original
+    # Tole fail-closed transition pending_receipt -> approved.
+    approve = tole_payments._approve_order_from_tole
+    approve_source = inspect.getsource(approve)
+    if "WHERE id=$1 AND status='pending_receipt'" not in approve_source:
+        from korgan import miniapp_paid_autostart_runtime as autostart
+
+        approve_source = inspect.getsource(autostart._ORIGINAL_APPROVE)
     assert "WHERE id=$1 AND status='pending_receipt'" in approve_source

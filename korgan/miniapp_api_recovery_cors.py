@@ -5,10 +5,18 @@ from urllib.parse import urlsplit
 
 from fastapi.middleware.cors import CORSMiddleware
 
+# Professional Mini App production must fail closed on legal citations. The
+# verifier may still be explicitly disabled for an emergency rollback, but an
+# omitted Railway variable must never silently turn current-law verification off.
+os.environ.setdefault("KORGAN_LIVE_ARTICLE_VERIFY", "on")
+
 from korgan.miniapp_payment_idempotency import app
 from korgan import fast_professional_repair_guard as _fast_professional_repair_guard  # noqa: F401
 from korgan import miniapp_generation_api as _miniapp_generation_api  # noqa: F401
-from korgan import miniapp_free_generation_runtime as _miniapp_free_generation_runtime  # noqa: F401
+from korgan import document_truth_runtime as _document_truth_runtime  # noqa: F401
+from korgan import live_article_release_runtime as _live_article_release_runtime  # noqa: F401
+from korgan import senior_document_drafting_runtime as _senior_document_drafting_runtime  # noqa: F401
+from korgan import miniapp_professional_consultation_runtime as _miniapp_professional_consultation_runtime  # noqa: F401
 from korgan import miniapp_case_activity as _miniapp_case_activity  # noqa: F401
 from korgan import miniapp_case_activity_cleanup as _miniapp_case_activity_cleanup  # noqa: F401
 
@@ -20,6 +28,9 @@ from korgan import miniapp_case_activity_cleanup as _miniapp_case_activity_clean
 from korgan import miniapp_manual_payment_admin as _miniapp_manual_payment_admin  # noqa: F401
 from korgan import miniapp_consultation_quota_api as _miniapp_consultation_quota_api  # noqa: F401
 from korgan import miniapp_tole_payments as _miniapp_tole_payments  # noqa: F401
+# Install only after Tole owns its routes: the wrapper turns a verified `paid`
+# transition into the durable generation job without requiring another client tap.
+from korgan import miniapp_paid_autostart_runtime as _miniapp_paid_autostart_runtime  # noqa: F401
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_consent_status as _miniapp_consent_status
 from korgan import miniapp_document_access as _miniapp_document_access

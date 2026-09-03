@@ -1,16 +1,12 @@
 """Путь клиента проверяется на том приложении, которое запускается в бою.
 
 Слоёв у Mini App API много, и каждый следующий снимает часть маршрутов
-предыдущего. Смоук при этом проверял `miniapp_api.app` — промежуточный слой,
-а не собранное приложение `miniapp_api_recovery_cors:app`, которое поднимает
-ASGI-сервер. Проверка слоя не отвечает на единственный важный вопрос: работает
-ли путь клиента там, где до него доходит браузер.
+предыдущего. Смоук проверяет собранное приложение
+`miniapp_api_recovery_cors:app`, которое поднимает ASGI-сервер.
 
 Здесь проходится весь путь на подписанном initData: запуск, шлюз согласия,
-согласие, дело, материалы дела, состояние подготовки, отказ выдать
-несуществующий документ, удаление дела и удаление всех данных. Порядок шагов
-повторяет порядок клиента, поэтому расхождение видно как расхождение, а не как
-случайный отказ на одном эндпоинте.
+согласие, дело, состояние подготовки, безопасная выдача документа, удаление
+дела и удаление всех данных.
 """
 
 from __future__ import annotations
@@ -57,7 +53,6 @@ def test_client_journey_from_launch_to_removed_data() -> None:
     headers = _headers(-900000801)
 
     with TestClient(app) as client:
-        # Запуск: клиент сначала убеждается, что отвечает именно KORGAN.
         health = client.get("/health")
         assert health.status_code == 200
         assert health.json()["status"] == "ok"
@@ -67,12 +62,10 @@ def test_client_journey_from_launch_to_removed_data() -> None:
         assert parity.status_code == 200
         assert parity.json()["status"] == "ok"
 
-        # Согласие спрашивается у сервера, а не у сохранённого флага браузера.
         consent = client.get("/miniapp/consent", headers=headers)
         assert consent.status_code == 200
         assert consent.json()["accepted"] is False
 
-        # До согласия закрыты и дела, и цены — клиент и не запрашивает их раньше.
         assert client.get("/miniapp/cases", headers=headers).status_code == 403
         assert client.get("/miniapp/pricing", headers=headers).status_code == 403
 
@@ -87,8 +80,6 @@ def test_client_journey_from_launch_to_removed_data() -> None:
             "accepted": True,
             "terms_version": TERMS_VERSION,
         }
-
-        # Согласие открывает ровно то, что было закрыто.
         assert client.get("/miniapp/pricing", headers=headers).status_code == 200
 
         created = client.post(
@@ -104,7 +95,6 @@ def test_client_journey_from_launch_to_removed_data() -> None:
         case = created.json()["case"]
         case_id = case["id"]
         assert case["status"] == "created"
-        # Новое дело не притворяется готовым документом.
         assert case["has_document"] is False
         assert case["filing_ready"] is False
         assert case["release_status"] == "not_generated"
@@ -116,21 +106,21 @@ def test_client_journey_from_launch_to_removed_data() -> None:
         detail = client.get(f"/miniapp/cases/{case_id}", headers=headers)
         assert detail.status_code == 200
 
-        # Подготовка не запускалась — состояние пустое, а не выдуманное.
         generation = client.get(f"/miniapp/cases/{case_id}/generation", headers=headers)
         assert generation.status_code == 200
         assert generation.json()["job"] is None
 
-        # Пока документа нет, его не выдают ни ссылкой, ни в Telegram.
+        # Новый безопасный путь выдачи не создаёт ссылку до готовности.
         assert client.post(f"/miniapp/cases/{case_id}/document/access", headers=headers).status_code == 404
-        assert client.post(f"/miniapp/cases/{case_id}/document/telegram", headers=headers).status_code == 404
+        # Старый Telegram-delivery endpoint оставлен только как fail-closed
+        # compatibility route и не раскрывает существование/содержимое файла.
+        assert client.post(f"/miniapp/cases/{case_id}/document/telegram", headers=headers).status_code == 410
 
         deleted = client.delete(f"/miniapp/cases/{case_id}", headers=headers)
         assert deleted.status_code == 200
         assert client.get("/miniapp/cases", headers=headers).json()["cases"] == []
         assert client.get(f"/miniapp/cases/{case_id}", headers=headers).status_code == 404
 
-        # Удаление всех данных доступно клиенту и завершается на сервере.
         assert client.delete("/miniapp/me", headers=headers).status_code == 200
 
 
