@@ -59,16 +59,19 @@ def test_fast_consult_uses_local_corpus_without_web_tools(monkeypatch):
         fallback_calls.append((args, kwargs))
         return "web", []
 
+    verified_statement = (
+        "Гражданское законодательство регулирует имущественные отношения участников гражданского оборота."
+    )
     inner = FakeInner(
         {
-            "summary": "Спор относится к имущественным отношениям.",
+            "summary": "Модель утверждает свободный вывод, который не должен попасть клиенту.",
             "legal_points": [
                 {
-                    "statement": "Гражданское законодательство регулирует имущественные отношения участников гражданского оборота.",
+                    "statement": verified_statement,
                     "article_id": "GK_RK_OBSHAYA:1",
                 }
             ],
-            "actions": [{"text": "Сохраните имеющиеся документы.", "basis_article_id": ""}],
+            "actions": [{"text": "Сохраните имеющиеся документы.", "basis_statement": ""}],
             "risks": [],
             "unknowns": [],
         }
@@ -80,7 +83,9 @@ def test_fast_consult_uses_local_corpus_without_web_tools(monkeypatch):
     assert corpus.closed is True
     assert len(inner.calls) == 1
     assert "tools" not in inner.calls[0]
-    assert "имущественные отношения" in text
+    assert verified_statement in text
+    assert "свободный вывод" not in text
+    assert "Сохраните имеющиеся документы" in text
     assert sources == ["https://adilet.zan.kz/rus/docs/K940001000_"]
 
 
@@ -106,7 +111,42 @@ def test_fast_consult_rejects_article_not_offered(monkeypatch):
     )
 
     assert sources == []
-    assert "не удалось надёжно подтвердить" in text
+    assert "не удалось подтвердить норму" in text
+    assert "Выдуманный вывод" not in text
+
+
+def test_fast_consult_drops_normative_action_not_linked_to_accepted_statement(monkeypatch):
+    monkeypatch.setattr(fast, "open_corpus", lambda: FakeCorpus([provision()]))
+
+    async def fallback(*args, **kwargs):
+        raise AssertionError("fallback not expected")
+
+    verified_statement = (
+        "Гражданское законодательство регулирует имущественные отношения участников гражданского оборота."
+    )
+    inner = FakeInner(
+        {
+            "summary": "Свободный вывод.",
+            "legal_points": [
+                {"statement": verified_statement, "article_id": "GK_RK_OBSHAYA:1"}
+            ],
+            "actions": [
+                {
+                    "text": "Вы обязаны подать иск в течение десяти дней.",
+                    "basis_statement": "Несуществующий подтверждённый тезис.",
+                },
+                {"text": "Сохраните расписку.", "basis_statement": ""},
+            ],
+            "risks": [],
+            "unknowns": [],
+        }
+    )
+    text, _ = asyncio.run(
+        fast.FastLocalConsultationAdapter(inner, fallback=fallback).consult("Вопрос", language="ru")
+    )
+
+    assert "обязаны подать иск" not in text
+    assert "Сохраните расписку" in text
 
 
 def test_old_110_second_setting_is_lifted_to_safety_floor(monkeypatch):
