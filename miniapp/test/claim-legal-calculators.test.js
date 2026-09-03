@@ -20,17 +20,26 @@ test('кнопка расчётов подключается после суще
 test('клиент видит профессиональное название без технического Юр. инструменты', () => {
   assert.match(bridge, /Расчёт госпошлины и неустойки/);
   assert.doesNotMatch(bridge, /Юр\. инструменты/);
-  assert.match(css, /position:\s*static/);
-  assert.match(css, /width:\s*100%/);
+  assert.match(css, /position:\s*absolute/);
   assert.match(css, /min-height:\s*52px/);
+  assert.match(css, /claim-calculator-active/);
 });
 
 test('расчёты доступны только внутри формы искового заявления', () => {
   assert.match(bridge, /draft\?\.documentType\s*!==\s*'claim'/);
   assert.match(bridge, /main\.creation-page/);
   assert.match(bridge, /textarea\.case-input/);
-  assert.match(bridge, /button\.style\.display\s*=\s*'none'/);
-  assert.match(bridge, /insertAdjacentElement\('afterend', button\)/);
+  assert.match(bridge, /classList\.remove\(ACTIVE_CLASS\)/);
+  assert.match(bridge, /classList\.add\(ACTIVE_CLASS\)/);
+  assert.match(css, /body:not\(\.claim-calculator-active\) #korgan-legal-tools-button/);
+});
+
+test('launcher остаётся вне disposable React subtree и только визуально привязан к форме', () => {
+  assert.doesNotMatch(bridge, /insertAdjacentElement\('afterend', button\)/);
+  assert.match(bridge, /getBoundingClientRect\(\)/);
+  assert.match(bridge, /--claim-calc-left/);
+  assert.match(bridge, /--claim-calc-top/);
+  assert.match(bridge, /--claim-calc-width/);
 });
 
 test('инструкция прямо объясняет куда попадёт рассчитанная сумма', () => {
@@ -45,6 +54,15 @@ test('госпошлина и неустойка добавляются в contr
   assert.match(bridge, /new InputEvent\('input'/);
   assert.match(bridge, /textarea\.dispatchEvent\(event\)/);
   assert.match(bridge, /Добавить в иск/);
+});
+
+test('период неустойки фиксируется в момент запуска расчёта', () => {
+  assert.match(bridge, /const submitted\s*=\s*\{/);
+  assert.match(bridge, /start:\s*document\.getElementById\('klt-penalty-start'\)/);
+  assert.match(bridge, /end:\s*document\.getElementById\('klt-penalty-end'\)/);
+  assert.match(bridge, /waitForCalculation\('penalty', submitted\)/);
+  assert.match(bridge, /formatDate\(submitted\.start\)/);
+  assert.match(bridge, /formatDate\(submitted\.end\)/);
 });
 
 test('в claim-режиме панель сфокусирована на двух расчётах', () => {
