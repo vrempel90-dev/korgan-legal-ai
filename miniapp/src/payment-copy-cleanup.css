@@ -8,12 +8,7 @@
   display: none !important;
 }
 
-/* In the document picker show only the document price, not the payment mechanism. */
-.price-note > span {
-  font-size: 0 !important;
-}
-
-.price-note > span > strong {
-  font-size: 0.95rem !important;
-  line-height: 1.35;
+/* The document picker is for choosing a document, not for showing price. */
+.price-note {
+  display: none !important;
 }
