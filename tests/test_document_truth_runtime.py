@@ -3,6 +3,7 @@ from __future__ import annotations
 from korgan.document_truth_runtime import (
     _is_russian_adilet,
     contract_truth_findings,
+    general_truth_findings,
     live_citation_findings,
 )
 from korgan.provision_check import verified_claim_line
@@ -94,3 +95,22 @@ def test_contract_blocks_invented_money_and_date() -> None:
     )
     assert any("750 000" in item for item in findings)
     assert any("03.09.2026" in item for item in findings)
+
+
+def test_general_guard_blocks_invented_dispatch_date_outside_fact_array() -> None:
+    findings = general_truth_findings(
+        ["Поскольку претензия была направлена 15.08.2026, нарушение не устранено."],
+        case_context="Претензия ранее не направлялась; дата направления отсутствует.",
+        verified_claims=[],
+    )
+    assert any("15.08.2026" in item or "направления претензии" in item for item in findings)
+
+
+def test_general_guard_allows_date_when_it_is_in_user_materials() -> None:
+    context = "Досудебная претензия направлена ответчику 15.08.2026."
+    findings = general_truth_findings(
+        ["Досудебная претензия направлена ответчику 15.08.2026."],
+        case_context=context,
+        verified_claims=[],
+    )
+    assert findings == []
