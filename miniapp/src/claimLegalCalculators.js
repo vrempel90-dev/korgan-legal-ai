@@ -1,5 +1,6 @@
 const APP_STATE_KEY = 'korgan-miniapp-state-v1';
 const RECONCILE_MS = 250;
+const ACTIVE_CLASS = 'claim-calculator-active';
 
 const COPY = {
   ru: {
@@ -137,7 +138,7 @@ function addResultAction(box, line, lang) {
   box.append(button, status);
 }
 
-function waitForCalculation(kind) {
+function waitForCalculation(kind, submitted = {}) {
   const boxId = kind === 'duty' ? 'klt-duty-result' : 'klt-penalty-result';
   const box = document.getElementById(boxId);
   box?.classList.remove('show');
@@ -160,8 +161,8 @@ function waitForCalculation(kind) {
       addResultAction(currentBox, COPY[lang].dutyLine(amount), lang);
       return;
     }
-    const start = formatDate(document.getElementById('klt-penalty-start')?.value);
-    const end = formatDate(document.getElementById('klt-penalty-end')?.value);
+    const start = formatDate(submitted.start);
+    const end = formatDate(submitted.end);
     const days = resultDays(text);
     addResultAction(currentBox, COPY[lang].penaltyLine({ amount, start, end, days }), lang);
   }, 120);
@@ -203,22 +204,40 @@ function preparePanel() {
   if (penaltyHint) penaltyHint.textContent = copy.penaltyHint;
 }
 
+function clearLauncherPosition(button) {
+  for (const name of ['--claim-calc-left', '--claim-calc-top', '--claim-calc-width']) {
+    button?.style.removeProperty(name);
+  }
+}
+
+function positionLauncher(button, form) {
+  const inputRect = form.textarea.getBoundingClientRect();
+  const anchorRect = form.anchor.getBoundingClientRect();
+  button.style.setProperty('--claim-calc-left', `${Math.round(inputRect.left + globalThis.scrollX)}px`);
+  button.style.setProperty('--claim-calc-top', `${Math.round(anchorRect.bottom + globalThis.scrollY + 12)}px`);
+  button.style.setProperty('--claim-calc-width', `${Math.round(inputRect.width)}px`);
+}
+
 function reconcile() {
   const button = document.getElementById('korgan-legal-tools-button');
   const form = claimForm();
   if (!button) return;
   if (!form) {
+    document.body?.classList.remove(ACTIVE_CLASS);
     button.hidden = true;
-    button.style.display = 'none';
+    clearLauncherPosition(button);
     document.getElementById('korgan-legal-tools-backdrop')?.classList.remove('open');
     return;
   }
   const copy = COPY[language()];
+  document.body?.classList.add(ACTIVE_CLASS);
   button.hidden = false;
-  button.style.display = '';
   button.textContent = copy.launcher;
   button.classList.add('claim-calculator-launcher');
-  if (button.parentElement !== form.page) form.anchor.insertAdjacentElement('afterend', button);
+  // Keep the launcher owned by the body-level Legal Workspace. We only position
+  // it over the claim form; moving it into React's disposable subtree would
+  // orphan the backdrop and create duplicate IDs after navigation.
+  positionLauncher(button, form);
   preparePanel();
 }
 
@@ -227,7 +246,13 @@ function install() {
     const id = event.target?.id;
     if (id === 'korgan-legal-tools-button') globalThis.setTimeout?.(preparePanel, 0);
     if (id === 'klt-duty-submit') waitForCalculation('duty');
-    if (id === 'klt-penalty-submit') waitForCalculation('penalty');
+    if (id === 'klt-penalty-submit') {
+      const submitted = {
+        start: document.getElementById('klt-penalty-start')?.value || '',
+        end: document.getElementById('klt-penalty-end')?.value || '',
+      };
+      waitForCalculation('penalty', submitted);
+    }
   }, true);
   reconcile();
   globalThis.setInterval?.(reconcile, RECONCILE_MS);
