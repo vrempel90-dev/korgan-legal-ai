@@ -66,6 +66,14 @@ def test_contractual_penalty_clause_without_breach_is_not_automatic_candidate():
     assert runtime.automatic_penalty_candidate(context) is False
 
 
+def test_due_obligation_with_timely_performance_is_not_breach():
+    context = (
+        "По договору поставки покупатель должен был оплатить 1 000 000 тенге до 10.01.2026. "
+        "Покупатель оплатил всю сумму в установленный срок."
+    )
+    assert runtime.automatic_penalty_candidate(context) is False
+
+
 def test_automatic_article_353_calculation_updates_claim_price_and_state_duty():
     context = (
         "Истец: Иванов Иван Иванович, ИИН 900101300001\n"
