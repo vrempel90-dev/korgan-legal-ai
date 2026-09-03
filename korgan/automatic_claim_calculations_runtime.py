@@ -43,7 +43,7 @@ _BREACH_RE = re.compile(
     r"просрочил\w*|оплатил\w*\s+с\s+просроч\w*|"
     r"(?:есть|имеетс\w*|допущен\w*|образовал\w*|составля\w*)\s+просроч\w*|"
     r"просрочк\w*\s+(?:оплат\w*|возврат\w*|исполн\w*)\s+(?:составля\w*\s+)?\d+|"
-    r"срок\w*\s+(?:ист[её]к|наруш\w*)|должен\w*\s+был\w*|"
+    r"срок\w*\s+(?:ист[её]к|наруш\w*)|"
     r"мерзім\w*\s+өт\w*|төлем\w*\s+жасалма\w*|қайтарма\w*)"
 )
 _PENALTY_RISK_RE = re.compile(
@@ -68,8 +68,8 @@ def automatic_penalty_candidate(case_context: str) -> bool:
     Explicit requests keep their old behaviour. Automatic mode is deliberately
     limited to a fact pattern that looks like an overdue civil/commercial money
     obligation: a money amount, a civil-obligation marker and factual breach
-    evidence. Merely quoting a contractual clause "за просрочку предусмотрена
-    пеня" is not breach evidence.
+    evidence. A due obligation or a contractual clause alone is not evidence
+    that the debtor actually breached it.
     """
     text = str(case_context or "")
     if _ORIGINAL_EXPLICIT(text):
@@ -152,8 +152,6 @@ def soft_penalty_clarification(
         if not late._PENALTY_LINE_RE.search(str(item))
         and not late._ARTICLE_353_LINE_RE.search(str(item))
     ]
-    # Remove only notes that are demonstrably limited to the optional automatic
-    # penalty. Any note that also questions principal remains blocking.
     draft.verification_notes = [
         str(item) for item in list(draft.verification_notes or [])
         if not _penalty_only_note(str(item))
@@ -169,8 +167,6 @@ def soft_penalty_clarification(
             "Неустойка в цену иска и просительную часть не включена. "
             f"Требует уточнения: {_clarification_reason(reason)}."
         )
-    # `detail` is deliberately not copied into filing-facing text: it can contain
-    # internal comparison diagnostics. The client needs the missing fact, not QA internals.
 
 
 def _research_prompt(case_context: str, *, max_chars: int, checked_on: str, **kwargs: object) -> str:
@@ -200,8 +196,6 @@ async def _research_case(self, case_context: str, language: str = "ru"):
     research = await _ORIGINAL_FAST_RESEARCH(self, case_context, language=language)
     if not automatic_penalty_candidate(case_context):
         return research
-    # If the client explicitly asked for the penalty, preserve the old blocking
-    # semantics: an unresolved requested remedy must not disappear silently.
     if _ORIGINAL_EXPLICIT(case_context):
         return research
 
@@ -210,9 +204,6 @@ async def _research_case(self, case_context: str, language: str = "ru"):
     remaining = [item for item in original_unverified if not _penalty_only_note(item)]
     research.unverified_claims = remaining
 
-    # Promote back to VERIFIED only when the original downgrade was demonstrably
-    # caused solely by penalty-specific notes and the principal has source-bound
-    # support. Never erase an unknown or mixed-cause downgrade.
     penalty_only_downgrade = (
         original_status == VerificationStatus.NEEDS_VERIFICATION
         and bool(original_unverified)
@@ -252,10 +243,6 @@ def install() -> None:
     if _INSTALLED:
         return
 
-    # Both the fast service and the finalizer imported the function by value, so
-    # patch all three references. The function itself resolves these module
-    # globals at call time, which lets the existing well-tested calculators stay
-    # authoritative instead of duplicating their formulas here.
     late._explicit_penalty_requested = automatic_penalty_candidate
     late._mark_penalty_for_verification = soft_penalty_clarification
     fast._apply_verified_article_353 = late._apply_verified_penalty
