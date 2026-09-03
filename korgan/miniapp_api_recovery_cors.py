@@ -5,6 +5,11 @@ from urllib.parse import urlsplit
 
 from fastapi.middleware.cors import CORSMiddleware
 
+# Professional Mini App production must fail closed on legal citations. The
+# verifier may still be explicitly disabled for an emergency rollback, but an
+# omitted Railway variable must never silently turn current-law verification off.
+os.environ.setdefault("KORGAN_LIVE_ARTICLE_VERIFY", "on")
+
 from korgan.miniapp_payment_idempotency import app
 from korgan import fast_professional_repair_guard as _fast_professional_repair_guard  # noqa: F401
 from korgan import miniapp_generation_api as _miniapp_generation_api  # noqa: F401
