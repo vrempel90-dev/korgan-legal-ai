@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+from korgan.document_truth_runtime import (
+    _is_russian_adilet,
+    contract_truth_findings,
+    live_citation_findings,
+)
+from korgan.provision_check import verified_claim_line
+
+
+def _gpk_166(source: str = "https://adilet.zan.kz/rus/docs/K1500000377") -> str:
+    return verified_claim_line(
+        "Отзыв на иск подается в порядке, установленном статьей 166 ГПК РК.",
+        "статья 166 ГПК РК",
+        (
+            "Ответчик представляет в суд отзыв на исковое заявление с приложением "
+            "документов, подтверждающих возражения относительно иска."
+        ),
+        source,
+    )
+
+
+def test_live_citation_accepts_same_request_verified_core_act() -> None:
+    findings = live_citation_findings(
+        "В соответствии со статьей 166 ГПК РК ответчик представляет отзыв на иск.",
+        [_gpk_166()],
+    )
+    assert findings == []
+
+
+def test_live_citation_rejects_correct_article_number_bound_to_wrong_core_act() -> None:
+    findings = live_citation_findings(
+        "В соответствии со статьей 166 ГПК РК ответчик представляет отзыв на иск.",
+        [_gpk_166("https://adilet.zan.kz/rus/docs/K940001000_")],
+    )
+    assert findings
+    assert "live source-bound VERIFIED" in findings[0]
+
+
+def test_live_citation_rejects_article_absent_from_current_request_verified() -> None:
+    # Even if the local corpus happens to contain Article 166, filing-ready
+    # release requires a live source-bound provision for this document.
+    findings = live_citation_findings(
+        "Согласно статье 166 ГПК РК ответчик представляет отзыв.",
+        [],
+    )
+    assert findings
+
+
+def test_adilet_legislation_source_must_be_russian_official_page() -> None:
+    assert _is_russian_adilet("https://adilet.zan.kz/rus/docs/K1500000377") is True
+    assert _is_russian_adilet("https://adilet.zan.kz/eng/docs/K1500000377") is False
+    assert _is_russian_adilet("https://example.com/rus/docs/K1500000377") is False
+
+
+def test_contract_blocks_invented_percentage_and_duration() -> None:
+    findings = contract_truth_findings(
+        [
+            "За просрочку начисляется пеня 0,1% за каждый день.",
+            "Оплата производится в течение 10 рабочих дней.",
+        ],
+        case_context="Стороны согласовали оказание услуг. Размер пени и срок оплаты не согласованы.",
+        verified_claims=[],
+    )
+    assert any("0,1%" in item for item in findings)
+    assert any("10 рабочих дней" in item for item in findings)
+
+
+def test_contract_allows_numeric_terms_explicitly_given_by_user() -> None:
+    context = (
+        "Стороны согласовали: пеня 0,1% за каждый день просрочки. "
+        "Оплата производится в течение 10 рабочих дней."
+    )
+    findings = contract_truth_findings(
+        [
+            "За просрочку начисляется пеня 0,1% за каждый день.",
+            "Оплата производится в течение 10 рабочих дней.",
+        ],
+        case_context=context,
+        verified_claims=[],
+    )
+    assert not any("0,1%" in item for item in findings)
+    assert not any("10 рабочих дней" in item for item in findings)
+
+
+def test_contract_blocks_invented_money_and_date() -> None:
+    findings = contract_truth_findings(
+        [
+            "Цена договора составляет 750 000 тенге.",
+            "Договор заключен 03.09.2026.",
+        ],
+        case_context="Пользователь просит подготовить договор оказания услуг; цена и дата не сообщены.",
+        verified_claims=[],
+    )
+    assert any("750 000" in item for item in findings)
+    assert any("03.09.2026" in item for item in findings)
