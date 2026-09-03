@@ -3,8 +3,8 @@ from __future__ import annotations
 """Expose real generation stages to the Mini App job endpoint.
 
 Percentages change only when the backend crosses an actual pipeline boundary.
-No timer pretends that work is complete. Stage names intentionally reuse the
-existing Mini App vocabulary so old clients still render meaningful text.
+No timer pretends that work is complete. Stage names and threshold values reuse
+the existing Mini App vocabulary so old clients still render meaningful text.
 """
 
 import base64
@@ -44,9 +44,9 @@ def _wrap_release_metadata() -> None:
         return
 
     def wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        generation_progress.report("quality_control", 72)
-        result = original(*args, **kwargs)
         generation_progress.report("quality_control", 80)
+        result = original(*args, **kwargs)
+        generation_progress.report("quality_control", 88)
         return result
 
     setattr(wrapped, "_korgan_real_progress", True)
@@ -59,9 +59,9 @@ def _wrap_docx_builder(name: str) -> None:
         return
 
     def wrapped(*args: Any, **kwargs: Any) -> bytes:
-        generation_progress.report("document_render", 82)
+        generation_progress.report("document_render", 90)
         result = original(*args, **kwargs)
-        generation_progress.report("document_render", 88)
+        generation_progress.report("document_render", 94)
         return result
 
     setattr(wrapped, "_korgan_real_progress", True)
@@ -74,12 +74,9 @@ def _wrap_live_verifier() -> None:
         return
 
     async def wrapped(file_bytes: bytes) -> None:
-        # This is still part of final Word preparation for the client. Keep the
-        # public stage stable while the exact backend boundary is reflected by
-        # the progress jump from 90 to 96.
-        generation_progress.report("document_render", 90)
+        generation_progress.report("document_render", 95)
         await original(file_bytes)
-        generation_progress.report("document_render", 96)
+        generation_progress.report("document_render", 98)
 
     setattr(wrapped, "_korgan_real_progress", True)
     live.verify_document_articles = wrapped  # type: ignore[assignment]
@@ -99,7 +96,7 @@ async def _run_free_generation(job: Any, *, context: str) -> None:
                 context,
                 job.language,
             )
-            update("document_render", 97)
+            update("document_render", 99)
 
             from korgan.miniapp_professional_release import apply_release_policy
 
@@ -136,15 +133,17 @@ async def _run_free_generation(job: Any, *, context: str) -> None:
             job.document_type,
         )
     except Exception as exc:
+        failure_stage = job.stage
+        failure_progress = job.progress
         job.status = "failed"
         job.stage = "failed"
         job.error = free._client_error(exc)
         LOGGER.exception(
-            "FREE_DOCUMENT_FAILED_REAL_PROGRESS case_id=%s document_type=%s stage=%s progress=%s",
+            "FREE_DOCUMENT_FAILED_REAL_PROGRESS case_id=%s document_type=%s failure_stage=%s progress=%s",
             job.case_id,
             job.document_type,
-            job.stage,
-            job.progress,
+            failure_stage,
+            failure_progress,
         )
         raise
 
@@ -154,6 +153,7 @@ def install() -> None:
     if _INSTALLED:
         return
 
+    # 20..79 is the existing visible "Право и проект" band.
     for method_name in (
         "research_case",
         "research_contract",
@@ -161,11 +161,8 @@ def install() -> None:
         "research_pretrial",
         "research_pretrial_response",
     ):
-        _wrap_async_method(method_name, 12, 42)
+        _wrap_async_method(method_name, 20, 42)
 
-    # Drafting remains in the client-facing "Право и проект" stage, but its
-    # progress range is distinct and advances only when drafting really starts
-    # and finishes.
     for method_name in (
         "draft_claim",
         "draft_contract",
@@ -173,8 +170,9 @@ def install() -> None:
         "draft_pretrial",
         "draft_pretrial_response",
     ):
-        _wrap_async_method(method_name, 45, 70)
+        _wrap_async_method(method_name, 45, 75)
 
+    # 80..89 = quality control, 90..99 = Word/final live verification.
     _wrap_release_metadata()
     for builder in (
         "build_claim_docx",
