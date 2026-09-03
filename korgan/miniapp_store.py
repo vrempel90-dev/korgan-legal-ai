@@ -37,6 +37,13 @@ class MiniAppStore:
     def user_key(self, user_id: str) -> str:
         return hmac.new(self.secret, str(user_id).encode("utf-8"), hashlib.sha256).hexdigest()
 
+    @staticmethod
+    def _validated_user_key(user_key: str) -> str:
+        key = str(user_key or "").strip().lower()
+        if len(key) != 64 or any(char not in "0123456789abcdef" for char in key):
+            raise ValueError("Invalid Mini App user key")
+        return key
+
     def _encode_state(self, state: dict[str, Any], *, aad: str) -> dict[str, str | int]:
         plaintext = json.dumps(state, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         nonce = os.urandom(12)
@@ -95,10 +102,16 @@ class MiniAppStore:
             await self.pool.close()
             self.pool = None
 
-    async def load(self, user_id: str) -> dict[str, Any]:
-        key = self.user_key(user_id)
+    async def load_by_user_key(self, user_key: str) -> dict[str, Any]:
+        """Load encrypted state using only the persisted HMAC lookup key.
+
+        This is an internal server-side path for trusted background workflows
+        such as payment webhooks. It does not recover or persist a Telegram id;
+        AES-GCM uses the same HMAC key as AAD as the ordinary ``load`` path.
+        """
+        key = self._validated_user_key(user_key)
         if self.pool is None:
-            return dict(self.memory.get(key) or {"consent": None, "cases": {}})
+            return json.loads(json.dumps(self.memory.get(key) or {"consent": None, "cases": {}}, ensure_ascii=False))
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT state_json FROM korgan_miniapp_state WHERE user_key=$1",
@@ -108,14 +121,13 @@ class MiniAppStore:
             return {"consent": None, "cases": {}}
         state, needs_migration = self._decode_state(row["state_json"], aad=key)
         if needs_migration:
-            await self.save(user_id, state)
+            await self.save_by_user_key(key, state)
         return state
 
-    async def save(self, user_id: str, state: dict[str, Any]) -> None:
-        key = self.user_key(user_id)
+    async def save_by_user_key(self, user_key: str, state: dict[str, Any]) -> None:
+        """Persist encrypted state by its HMAC lookup key for background work."""
+        key = self._validated_user_key(user_key)
         if self.pool is None:
-            # Keep development fallback semantics simple; memory never leaves the
-            # process, while PostgreSQL always receives encrypted state.
             self.memory[key] = json.loads(json.dumps(state, ensure_ascii=False))
             return
         envelope = json.dumps(self._encode_state(state, aad=key), separators=(",", ":"))
@@ -130,6 +142,12 @@ class MiniAppStore:
                 key,
                 envelope,
             )
+
+    async def load(self, user_id: str) -> dict[str, Any]:
+        return await self.load_by_user_key(self.user_key(user_id))
+
+    async def save(self, user_id: str, state: dict[str, Any]) -> None:
+        await self.save_by_user_key(self.user_key(user_id), state)
 
     async def delete(self, user_id: str) -> None:
         key = self.user_key(user_id)
