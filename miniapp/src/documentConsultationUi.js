@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'korgan_document_consultation_title';
+const STORAGE_KEY = 'korgan_document_consultation';
 
 function clean(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -16,6 +16,7 @@ function languageForButton(text) {
 }
 
 function replaceButtonText(button, label) {
+  if (clean(button.textContent) === label) return;
   const textNodes = Array.from(button.childNodes).filter(node => node.nodeType === Node.TEXT_NODE);
   if (textNodes.length) {
     textNodes[0].textContent = ` ${label}`;
@@ -30,6 +31,18 @@ function isReadyDocumentPage(root) {
     const text = clean(button.textContent);
     return text.includes('Скачать готовый DOCX') || text.includes('Дайын DOCX жүктеу');
   });
+}
+
+function storedScope() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || '{}');
+    return {
+      title: clean(parsed.title),
+      language: parsed.language === 'kk' ? 'kk' : 'ru',
+    };
+  } catch {
+    return { title: '', language: 'ru' };
+  }
 }
 
 export function applyDocumentConsultationUi(root = document.getElementById('root')) {
@@ -53,17 +66,16 @@ export function applyDocumentConsultationUi(root = document.getElementById('root
 
   const chat = root.querySelector('.chat-shell');
   if (chat) {
-    const title = clean(sessionStorage.getItem(STORAGE_KEY));
-    if (!title) return;
+    const scope = storedScope();
+    if (!scope.title) return;
     const header = chat.querySelector('.subbar strong');
     const input = chat.querySelector('.composer input');
-    const lang = /[ӘәҒғҚқҢңӨөҰұҮүҺһІі]/.test(title) ? 'kk' : 'ru';
-    if (header) header.textContent = documentConsultationLabel(title, lang);
-    if (input && !input.disabled) {
-      input.placeholder = lang === 'kk'
-        ? `«${title}» құжаты бойынша сұрақ…`
-        : `Вопрос по документу «${title}»…`;
-    }
+    const label = documentConsultationLabel(scope.title, scope.language);
+    const placeholder = scope.language === 'kk'
+      ? `«${scope.title}» құжаты бойынша сұрақ…`
+      : `Вопрос по документу «${scope.title}»…`;
+    if (header && clean(header.textContent) !== label) header.textContent = label;
+    if (input && !input.disabled && input.placeholder !== placeholder) input.placeholder = placeholder;
   }
 }
 
@@ -71,11 +83,18 @@ function rememberClickedDocument(event) {
   const button = event.target?.closest?.('button[data-document-consultation="true"]');
   if (!button) return;
   const title = clean(button.dataset.documentTitle);
-  if (title) sessionStorage.setItem(STORAGE_KEY, title);
+  const language = button.dataset.documentLanguage === 'kk' ? 'kk' : 'ru';
+  if (title) sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ title, language }));
 }
 
+let applyQueued = false;
 function scheduleApply() {
-  queueMicrotask(() => applyDocumentConsultationUi());
+  if (applyQueued) return;
+  applyQueued = true;
+  queueMicrotask(() => {
+    applyQueued = false;
+    applyDocumentConsultationUi();
+  });
 }
 
 document.addEventListener('click', rememberClickedDocument, true);
