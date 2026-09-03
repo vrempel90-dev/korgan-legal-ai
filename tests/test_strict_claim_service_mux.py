@@ -57,10 +57,16 @@ def test_strict_runtime_wraps_stable_service_with_claim_mux_in_subprocess():
     script = textwrap.dedent(
         r'''
         import asyncio
+        import os
         from types import SimpleNamespace
         from korgan import bot as base_bot
         from korgan import strict_bot
         from korgan.claim_service_mux import ClaimServiceMux
+
+        # This regression deliberately exercises the active worker runtime. The
+        # production Railway worker can be kill-switched independently, so do
+        # not inherit that deployment flag into this subprocess contract test.
+        os.environ.pop("KORGAN_TELEGRAM_AGENT_DISABLED", None)
 
         settings = SimpleNamespace(
             telegram_bot_token="test-token",
