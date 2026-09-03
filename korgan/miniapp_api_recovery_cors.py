@@ -57,6 +57,11 @@ _admin_test_enabled = str(os.getenv("KORGAN_ADMIN_FREE_DOCUMENT_TEST", "") or ""
 if not _miniapp_settings.payments_enabled and _admin_test_enabled:
     from korgan import miniapp_admin_free_generation_runtime as _miniapp_admin_free_generation_runtime  # noqa: F401
 
+# Additive client metadata is installed after every generation owner above. This
+# lets paid production jobs and the explicit admin-free test worker persist the
+# same unresolved-calculation advice without changing payment or release policy.
+from korgan import miniapp_calculation_advisory_runtime as _miniapp_calculation_advisory_runtime  # noqa: F401
+
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_consent_status as _miniapp_consent_status
 from korgan import miniapp_document_access as _miniapp_document_access
