@@ -17,10 +17,11 @@ import re
 from korgan import fast_professional_litigation as fast
 from korgan import finalized_litigation as finalized
 from korgan import late_interest_hotfix as late
-from korgan.legal_types import ClaimDraft
+from korgan.legal_types import ClaimDraft, VerificationStatus
 
 _INSTALLED = False
 _ORIGINAL_RESEARCH_PROMPT = fast._professional_research_prompt
+_ORIGINAL_FAST_RESEARCH = fast.FastProfessionalLitigationService.research_case
 _ORIGINAL_EXPLICIT = late._explicit_penalty_requested
 
 _CIVIL_MONEY_RE = re.compile(
@@ -32,6 +33,11 @@ _BREACH_RE = re.compile(
     r"(?i)(?:не\s+(?:вернул\w*|возвратил\w*|оплатил\w*|погасил\w*|исполнил\w*)|"
     r"не\s+возвращ\w*|не\s+оплач\w*|просроч\w*|срок\w*\s+(?:ист[её]к|наруш\w*)|"
     r"должен\w*\s+был\w*|мерзім\w*\s+өт\w*|төлем\w*\s+жасалма\w*|қайтарма\w*)"
+)
+_PENALTY_RISK_RE = re.compile(
+    r"(?i)(?:ст\.?\s*353|стать\w*\s*353|неустойк\w*|пен[яию]\b|өсімпұл\w*|"
+    r"тұрақсыздық\s+айыб\w*|пользован\w*\s+чужими\s+деньг\w*|"
+    r"процент\w*\s+за\s+просроч\w*)"
 )
 
 
@@ -49,6 +55,11 @@ def automatic_penalty_candidate(case_context: str) -> bool:
     if late.parse_contractual_penalty_terms(text) is not None:
         return True
     return bool(late._MONEY_TOKEN_RE.search(text) and _CIVIL_MONEY_RE.search(text) and _BREACH_RE.search(text))
+
+
+def _penalty_only_note(text: str) -> bool:
+    value = " ".join(str(text or "").split()).strip()
+    return bool(value and _PENALTY_RISK_RE.search(value))
 
 
 def _clarification_reason(reason: str) -> str:
@@ -87,7 +98,15 @@ def soft_penalty_clarification(
     ]
     draft.legal_basis = [
         str(item) for item in list(draft.legal_basis or [])
-        if not late._ARTICLE_353_LINE_RE.search(str(item))
+        if not late._PENALTY_LINE_RE.search(str(item))
+        and not late._ARTICLE_353_LINE_RE.search(str(item))
+    ]
+    # The model may have emitted a local risk note before deterministic cleanup.
+    # Once the same uncertainty is shown in the filing-facing calculation section,
+    # keeping that note would incorrectly downgrade the entire claim.
+    draft.verification_notes = [
+        str(item) for item in list(draft.verification_notes or [])
+        if not _penalty_only_note(str(item))
     ]
     late._drop_penalty_calculation(draft)
     clarification = _clarification_reason(reason)
@@ -116,8 +135,25 @@ def _research_prompt(case_context: str, *, max_chars: int, checked_on: str, **kw
         "Если договорной ставки нет или она неприменима, проверь, применимы ли пункты 1 и 2 статьи 353 ГК РК к установленным фактам.\n"
         "28. Не включай статью 353 только потому, что есть долг. Верни её как VERIFIED лишь когда действующая официальная норма и характер обязательства действительно позволяют этот способ взыскания.\n"
         "29. Если правовое основание есть, но для точного расчёта не хватает срока исполнения, даты частичной оплаты или другого исходного факта, отрази это как NEEDS_FACTS в remedies. Не придумывай дату или ставку.\n"
-        "30. Госпошлину и арифметику не считай моделью: после drafting их вычисляет детерминированный код KORGAN."
+        "30. Сомнение только по автоматически проверяемой неустойке НЕ должно делать весь основной иск UNVERIFIED: не добавляй такое сомнение в unverified_claims, если оно не затрагивает основной долг. Используй REMEDY NEEDS_FACTS/EXCLUDE.\n"
+        "31. Госпошлину и арифметику не считай моделью: после drafting их вычисляет детерминированный код KORGAN."
     )
+
+
+async def _research_case(self, case_context: str, language: str = "ru"):
+    """Keep optional penalty uncertainty local to the optional monetary remedy."""
+    research = await _ORIGINAL_FAST_RESEARCH(self, case_context, language=language)
+    if not automatic_penalty_candidate(case_context):
+        return research
+
+    remaining = [
+        str(item) for item in list(research.unverified_claims or [])
+        if not _penalty_only_note(str(item))
+    ]
+    research.unverified_claims = remaining
+    if research.verified_claims and research.source_urls and not remaining:
+        research.status = VerificationStatus.VERIFIED
+    return research
 
 
 def install() -> None:
@@ -134,6 +170,7 @@ def install() -> None:
     fast._apply_verified_article_353 = late._apply_verified_penalty
     finalized._apply_verified_article_353 = late._apply_verified_penalty
     fast._professional_research_prompt = _research_prompt
+    fast.FastProfessionalLitigationService.research_case = _research_case
     _INSTALLED = True
 
 
