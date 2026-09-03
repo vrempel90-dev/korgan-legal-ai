@@ -53,6 +53,19 @@ def test_merge_client_todo_preserves_existing_filing_tasks_and_adds_lawyer_cta()
     assert any("советую обратиться к юристу KORGAN" in item for item in result["todo_before_filing"])
 
 
+def test_lawyer_cta_and_calculation_survive_crowded_existing_checklist() -> None:
+    payload = {
+        "todo_before_filing": [f"обычная задача {index}" for index in range(12)],
+        "calculation_todo": ["Неустойка: уточнить дату начала просрочки."],
+    }
+
+    result = runtime._merge_client_todo(payload, "ru")
+
+    assert len(result["todo_before_filing"]) == runtime._MAX_CLIENT_TODO
+    assert "Неустойка: уточнить дату начала просрочки." in result["todo_before_filing"]
+    assert "советую обратиться к юристу KORGAN" in result["todo_before_filing"][-1]
+
+
 def test_merge_client_todo_is_noop_when_calculations_are_confirmed() -> None:
     payload = {
         "filing_ready": True,
