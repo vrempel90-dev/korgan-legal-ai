@@ -1,0 +1,57 @@
+name: MiniApp legal workspace CI
+
+on:
+  pull_request:
+    branches:
+      - recovery/miniapp-api-1600-sg
+    paths:
+      - 'korgan/miniapp_legal_workspace.py'
+      - 'korgan/miniapp_api_recovery_cors.py'
+      - 'tests/test_miniapp_legal_workspace.py'
+      - 'miniapp/**'
+      - '.github/workflows/miniapp-legal-workspace-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      TELEGRAM_BOT_TOKEN: test-token
+      OPENAI_API_KEY: test-key
+      PAYMENTS_ENABLED: 'false'
+      CONSULTATION_LIMIT_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Legal workspace tests
+        run: python -m pytest -q tests/test_miniapp_legal_workspace.py
+      - name: Production route smoke
+        run: python -m pytest -q tests/test_miniapp_api_smoke.py tests/test_miniapp_business_parity_v4.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: miniapp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: miniapp/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build MiniApp
+        run: npm run build
+      - name: Run frontend regression suite
+        run: npm test

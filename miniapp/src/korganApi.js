@@ -3,6 +3,7 @@ import { createApiTransport } from './apiTransport.js';
 import { clearLifecycleNotificationCase } from './lifecycleNotifications.js';
 
 const API_BASE = import.meta.env.VITE_KORGAN_API_BASE || '';
+const DOCUMENT_CONSULTATION_SCOPE_KEY = 'korgan_document_consultation';
 const request = createApiTransport({
   baseUrl: API_BASE,
   getTelegramInitData: () => window.Telegram?.WebApp?.initData || '',
@@ -12,6 +13,40 @@ const LEGACY_UPLOAD_ONLY_DESCRIPTIONS = new Set([
   'Дело создано на основании загруженных материалов. Факты следует брать только из документов, загруженных пользователем.',
   'Іс жүктелген материалдар негізінде құрылды. Фактілерді тек пайдаланушы жүктеген құжаттардан алу керек.',
 ]);
+
+function documentConsultationScope() {
+  try {
+    const parsed = JSON.parse(globalThis.sessionStorage?.getItem(DOCUMENT_CONSULTATION_SCOPE_KEY) || '{}');
+    return {
+      caseId: String(parsed?.caseId || '').trim(),
+      title: String(parsed?.title || '').trim(),
+    };
+  } catch {
+    return { caseId: '', title: '' };
+  }
+}
+
+async function consultation(message, caseId, language = 'ru') {
+  const safeCaseId = caseId || null;
+  let documentRevision = null;
+  const scope = documentConsultationScope();
+  if (safeCaseId && scope.caseId === String(safeCaseId)) {
+    const currentCase = await request(`/miniapp/cases/${encodeURIComponent(safeCaseId)}`);
+    documentRevision = String(currentCase?.document_revision || '').trim() || null;
+    if (!documentRevision) {
+      throw new Error('Текущая версия документа недоступна. Откройте готовый документ заново и повторите вопрос.');
+    }
+  }
+  return request('/miniapp/consultation', {
+    method: 'POST',
+    body: JSON.stringify({
+      message,
+      case_id: safeCaseId,
+      language,
+      document_revision: documentRevision,
+    }),
+  });
+}
 
 async function uploadMaterial(caseId, file) {
   const body = new FormData();
@@ -42,10 +77,7 @@ export const korganApi = {
   consentStatus: (options = {}) => request('/miniapp/consent', options),
   pricing: (options = {}) => request('/miniapp/pricing', options),
   getConsultationQuota: (options = {}) => request('/miniapp/consultation/quota', options),
-  consultation: (message, caseId, language = 'ru') => request('/miniapp/consultation', {
-    method: 'POST',
-    body: JSON.stringify({ message, case_id: caseId || null, language }),
-  }),
+  consultation,
   uploadConsultationReceipt,
   retryPaidConsultation: (orderId) => request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/retry`, {
     method: 'POST',
