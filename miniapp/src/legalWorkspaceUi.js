@@ -5,6 +5,9 @@ const API_BASE = String(import.meta.env.VITE_KORGAN_API_BASE || '').replace(/\/$
 const APP_STATE_KEY = 'korgan-miniapp-state-v1';
 const RECONCILE_MS = 400;
 let caseLoadSequence = 0;
+let mountEpoch = 0;
+const actionSequence = { duty: 0, penalty: 0, stress: 0 };
+const activeControllers = new Set();
 
 const COPY = {
   ru: {
@@ -46,6 +49,22 @@ const api = createApiTransport({
   timeoutMs: 30000,
 });
 
+function beginScopedRequest(kind, epoch) {
+  const requestId = ++actionSequence[kind];
+  const controller = new AbortController();
+  activeControllers.add(controller);
+  return {
+    signal: controller.signal,
+    isCurrent: () => epoch === mountEpoch && requestId === actionSequence[kind] && !controller.signal.aborted,
+    cleanup: () => activeControllers.delete(controller),
+  };
+}
+
+function abortActiveRequests() {
+  for (const controller of activeControllers) controller.abort('legal-workspace-unmounted');
+  activeControllers.clear();
+}
+
 function money(value, language) {
   return new Intl.NumberFormat(language === 'kk' ? 'kk-KZ' : 'ru-RU').format(Number(value || 0)) + ' ₸';
 }
@@ -86,13 +105,15 @@ function singleOption(select, text) {
   select.replaceChildren(option);
 }
 
-async function loadCases(select, language) {
+async function loadCases(select, language, epoch) {
   const requestId = ++caseLoadSequence;
+  const controller = new AbortController();
+  activeControllers.add(controller);
   const t = COPY[language];
   singleOption(select, t.loadingCases);
   try {
-    const payload = await api('/miniapp/cases');
-    if (requestId !== caseLoadSequence || !select.isConnected) return;
+    const payload = await api('/miniapp/cases', { signal: controller.signal });
+    if (epoch !== mountEpoch || requestId !== caseLoadSequence || controller.signal.aborted || !select.isConnected) return;
     const options = [];
     const empty = document.createElement('option');
     empty.value = '';
@@ -106,8 +127,10 @@ async function loadCases(select, language) {
     }
     select.replaceChildren(...options);
   } catch (error) {
-    if (requestId !== caseLoadSequence || !select.isConnected) return;
+    if (epoch !== mountEpoch || requestId !== caseLoadSequence || controller.signal.aborted || !select.isConnected) return;
     singleOption(select, `${t.loadCasesError}: ${messageForError(error, language)}`);
+  } finally {
+    activeControllers.delete(controller);
   }
 }
 
@@ -150,13 +173,17 @@ function html(language) {
 }
 
 function unmount() {
+  mountEpoch += 1;
   caseLoadSequence += 1;
+  for (const kind of Object.keys(actionSequence)) actionSequence[kind] += 1;
+  abortActiveRequests();
   document.getElementById('korgan-legal-tools-button')?.remove();
   document.getElementById('korgan-legal-tools-backdrop')?.remove();
 }
 
 function mount(language) {
   if (document.getElementById('korgan-legal-tools-button')) return;
+  const epoch = ++mountEpoch;
   const t = COPY[language];
   const button = document.createElement('button');
   button.id = 'korgan-legal-tools-button';
@@ -174,58 +201,76 @@ function mount(language) {
   const close = () => backdrop.classList.remove('open');
   button.addEventListener('click', async () => {
     backdrop.classList.add('open');
-    await loadCases(document.getElementById('klt-stress-case'), language);
+    await loadCases(document.getElementById('klt-stress-case'), language, epoch);
   });
   backdrop.querySelector('.korgan-legal-tools-close')?.addEventListener('click', close);
   backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
 
   document.getElementById('klt-duty-submit')?.addEventListener('click', async event => {
     const submit = event.currentTarget;
+    const scoped = beginScopedRequest('duty', epoch);
     submit.disabled = true;
     try {
       const payload = await api('/miniapp/legal-workspace/state-duty', {
-        method: 'POST',
+        method: 'POST', signal: scoped.signal,
         body: JSON.stringify({ mode: document.getElementById('klt-duty-mode').value, claimant_type: document.getElementById('klt-duty-claimant').value, amount_kzt: Number(document.getElementById('klt-duty-amount').value || 0), nonproperty_demands: Number(document.getElementById('klt-duty-nonproperty').value || 0) }),
       });
+      if (!scoped.isCurrent()) return;
       resultBox('klt-duty-result', `${t.dutyResult}: ${money(payload.amount_kzt, language)}\n${t.warning}`, language, { sourceUrl: payload.source_url, sourceLabel: payload.source || t.officialSource });
     } catch (error) {
+      if (!scoped.isCurrent()) return;
       resultBox('klt-duty-result', messageForError(error, language), language, { error: true });
-    } finally { submit.disabled = false; }
+    } finally {
+      if (scoped.isCurrent()) submit.disabled = false;
+      scoped.cleanup();
+    }
   });
 
   document.getElementById('klt-penalty-submit')?.addEventListener('click', async event => {
     const submit = event.currentTarget;
+    const scoped = beginScopedRequest('penalty', epoch);
     submit.disabled = true;
     try {
       const rateDate = document.getElementById('klt-penalty-rate-date').value;
       const payload = await api('/miniapp/legal-workspace/late-penalty-353', {
-        method: 'POST',
+        method: 'POST', signal: scoped.signal,
         body: JSON.stringify({ principal_kzt: Number(document.getElementById('klt-penalty-principal').value || 0), start_date: document.getElementById('klt-penalty-start').value, end_date: document.getElementById('klt-penalty-end').value, rate_date: rateDate || null }),
       });
+      if (!scoped.isCurrent()) return;
       if (payload.status !== 'calculated') {
         resultBox('klt-penalty-result', t.needsRate, language, { error: true, sourceUrl: payload.source_url, sourceLabel: payload.source || t.officialSource });
       } else {
         resultBox('klt-penalty-result', `${t.penaltyResult}: ${money(payload.amount_kzt, language)}\n${t.days}: ${payload.days}\n${t.baseRate}: ${payload.base_rate_percent}%\n${payload.formula}`, language, { sourceUrl: payload.source_url, sourceLabel: payload.source || t.officialSource });
       }
     } catch (error) {
+      if (!scoped.isCurrent()) return;
       resultBox('klt-penalty-result', messageForError(error, language), language, { error: true });
-    } finally { submit.disabled = false; }
+    } finally {
+      if (scoped.isCurrent()) submit.disabled = false;
+      scoped.cleanup();
+    }
   });
 
   document.getElementById('klt-stress-submit')?.addEventListener('click', async event => {
     const submit = event.currentTarget;
+    const scoped = beginScopedRequest('stress', epoch);
     submit.disabled = true;
     resultBox('klt-stress-result', t.checking, language);
     try {
       const payload = await api('/miniapp/legal-workspace/stress-test', {
-        method: 'POST', timeoutMs: 110000,
+        method: 'POST', timeoutMs: 110000, signal: scoped.signal,
         body: JSON.stringify({ case_id: document.getElementById('klt-stress-case').value, focus: document.getElementById('klt-stress-focus').value, language }),
       });
+      if (!scoped.isCurrent()) return;
       const sources = (payload.sources || []).length ? `\n\n${t.sources}:\n${payload.sources.join('\n')}` : '';
       resultBox('klt-stress-result', `${payload.answer || ''}${sources}`, language);
     } catch (error) {
+      if (!scoped.isCurrent()) return;
       resultBox('klt-stress-result', messageForError(error, language), language, { error: true });
-    } finally { submit.disabled = false; }
+    } finally {
+      if (scoped.isCurrent()) submit.disabled = false;
+      scoped.cleanup();
+    }
   });
 }
 
