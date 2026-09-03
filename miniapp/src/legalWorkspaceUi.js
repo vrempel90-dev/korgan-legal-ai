@@ -1,11 +1,36 @@
+import { createApiTransport } from './apiTransport.js';
+
 const API_BASE = String(import.meta.env.VITE_KORGAN_API_BASE || '').replace(/\/$/, '');
 const APP_STATE_KEY = 'korgan-miniapp-state-v1';
+const RECONCILE_MS = 400;
+let caseLoadSequence = 0;
+
+const COPY = {
+  ru: {
+    launcher: '⚖ Юр. инструменты', dialog: 'Юридические инструменты KORGAN', close: 'Закрыть',
+    title: 'Юридические инструменты', subtitle: 'Расчёты выполняет код. Правовые выводы — только по проверенным источникам РК.',
+    dutyTitle: 'Госпошлина', dutyHint: 'Обычный гражданский имущественный, неимущественный или смешанный иск. Льготы и специальные категории проверяются отдельно.',
+    demandType: 'Тип требования', property: 'Имущественное', nonproperty: 'Неимущественное', mixed: 'Смешанное', claimant: 'Истец', individual: 'Физлицо / ИП', legalEntity: 'Юрлицо', claimAmount: 'Цена иска, ₸', nonpropertyCount: 'Неимущественных требований', dutyAction: 'Рассчитать госпошлину', dutyResult: 'Госпошлина',
+    penaltyTitle: 'Неустойка по ст. 353 ГК РК', penaltyHint: 'Законная ответственность за неправомерное пользование чужими деньгами. Ставка берётся из подтверждённого справочника НБ РК.', principal: 'Основной долг, ₸', start: 'Начало просрочки', end: 'Конец периода', rateDate: 'Дата базовой ставки', rateDateHint: 'Если не указана — используется начало периода.', penaltyAction: 'Рассчитать неустойку', penaltyResult: 'Неустойка', days: 'Дней', baseRate: 'Базовая ставка', needsRate: 'Ставка требует проверки',
+    stressTitle: 'Stress Test позиции', stressHint: 'KORGAN выступает как оппонент: ищет слабые места, доказательственные и процессуальные риски и проверяет правовые выводы по действующим нормам РК.', caseLabel: 'Дело', chooseCase: 'Выберите дело…', loadingCases: 'Загружаю дела…', loadCasesError: 'Не удалось загрузить дела', focus: 'На что обратить особое внимание', focusPlaceholder: 'Например: срок исковой давности, доказательство поставки, размер неустойки…', stressAction: 'Проверить позицию', checking: 'Проверяю позицию и актуальные нормы РК…', sources: 'Источники',
+    officialSource: 'Открыть официальный источник', warning: 'Льготы и специальные категории должны проверяться отдельно по материалам дела.', timeout: 'Сервис не успел ответить. Повторите запрос.', unavailable: 'Сервис временно недоступен.', unauthorized: 'Сессия Telegram недействительна. Закройте и откройте KORGAN заново.', requestFailed: 'Не удалось выполнить запрос.',
+  },
+  kk: {
+    launcher: '⚖ Заң құралдары', dialog: 'KORGAN заң құралдары', close: 'Жабу',
+    title: 'Заң құралдары', subtitle: 'Есептеулер кодпен орындалады. Құқықтық қорытындылар — тек тексерілген ҚР дереккөздері бойынша.',
+    dutyTitle: 'Мемлекеттік баж', dutyHint: 'Кәдімгі азаматтық мүліктік, мүліктік емес немесе аралас талап. Жеңілдіктер мен арнайы санаттар бөлек тексеріледі.',
+    demandType: 'Талап түрі', property: 'Мүліктік', nonproperty: 'Мүліктік емес', mixed: 'Аралас', claimant: 'Талап қоюшы', individual: 'Жеке тұлға / ЖК', legalEntity: 'Заңды тұлға', claimAmount: 'Талап бағасы, ₸', nonpropertyCount: 'Мүліктік емес талап саны', dutyAction: 'Мемлекеттік бажды есептеу', dutyResult: 'Мемлекеттік баж',
+    penaltyTitle: 'ҚР АК 353-бабы бойынша тұрақсыздық айыбы', penaltyHint: 'Бөтен ақшаны заңсыз пайдаланғаны үшін заңды жауапкершілік. Мөлшерлеме ҚР ҰБ расталған анықтамалығынан алынады.', principal: 'Негізгі қарыз, ₸', start: 'Мерзім өткізу басталған күн', end: 'Кезеңнің соңы', rateDate: 'Базалық мөлшерлеме күні', rateDateHint: 'Көрсетілмесе — кезеңнің басталған күні қолданылады.', penaltyAction: 'Тұрақсыздық айыбын есептеу', penaltyResult: 'Тұрақсыздық айыбы', days: 'Күндер', baseRate: 'Базалық мөлшерлеме', needsRate: 'Мөлшерлемені тексеру қажет',
+    stressTitle: 'Позицияның Stress Test-і', stressHint: 'KORGAN қарсы тарап сияқты әрекет етеді: әлсіз тұстарды, дәлелдеу және процестік тәуекелдерді тауып, қорытындыларды қолданыстағы ҚР нормаларымен тексереді.', caseLabel: 'Іс', chooseCase: 'Істі таңдаңыз…', loadingCases: 'Істер жүктелуде…', loadCasesError: 'Істерді жүктеу мүмкін болмады', focus: 'Неге ерекше назар аудару керек', focusPlaceholder: 'Мысалы: талап қою мерзімі, жеткізу дәлелі, тұрақсыздық айыбының мөлшері…', stressAction: 'Позицияны тексеру', checking: 'Позиция және қолданыстағы ҚР нормалары тексерілуде…', sources: 'Дереккөздер',
+    officialSource: 'Ресми дереккөзді ашу', warning: 'Жеңілдіктер мен арнайы санаттар іс материалдары бойынша бөлек тексерілуі тиіс.', timeout: 'Сервис уақытында жауап бермеді. Сұрауды қайталаңыз.', unavailable: 'Сервис уақытша қолжетімсіз.', unauthorized: 'Telegram сессиясы жарамсыз. KORGAN-ды жауып, қайта ашыңыз.', requestFailed: 'Сұрауды орындау мүмкін болмады.',
+  },
+};
 
 function initData() {
-  return String(window.Telegram?.WebApp?.initData || '');
+  return String(window.Telegram?.WebApp?.initData || globalThis.window?.__KORGAN_TG_INIT_DATA__ || '');
 }
 
-function selectedLanguage() {
+export function selectedLanguage() {
   try {
     const parsed = JSON.parse(globalThis.localStorage?.getItem(APP_STATE_KEY) || '{}');
     return parsed?.language === 'kk' ? 'kk' : 'ru';
@@ -14,202 +39,222 @@ function selectedLanguage() {
   }
 }
 
-async function api(path, options = {}) {
-  if (!API_BASE) throw new Error('API Mini App не настроен');
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Telegram-Init-Data': initData(),
-      ...(options.headers || {}),
-    },
-  });
-  let payload = {};
-  try { payload = await response.json(); } catch { payload = {}; }
-  if (!response.ok) throw new Error(String(payload.detail || payload.message || `HTTP ${response.status}`));
-  return payload;
+const api = createApiTransport({
+  baseUrl: API_BASE,
+  getTelegramInitData: initData,
+  timeoutMs: 30000,
+});
+
+export function safeHttpsUrl(value) {
+  try {
+    const parsed = new URL(String(value || ''));
+    return parsed.protocol === 'https:' ? parsed.href : '';
+  } catch {
+    return '';
+  }
 }
 
-function money(value) {
-  return new Intl.NumberFormat('ru-RU').format(Number(value || 0)) + ' ₸';
+function money(value, language) {
+  return new Intl.NumberFormat(language === 'kk' ? 'kk-KZ' : 'ru-RU').format(Number(value || 0)) + ' ₸';
 }
 
-function resultBox(id, text, { error = false, sourceUrl = '', sourceLabel = '' } = {}) {
+function messageForError(error, language) {
+  const t = COPY[language];
+  if (error?.code === 'KORGAN_API_TIMEOUT') return t.timeout;
+  if (error?.code === 'KORGAN_API_UNAUTHORIZED') return t.unauthorized;
+  if (error?.code === 'KORGAN_API_NOT_CONNECTED' || error?.code === 'KORGAN_API_NETWORK_ERROR') return t.unavailable;
+  if (error?.status === 429) return language === 'kk' ? 'Тегін кеңес лимиті аяқталды.' : 'Бесплатный лимит консультаций исчерпан.';
+  if (error?.status === 422) return language === 'kk' ? 'Енгізілген деректерді тексеріңіз.' : 'Проверьте введённые данные.';
+  return t.requestFailed;
+}
+
+function resultBox(id, text, language, { error = false, sourceUrl = '', sourceLabel = '' } = {}) {
   const box = document.getElementById(id);
   if (!box) return;
   box.classList.toggle('error', error);
   box.classList.add('show');
   box.textContent = text;
-  if (sourceUrl) {
+  const safeUrl = safeHttpsUrl(sourceUrl);
+  if (safeUrl) {
     const link = document.createElement('a');
     link.className = 'korgan-legal-tool-source';
-    link.href = sourceUrl;
+    link.href = safeUrl;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
-    link.textContent = sourceLabel || 'Открыть официальный источник';
+    link.textContent = sourceLabel || COPY[language].officialSource;
     box.appendChild(document.createElement('br'));
     box.appendChild(link);
   }
 }
 
-async function loadCases(select) {
-  select.innerHTML = '<option value="">Выберите дело…</option>';
+function singleOption(select, text) {
+  const option = document.createElement('option');
+  option.value = '';
+  option.textContent = text;
+  select.replaceChildren(option);
+}
+
+async function loadCases(select, language) {
+  const requestId = ++caseLoadSequence;
+  const t = COPY[language];
+  singleOption(select, t.loadingCases);
   try {
     const payload = await api('/miniapp/cases');
+    if (requestId !== caseLoadSequence || !select.isConnected) return;
+    const options = [];
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = t.chooseCase;
+    options.push(empty);
     for (const item of payload.cases || []) {
       const option = document.createElement('option');
       option.value = item.id;
       option.textContent = String(item.title || item.description || item.document_type || item.id).slice(0, 80);
-      select.appendChild(option);
+      options.push(option);
     }
+    select.replaceChildren(...options);
   } catch (error) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = `Не удалось загрузить дела: ${error.message}`;
-    select.appendChild(option);
+    if (requestId !== caseLoadSequence || !select.isConnected) return;
+    singleOption(select, `${t.loadCasesError}: ${messageForError(error, language)}`);
   }
 }
 
-function mount() {
-  if (document.getElementById('korgan-legal-tools-button')) return;
-
-  const button = document.createElement('button');
-  button.id = 'korgan-legal-tools-button';
-  button.className = 'korgan-legal-tools-button';
-  button.type = 'button';
-  button.textContent = '⚖ Юр. инструменты';
-
-  const backdrop = document.createElement('div');
-  backdrop.className = 'korgan-legal-tools-backdrop';
-  backdrop.innerHTML = `
-    <section class="korgan-legal-tools-sheet" role="dialog" aria-modal="true" aria-label="Юридические инструменты KORGAN">
+function html(language) {
+  const t = COPY[language];
+  return `
+    <section class="korgan-legal-tools-sheet" role="dialog" aria-modal="true" aria-label="${t.dialog}">
       <div class="korgan-legal-tools-head">
-        <div><h2>Юридические инструменты</h2><p>Расчёты выполняет код. Правовые выводы — только по проверенным источникам РК.</p></div>
-        <button class="korgan-legal-tools-close" type="button" aria-label="Закрыть">×</button>
+        <div><h2>${t.title}</h2><p>${t.subtitle}</p></div>
+        <button class="korgan-legal-tools-close" type="button" aria-label="${t.close}">×</button>
       </div>
-
       <article class="korgan-legal-tool-card">
-        <h3>Госпошлина</h3>
-        <p class="hint">Обычный гражданский имущественный, неимущественный или смешанный иск. Льготы и специальные категории проверяются отдельно.</p>
+        <h3>${t.dutyTitle}</h3><p class="hint">${t.dutyHint}</p>
         <div class="korgan-legal-tool-grid">
-          <label>Тип требования
-            <select id="klt-duty-mode"><option value="property">Имущественное</option><option value="nonproperty">Неимущественное</option><option value="mixed">Смешанное</option></select>
-          </label>
-          <label>Истец
-            <select id="klt-duty-claimant"><option value="individual">Физлицо / ИП</option><option value="legal_entity">Юрлицо</option></select>
-          </label>
-          <label>Цена иска, ₸<input id="klt-duty-amount" inputmode="numeric" type="number" min="0" step="1" placeholder="5000000"></label>
-          <label>Неимущественных требований<input id="klt-duty-nonproperty" inputmode="numeric" type="number" min="0" max="50" step="1" value="0"></label>
+          <label>${t.demandType}<select id="klt-duty-mode"><option value="property">${t.property}</option><option value="nonproperty">${t.nonproperty}</option><option value="mixed">${t.mixed}</option></select></label>
+          <label>${t.claimant}<select id="klt-duty-claimant"><option value="individual">${t.individual}</option><option value="legal_entity">${t.legalEntity}</option></select></label>
+          <label>${t.claimAmount}<input id="klt-duty-amount" inputmode="numeric" type="number" min="0" step="1" placeholder="5000000"></label>
+          <label>${t.nonpropertyCount}<input id="klt-duty-nonproperty" inputmode="numeric" type="number" min="0" max="50" step="1" value="0"></label>
         </div>
-        <button id="klt-duty-submit" class="korgan-legal-tool-action" type="button">Рассчитать госпошлину</button>
-        <div id="klt-duty-result" class="korgan-legal-tool-result"></div>
+        <button id="klt-duty-submit" class="korgan-legal-tool-action" type="button">${t.dutyAction}</button><div id="klt-duty-result" class="korgan-legal-tool-result"></div>
       </article>
-
       <article class="korgan-legal-tool-card">
-        <h3>Неустойка по ст. 353 ГК РК</h3>
-        <p class="hint">Законная ответственность за неправомерное пользование чужими деньгами. Ставка берётся из подтверждённого справочника НБ РК.</p>
+        <h3>${t.penaltyTitle}</h3><p class="hint">${t.penaltyHint}</p>
         <div class="korgan-legal-tool-grid">
-          <label class="wide">Основной долг, ₸<input id="klt-penalty-principal" inputmode="numeric" type="number" min="1" step="1" placeholder="1000000"></label>
-          <label>Начало просрочки<input id="klt-penalty-start" type="date"></label>
-          <label>Конец периода<input id="klt-penalty-end" type="date"></label>
-          <label class="wide">Дата базовой ставки<input id="klt-penalty-rate-date" type="date"><span>Если не указана — используется начало периода.</span></label>
+          <label class="wide">${t.principal}<input id="klt-penalty-principal" inputmode="numeric" type="number" min="1" step="1" placeholder="1000000"></label>
+          <label>${t.start}<input id="klt-penalty-start" type="date"></label><label>${t.end}<input id="klt-penalty-end" type="date"></label>
+          <label class="wide">${t.rateDate}<input id="klt-penalty-rate-date" type="date"><span>${t.rateDateHint}</span></label>
         </div>
-        <button id="klt-penalty-submit" class="korgan-legal-tool-action" type="button">Рассчитать неустойку</button>
-        <div id="klt-penalty-result" class="korgan-legal-tool-result"></div>
+        <button id="klt-penalty-submit" class="korgan-legal-tool-action" type="button">${t.penaltyAction}</button><div id="klt-penalty-result" class="korgan-legal-tool-result"></div>
       </article>
-
       <article class="korgan-legal-tool-card">
-        <h3>Stress Test позиции</h3>
-        <p class="hint">KORGAN выступает как оппонент: ищет слабые места, доказательственные и процессуальные риски и проверяет правовые выводы по действующим нормам РК.</p>
+        <h3>${t.stressTitle}</h3><p class="hint">${t.stressHint}</p>
         <div class="korgan-legal-tool-grid">
-          <label class="wide">Дело<select id="klt-stress-case"><option value="">Выберите дело…</option></select></label>
-          <label class="wide">На что обратить особое внимание<textarea id="klt-stress-focus" placeholder="Например: срок исковой давности, доказательство поставки, размер неустойки…"></textarea></label>
+          <label class="wide">${t.caseLabel}<select id="klt-stress-case"><option value="">${t.chooseCase}</option></select></label>
+          <label class="wide">${t.focus}<textarea id="klt-stress-focus" placeholder="${t.focusPlaceholder}"></textarea></label>
         </div>
-        <button id="klt-stress-submit" class="korgan-legal-tool-action" type="button">Проверить позицию</button>
-        <div id="klt-stress-result" class="korgan-legal-tool-result"></div>
+        <button id="klt-stress-submit" class="korgan-legal-tool-action" type="button">${t.stressAction}</button><div id="klt-stress-result" class="korgan-legal-tool-result"></div>
       </article>
     </section>`;
+}
 
+function unmount() {
+  caseLoadSequence += 1;
+  document.getElementById('korgan-legal-tools-button')?.remove();
+  document.getElementById('korgan-legal-tools-backdrop')?.remove();
+}
+
+function mount(language) {
+  if (document.getElementById('korgan-legal-tools-button')) return;
+  const t = COPY[language];
+  const button = document.createElement('button');
+  button.id = 'korgan-legal-tools-button';
+  button.dataset.language = language;
+  button.className = 'korgan-legal-tools-button';
+  button.type = 'button';
+  button.textContent = t.launcher;
+
+  const backdrop = document.createElement('div');
+  backdrop.id = 'korgan-legal-tools-backdrop';
+  backdrop.className = 'korgan-legal-tools-backdrop';
+  backdrop.innerHTML = html(language);
   document.body.append(button, backdrop);
+
   const close = () => backdrop.classList.remove('open');
   button.addEventListener('click', async () => {
     backdrop.classList.add('open');
-    await loadCases(document.getElementById('klt-stress-case'));
+    await loadCases(document.getElementById('klt-stress-case'), language);
   });
   backdrop.querySelector('.korgan-legal-tools-close')?.addEventListener('click', close);
-  backdrop.addEventListener('click', (event) => { if (event.target === backdrop) close(); });
+  backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
 
-  document.getElementById('klt-duty-submit')?.addEventListener('click', async (event) => {
+  document.getElementById('klt-duty-submit')?.addEventListener('click', async event => {
     const submit = event.currentTarget;
     submit.disabled = true;
     try {
       const payload = await api('/miniapp/legal-workspace/state-duty', {
         method: 'POST',
-        body: JSON.stringify({
-          mode: document.getElementById('klt-duty-mode').value,
-          claimant_type: document.getElementById('klt-duty-claimant').value,
-          amount_kzt: Number(document.getElementById('klt-duty-amount').value || 0),
-          nonproperty_demands: Number(document.getElementById('klt-duty-nonproperty').value || 0),
-        }),
+        body: JSON.stringify({ mode: document.getElementById('klt-duty-mode').value, claimant_type: document.getElementById('klt-duty-claimant').value, amount_kzt: Number(document.getElementById('klt-duty-amount').value || 0), nonproperty_demands: Number(document.getElementById('klt-duty-nonproperty').value || 0) }),
       });
-      resultBox('klt-duty-result', `Госпошлина: ${money(payload.amount_kzt)}\n${payload.warning || ''}`, {
-        sourceUrl: payload.source_url,
-        sourceLabel: payload.source || 'Налоговый кодекс РК',
-      });
+      resultBox('klt-duty-result', `${t.dutyResult}: ${money(payload.amount_kzt, language)}\n${t.warning}`, language, { sourceUrl: payload.source_url, sourceLabel: payload.source || t.officialSource });
     } catch (error) {
-      resultBox('klt-duty-result', error.message, { error: true });
+      resultBox('klt-duty-result', messageForError(error, language), language, { error: true });
     } finally { submit.disabled = false; }
   });
 
-  document.getElementById('klt-penalty-submit')?.addEventListener('click', async (event) => {
+  document.getElementById('klt-penalty-submit')?.addEventListener('click', async event => {
     const submit = event.currentTarget;
     submit.disabled = true;
     try {
       const rateDate = document.getElementById('klt-penalty-rate-date').value;
       const payload = await api('/miniapp/legal-workspace/late-penalty-353', {
         method: 'POST',
-        body: JSON.stringify({
-          principal_kzt: Number(document.getElementById('klt-penalty-principal').value || 0),
-          start_date: document.getElementById('klt-penalty-start').value,
-          end_date: document.getElementById('klt-penalty-end').value,
-          rate_date: rateDate || null,
-        }),
+        body: JSON.stringify({ principal_kzt: Number(document.getElementById('klt-penalty-principal').value || 0), start_date: document.getElementById('klt-penalty-start').value, end_date: document.getElementById('klt-penalty-end').value, rate_date: rateDate || null }),
       });
       if (payload.status !== 'calculated') {
-        resultBox('klt-penalty-result', payload.reason || 'Ставка требует проверки', {
-          error: true, sourceUrl: payload.source_url, sourceLabel: payload.source,
-        });
+        resultBox('klt-penalty-result', t.needsRate, language, { error: true, sourceUrl: payload.source_url, sourceLabel: payload.source || t.officialSource });
       } else {
-        resultBox('klt-penalty-result', `Неустойка: ${money(payload.amount_kzt)}\nДней: ${payload.days}\nБазовая ставка: ${payload.base_rate_percent}%\n${payload.formula}`, {
-          sourceUrl: payload.source_url,
-          sourceLabel: payload.source,
-        });
+        resultBox('klt-penalty-result', `${t.penaltyResult}: ${money(payload.amount_kzt, language)}\n${t.days}: ${payload.days}\n${t.baseRate}: ${payload.base_rate_percent}%\n${payload.formula}`, language, { sourceUrl: payload.source_url, sourceLabel: payload.source || t.officialSource });
       }
     } catch (error) {
-      resultBox('klt-penalty-result', error.message, { error: true });
+      resultBox('klt-penalty-result', messageForError(error, language), language, { error: true });
     } finally { submit.disabled = false; }
   });
 
-  document.getElementById('klt-stress-submit')?.addEventListener('click', async (event) => {
+  document.getElementById('klt-stress-submit')?.addEventListener('click', async event => {
     const submit = event.currentTarget;
     submit.disabled = true;
-    resultBox('klt-stress-result', 'Проверяю позицию и актуальные нормы РК…');
+    resultBox('klt-stress-result', t.checking, language);
     try {
       const payload = await api('/miniapp/legal-workspace/stress-test', {
-        method: 'POST',
-        body: JSON.stringify({
-          case_id: document.getElementById('klt-stress-case').value,
-          focus: document.getElementById('klt-stress-focus').value,
-          language: selectedLanguage(),
-        }),
+        method: 'POST', timeoutMs: 110000,
+        body: JSON.stringify({ case_id: document.getElementById('klt-stress-case').value, focus: document.getElementById('klt-stress-focus').value, language }),
       });
-      const sources = (payload.sources || []).length ? `\n\nИсточники:\n${payload.sources.join('\n')}` : '';
-      resultBox('klt-stress-result', `${payload.answer || ''}${sources}`);
+      const sources = (payload.sources || []).length ? `\n\n${t.sources}:\n${payload.sources.join('\n')}` : '';
+      resultBox('klt-stress-result', `${payload.answer || ''}${sources}`, language);
     } catch (error) {
-      resultBox('klt-stress-result', error.message, { error: true });
+      resultBox('klt-stress-result', messageForError(error, language), language, { error: true });
     } finally { submit.disabled = false; }
   });
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, { once: true });
-else mount();
+export function reconcileLegalWorkspace() {
+  const consentedShell = document.querySelector('#root .app-shell:not(.consent-shell)');
+  if (!consentedShell) {
+    unmount();
+    return;
+  }
+  const language = selectedLanguage();
+  const current = document.getElementById('korgan-legal-tools-button');
+  if (current && current.dataset.language !== language) unmount();
+  if (!document.getElementById('korgan-legal-tools-button')) mount(language);
+  const button = document.getElementById('korgan-legal-tools-button');
+  const chatOpen = Boolean(document.querySelector('#root .chat-shell'));
+  if (button) button.hidden = chatOpen;
+  if (chatOpen) document.getElementById('korgan-legal-tools-backdrop')?.classList.remove('open');
+}
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', reconcileLegalWorkspace, { once: true });
+  else reconcileLegalWorkspace();
+  globalThis.setInterval?.(reconcileLegalWorkspace, RECONCILE_MS);
+}
