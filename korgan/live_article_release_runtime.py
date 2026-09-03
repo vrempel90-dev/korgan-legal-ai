@@ -129,21 +129,36 @@ async def _live_act(act_id: str) -> LiveAct:
     return act
 
 
-def _article_text(act: LiveAct, article: str, part: str) -> str:
+def _article_variants(act: LiveAct, article: str, part: str) -> list[tuple[str, str]]:
+    """Return independently verifiable subdivisions of one cited article.
+
+    An article-level citation (for example ``статья 350 ГК РК``) does not mean
+    that every qualifier from every paragraph of that article must be repeated
+    in the sentence that cites it. The old verifier concatenated all paragraphs
+    before checking wording. Article 350 therefore inherited ``только`` from
+    paragraph 2 even when the claim relied on paragraph 1, and a correct claim
+    was blocked in production.
+
+    Explicit paragraph citations still resolve to that paragraph only. For an
+    article-level citation each parsed paragraph is checked independently; an
+    unsplit article remains one variant. This narrows verification to the legal
+    proposition actually asserted without weakening the qualifier checks inside
+    the relevant paragraph.
+    """
     items = act.articles.get(article)
     if not items:
-        return ""
+        return []
     if part:
         exact = items.get(part)
         if exact:
-            return exact
+            return [(part, exact)]
         # Some one-part articles are not split by the parser because the only
         # numbered paragraph is also the entire body. Only part 1 may safely
         # fall back to the whole single entry.
         if part == "1" and len(items) == 1 and "" in items:
-            return items[""]
-        return ""
-    return " ".join(value for value in items.values() if value).strip()
+            return [(part, items[""])]
+        return []
+    return [(key, value) for key, value in items.items() if value]
 
 
 def _citation_paragraph(text: str, reference: citation_audit.ProvisionReference) -> str:
@@ -158,21 +173,41 @@ def _citation_paragraph(text: str, reference: citation_audit.ProvisionReference)
     return ""
 
 
-def _verify_wording(paragraph: str, live_text: str, reference: citation_audit.ProvisionReference) -> None:
+def _verify_wording_variants(
+    paragraph: str,
+    variants: list[tuple[str, str]],
+    reference: citation_audit.ProvisionReference,
+) -> None:
+    if not variants:
+        raise LiveArticleVerificationError(
+            f"{reference.label()} не содержит текста, пригодного для live-проверки"
+        )
+
     quote = citation_audit._quote_in(paragraph)
     if quote:
-        if normalize_text(quote) not in normalize_text(live_text):
-            raise LiveArticleVerificationError(
-                f"дословная цитата {reference.label()} не совпадает с живым текстом Adilet"
-            )
-        return
+        normalized_quote = normalize_text(quote)
+        if any(normalized_quote in normalize_text(live_text) for _, live_text in variants):
+            return
+        raise LiveArticleVerificationError(
+            f"дословная цитата {reference.label()} не совпадает с живым текстом Adilet"
+        )
 
     legal_statement = _norm_claim_only(paragraph)
-    defects = paraphrase_defects(legal_statement, live_text)
-    if defects:
-        raise LiveArticleVerificationError(
-            f"правовой вывод по {reference.label()} не подтверждается живым текстом нормы: {defects[0]}"
-        )
+    checks = [
+        (part, paraphrase_defects(legal_statement, live_text))
+        for part, live_text in variants
+    ]
+    if any(not defects for _, defects in checks):
+        return
+
+    # Every subdivision rejected the proposition. Report the least noisy
+    # deterministic finding instead of a qualifier copied from an unrelated
+    # paragraph of the same article.
+    _, best_defects = min(checks, key=lambda item: (len(item[1]), item[0]))
+    detail = best_defects[0] if best_defects else "правовой вывод не подтверждён"
+    raise LiveArticleVerificationError(
+        f"правовой вывод по {reference.label()} не подтверждается живым текстом нормы: {detail}"
+    )
 
 
 def _unique_references(
@@ -229,12 +264,12 @@ async def verify_document_articles(file_bytes: bytes) -> None:
     acts = await _load_required_acts(references)
     for reference in references:
         candidates = _ACT_CANDIDATES[reference.act]
-        matches: list[tuple[LiveAct, str]] = []
+        matches: list[tuple[LiveAct, list[tuple[str, str]]]] = []
         for act_id in candidates:
             live = acts[act_id]
-            provision = _article_text(live, reference.article, reference.part)
-            if provision:
-                matches.append((live, provision))
+            variants = _article_variants(live, reference.article, reference.part)
+            if variants:
+                matches.append((live, variants))
 
         if len(matches) != 1:
             if not matches:
@@ -245,11 +280,11 @@ async def verify_document_articles(file_bytes: bytes) -> None:
                 f"{reference.label()} неоднозначно сопоставилась с несколькими актуальными актами"
             )
 
-        live, provision = matches[0]
+        live, variants = matches[0]
         paragraph = _citation_paragraph(text, reference)
         if not paragraph:
             raise LiveArticleVerificationError(f"не удалось локализовать {reference.label()} в финальном Word")
-        _verify_wording(paragraph, provision, reference)
+        _verify_wording_variants(paragraph, variants, reference)
         LOGGER.info(
             "LIVE_ARTICLE_VERIFIED reference=%s act_id=%s edition=%s source=%s",
             reference.label(),

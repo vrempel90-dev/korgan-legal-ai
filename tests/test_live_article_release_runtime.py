@@ -164,3 +164,89 @@ def test_required_live_acts_are_prefetched_concurrently(monkeypatch: pytest.Monk
         assert started == expected
 
     asyncio.run(scenario())
+
+
+def test_article_level_citation_checks_matching_paragraph_not_unrelated_qualifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for the real Article 350 production false-positive.
+
+    Paragraph 2 contains the qualifier ``только``. A proposition grounded in
+    paragraph 1 must not be rejected merely because the citation names the
+    article rather than the paragraph.
+    """
+    import korgan.live_article_release_runtime as runtime
+
+    async def scenario() -> None:
+        general = runtime.LiveAct(
+            act_id=runtime.ACT_GK_GENERAL,
+            source_url="https://adilet.zan.kz/rus/docs/K940001000_",
+            edition_date="20.08.2026",
+            articles={
+                "350": {
+                    "1": "Должник, нарушивший обязательство, обязан возместить кредитору вызванные нарушением убытки.",
+                    "2": (
+                        "Стороны по взаимному соглашению могут предусмотреть взыскание "
+                        "только реального ущерба в имуществе."
+                    ),
+                }
+            },
+        )
+        special = runtime.LiveAct(
+            act_id=runtime.ACT_GK_SPECIAL,
+            source_url="https://adilet.zan.kz/rus/docs/K990000409_",
+            edition_date="25.08.2026",
+            articles={},
+        )
+
+        async def live_act(act_id: str):
+            return general if act_id == runtime.ACT_GK_GENERAL else special
+
+        monkeypatch.setattr(runtime, "_live_act", live_act)
+        payload = _docx_bytes(
+            "В силу статьи 350 ГК РК должник, нарушивший обязательство, обязан "
+            "возместить кредитору вызванные нарушением убытки."
+        )
+
+        await runtime.verify_document_articles(payload)
+
+    asyncio.run(scenario())
+
+
+def test_explicit_paragraph_keeps_its_qualifier_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Subdivision matching must not weaken an explicit paragraph citation."""
+    import korgan.live_article_release_runtime as runtime
+
+    async def scenario() -> None:
+        general = runtime.LiveAct(
+            act_id=runtime.ACT_GK_GENERAL,
+            source_url="https://adilet.zan.kz/rus/docs/K940001000_",
+            edition_date="20.08.2026",
+            articles={
+                "350": {
+                    "2": (
+                        "Стороны по взаимному соглашению могут предусмотреть взыскание "
+                        "только реального ущерба в имуществе."
+                    )
+                }
+            },
+        )
+        special = runtime.LiveAct(
+            act_id=runtime.ACT_GK_SPECIAL,
+            source_url="https://adilet.zan.kz/rus/docs/K990000409_",
+            edition_date="25.08.2026",
+            articles={},
+        )
+
+        async def live_act(act_id: str):
+            return general if act_id == runtime.ACT_GK_GENERAL else special
+
+        monkeypatch.setattr(runtime, "_live_act", live_act)
+        payload = _docx_bytes(
+            "Согласно пункту 2 статьи 350 ГК РК стороны могут предусмотреть взыскание реального ущерба."
+        )
+
+        with pytest.raises(runtime.LiveArticleVerificationError, match="только"):
+            await runtime.verify_document_articles(payload)
+
+    asyncio.run(scenario())
