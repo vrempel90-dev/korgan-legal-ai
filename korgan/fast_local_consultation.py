@@ -6,14 +6,16 @@ A consultation must not spend a minute opening dozens of URLs. The production
 corpus is refreshed from Adilet separately; this adapter retrieves a small set
 of relevant provisions locally, gives only those provisions to one structured
 model call, then deterministically rejects any article the model was not shown.
-The old web-bound consultation remains a fallback only when the local corpus is
-unavailable or the fast model call itself fails.
+The old web-bound consultation remains a fallback when the local corpus is
+unavailable, stale, or the fast model call itself fails.
 """
 
 import logging
 from typing import Any, Awaitable, Callable
 
+from korgan import claim_corpus_health
 from korgan.legal.pipeline import open_corpus
+from korgan.legal_calc import today_kz
 from korgan.professional_consultation import _NORMATIVE_ADVICE_RE
 from korgan.provision_check import paraphrase_defects
 from korgan.robust_production_legal import _is_adilet_source
@@ -86,6 +88,16 @@ def _candidate_block(provisions: tuple[Any, ...]) -> str:
             f"Текст нормы: {body}"
         )
     return "\n\n---\n\n".join(parts)
+
+
+def _freshness_issue(corpus: Any, provisions: list[Any]) -> str:
+    """Return the first snapshot problem for an act offered to this answer."""
+    checked_on = today_kz()
+    for act_id in sorted({str(item.act_id) for item in provisions if getattr(item, "act_id", None)}):
+        issue = claim_corpus_health._snapshot_issue(corpus, act_id, today=checked_on)
+        if issue:
+            return issue
+    return ""
 
 
 def _render(
@@ -190,18 +202,28 @@ class FastLocalConsultationAdapter:
     ) -> tuple[str, list[str]]:
         query = (str(question or "") + "\n" + str(case_context or "")[:8000]).strip()
         corpus = None
+        offered: list[Any] = []
+        local_issue = ""
         try:
             corpus = open_corpus()
             if corpus is None:
-                LOGGER.warning("FAST_LOCAL_CONSULT corpus unavailable; using web fallback")
-                return await self.fallback(question, case_context=case_context, language=language)
-            offered = corpus.search(query, limit=8)
-        except Exception:
-            LOGGER.exception("FAST_LOCAL_CONSULT corpus lookup failed; using web fallback")
-            return await self.fallback(question, case_context=case_context, language=language)
+                local_issue = "local corpus unavailable"
+            else:
+                offered = corpus.search(query, limit=8)
+                if offered:
+                    local_issue = _freshness_issue(corpus, offered)
+                else:
+                    local_issue = "local corpus returned no candidates"
+        except Exception as exc:
+            LOGGER.exception("FAST_LOCAL_CONSULT corpus lookup/health failed; using web fallback")
+            local_issue = f"corpus health error: {type(exc).__name__}"
         finally:
             if corpus is not None:
                 corpus.close()
+
+        if local_issue:
+            LOGGER.warning("FAST_LOCAL_CONSULT %s; using web fallback", local_issue)
+            return await self.fallback(question, case_context=case_context, language=language)
 
         provisions = {
             provision.article_id: provision
