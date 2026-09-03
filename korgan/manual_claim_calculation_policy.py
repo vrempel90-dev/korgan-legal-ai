@@ -39,6 +39,12 @@ _AUTO_CALC_NOTE_RE = re.compile(
     r"(?i)(?:расч[её]т\w*\s+(?:госпошлин|неустойк)|госпошлин\w*\s+требует\s+расч|"
     r"базов\w*\s+ставк\w*.*неустойк|неустойк\w*.*не\s+рассчит)"
 )
+_MINIAPP_CONTEXT_MARKERS = (
+    "Факты, сообщённые пользователем:\n",
+    "Материалы дела:\n",
+    "Дополнительные факты, сообщённые пользователем в консультации:\n",
+    "ИСТОЧНИК МАТЕРИАЛА:",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,12 +55,12 @@ class ManualPenalty:
 
 @contextmanager
 def manual_claim_calculation_mode() -> Iterator[None]:
-    """Enable button-only amounts for one MiniApp claim-generation coroutine.
+    """Explicitly enable button-only amounts for one claim-generation coroutine.
 
-    ContextVar keeps concurrent consultations/documents isolated. The standalone
-    deterministic calculators remain usable and their historical tests keep their
-    original semantics; only a MiniApp claim created while this context is active
-    stops automatic duty/penalty inference.
+    ContextVar keeps concurrent consultations/documents isolated. Production MiniApp
+    contexts are also recognized by the stable headings emitted by
+    ``miniapp_api_v2._case_context`` so the policy applies to both direct HTTP and
+    persisted generation-job execution without changing the progress-job lifecycle.
     """
     token = _MANUAL_MODE.set(True)
     try:
@@ -63,8 +69,19 @@ def manual_claim_calculation_mode() -> Iterator[None]:
         _MANUAL_MODE.reset(token)
 
 
-def manual_claim_calculation_mode_enabled() -> bool:
-    return _MANUAL_MODE.get()
+def _is_miniapp_claim_context(case_context: str) -> bool:
+    text = str(case_context or "")
+    if calculator_state_duty(text) is not None or calculator_penalty(text) is not None:
+        return True
+    return any(marker in text for marker in _MINIAPP_CONTEXT_MARKERS)
+
+
+def manual_claim_calculation_mode_enabled(case_context: str | None = None) -> bool:
+    if _MANUAL_MODE.get():
+        return True
+    if case_context is None:
+        return False
+    return _is_miniapp_claim_context(case_context)
 
 
 def _amount_key(value: str) -> str:
@@ -192,6 +209,23 @@ def apply_manual_penalty(
     ]
 
 
+def finalize_manual_claim_calculations(
+    case_context: str,
+    draft: ClaimDraft,
+    *,
+    language: str = "ru",
+) -> None:
+    """Direct regression helper for the same final invariant used in MiniApp release."""
+    from korgan import universal_word_quality_guard as guard
+    from korgan.professional_claim_finalizer import _recalculate_price
+
+    guard.sanitize_draft_instructions(draft)
+    apply_manual_penalty(case_context, None, draft, language=language)
+    _recalculate_price(draft)
+    apply_manual_state_duty(case_context, draft, language=language)
+    guard._strip_internal_score_notes(draft)
+
+
 def _complete_manual_penalty(
     case_context: str,
     draft: ClaimDraft,
@@ -206,10 +240,10 @@ def _complete_manual_penalty(
 def install_manual_claim_calculation_policy() -> None:
     """Make the MiniApp claim-form calculator the sole authority inside that flow.
 
-    The wrappers delegate to the existing deterministic calculators everywhere else.
-    This avoids changing Telegram/non-MiniApp flows and keeps calculator unit tests as
-    independent safety coverage while removing automatic calculations from the UI flow
-    that now has an explicit «Расчёт госпошлины и неустойки» button.
+    Wrappers delegate to the existing deterministic calculators everywhere else.
+    MiniApp v2 contexts are recognized by the stable factual/source headings produced
+    by its context builder. This keeps Telegram and standalone calculator behavior
+    unchanged while the MiniApp claim flow uses only «Добавить в иск» amounts.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -229,25 +263,25 @@ def install_manual_claim_calculation_policy() -> None:
     original_complete_relief = guard.complete_claim_relief_from_materials
 
     def production_duty(case_context: str, draft: ClaimDraft) -> None:
-        if manual_claim_calculation_mode_enabled():
+        if manual_claim_calculation_mode_enabled(case_context):
             apply_manual_state_duty(case_context, draft)
         else:
             original_production_duty(case_context, draft)
 
     def fast_v2_duty(case_context: str, draft: ClaimDraft) -> None:
-        if manual_claim_calculation_mode_enabled():
+        if manual_claim_calculation_mode_enabled(case_context):
             apply_manual_state_duty(case_context, draft)
         else:
             original_fast_v2_duty(case_context, draft)
 
     def guard_duty(case_context: str, draft: ClaimDraft, language: str = "ru") -> None:
-        if manual_claim_calculation_mode_enabled():
+        if manual_claim_calculation_mode_enabled(case_context):
             apply_manual_state_duty(case_context, draft, language=language)
         else:
             original_guard_duty(case_context, draft, language=language)
 
     def explicit_penalty(case_context: str) -> bool:
-        if manual_claim_calculation_mode_enabled():
+        if manual_claim_calculation_mode_enabled(case_context):
             return _is_manual_penalty_requested(case_context)
         return original_explicit_penalty(case_context)
 
@@ -258,7 +292,7 @@ def install_manual_claim_calculation_policy() -> None:
         *,
         filing_date: Any = None,
     ) -> None:
-        if manual_claim_calculation_mode_enabled():
+        if manual_claim_calculation_mode_enabled(case_context):
             apply_manual_penalty(case_context, research, draft, filing_date=filing_date)
         else:
             original_apply_penalty(case_context, research, draft, filing_date=filing_date)
@@ -270,7 +304,7 @@ def install_manual_claim_calculation_policy() -> None:
         *,
         filing_date: Any = None,
     ) -> None:
-        if manual_claim_calculation_mode_enabled():
+        if manual_claim_calculation_mode_enabled(case_context):
             apply_manual_penalty(case_context, research, draft, filing_date=filing_date)
         else:
             original_apply_article_353(case_context, research, draft, filing_date=filing_date)
@@ -281,7 +315,7 @@ def install_manual_claim_calculation_policy() -> None:
         *,
         language: str = "ru",
     ) -> bool:
-        if manual_claim_calculation_mode_enabled():
+        if manual_claim_calculation_mode_enabled(case_context):
             return _complete_manual_penalty(case_context, draft, language=language)
         return original_complete_relief(case_context, draft, language=language)
 
