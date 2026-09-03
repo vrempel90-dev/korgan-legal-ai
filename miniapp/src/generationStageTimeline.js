@@ -12,12 +12,14 @@ const LIFECYCLE_EVENT = 'korgan:generation-lifecycle';
 const COPY = {
   ru: {
     title: 'Этапы подготовки',
-    live: 'Идёт реальная обработка',
+    live: 'Работа продолжается',
+    current: 'Сейчас выполняется',
     stages: ['Старт', 'Право и проект', 'Проверка качества', 'Word', 'Готово'],
   },
   kk: {
     title: 'Дайындау кезеңдері',
-    live: 'Нақты өңдеу жүріп жатыр',
+    live: 'Жұмыс жалғасуда',
+    current: 'Қазір орындалып жатыр',
     stages: ['Бастау', 'Құқық және жоба', 'Сапаны тексеру', 'Word', 'Дайын'],
   },
 };
@@ -43,7 +45,8 @@ function renderTimeline(page, progress) {
   const value = clampProgress(progress.getAttribute('aria-valuenow'));
   const active = stageIndexForProgress(value);
   const failed = /Подготовка не завершилась|Дайындау аяқталмады/.test(page.textContent || '');
-  const signature = timelineSignature({ language, progress: value, failed });
+  const currentStage = String(progress.getAttribute('aria-label') || copy.stages[active] || '').trim();
+  const signature = `${timelineSignature({ language, progress: value, failed })}|${currentStage}`;
 
   let root = document.getElementById(ROOT_ID);
   // Never reuse a manually injected node from an old React screen. That was the
@@ -63,13 +66,25 @@ function renderTimeline(page, progress) {
   root.style.setProperty('--generation-line-progress', `${Math.min(value * 0.8, 80)}%`);
   root.dataset.progress = String(value);
 
+  // Server progress changes trigger lifecycle events. When nothing changed,
+  // leave the DOM untouched; the CSS pulse/shimmer communicates that the active
+  // backend stage is still working without a permanent JS repaint loop.
   if (root.dataset.signature === signature) return root;
   root.dataset.signature = signature;
+
+  const statusClass = failed ? 'korgan-generation-state is-failed' : 'korgan-generation-live';
+  const statusIcon = failed ? '' : '<i aria-hidden="true"></i>';
+  const statusText = failed ? (language === 'kk' ? 'Қате' : 'Ошибка') : copy.live;
 
   root.innerHTML = `
     <div class="korgan-generation-stage-title">
       <strong>${copy.title}</strong>
-      <span>${failed ? (language === 'kk' ? 'Қате' : 'Ошибка') : copy.live}</span>
+      <span class="${statusClass}">${statusIcon}${statusText}</span>
+    </div>
+    <div class="korgan-generation-current">
+      <span>${copy.current}</span>
+      <strong>${currentStage || copy.stages[active]}</strong>
+      <small>${value}%</small>
     </div>
     <div class="korgan-generation-stage-track" aria-label="${copy.title}">
       <span class="korgan-generation-stage-line" aria-hidden="true"></span>
