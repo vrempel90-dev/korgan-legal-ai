@@ -23,6 +23,9 @@ LOGGER = logging.getLogger(__name__)
 _FAST_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        # The model summary is intentionally not rendered directly. A
+        # customer-facing legal conclusion is derived from accepted legal_points
+        # below, so free prose can never bypass source binding.
         "summary": {"type": "string"},
         "legal_points": {
             "type": "array",
@@ -42,9 +45,9 @@ _FAST_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "text": {"type": "string"},
-                    "basis_article_id": {"type": "string"},
+                    "basis_statement": {"type": "string"},
                 },
-                "required": ["text", "basis_article_id"],
+                "required": ["text", "basis_statement"],
                 "additionalProperties": False,
             },
         },
@@ -54,9 +57,9 @@ _FAST_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "text": {"type": "string"},
-                    "basis_article_id": {"type": "string"},
+                    "basis_statement": {"type": "string"},
                 },
-                "required": ["text", "basis_article_id"],
+                "required": ["text", "basis_statement"],
                 "additionalProperties": False,
             },
         },
@@ -89,23 +92,40 @@ def _render(
     payload: dict[str, Any],
     *,
     accepted: list[tuple[str, str, str]],
-    accepted_ids: set[str],
     language: str,
 ) -> str:
     kk = language == "kk"
-    summary = _clean(payload.get("summary"))
+    accepted_statements = {statement for statement, _, _ in accepted}
+
+    # Never display the model's free-form summary as a legal conclusion. The
+    # first accepted point has already passed offered-ID + provision-paraphrase
+    # validation and is therefore the only safe source for the short conclusion.
+    if accepted:
+        summary = accepted[0][0]
+    else:
+        summary = (
+            "Берілген деректер бойынша нақты құқықтық қорытындыны растайтын норма табылмады."
+            if kk
+            else "По имеющимся данным не удалось подтвердить норму для конкретного правового вывода."
+        )
 
     def linked(items: list[dict[str, Any]]) -> list[str]:
         result: list[str] = []
         for item in items or []:
             text = _clean(item.get("text"))
-            basis = _clean(item.get("basis_article_id"))
+            basis = _clean(item.get("basis_statement"))
             if not text:
                 continue
             if basis:
-                if basis not in accepted_ids:
+                # A legal/procedural recommendation may rely only on the exact
+                # statement that already survived provision validation. Merely
+                # naming the same article is insufficient: one article can
+                # contain several rules with different conditions.
+                if basis not in accepted_statements:
                     continue
             elif _NORMATIVE_ADVICE_RE.search(text):
+                # Empty basis is reserved for factual steps only, e.g. preserve
+                # a receipt or obtain a copy of a document.
                 continue
             if text not in result:
                 result.append(text)
@@ -116,7 +136,7 @@ def _render(
     unknowns = [_clean(x) for x in list(payload.get("unknowns") or []) if _clean(x)]
 
     if kk:
-        out = ["Қысқаша қорытынды", summary or "Сұрақ бойынша құқықтық жағдай талданды."]
+        out = ["Қысқаша қорытынды", summary]
         out.append("\nҚұқықтық негіз")
         if accepted:
             out.extend(f"{i}. {statement} ({label})" for i, (statement, label, _) in enumerate(accepted, 1))
@@ -133,7 +153,7 @@ def _render(
             out.extend(f"• {text}" for text in list(dict.fromkeys(unknowns))[:6])
         return "\n".join(out).strip()
 
-    out = ["Краткий вывод", summary or "Правовая ситуация по вашему вопросу проанализирована."]
+    out = ["Краткий вывод", summary]
     out.append("\nПравовая оценка")
     if accepted:
         out.extend(f"{i}. {statement} ({label})" for i, (statement, label, _) in enumerate(accepted, 1))
@@ -197,8 +217,12 @@ class FastLocalConsultationAdapter:
             "которые приведены ниже из локального корпуса KORGAN, обновляемого с Adilet.\n"
             "FACT LOCK: не придумывай даты, суммы, договоры, документы и действия сторон.\n"
             "Для каждого правового вывода укажи article_id ровно из предложенного списка. "
+            "statement должен следовать непосредственно из текста этой нормы.\n"
+            "Для каждого юридического action/risk basis_statement должен ДОСЛОВНО совпадать со statement "
+            "одного legal_point. Оставляй basis_statement пустым только для чисто фактического действия, "
+            "которое не утверждает право, обязанность, срок, подсудность, пошлину или иной правовой результат.\n"
             "Если подходящей нормы нет — не выдумывай её, вынеси вопрос в unknowns.\n"
-            "Дай короткий понятный ответ клиенту: вывод, применимое право, что делать и реальные риски.\n"
+            "Дай короткий понятный ответ клиенту: применимое право, что делать и реальные риски.\n"
             f"Язык ответа: {'казахский' if language == 'kk' else 'русский'}.\n\n"
             f"ВОПРОС:\n{str(question or '')[:6000]}\n\n"
             f"МАТЕРИАЛЫ ДЕЛА:\n{str(case_context or '')[:10000] or 'нет'}\n\n"
@@ -221,7 +245,6 @@ class FastLocalConsultationAdapter:
             return await self.fallback(question, case_context=case_context, language=language)
 
         accepted: list[tuple[str, str, str]] = []
-        accepted_ids: set[str] = set()
         sources: list[str] = []
         for raw in list(payload.get("legal_points") or []):
             statement = _clean(raw.get("statement"))
@@ -232,14 +255,12 @@ class FastLocalConsultationAdapter:
             if paraphrase_defects(statement, str(provision.body or "")):
                 continue
             accepted.append((statement, provision.label(), provision.url))
-            accepted_ids.add(article_id)
             if provision.url not in sources:
                 sources.append(provision.url)
 
         text = _render(
             payload,
             accepted=accepted,
-            accepted_ids=accepted_ids,
             language=language,
         )
         LOGGER.info(
