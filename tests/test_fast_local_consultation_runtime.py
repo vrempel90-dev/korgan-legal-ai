@@ -151,7 +151,7 @@ def test_fast_consult_drops_normative_action_not_linked_to_accepted_statement(mo
 
 def test_old_110_second_setting_is_lifted_to_safety_floor(monkeypatch):
     monkeypatch.setenv("KORGAN_DOCUMENT_GENERATION_TIMEOUT_SECONDS", "110")
-    assert latency.document_generation_timeout_seconds() == 240.0
+    assert latency.document_generation_timeout_seconds() == 600.0
 
 
 def test_progress_report_is_request_local():
