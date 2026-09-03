@@ -22,6 +22,9 @@ from korgan import miniapp_case_activity_cleanup as _miniapp_case_activity_clean
 from korgan import miniapp_manual_payment_admin as _miniapp_manual_payment_admin  # noqa: F401
 from korgan import miniapp_consultation_quota_api as _miniapp_consultation_quota_api  # noqa: F401
 from korgan import miniapp_tole_payments as _miniapp_tole_payments  # noqa: F401
+# Install only after Tole owns its routes: the wrapper turns a verified `paid`
+# transition into the durable generation job without requiring another client tap.
+from korgan import miniapp_paid_autostart_runtime as _miniapp_paid_autostart_runtime  # noqa: F401
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_consent_status as _miniapp_consent_status
 from korgan import miniapp_document_access as _miniapp_document_access
