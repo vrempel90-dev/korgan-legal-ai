@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import logging
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
 from korgan.legal_types import ClaimDraft, VerificationStatus
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
+_MANUAL_MODE: ContextVar[bool] = ContextVar("korgan_manual_claim_calculations", default=False)
 
 _MONEY_TOKEN = r"\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:тенге|теңге|тг\b|₸|kzt)"
 _DUTY_LINE_RE = re.compile(
@@ -42,6 +45,26 @@ _AUTO_CALC_NOTE_RE = re.compile(
 class ManualPenalty:
     amount: str
     line: str
+
+
+@contextmanager
+def manual_claim_calculation_mode() -> Iterator[None]:
+    """Enable button-only amounts for one MiniApp claim-generation coroutine.
+
+    ContextVar keeps concurrent consultations/documents isolated. The standalone
+    deterministic calculators remain usable and their historical tests keep their
+    original semantics; only a MiniApp claim created while this context is active
+    stops automatic duty/penalty inference.
+    """
+    token = _MANUAL_MODE.set(True)
+    try:
+        yield
+    finally:
+        _MANUAL_MODE.reset(token)
+
+
+def manual_claim_calculation_mode_enabled() -> bool:
+    return _MANUAL_MODE.get()
 
 
 def _amount_key(value: str) -> str:
@@ -89,14 +112,7 @@ def _strip_or_validate_penalty_requests(
     draft: ClaimDraft,
     manual: ManualPenalty | None,
 ) -> bool:
-    """Remove model/legacy penalty amounts while preserving a grounded combined request.
-
-    If a request combines another monetary remedy with the penalty, it is kept only
-    when it already contains the exact calculator amount. This prevents a legacy
-    calculated number from surviving in a mixed prayer line. An unsafe mixed line is
-    dropped and the draft is marked for review rather than publishing contradictory
-    arithmetic.
-    """
+    """Remove legacy/model penalty amounts while preserving an exact grounded combined line."""
     expected = _amount_key(manual.amount) if manual else ""
     cleaned: list[str] = []
     grounded_combined = False
@@ -115,7 +131,7 @@ def _strip_or_validate_penalty_requests(
             continue
         if combined:
             unsafe_combined = True
-        # Penalty-only lines are always rebuilt from the calculator value below.
+        # Penalty-only lines are rebuilt below exclusively from the calculator value.
 
     draft.requests = cleaned
     if unsafe_combined:
@@ -176,23 +192,6 @@ def apply_manual_penalty(
     ]
 
 
-def finalize_manual_claim_calculations(
-    case_context: str,
-    draft: ClaimDraft,
-    *,
-    language: str = "ru",
-) -> None:
-    """Final fail-safe: no legacy/model calculation can survive Word release."""
-    from korgan import universal_word_quality_guard as guard
-    from korgan.professional_claim_finalizer import _recalculate_price
-
-    guard.sanitize_draft_instructions(draft)
-    apply_manual_penalty(case_context, None, draft, language=language)
-    _recalculate_price(draft)
-    apply_manual_state_duty(case_context, draft, language=language)
-    guard._strip_internal_score_notes(draft)
-
-
 def _complete_manual_penalty(
     case_context: str,
     draft: ClaimDraft,
@@ -205,11 +204,12 @@ def _complete_manual_penalty(
 
 
 def install_manual_claim_calculation_policy() -> None:
-    """Make the claim-form calculator the sole authority for duty/penalty amounts.
+    """Make the MiniApp claim-form calculator the sole authority inside that flow.
 
-    The legal-workspace endpoints themselves are intentionally untouched; they remain
-    the calculator behind the Mini App button. Only automatic inference/recalculation
-    inside the document pipeline is disabled.
+    The wrappers delegate to the existing deterministic calculators everywhere else.
+    This avoids changing Telegram/non-MiniApp flows and keeps calculator unit tests as
+    independent safety coverage while removing automatic calculations from the UI flow
+    that now has an explicit «Расчёт госпошлины и неустойки» button.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -220,24 +220,80 @@ def install_manual_claim_calculation_policy() -> None:
     from korgan import production_legal
     from korgan import universal_word_quality_guard as guard
 
-    # Stop the legacy state-duty calculators at their common production call sites.
-    production_legal._apply_state_duty = apply_manual_state_duty
-    fast_v2._apply_state_duty = apply_manual_state_duty
-    guard.apply_state_duty_from_draft = apply_manual_state_duty
+    original_production_duty = production_legal._apply_state_duty
+    original_fast_v2_duty = fast_v2._apply_state_duty
+    original_guard_duty = guard.apply_state_duty_from_draft
+    original_explicit_penalty = late._explicit_penalty_requested
+    original_apply_penalty = late._apply_verified_penalty
+    original_apply_article_353 = late._apply_verified_article_353
+    original_complete_relief = guard.complete_claim_relief_from_materials
 
-    # A mention such as «рассчитать неустойку» no longer starts automatic Article
-    # 353 calculation/research. Only the exact line inserted by the calculator is
-    # treated as a calculated penalty, and its amount is copied without recomputing.
-    late._explicit_penalty_requested = _is_manual_penalty_requested
-    late._apply_verified_penalty = apply_manual_penalty
-    late._apply_verified_article_353 = apply_manual_penalty
+    def production_duty(case_context: str, draft: ClaimDraft) -> None:
+        if manual_claim_calculation_mode_enabled():
+            apply_manual_state_duty(case_context, draft)
+        else:
+            original_production_duty(case_context, draft)
 
-    # Universal release runs after all older hotfix layers, so this is the final
-    # invariant immediately before quality assessment/Word rendering.
-    guard.complete_claim_relief_from_materials = _complete_manual_penalty
-    guard.finalize_claim_for_release = finalize_manual_claim_calculations
+    def fast_v2_duty(case_context: str, draft: ClaimDraft) -> None:
+        if manual_claim_calculation_mode_enabled():
+            apply_manual_state_duty(case_context, draft)
+        else:
+            original_fast_v2_duty(case_context, draft)
+
+    def guard_duty(case_context: str, draft: ClaimDraft, language: str = "ru") -> None:
+        if manual_claim_calculation_mode_enabled():
+            apply_manual_state_duty(case_context, draft, language=language)
+        else:
+            original_guard_duty(case_context, draft, language=language)
+
+    def explicit_penalty(case_context: str) -> bool:
+        if manual_claim_calculation_mode_enabled():
+            return _is_manual_penalty_requested(case_context)
+        return original_explicit_penalty(case_context)
+
+    def apply_penalty(
+        case_context: str,
+        research: Any,
+        draft: ClaimDraft,
+        *,
+        filing_date: Any = None,
+    ) -> None:
+        if manual_claim_calculation_mode_enabled():
+            apply_manual_penalty(case_context, research, draft, filing_date=filing_date)
+        else:
+            original_apply_penalty(case_context, research, draft, filing_date=filing_date)
+
+    def apply_article_353(
+        case_context: str,
+        research: Any,
+        draft: ClaimDraft,
+        *,
+        filing_date: Any = None,
+    ) -> None:
+        if manual_claim_calculation_mode_enabled():
+            apply_manual_penalty(case_context, research, draft, filing_date=filing_date)
+        else:
+            original_apply_article_353(case_context, research, draft, filing_date=filing_date)
+
+    def complete_relief(
+        case_context: str,
+        draft: ClaimDraft,
+        *,
+        language: str = "ru",
+    ) -> bool:
+        if manual_claim_calculation_mode_enabled():
+            return _complete_manual_penalty(case_context, draft, language=language)
+        return original_complete_relief(case_context, draft, language=language)
+
+    production_legal._apply_state_duty = production_duty
+    fast_v2._apply_state_duty = fast_v2_duty
+    guard.apply_state_duty_from_draft = guard_duty
+    late._explicit_penalty_requested = explicit_penalty
+    late._apply_verified_penalty = apply_penalty
+    late._apply_verified_article_353 = apply_article_353
+    guard.complete_claim_relief_from_materials = complete_relief
 
     _INSTALLED = True
     LOGGER.info(
-        "Installed manual claim calculation policy: Mini App calculator is sole source for state duty and penalty amounts"
+        "Installed scoped manual claim calculation policy: MiniApp claim generation uses calculator-button amounts only"
     )
