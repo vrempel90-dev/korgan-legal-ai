@@ -11,19 +11,34 @@ from korgan.professional_consultation import _render_consultation
 def test_recovery_runtime_has_no_free_document_generation_import() -> None:
     source = Path("korgan/miniapp_api_recovery_cors.py").read_text(encoding="utf-8")
     assert "miniapp_free_generation_runtime" not in source
-    assert "miniapp_document_payment_required" in source
+    assert "miniapp_document_payment_required" not in source
 
 
-def test_paid_document_guard_fails_closed_when_payments_are_disabled() -> None:
-    # Import locally so the static recovery-runtime assertion above stays useful
-    # even if another test imported the complete Mini App stack first.
-    from korgan.miniapp_document_payment_required import require_document_payments_enabled
+def test_generation_owner_fails_closed_when_payments_are_disabled(monkeypatch) -> None:
+    from korgan import miniapp_generation_api as generation_api
 
-    require_document_payments_enabled(True)
+    monkeypatch.setattr(generation_api.settings, "payments_enabled", False)
     with pytest.raises(HTTPException) as raised:
-        require_document_payments_enabled(False)
+        generation_api._require_paid_document_runtime()
     assert raised.value.status_code == 503
     assert "только после подтвержденной оплаты" in str(raised.value.detail)
+
+
+def test_generation_owner_keeps_existing_route_identity() -> None:
+    from korgan import miniapp_generation_api as generation_api
+
+    routes = [
+        route
+        for route in generation_api.app.router.routes
+        if getattr(route, "path", None) == "/miniapp/documents/generate"
+        and "POST" in (getattr(route, "methods", set()) or set())
+    ]
+    assert len(routes) == 1
+    # Tole may intentionally own the route when configured in a real runtime;
+    # otherwise durable generation remains the single owner. The hard payment
+    # rule is implemented inside that owner instead of by installing a shadow
+    # route in tests/staging.
+    assert "miniapp_document_payment_required" not in routes[0].endpoint.__module__
 
 
 def test_professional_consultation_drops_action_with_unverified_legal_basis() -> None:
@@ -74,3 +89,10 @@ def test_professional_consultation_keeps_action_linked_to_verified_point() -> No
 def test_recovery_runtime_installs_professional_consultation_layer() -> None:
     source = Path("korgan/miniapp_api_recovery_cors.py").read_text(encoding="utf-8")
     assert "miniapp_professional_consultation_runtime" in source
+
+
+def test_professional_consultation_preserves_service_object_identity() -> None:
+    from korgan import miniapp_api_v3
+    from korgan import miniapp_professional_consultation_runtime  # noqa: F401
+
+    assert miniapp_api_v3.core.service is miniapp_api_v3.service
