@@ -64,11 +64,11 @@ function claimForm() {
   return { page, textarea, anchor: page.querySelector('.input-meta') || textarea };
 }
 
-function formatDate(raw, lang) {
+function formatDate(raw) {
   const match = String(raw || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return String(raw || '');
   const [, year, month, day] = match;
-  return lang === 'kk' ? `${day}.${month}.${year}` : `${day}.${month}.${year}`;
+  return `${day}.${month}.${year}`;
 }
 
 function setControlledTextarea(textarea, value) {
@@ -140,7 +140,8 @@ function addResultAction(box, line, lang) {
 function waitForCalculation(kind) {
   const boxId = kind === 'duty' ? 'klt-duty-result' : 'klt-penalty-result';
   const box = document.getElementById(boxId);
-  const before = directText(box);
+  box?.classList.remove('show');
+  box?.classList.remove('error');
   const started = Date.now();
   const timer = globalThis.setInterval?.(() => {
     const currentBox = document.getElementById(boxId);
@@ -149,7 +150,7 @@ function waitForCalculation(kind) {
       return;
     }
     const text = directText(currentBox);
-    if (!currentBox.classList.contains('show') || !text || text === before) return;
+    if (!currentBox.classList.contains('show') || !text) return;
     globalThis.clearInterval?.(timer);
     if (currentBox.classList.contains('error')) return;
     const lang = language();
@@ -159,8 +160,8 @@ function waitForCalculation(kind) {
       addResultAction(currentBox, COPY[lang].dutyLine(amount), lang);
       return;
     }
-    const start = formatDate(document.getElementById('klt-penalty-start')?.value, lang);
-    const end = formatDate(document.getElementById('klt-penalty-end')?.value, lang);
+    const start = formatDate(document.getElementById('klt-penalty-start')?.value);
+    const end = formatDate(document.getElementById('klt-penalty-end')?.value);
     const days = resultDays(text);
     addResultAction(currentBox, COPY[lang].penaltyLine({ amount, start, end, days }), lang);
   }, 120);
@@ -208,11 +209,13 @@ function reconcile() {
   if (!button) return;
   if (!form) {
     button.hidden = true;
+    button.style.display = 'none';
     document.getElementById('korgan-legal-tools-backdrop')?.classList.remove('open');
     return;
   }
   const copy = COPY[language()];
   button.hidden = false;
+  button.style.display = '';
   button.textContent = copy.launcher;
   button.classList.add('claim-calculator-launcher');
   if (button.parentElement !== form.page) form.anchor.insertAdjacentElement('afterend', button);
