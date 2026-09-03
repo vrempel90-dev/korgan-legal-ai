@@ -1,0 +1,42 @@
+/* Exact KORGAN wordmark traced from the supplied original logo.
+   The asset itself contains the full large K and separator, so no clipping
+   workaround or text reconstruction is needed. */
+.topbar {
+  position: sticky;
+  height: 72px !important;
+}
+
+.topbar .brand-mark {
+  position: absolute !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: 190px !important;
+  min-width: 0 !important;
+  height: 66px !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background-image: url('/korgan-wordmark-exact.svg') !important;
+  background-position: center !important;
+  background-size: contain !important;
+  background-repeat: no-repeat !important;
+  filter: brightness(0) saturate(100%) !important;
+  overflow: visible !important;
+  pointer-events: none;
+}
+
+.topbar .brand-mark::before,
+.topbar .brand-mark::after,
+.topbar .brand-mark > svg,
+.topbar .brand {
+  display: none !important;
+}
+
+@media (max-width: 390px) {
+  .topbar .brand-mark {
+    width: 176px !important;
+    height: 64px !important;
+  }
+}

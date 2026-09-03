@@ -1,0 +1,226 @@
+/* Profile-only feedback preferences and relocated data controls. */
+.feedback-settings-card {
+  overflow: hidden;
+}
+
+.feedback-setting-row {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px 16px;
+}
+
+.feedback-setting-row + .feedback-setting-row {
+  border-top: 1px solid #edf1f6;
+}
+
+.feedback-setting-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.feedback-setting-copy strong {
+  color: #0b1324;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.feedback-setting-copy small {
+  color: #7d899d;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.feedback-switch {
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.feedback-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.feedback-switch-track {
+  width: 48px;
+  height: 28px;
+  display: block;
+  position: relative;
+  border-radius: 999px;
+  background: #d8dfe9;
+  transition: background .18s ease;
+}
+
+.feedback-switch-thumb {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  top: 3px;
+  left: 3px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 7px rgba(28,44,70,.22);
+  transition: transform .18s ease;
+}
+
+.feedback-switch input:checked + .feedback-switch-track {
+  background: #0d63ff;
+}
+
+.feedback-switch input:checked + .feedback-switch-track .feedback-switch-thumb {
+  transform: translateX(20px);
+}
+
+.feedback-switch input:focus-visible + .feedback-switch-track {
+  outline: 3px solid rgba(13,99,255,.2);
+  outline-offset: 2px;
+}
+
+.relocated-delete-all {
+  margin-top: 14px;
+  color: #b42318 !important;
+  border-color: #efc7c3 !important;
+  background: #fff !important;
+}
+
+.delete-data-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* The hero is informational now; consultation remains available from the action tile. */
+.home-page .hero .hero-copy > button[hidden] {
+  display: none !important;
+}
+
+/* Bottom navigation is intentionally limited to the three global destinations.
+   Cases and AI lawyer stay available from the main screen, but are not persistent tabs. */
+.bottom-nav {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+.bottom-nav > button:nth-child(2),
+.bottom-nav > button:nth-child(3) {
+  display: none !important;
+}
+
+/* The full source narrative belongs to the legal runtime, not to the client card. */
+.analysis-card .case-description {
+  display: none !important;
+}
+
+/* Per-document generation progress exists only inside the My Cases document cards.
+   No global progress selector is used, so this presentation cannot affect other screens. */
+.case-list-item .case-document-progress {
+  width: 100%;
+  margin-top: 9px;
+}
+
+.case-list-item .case-document-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.case-list-item .case-document-progress-head span {
+  min-width: 0;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: left;
+}
+
+.case-list-item .case-document-progress-head strong {
+  flex: 0 0 auto;
+  color: #0d63ff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.case-list-item .case-document-progress-track {
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  position: relative;
+  border-radius: 999px;
+  background: #e7edf6;
+}
+
+.case-list-item .case-document-progress-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  position: relative;
+  overflow: hidden;
+  border-radius: inherit;
+  background: #0d63ff;
+  transition: width .8s cubic-bezier(.22,.61,.36,1);
+}
+
+/* Motion is visual only: width still comes exclusively from backend job.progress. */
+.case-list-item .case-document-progress[data-progress-kind='running'] .case-document-progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 38%;
+  transform: translateX(-150%) skewX(-18deg);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.42), transparent);
+  animation: korgan-progress-shimmer 1.35s ease-in-out infinite;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='ready'] .case-document-progress-head strong {
+  color: #159454;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='ready'] .case-document-progress-fill {
+  background: #159454;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='failed'] .case-document-progress-head strong {
+  color: #b42318;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='failed'] .case-document-progress-fill {
+  background: #b42318;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='payment'] .case-document-progress-fill {
+  background: #d89200;
+}
+
+.case-list-item .case-document-progress[data-progress-kind='pending'] .case-document-progress-fill,
+.case-list-item .case-document-progress[data-progress-kind='unavailable'] .case-document-progress-fill {
+  width: 34% !important;
+  background: #9eb7dd;
+  animation: korgan-progress-pending 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes korgan-progress-shimmer {
+  0% { transform: translateX(-150%) skewX(-18deg); opacity: 0; }
+  18% { opacity: 1; }
+  72% { opacity: 1; }
+  100% { transform: translateX(360%) skewX(-18deg); opacity: 0; }
+}
+
+@keyframes korgan-progress-pending {
+  from { transform: translateX(-35%); opacity: .5; }
+  to { transform: translateX(190%); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .case-list-item .case-document-progress-fill {
+    transition: none;
+    animation: none !important;
+  }
+
+  .case-list-item .case-document-progress-fill::after {
+    animation: none !important;
+  }
+}
