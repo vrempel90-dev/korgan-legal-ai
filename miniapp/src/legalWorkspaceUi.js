@@ -259,7 +259,7 @@ function mount(language) {
     try {
       const payload = await api('/miniapp/legal-workspace/stress-test', {
         method: 'POST', timeoutMs: 110000, signal: scoped.signal,
-        body: JSON.stringify({ case_id: document.getElementById('klt-stress-case').value, focus: document.getElementById('klt-stress-focus').value, language }),
+        body: JSON.stringify({ case_id: document.getElementById('klt-stress-case').value, focus: document.getElementById('klt-stress-focus').value, language: selectedLanguage() }),
       });
       if (!scoped.isCurrent()) return;
       const sources = (payload.sources || []).length ? `\n\n${t.sources}:\n${payload.sources.join('\n')}` : '';
