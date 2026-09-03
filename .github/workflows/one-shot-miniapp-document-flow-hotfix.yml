@@ -1,0 +1,134 @@
+name: one-shot-miniapp-document-flow-hotfix
+
+on:
+  push:
+    branches:
+      - recovery/miniapp-web-1600-sg
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: recovery/miniapp-web-1600-sg
+          fetch-depth: 0
+
+      - name: Patch document flow and client UI
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 occurrence, got {count}')
+              return text.replace(old, new, 1)
+
+          main_path = Path('miniapp/src/main.jsx')
+          text = main_path.read_text(encoding='utf-8')
+
+          replacements = [
+              ("prepare: 'Подготовить документ', prepareSub: 'Production Word-документы KORGAN'", "prepare: 'Подготовить документ', prepareSub: 'Иски, договоры, претензии и другие документы'", 'ru prepare copy'),
+              ("sessionExpired: 'Сессия Telegram истекла. Закройте и откройте KORGAN заново — данные сохранены.'", "sessionExpired: 'Сессия приложения истекла. Закройте и откройте KORGAN заново — данные сохранены.'", 'ru session copy'),
+              ("consultCase: 'Консультация по делу'", "consultCase: 'Консультация по документу'", 'ru consultation copy'),
+              ("download: 'Скачать DOCX', downloadExisting: 'Скачать готовый DOCX', liveReview: 'Проверка живым юристом'", "download: 'Скачать DOCX', downloadExisting: 'Скачать готовый DOCX', liveReview: 'Консультация с юристом'", 'ru lawyer copy'),
+              ("documentPayment: 'Оплата документа', documentPaymentText: 'Юридический анализ и генерация Word ещё не начались. Оплатите документ и дождитесь подтверждения платежа.'", "documentPayment: 'Оплата документа', documentPaymentText: 'Оплатите документ через Kaspi.'", 'ru payment copy'),
+              ("automaticPayment: 'Автоматическая оплата', automaticPaymentText: 'Нажмите «Оплатить через Kaspi». После оплаты Tole автоматически подтвердит платёж — чек загружать не нужно. Вернитесь в KORGAN и дождитесь запуска документа.', automaticPaymentSecurity: 'Банковский факт подтверждает Tole. KORGAN дополнительно сверяет на сервере статус, валюту KZT и точную сумму заказа.'", "automaticPayment: 'Оплата документа', automaticPaymentText: 'Оплатите документ через Kaspi.', automaticPaymentSecurity: ''", 'ru automatic payment copy'),
+              ("paymentApproved: 'Оплата подтверждена', paymentApprovedText: 'Оплата подтверждена. KORGAN автоматически запускает юридический анализ и генерацию Word. Новая оплата не требуется.'", "paymentApproved: 'Оплата подтверждена', paymentApprovedText: 'Платёж подтверждён. Подготовка документа начинается.'", 'ru approved copy'),
+              ("dataControl: 'Данные под контролем', dataControlSub: 'Mini App использует отдельный API и не изменяет production Telegram‑агента.'", "dataControl: 'Ваши документы', dataControlSub: 'Материалы и готовые документы сохраняются в ваших делах.'", 'ru data copy'),
+              ("helpText: 'Создайте дело, добавьте факты и материалы, задайте вопросы AI‑юристу. Для документа KORGAN использует то же production‑юридическое ядро и quality gates, что и AI‑агент. Если включена оплата документов, генерация не начинается до подтверждения оплаты.'", "helpText: 'Выберите документ, добавьте описание и материалы. После оплаты готовый DOCX сохранится в разделе «Мои дела».'", 'ru help copy'),
+              ("prepare: 'Құжат дайындау', prepareSub: 'KORGAN production Word-құжаттары'", "prepare: 'Құжат дайындау', prepareSub: 'Талаптар, шарттар және басқа дайын құжаттар'", 'kk prepare copy'),
+              ("sessionExpired: 'Telegram сессиясының мерзімі бітті. KORGAN-ды жауып, қайта ашыңыз — деректер сақталды.'", "sessionExpired: 'Қолданба сессиясының мерзімі бітті. KORGAN-ды жауып, қайта ашыңыз — деректер сақталды.'", 'kk session copy'),
+              ("consultCase: 'Іс бойынша кеңес'", "consultCase: 'Құжат бойынша кеңес'", 'kk consultation copy'),
+              ("download: 'DOCX жүктеу', downloadExisting: 'Дайын DOCX жүктеу', liveReview: 'Тірі заңгердің тексеруі'", "download: 'DOCX жүктеу', downloadExisting: 'Дайын DOCX жүктеу', liveReview: 'Заңгермен кеңесу'", 'kk lawyer copy'),
+              ("documentPayment: 'Құжат төлемі', documentPaymentText: 'Құқықтық талдау мен Word генерациясы әлі басталған жоқ. Құжат үшін төлеңіз және төлем расталғанша күтіңіз.'", "documentPayment: 'Құжат төлемі', documentPaymentText: 'Құжатты Kaspi арқылы төлеңіз.'", 'kk payment copy'),
+              ("automaticPayment: 'Автоматты төлем', automaticPaymentText: '«Kaspi арқылы төлеу» түймесін басыңыз. Төлемнен кейін Tole төлемді автоматты түрде растайды — чек жүктеу қажет емес. KORGAN-ға оралып, құжаттың іске қосылуын күтіңіз.', automaticPaymentSecurity: 'Банк төлемін Tole растайды. KORGAN серверде мәртебені, KZT валютасын және тапсырыстың нақты сомасын қосымша тексереді.'", "automaticPayment: 'Құжат төлемі', automaticPaymentText: 'Құжатты Kaspi арқылы төлеңіз.', automaticPaymentSecurity: ''", 'kk automatic payment copy'),
+              ("paymentApproved: 'Төлем расталды', paymentApprovedText: 'Төлем расталды. KORGAN құқықтық талдау мен Word генерациясын автоматты түрде бастайды. Қайта төлем қажет емес.'", "paymentApproved: 'Төлем расталды', paymentApprovedText: 'Төлем расталды. Құжат дайындала бастайды.'", 'kk approved copy'),
+              ("dataControl: 'Деректер бақылауда', dataControlSub: 'Mini App бөлек API қолданады және production Telegram‑агентін өзгертпейді.'", "dataControl: 'Сіздің құжаттарыңыз', dataControlSub: 'Материалдар мен дайын құжаттар сіздің істеріңізде сақталады.'", 'kk data copy'),
+              ("helpText: 'Іс құрыңыз, фактілер мен материалдарды қосыңыз, AI‑заңгерге сұрақ қойыңыз. Құжат үшін KORGAN AI‑агентпен бірдей production заңдық ядро мен quality gate-терді қолданады. Құжат төлемі қосылса, генерация төлем расталғанға дейін басталмайды.'", "helpText: 'Құжатты таңдаңыз, сипаттама мен материалдарды қосыңыз. Төлемнен кейін дайын DOCX «Менің істерім» бөлімінде сақталады.'", 'kk help copy'),
+          ]
+          for old, new, label in replacements:
+              text = replace_once(text, old, new, label)
+
+          anchor = "const docText = (id, lang) => DOCUMENTS.find(x => x.id === id)?.[lang] || ['KORGAN Legal AI', ''];\n"
+          helpers = """const documentConsultationLabel = (id, lang) => lang === 'kk'\n  ? `${docText(id, lang)[0]} бойынша кеңес`\n  : `Консультация по документу: ${docText(id, lang)[0]}`;\nconst documentReadyNotice = (id, lang) => {\n  const ru = {\n    claim: 'Ваш документ готов. Перед отправкой иска в суд настоятельно рекомендуем обратиться к нашему юристу за консультацией.',\n    response: 'Ваш документ готов. Перед подачей отзыва на иск в суд настоятельно рекомендуем обратиться к нашему юристу за консультацией.',\n    pretrial: 'Ваш документ готов. Перед направлением досудебной претензии настоятельно рекомендуем обратиться к нашему юристу за консультацией.',\n    pretrial_response: 'Ваш документ готов. Перед направлением ответа на претензию настоятельно рекомендуем обратиться к нашему юристу за консультацией.',\n    contract: 'Ваш документ готов. Перед подписанием договора настоятельно рекомендуем обратиться к нашему юристу за консультацией.',\n  };\n  const kk = {\n    claim: 'Құжатыңыз дайын. Талап арызды сотқа жібермес бұрын біздің заңгерден кеңес алуды ұсынамыз.',\n    response: 'Құжатыңыз дайын. Талапқа пікірді сотқа бермес бұрын біздің заңгерден кеңес алуды ұсынамыз.',\n    pretrial: 'Құжатыңыз дайын. Сотқа дейінгі талапты жібермес бұрын біздің заңгерден кеңес алуды ұсынамыз.',\n    pretrial_response: 'Құжатыңыз дайын. Талапқа жауапты жібермес бұрын біздің заңгерден кеңес алуды ұсынамыз.',\n    contract: 'Құжатыңыз дайын. Шартқа қол қоймас бұрын біздің заңгерден кеңес алуды ұсынамыз.',\n  };\n  return (lang === 'kk' ? kk : ru)[id] || (lang === 'kk' ? 'Құжатыңыз дайын. Пайдаланар алдында біздің заңгерден кеңес алуды ұсынамыз.' : 'Ваш документ готов. Перед использованием рекомендуем обратиться к нашему юристу за консультацией.');\n};\nconst liveLawyerUrl = (caseId, documentType, lang) => {\n  const title = docText(documentType, lang)[0];\n  const message = lang === 'kk'\n    ? `Сәлеметсіз бе. ${title} құжаты бойынша кеңес керек. Іс: ${caseId || '—'}.`\n    : `Здравствуйте. Нужна консультация по сгенерированному документу «${title}». Дело: ${caseId || '—'}.`;\n  return `${WHATSAPP_URL}?text=${encodeURIComponent(message)}`;\n};\n"""
+          text = replace_once(text, anchor, anchor + helpers, 'document helpers')
+
+          old_create = """      clearLocalCaseData(); setCaseText(''); setPendingFiles([]); showScreen('case');\n      refreshCases().catch(() => {});"""
+          new_create = """      clearLocalCaseData(); setCaseText(''); setPendingFiles([]);\n      refreshCases().catch(() => {});\n      await applyGenerationState(await korganApi.generateDocument(item.id, item.document_type, item.language || language));"""
+          text = replace_once(text, old_create, new_create, 'auto payment after initial data')
+
+          old_upload = """      setActiveCase(latest); setDocPayment(null);\n      // Материалы приняты сервером, и счётчик файлов на экране дела уже вырос.\n      // Обновление списка дел стояло между отправкой и сообщением, и его сбой\n      // уводил обработчик в разбор ошибок: успешная загрузка объявлялась\n      // неудачной, а пользователь грузил те же файлы второй раз. Списка на\n      // этом экране нет, поэтому его сверка уходит за результат загрузки.\n      setNotice(language === 'kk' ? `${files.length} файл өңделді.` : `Обработано файлов: ${files.length}.`);\n      refreshCases().catch(() => {});"""
+          new_upload = """      setActiveCase(latest); setDocPayment(null);\n      refreshCases().catch(() => {});\n      await applyGenerationState(await korganApi.generateDocument(latest.id, latest.document_type, latest.language || language));"""
+          text = replace_once(text, old_upload, new_upload, 'auto payment after added materials')
+
+          old_price = "{pricing?.document_payments_enabled && <div className=\"price-note\"><CreditCard size={16}/><span>{t.docPrice}: <strong>{money(pricing.document_price_kzt)}</strong> · {pricing?.document_payment_provider === 'tole' ? t.automaticPayment : t.manualCheck}</span></div>}"
+          new_price = "{pricing?.document_payments_enabled && <div className=\"price-note\"><CreditCard size={16}/><span>{t.docPrice}: <strong>{money(pricing.document_price_kzt)}</strong></span></div>}"
+          text = replace_once(text, old_price, new_price, 'document list payment label')
+
+          technical_case = "{activeCase.verification_status && <div className=\"fact\"><span>{t.check}</span><strong>{activeCase.filing_ready ? t.verified : t.needsCheck}</strong></div>}{typeof activeCase.quality_score === 'number' && <div className=\"fact\"><span>{t.quality}</span><strong>{activeCase.quality_score}/10</strong></div>}"
+          text = replace_once(text, technical_case, '', 'case quality/check UI')
+
+          old_consult = "<button className=\"secondary wide\" onClick={() => go('chat')}><MessageCircle size={18}/>{t.consultCase}</button>"
+          new_consult = "{activeCase.has_document && <button className=\"secondary wide\" onClick={() => go('chat')}><MessageCircle size={18}/>{documentConsultationLabel(activeCase.document_type, language)}</button>}"
+          text = replace_once(text, old_consult, new_consult, 'document-specific consultation')
+
+          payment_pattern = re.compile(r"    return <div className=\"app-shell\"><Header go=\{go\} title=\{t\.documentPayment\} back=\"case\"/><main className=\"page payment-page\">.*?</main>\{nav\}</div>;", re.S)
+          payment_replacement = """    return <div className=\"app-shell\"><Header go={go} title={t.documentPayment} back=\"case\"/><main className=\"page payment-page\"><div className={`payment-stage-icon ${approved ? 'approved' : (awaiting || automaticPending) ? 'waiting' : ''}`}>{approved ? <CheckCircle2 size={38}/> : (awaiting || automaticPending) ? <Clock3 size={38}/> : <Banknote size={38}/>}</div><h1>{approved ? t.paymentApproved : t.documentPayment}</h1><div className=\"payment-amount centered\">{money(docPayment.amount_kzt)}</div>{notice && <div className=\"warning-note\"><AlertTriangle size={17}/>{notice}</div>}{automaticPending && paymentUrl && <button className=\"primary wide\" onClick={() => window.open(paymentUrl, '_blank', 'noopener,noreferrer')}><CreditCard size={18}/>{t.payKaspi}<ExternalLink size={15}/></button>}{!automatic && !approved && !awaiting && <><button className=\"primary wide\" onClick={() => window.open(docPayment.kaspi_url, '_blank', 'noopener,noreferrer')}><CreditCard size={18}/>{t.payKaspi}<ExternalLink size={15}/></button><label className=\"secondary wide receipt-upload\"><Paperclip size={18}/>{receiptBusy ? t.checkingReceipt : t.uploadReceipt}<input type=\"file\" accept=\".pdf,.jpg,.jpeg,.png,.webp\" disabled={receiptBusy} onChange={uploadDocReceipt}/></label></>}{awaiting && <button className=\"secondary wide\" disabled={busy} onClick={refreshDocPayment}><RefreshCw size={18}/>{t.checkPayment}</button>}{approved && <p>{t.paymentApprovedText}</p>}</main>{nav}</div>;"""
+          text, count = payment_pattern.subn(payment_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'payment screen: expected 1 replacement, got {count}')
+
+          ready_pattern = re.compile(r"  if \(view === 'ready'\) \{.*?\n\n  if \(view === 'cases'\)", re.S)
+          ready_replacement = """  if (view === 'ready') { const documentType = activeCase?.document_type || 'claim'; return <div className=\"app-shell\"><Header go={go} title={t.docReady} back=\"case\"/><main className=\"page ready-page\"><div className=\"success-ring\"><CheckCircle2 size={48}/></div><h1>{t.docReady}</h1><p>{documentReadyNotice(documentType, language)}</p><div className=\"document-preview\"><div className=\"paper-lines\"><b>{documentResult?.title || docText(documentType, language)[0]}</b><span/><span/><span/><span/><span/></div></div>{documentResult?.todo_before_filing?.length > 0 && <div className=\"warning-note left-note\"><AlertTriangle size={17}/><span>{documentResult.todo_before_filing.join(' · ')}</span></div>}{notice && <div className=\"warning-note\"><AlertTriangle size={17}/>{notice}</div>}<button className=\"primary wide\" disabled={!activeCase || busy} onClick={deliverActiveDocument}>{busy ? <LoaderCircle className=\"spin\" size={18}/> : <Download size={18}/>} {t.download}</button><button className=\"lawyer-btn wide\" onClick={() => window.open(liveLawyerUrl(activeCase?.id, documentType, language), '_blank', 'noopener,noreferrer')}><ShieldCheck size={18}/>{documentConsultationLabel(documentType, language)}</button></main>{nav}</div>; }\n\n  if (view === 'cases')"""
+          text, count = ready_pattern.subn(ready_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'ready screen: expected 1 replacement, got {count}')
+
+          system_pattern = re.compile(r"<section className=\"analysis-card system-card\">.*?</section>", re.S)
+          text, count = system_pattern.subn('', text, count=1)
+          if count != 1:
+              raise SystemExit(f'profile system card: expected 1 replacement, got {count}')
+          text = text.replace("'Telegram Mini App'", "'KORGAN'")
+
+          forbidden = [
+              'TOLE · SECURITY', 'KORGAN PREPAY', 'quality_score}/10',
+              'production Telegram', '>SYSTEM<', 'Telegram Mini App',
+          ]
+          for value in forbidden:
+              if value in text:
+                  raise SystemExit(f'forbidden client technical copy remains: {value}')
+          if 'Ваш документ готов. Перед отправкой иска в суд настоятельно рекомендуем обратиться к нашему юристу за консультацией.' not in text:
+              raise SystemExit('claim ready recommendation is missing')
+          if 'await applyGenerationState(await korganApi.generateDocument(item.id' not in text:
+              raise SystemExit('initial auto payment flow is missing')
+          if 'await applyGenerationState(await korganApi.generateDocument(latest.id' not in text:
+              raise SystemExit('uploaded-material auto payment flow is missing')
+
+          main_path.write_text(text, encoding='utf-8')
+
+          api_path = Path('miniapp/src/korganApi.js')
+          api = api_path.read_text(encoding='utf-8')
+          old_timeout = """      body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),\n      timeoutMs: 8000,"""
+          new_timeout = """      body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),"""
+          api = replace_once(api, old_timeout, new_timeout, 'generation timeout')
+          if 'timeoutMs: 8000' in api:
+              raise SystemExit('8 second generation timeout still present')
+          api_path.write_text(api, encoding='utf-8')
+          PY
+
+          rm -f .github/workflows/one-shot-miniapp-document-flow-hotfix.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add miniapp/src/main.jsx miniapp/src/korganApi.js .github/workflows/one-shot-miniapp-document-flow-hotfix.yml
+          git diff --cached --check
+          git commit -m "fix(miniapp): open payment after document data and simplify client UI"
+          git push origin HEAD:recovery/miniapp-web-1600-sg
