@@ -35,6 +35,14 @@ from korgan import miniapp_paid_autostart_runtime as _miniapp_paid_autostart_run
 # installed. This removes the legacy KASPI_PAYMENT_URL dependency and makes
 # approved/consumed payment recovery idempotent without enabling payments.
 from korgan import miniapp_payment_hardening_runtime as _miniapp_payment_hardening_runtime  # noqa: F401
+# Temporary document-quality testing: while PAYMENTS_ENABLED=false, administrators
+# may generate documents without creating any payment order/QR/Tole intent. The
+# module is deliberately not imported once payments are enabled, so it cannot
+# become a production free-generation bypass.
+from korgan.miniapp_api_v5 import settings as _miniapp_settings
+if not _miniapp_settings.payments_enabled:
+    from korgan import miniapp_admin_free_generation_runtime as _miniapp_admin_free_generation_runtime  # noqa: F401
+
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_consent_status as _miniapp_consent_status
 from korgan import miniapp_document_access as _miniapp_document_access
