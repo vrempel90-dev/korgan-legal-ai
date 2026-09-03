@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
+from types import SimpleNamespace
+
+import pytest
 
 from korgan import miniapp_legal_workspace as workspace
 
@@ -62,18 +65,22 @@ def test_late_penalty_fails_closed_when_rate_is_not_known(monkeypatch):
     assert "ТРЕБУЕТ ПРОВЕРКИ" in payload["reason"]
 
 
-def test_stress_test_uses_case_context_and_professional_consult(monkeypatch):
-    async def identity(_: str):
-        return "user", {
-            "cases": {
-                "case-1": {
-                    "id": "case-1",
-                    "description": "Поставщик не передал оплаченный товар. Оплата 1 000 000 тенге подтверждена.",
-                    "materials": [],
-                    "conversation": [],
-                }
+def _stress_state():
+    return {
+        "cases": {
+            "case-1": {
+                "id": "case-1",
+                "description": "Поставщик не передал оплаченный товар. Оплата 1 000 000 тенге подтверждена.",
+                "materials": [],
+                "conversation": [],
             }
         }
+    }
+
+
+def test_stress_test_uses_case_context_and_professional_consult(monkeypatch):
+    async def identity(_: str):
+        return "user", _stress_state()
 
     calls: dict[str, str] = {}
 
@@ -97,3 +104,35 @@ def test_stress_test_uses_case_context_and_professional_consult(monkeypatch):
     assert "Stress Test" in calls["question"]
     assert "Поставщик" in calls["context"]
     assert payload["sources"][0].startswith("https://adilet.zan.kz/")
+
+
+def test_stress_test_cannot_bypass_consultation_quota(monkeypatch):
+    async def identity(_: str):
+        return "101", _stress_state()
+
+    async def exhausted(*_args, **_kwargs):
+        return None
+
+    class MustNotRun:
+        async def consult(self, *_args, **_kwargs):
+            raise AssertionError("model must not run after quota is exhausted")
+
+    monkeypatch.setattr(workspace, "_require_identity", identity)
+    monkeypatch.setattr(
+        workspace.business,
+        "settings",
+        SimpleNamespace(consultation_limit_enabled=True, free_consultations_per_day=1),
+    )
+    monkeypatch.setattr(workspace.business, "reserve_free_consultation", exhausted)
+    monkeypatch.setattr(workspace.core, "service", MustNotRun())
+
+    with pytest.raises(Exception) as exc_info:
+        asyncio.run(
+            workspace.stress_test(
+                workspace.StressTestRequest(case_id="case-1", language="ru"),
+                "telegram-init",
+            )
+        )
+    error = exc_info.value
+    assert getattr(error, "status_code", None) == 429
+    assert "оплат" in str(getattr(error, "detail", "")).lower()
