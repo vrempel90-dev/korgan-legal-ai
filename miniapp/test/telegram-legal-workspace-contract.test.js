@@ -13,7 +13,7 @@ const index = readFileSync(join(miniapp, 'index.html'), 'utf8');
 const ui = readFileSync(join(src, 'legalWorkspaceUi.js'), 'utf8');
 const css = readFileSync(join(src, 'legal-workspace.css'), 'utf8');
 
-test('live MiniApp подключает Legal Workspace поверх существующего UI', () => {
+test('Telegram MiniApp подключает Legal Workspace поверх существующего UI', () => {
   assert.match(index, /\/src\/approved-compat\.css/);
   assert.match(index, /\/src\/legal-workspace\.css/);
   assert.match(index, /\/src\/main\.jsx/);
@@ -22,7 +22,7 @@ test('live MiniApp подключает Legal Workspace поверх сущес�
   assert.ok(index.indexOf('/src/legalWorkspaceUi.js') > index.indexOf('/src/main.jsx'));
 });
 
-test('live Legal Workspace использует только legal-workspace API и не включает оплату', () => {
+test('Legal Workspace использует только legal-workspace API и не включает оплату', () => {
   assert.match(ui, /\/miniapp\/legal-workspace\/state-duty/);
   assert.match(ui, /\/miniapp\/legal-workspace\/late-penalty-353/);
   assert.match(ui, /\/miniapp\/legal-workspace\/stress-test/);
@@ -30,10 +30,11 @@ test('live Legal Workspace использует только legal-workspace API
   assert.doesNotMatch(ui, /\/payments\//);
 });
 
-test('Legal Workspace использует общий transport с bounded timeout', () => {
+test('Legal Workspace использует общий transport с bounded timeout и AbortSignal', () => {
   assert.match(ui, /createApiTransport/);
   assert.match(ui, /timeoutMs:\s*30000/);
   assert.match(ui, /timeoutMs:\s*110000/);
+  assert.match(ui, /signal:\s*scoped\.signal/);
   assert.doesNotMatch(ui, /await\s+fetch\s*\(/);
 });
 
@@ -41,7 +42,7 @@ test('Stress Test и весь sheet поддерживают сохранённ�
   assert.match(ui, /korgan-miniapp-state-v1/);
   assert.match(ui, /const COPY\s*=\s*\{/);
   assert.match(ui, /launcher:\s*'⚖ Заң құралдары'/);
-  assert.match(ui, /language\s*\}\),/);
+  assert.match(ui, /language:\s*selectedLanguage\(\)/);
   assert.doesNotMatch(ui, /document\.documentElement\.lang/);
 });
 
@@ -57,12 +58,21 @@ test('список дел защищён от позднего ответа ст
   assert.match(ui, /select\.replaceChildren/);
 });
 
+test('remount отменяет запросы старой панели и запрещает stale resultBox', () => {
+  assert.match(ui, /let mountEpoch\s*=\s*0/);
+  assert.match(ui, /beginScopedRequest/);
+  assert.match(ui, /abortActiveRequests\(\)/);
+  assert.match(ui, /controller\.abort\(/);
+  assert.match(ui, /if \(!scoped\.isCurrent\(\)\) return/);
+});
+
 test('ответы юридических инструментов вставляются как текст, а не как HTML', () => {
   assert.match(ui, /box\.textContent\s*=\s*text/);
   assert.doesNotMatch(ui, /box\.innerHTML\s*=\s*text/);
 });
 
 test('внешние ссылки разрешают только абсолютный HTTPS', () => {
+  assert.match(ui, /import \{ safeHttpsUrl \} from '.\/safeExternalUrl\.js'/);
   assert.equal(safeHttpsUrl('https://adilet.zan.kz/rus/docs/K940001000_'), 'https://adilet.zan.kz/rus/docs/K940001000_');
   assert.equal(safeHttpsUrl('javascript:alert(1)'), '');
   assert.equal(safeHttpsUrl('data:text/html,boom'), '');
