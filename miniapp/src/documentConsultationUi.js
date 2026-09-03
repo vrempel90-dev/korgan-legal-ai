@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'korgan_document_consultation';
+const REFRESH_MS = 500;
 
 function clean(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -100,11 +101,8 @@ function scheduleApply() {
 if (typeof document !== 'undefined') {
   document.addEventListener('click', rememberClickedDocument, true);
   document.addEventListener('click', scheduleApply, true);
-
-  const root = document.getElementById('root');
-  if (root) {
-    const observer = new MutationObserver(() => scheduleApply());
-    observer.observe(root, { childList: true, subtree: true, characterData: true });
-    applyDocumentConsultationUi(root);
+  applyDocumentConsultationUi();
+  if (typeof window !== 'undefined' && typeof window.setInterval === 'function') {
+    window.setInterval(() => applyDocumentConsultationUi(), REFRESH_MS);
   }
 }
