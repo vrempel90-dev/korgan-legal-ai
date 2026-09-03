@@ -51,6 +51,28 @@ async function generateDocument(caseId, documentType = 'claim', language = 'ru')
   }
 }
 
+async function consultation(message, caseId, language = 'ru') {
+  let documentRevision = '';
+  const id = String(caseId || '').trim();
+  if (id) {
+    // Consultation must follow the exact generated file the user is looking at.
+    // The server publishes SHA-256 for the current DOCX. Fetch it immediately
+    // before asking the legal AI so a regenerated file cannot be silently
+    // substituted between the case screen and the consultation request.
+    const result = await request(`/miniapp/cases/${encodeURIComponent(id)}`);
+    documentRevision = String(result?.case?.document_revision || '').trim();
+  }
+  return request('/miniapp/consultation', {
+    method: 'POST',
+    body: JSON.stringify({
+      message,
+      case_id: id || null,
+      language,
+      document_revision: documentRevision || null,
+    }),
+  });
+}
+
 export const korganApi = {
   health: async (options = {}) => {
     const [health, parity] = await Promise.all([
@@ -61,15 +83,7 @@ export const korganApi = {
   },
   consentStatus: (options = {}) => request('/miniapp/consent', options),
   pricing: (options = {}) => request('/miniapp/pricing', options),
-  consultation: (message, caseId, language = 'ru', documentRevision = '') => request('/miniapp/consultation', {
-    method: 'POST',
-    body: JSON.stringify({
-      message,
-      case_id: caseId || null,
-      language,
-      document_revision: documentRevision || null,
-    }),
-  }),
+  consultation,
   uploadConsultationReceipt,
   retryPaidConsultation: (orderId) => request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/retry`, {
     method: 'POST',
