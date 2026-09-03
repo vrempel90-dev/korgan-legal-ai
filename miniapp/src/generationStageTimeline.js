@@ -1,4 +1,5 @@
 import './generation-stage-timeline.css';
+import { loadState } from './store.js';
 import {
   clampProgress,
   stageIndexForProgress,
@@ -26,6 +27,14 @@ function languageFor(page, progress) {
   return /Құжат|Қазақстан|Дайындық|тексерілуде/.test(text) ? 'kk' : 'ru';
 }
 
+function isClaimFlow() {
+  try {
+    return loadState()?.draft?.documentType === 'claim';
+  } catch {
+    return false;
+  }
+}
+
 function renderTimeline(page, progress) {
   if (!page || !progress) return null;
 
@@ -37,6 +46,12 @@ function renderTimeline(page, progress) {
   const signature = timelineSignature({ language, progress: value, failed });
 
   let root = document.getElementById(ROOT_ID);
+  // Never reuse a manually injected node from an old React screen. That was the
+  // reason the claim timeline could remain on Home after navigation.
+  if (root && root.parentElement !== page) {
+    root.remove();
+    root = null;
+  }
   if (!root) {
     root = document.createElement('section');
     root.id = ROOT_ID;
@@ -77,7 +92,9 @@ function sync() {
   const progress = page?.querySelector('[role="progressbar"]');
   const root = document.getElementById(ROOT_ID);
 
-  if (!page || !progress) {
+  // The stage timeline is a claim-only UI. It must disappear immediately on
+  // Home, consultation, contracts and every other document flow.
+  if (!isClaimFlow() || !page || !progress) {
     root?.remove();
     return;
   }
@@ -98,13 +115,20 @@ function install() {
     else window.setTimeout(run, 0);
   };
 
-  // generationJob publishes this event from the real backend job. Deferring one
-  // frame lets React commit the new aria-valuenow before the timeline reads it.
+  // generationJob publishes this event from the real backend job. React screen
+  // changes themselves do not publish it, so observe DOM navigation too; this
+  // guarantees an injected timeline is removed as soon as the user leaves the
+  // claim generation screen.
   window.addEventListener(LIFECYCLE_EVENT, scheduleSync);
   window.addEventListener('pageshow', scheduleSync);
+  const observer = typeof MutationObserver === 'function'
+    ? new MutationObserver(scheduleSync)
+    : null;
+  observer?.observe(document.body, { childList: true, subtree: true });
   scheduleSync();
 
   return () => {
+    observer?.disconnect();
     window.removeEventListener(LIFECYCLE_EVENT, scheduleSync);
     window.removeEventListener('pageshow', scheduleSync);
     document.getElementById(ROOT_ID)?.remove();
