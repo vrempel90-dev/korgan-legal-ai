@@ -107,7 +107,12 @@ async def late_penalty_353(
     x_telegram_init_data: str = Header(default=""),
 ) -> dict[str, object]:
     await _require_identity(x_telegram_init_data)
-    rate_date = payload.rate_date or payload.start_date
+    # Article 353 allows the creditor, in a court claim, to use the base rate on
+    # the day the claim is presented (among the statutory choices). For this
+    # calculator the end of the selected period is the natural filing/control
+    # date. The old default used the first day of delay and could silently apply
+    # a stale, higher rate to the entire period.
+    rate_date = payload.rate_date or payload.end_date
     try:
         result = legal_calc.calc_late_payment_penalty(
             payload.principal_kzt,
@@ -123,6 +128,8 @@ async def late_penalty_353(
             "status": "needs_verification",
             "amount_kzt": None,
             "reason": legal_calc.needs_rate_marker(rate_date),
+            "rate_date": rate_date.isoformat(),
+            "rate_date_basis": "end_or_filing_date",
             "source": legal_calc.ARTICLE_353_LABEL,
             "source_url": legal_calc.ARTICLE_353_SOURCE_URL,
         }
@@ -135,6 +142,7 @@ async def late_penalty_353(
         "period_from": result.start.isoformat(),
         "period_to": result.end.isoformat(),
         "rate_date": result.rate_date.isoformat(),
+        "rate_date_basis": "explicit" if payload.rate_date else "end_or_filing_date",
         "base_rate_percent": result.rate_percent,
         "formula": result.formula(),
         "source": legal_calc.ARTICLE_353_LABEL,
