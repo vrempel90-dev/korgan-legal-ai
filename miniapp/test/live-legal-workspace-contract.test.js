@@ -30,10 +30,11 @@ test('live Legal Workspace использует только legal-workspace API
   assert.doesNotMatch(ui, /\/payments\//);
 });
 
-test('Legal Workspace использует общий transport с bounded timeout', () => {
+test('Legal Workspace использует общий transport с bounded timeout и AbortSignal', () => {
   assert.match(ui, /createApiTransport/);
   assert.match(ui, /timeoutMs:\s*30000/);
   assert.match(ui, /timeoutMs:\s*110000/);
+  assert.match(ui, /signal:\s*scoped\.signal/);
   assert.doesNotMatch(ui, /await\s+fetch\s*\(/);
 });
 
@@ -57,12 +58,23 @@ test('список дел защищён от позднего ответа ст
   assert.match(ui, /select\.replaceChildren/);
 });
 
+test('remount инвалидирует и отменяет запросы старой панели', () => {
+  assert.match(ui, /let mountEpoch\s*=\s*0/);
+  assert.match(ui, /beginScopedRequest/);
+  assert.match(ui, /epoch === mountEpoch/);
+  assert.match(ui, /requestId === actionSequence\[kind\]/);
+  assert.match(ui, /abortActiveRequests\(\)/);
+  assert.match(ui, /controller\.abort\(/);
+  assert.match(ui, /if \(!scoped\.isCurrent\(\)\) return/);
+});
+
 test('ответы юридических инструментов вставляются как текст, а не как HTML', () => {
   assert.match(ui, /box\.textContent\s*=\s*text/);
   assert.doesNotMatch(ui, /box\.innerHTML\s*=\s*text/);
 });
 
-test('внешние ссылки разрешают только абсолютный HTTPS', () => {
+test('внешние ссылки разрешают только абсолютный HTTPS и runtime импортирует тот же sanitizer', () => {
+  assert.match(ui, /import \{ safeHttpsUrl \} from '.\/safeExternalUrl\.js'/);
   assert.equal(safeHttpsUrl('https://adilet.zan.kz/rus/docs/K940001000_'), 'https://adilet.zan.kz/rus/docs/K940001000_');
   assert.equal(safeHttpsUrl('javascript:alert(1)'), '');
   assert.equal(safeHttpsUrl('data:text/html,boom'), '');
