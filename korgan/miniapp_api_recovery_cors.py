@@ -16,6 +16,10 @@ from korgan import miniapp_generation_api as _miniapp_generation_api  # noqa: F4
 from korgan import document_truth_runtime as _document_truth_runtime  # noqa: F401
 from korgan import live_article_release_runtime as _live_article_release_runtime  # noqa: F401
 from korgan import senior_document_drafting_runtime as _senior_document_drafting_runtime  # noqa: F401
+# Bound the complete legal pipeline after all release/drafting wrappers are in
+# place. The budget includes research, drafting, deterministic QA, DOCX render
+# and final live citation verification; timing out never releases partial Word.
+from korgan import document_latency_budget_runtime as _document_latency_budget_runtime  # noqa: F401
 from korgan import miniapp_professional_consultation_runtime as _miniapp_professional_consultation_runtime  # noqa: F401
 from korgan import miniapp_case_activity as _miniapp_case_activity  # noqa: F401
 from korgan import miniapp_case_activity_cleanup as _miniapp_case_activity_cleanup  # noqa: F401
@@ -36,12 +40,16 @@ from korgan import miniapp_paid_autostart_runtime as _miniapp_paid_autostart_run
 # approved/consumed payment recovery idempotent without enabling payments.
 from korgan import miniapp_payment_hardening_runtime as _miniapp_payment_hardening_runtime  # noqa: F401
 
-# Payments are intentionally disabled for the current Mini App release. When the
-# payment switch is OFF, replace the document-generation routes with the direct
-# free-generation runtime for every authenticated user. No admin-only gate and no
-# separate test feature flag are required.
+# No-payment document testing is an explicit temporary mode, not a side effect
+# of disabling commercial payments. This is important for both production
+# safety and test determinism: PAYMENTS_ENABLED=false alone keeps the normal
+# fail-closed routes, while the operator must separately enable the admin test
+# worker. When payments are later enabled, this bypass cannot install at all.
 from korgan.miniapp_api_v5 import settings as _miniapp_settings
-if not _miniapp_settings.payments_enabled:
+_admin_test_enabled = str(os.getenv("KORGAN_ADMIN_FREE_DOCUMENT_TEST", "") or "").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+if not _miniapp_settings.payments_enabled and _admin_test_enabled:
     from korgan import miniapp_admin_free_generation_runtime as _miniapp_admin_free_generation_runtime  # noqa: F401
 
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
