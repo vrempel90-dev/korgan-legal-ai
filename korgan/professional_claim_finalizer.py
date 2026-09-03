@@ -140,10 +140,17 @@ def _verified_legal_basis(research: LegalResearch) -> list[str]:
     return result
 
 
-def _apply_verified_legal_basis(research: LegalResearch, draft: ClaimDraft) -> None:
-    basis = _verified_legal_basis(research)
-    if basis:
-        draft.legal_basis = basis
+def bind_verified_legal_basis(research: LegalResearch, draft: ClaimDraft) -> None:
+    """Replace model-written citations with this request's VERIFIED law only.
+
+    The model still drafts the legal argument, but an article number can enter
+    the court-facing basis only through a source-bound research record. An empty
+    verified set therefore clears the model basis instead of preserving a
+    plausible citation from memory.
+    """
+    draft.legal_basis = _verified_legal_basis(research)
+    if not draft.legal_basis:
+        draft.status = VerificationStatus.NEEDS_VERIFICATION
 
 
 def _moral_facts_supplied(case_context: str) -> bool:
@@ -230,7 +237,7 @@ def finalize_professional_claim(
 ) -> None:
     """Apply non-model professional drafting invariants before final release checks."""
     _resolve_court(case_context, research, draft)
-    _apply_verified_legal_basis(research, draft)
+    bind_verified_legal_basis(research, draft)
     apply_claim_filing_accuracy(case_context, research, draft)
     enforce_claim_corpus_health(research, draft)
     _sanitize_relief(case_context, research, draft)

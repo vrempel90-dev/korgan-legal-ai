@@ -28,6 +28,37 @@ from __future__ import annotations
 
 import re
 
+from korgan.legal.corpus import ACT_SHORT_TITLES, KNOWN_ACTS
+
+
+_ARTICLE_REFERENCE_RE = re.compile(
+    r"(?:стать[ьяиеёю]\w*|ст\.)\s*\d+(?:-\d+)?",
+    re.IGNORECASE,
+)
+
+
+def canonical_article_reference(article: str, source_url: str) -> str:
+    """Bind a Russian article label to the act identified by its Adilet URL.
+
+    A model sometimes returns only ``статья 35 Закона РК``. The URL identifies
+    the act, but that shortened label is ambiguous in the court document and
+    cannot pass the same-act truth gate. For the six owned corpus acts we render
+    the canonical short title from deterministic metadata instead of asking a
+    second model call to repair the label.
+    """
+    raw = " ".join(str(article or "").split()).strip()
+    match = _ARTICLE_REFERENCE_RE.search(raw)
+    if match is None:
+        return raw
+    url = str(source_url or "")
+    for act_id, (adilet_id, _title) in KNOWN_ACTS.items():
+        if adilet_id not in url:
+            continue
+        head = raw[: match.end()].strip(" ,.;:-")
+        short_title = ACT_SHORT_TITLES[act_id]
+        return f"{head} {short_title}".strip()
+    return raw
+
 # Qualifiers that narrow a provision. If the provision text carries one and the
 # paraphrase does not, the paraphrase has widened the rule.
 _SCOPE_QUALIFIERS: tuple[tuple[str, str], ...] = (
@@ -286,4 +317,5 @@ def verified_claim_line(statement: str, article: str, provision_text: str, sourc
     travels with the conclusion instead of being dropped after research.
     """
     quote = " ".join((provision_text or "").split())[:400]
-    return f"{statement} [основание: {article}; текст нормы: «{quote}»; источник: {source_url}]"
+    canonical_article = canonical_article_reference(article, source_url)
+    return f"{statement} [основание: {canonical_article}; текст нормы: «{quote}»; источник: {source_url}]"

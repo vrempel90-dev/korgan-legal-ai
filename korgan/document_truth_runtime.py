@@ -125,17 +125,6 @@ _INSTALLED = False
 _ORIGINAL_COMMON_HYGIENE = quality._common_hygiene
 _ORIGINAL_CURRENT_SOURCE = StrictOpenAILegalService._is_current_official_source
 
-# citation_audit historically covered codes but not the consumer act by its
-# common filing name. Add that act to the same deterministic parser so a
-# consumer-law citation cannot evade the live-source guard merely by naming the
-# statute instead of a code abbreviation.
-if not any(act == "ЗПП РК" for _, act in citation_audit._ACT_PATTERNS):
-    citation_audit._ACT_PATTERNS = (
-        *citation_audit._ACT_PATTERNS,
-        (r"закон\w*\s+(?:рк\s+)?[«\"]?о\s+защит\w*\s+прав\w*\s+потребител\w*", "ЗПП РК"),
-    )
-
-
 def _norm(value: str) -> str:
     return re.sub(r"\s+", "", str(value or "").replace("ё", "е").lower())
 

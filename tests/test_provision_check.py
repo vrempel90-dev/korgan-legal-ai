@@ -9,6 +9,7 @@ official source at runtime.
 from __future__ import annotations
 
 from korgan.provision_check import (
+    canonical_article_reference,
     is_paraphrase_safe,
     paraphrase_defects,
     quote_is_usable,
@@ -105,3 +106,24 @@ def test_accepted_point_carries_the_provision_text_to_the_drafter() -> None:
     assert "текст нормы:" in line
     assert "подписанном представителем" in line
     assert "https://adilet.zan.kz/rus/docs/K1500000377" in line
+
+
+def test_ambiguous_article_label_is_bound_to_act_from_official_url() -> None:
+    reference = canonical_article_reference(
+        "статья 35 Закона РК",
+        "https://adilet.zan.kz/rus/docs/Z100000274_",
+    )
+
+    assert reference == "статья 35 Закона РК «О защите прав потребителей»"
+
+
+def test_verified_line_cannot_keep_wrong_act_name_for_known_official_url() -> None:
+    line = verified_claim_line(
+        "Проверяемый вывод.",
+        "статья 35 другого закона",
+        "Достаточно длинный текст нормы для механической проверки и source-bound связи.",
+        "https://adilet.zan.kz/rus/docs/Z100000274_",
+    )
+
+    assert "статья 35 Закона РК «О защите прав потребителей»" in line
+    assert "другого закона" not in line

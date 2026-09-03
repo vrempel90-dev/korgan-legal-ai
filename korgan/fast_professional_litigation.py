@@ -15,6 +15,7 @@ from korgan.professional_service import (
     _professional_research_prompt,
     _strategy_notes,
 )
+from korgan.professional_claim_finalizer import bind_verified_legal_basis
 from korgan.provision_check import paraphrase_defects, verified_claim_line
 from korgan.robust_production_legal import _is_adilet_source, _is_court_source
 from korgan.senior_claim_preflight import deterministic_claim_preflight
@@ -22,6 +23,34 @@ from korgan.verified_openai import _actual_response_urls, _canonical_url
 from korgan.pro_claim_sections import PRO_CLAIM_PROMPT, pro_payload
 
 LOGGER = logging.getLogger(__name__)
+
+
+_EXTERNAL_INPUT_ISSUES = (
+    "точное наименование суда не подтверждено",
+    "не определено конкретное наименование суда",
+    "наименование суда не подтверждено",
+    "не определена госпошлина",
+    "не заполнены данные истца",
+    "не заполнены данные ответчика",
+    "нет source-bound подтвержденной материально-правовой основы",
+    "есть verified-нормы, но документ не содержит конкретной статьи",
+    "отсутствует правовое обоснование",
+    "вопросы к проверке перед подачей",
+)
+
+
+def claim_repair_has_actionable_issue(issues: list[str]) -> bool:
+    """Whether one model edit can safely fix at least one listed defect.
+
+    A model cannot discover an unknown party, court, duty basis or missing
+    source-bound law during a no-search repair call. Sending those gaps through
+    another full drafting pass adds latency and invites fabricated replacements.
+    """
+    for issue in issues:
+        lowered = str(issue or "").strip().lower()
+        if lowered and not any(marker in lowered for marker in _EXTERNAL_INPUT_ISSUES):
+            return True
+    return False
 
 
 class FastProfessionalLitigationService(ProfessionalRKProductionService):
@@ -213,6 +242,7 @@ class FastProfessionalLitigationService(ProfessionalRKProductionService):
 
         draft = ClaimDraft(status=research.status, source_urls=list(research.source_urls), **payload)
         self._drop_internal_quality_notes(draft)
+        bind_verified_legal_basis(research, draft)
         _deterministic_pre_qa(case_context, research, draft)
         _apply_verified_article_353(case_context, research, draft, filing_date=_today_kz())
 
@@ -229,6 +259,19 @@ class FastProfessionalLitigationService(ProfessionalRKProductionService):
             return draft
 
         issues = list(dict.fromkeys([*deterministic, *quality.repair_issues()]))[:16]
+        if not claim_repair_has_actionable_issue(issues):
+            # These gaps require a user fact or a new source-bound research
+            # result. A no-search rewrite cannot resolve them safely.
+            draft.status = VerificationStatus.NEEDS_VERIFICATION
+            final_score = min(quality.score, 6.9 if deterministic else quality.score)
+            remaining = list(dict.fromkeys([*deterministic, *quality.hard_blockers]))
+            note = (
+                f"SENIOR_PREFLIGHT_SCORE: {final_score:.1f}/10 — "
+                + ("; ".join(remaining[:6]) or "не достигнут порог 8.5")
+            )
+            draft.verification_notes.append(note)
+            return draft
+
         current = {
             "title": draft.title,
             "court": draft.court,
@@ -261,6 +304,7 @@ class FastProfessionalLitigationService(ProfessionalRKProductionService):
         )
         repaired = ClaimDraft(status=research.status, source_urls=list(research.source_urls), **repaired_payload)
         self._drop_internal_quality_notes(repaired)
+        bind_verified_legal_basis(research, repaired)
         _deterministic_pre_qa(case_context, research, repaired)
         _apply_verified_article_353(case_context, research, repaired, filing_date=_today_kz())
 
