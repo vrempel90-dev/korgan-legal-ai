@@ -37,9 +37,14 @@ _CIVIL_MONEY_RE = re.compile(
     r"возврат\w*\s+денег|вернут\w*\s+денег|берешек\w*|қарыз\w*|шарт\w*)"
 )
 _BREACH_RE = re.compile(
-    r"(?i)(?:не\s+(?:вернул\w*|возвратил\w*|оплатил\w*|погасил\w*|исполнил\w*)|"
-    r"не\s+возвращ\w*|не\s+оплач\w*|просроч\w*|срок\w*\s+(?:ист[её]к|наруш\w*)|"
-    r"должен\w*\s+был\w*|мерзім\w*\s+өт\w*|төлем\w*\s+жасалма\w*|қайтарма\w*)"
+    r"(?i)(?:"
+    r"не\s+(?:вернул\w*|возвратил\w*|оплатил\w*|погасил\w*|исполнил\w*)|"
+    r"не\s+возвращ\w*|не\s+оплач\w*|"
+    r"просрочил\w*|оплатил\w*\s+с\s+просроч\w*|"
+    r"(?:есть|имеетс\w*|допущен\w*|образовал\w*|составля\w*)\s+просроч\w*|"
+    r"просрочк\w*\s+(?:оплат\w*|возврат\w*|исполн\w*)\s+(?:составля\w*\s+)?\d+|"
+    r"срок\w*\s+(?:ист[её]к|наруш\w*)|должен\w*\s+был\w*|"
+    r"мерзім\w*\s+өт\w*|төлем\w*\s+жасалма\w*|қайтарма\w*)"
 )
 _PENALTY_RISK_RE = re.compile(
     r"(?i)(?:ст\.?\s*353|стать\w*\s*353|неустойк\w*|пен[яию]\b|өсімпұл\w*|"
@@ -62,8 +67,9 @@ def automatic_penalty_candidate(case_context: str) -> bool:
 
     Explicit requests keep their old behaviour. Automatic mode is deliberately
     limited to a fact pattern that looks like an overdue civil/commercial money
-    obligation: a money amount, a civil-obligation marker and a breach marker.
-    A contractual penalty clause alone is not evidence that a breach occurred.
+    obligation: a money amount, a civil-obligation marker and factual breach
+    evidence. Merely quoting a contractual clause "за просрочку предусмотрена
+    пеня" is not breach evidence.
     """
     text = str(case_context or "")
     if _ORIGINAL_EXPLICIT(text):
@@ -179,7 +185,7 @@ def _research_prompt(case_context: str, *, max_chars: int, checked_on: str, **kw
     return base + (
         "\n\nАВТОМАТИЧЕСКИЙ РАСЧЁТ ДЕНЕЖНЫХ ТРЕБОВАНИЙ:\n"
         "26. Пользователь не обязан знать термин 'неустойка' и отдельно просить её. "
-        "Если из материалов следует просроченное денежное обязательство, в ЭТОМ ЖЕ source-bound проходе проверь право на неустойку автоматически.\n"
+        "Если из материалов следует просроченное денежное обязательство, В ЭТОМ ЖЕ source-bound проходе проверь право на неустойку автоматически.\n"
         "27. Сначала проверь договор: если в материалах есть договорная пеня/неустойка, не подменяй её статьёй 353 ГК РК. "
         "Если договорной ставки нет или она неприменима, проверь, применимы ли пункты 1 и 2 статьи 353 ГК РК к установленным фактам.\n"
         "28. Не включай статью 353 только потому, что есть долг. Верни её как VERIFIED лишь когда действующая официальная норма и характер обязательства действительно позволяют этот способ взыскания.\n"
