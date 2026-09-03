@@ -45,13 +45,26 @@ _DURATION_RE = re.compile(
     re.IGNORECASE,
 )
 _MRP_RE = re.compile(r"(?<!\d)(?:\d+(?:[.,]\d+)?)\s*МРП\b", re.IGNORECASE)
-_HIGH_RISK_FACT_PREFIXES = (
+
+# A contract may prescribe future evidence/payment mechanics, so its high-risk
+# provenance pass is deliberately narrower than litigation correspondence.
+_CONTRACT_HIGH_RISK_PREFIXES = (
     "ФИО отсутствует",
     "ИИН/БИН отсутствует",
     "адрес отсутствует",
     "номер договора отсутствует",
     "дата отсутствует",
     "сумма отсутствует",
+)
+_GENERAL_HIGH_RISK_PREFIXES = (
+    "ФИО отсутствует",
+    "ИИН/БИН отсутствует",
+    "адрес отсутствует",
+    "номер договора отсутствует",
+    "дата отсутствует",
+    "доказательство отсутствует",
+    "факт оплаты отсутствует",
+    "факт направления претензии отсутствует",
 )
 
 _INSTALLED = False
@@ -167,6 +180,30 @@ def _finding_supported_by_verified(finding: str, verified_text: str) -> bool:
     return _norm(tail) in _norm(verified_text)
 
 
+def general_truth_findings(
+    lines: list[str],
+    *,
+    case_context: str,
+    verified_claims: list[str] | None,
+) -> list[str]:
+    """Catch invented litigation/correspondence facts anywhere in final prose.
+
+    Existing per-document QA checks the main fact arrays.  This final pass also
+    covers legal-basis, objection and request paragraphs, where a model could
+    otherwise smuggle in an invented payment, dispatch, document, date or party
+    particular while sounding like legal analysis.
+    """
+    verified_text = "\n".join(str(x) for x in (verified_claims or []))
+    findings: list[str] = []
+    for finding in forbidden_fact_findings(lines, case_context):
+        if not finding.startswith(_GENERAL_HIGH_RISK_PREFIXES):
+            continue
+        if _finding_supported_by_verified(finding, verified_text):
+            continue
+        findings.append(finding)
+    return list(dict.fromkeys(findings))
+
+
 def contract_truth_findings(
     lines: list[str],
     *,
@@ -202,7 +239,7 @@ def contract_truth_findings(
     # but ignore evidence-event findings because a contract may legitimately
     # prescribe a future act/invoice without asserting that it already exists.
     for finding in forbidden_fact_findings(lines, case_context):
-        if not finding.startswith(_HIGH_RISK_FACT_PREFIXES):
+        if not finding.startswith(_CONTRACT_HIGH_RISK_PREFIXES):
             continue
         if _finding_supported_by_verified(finding, verified_text):
             continue
@@ -236,6 +273,14 @@ def _truth_common_hygiene(
     if kind == "contract":
         truth_findings.extend(
             contract_truth_findings(
+                lines,
+                case_context=case_context,
+                verified_claims=verified_claims,
+            )
+        )
+    else:
+        truth_findings.extend(
+            general_truth_findings(
                 lines,
                 case_context=case_context,
                 verified_claims=verified_claims,
