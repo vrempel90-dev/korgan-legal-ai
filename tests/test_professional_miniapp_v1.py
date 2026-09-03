@@ -52,6 +52,10 @@ def test_professional_consultation_drops_action_with_unverified_legal_basis() ->
                 "action": "Обязательно подать иск в течение трёх дней.",
                 "basis_statement": "У клиента есть трёхдневный срок.",
             },
+            {
+                "action": "Подать иск в суд в течение пяти дней.",
+                "basis_statement": "",
+            },
         ],
         "risks": [],
         "unknowns": [],
@@ -59,6 +63,7 @@ def test_professional_consultation_drops_action_with_unverified_legal_basis() ->
     text = _render_consultation(payload=payload, verified=[], rejected=[], language="ru")
     assert "Сохранить платёжные документы" in text
     assert "трёх дней" not in text
+    assert "пяти дней" not in text
     assert "Я не могу подтвердить конкретную правовую норму" in text
 
 
