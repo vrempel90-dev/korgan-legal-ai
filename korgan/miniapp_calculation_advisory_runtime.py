@@ -3,11 +3,9 @@ from __future__ import annotations
 """Persist calculation uncertainty as client-facing Mini App metadata.
 
 Generation jobs store the finished document in the encrypted case state. This
-runtime adds two additive fields to that same atomic publication:
-
-* ``calculation_todo`` — short human-readable unresolved monetary points;
-* ``calculation_advisory`` — the post-generation recommendation to use a KORGAN
-  lawyer for those points.
+runtime adds additive fields to that same atomic publication and merges the
+calculation advice into the existing ``todo_before_filing`` contract that the
+ready screen already renders. No frontend guesswork is needed.
 
 The fields do not alter legal readiness. In particular, an optional penalty that
 was safely excluded from a filing-ready principal claim stays optional instead
@@ -43,6 +41,43 @@ def _fields(draft: Any, language: str) -> dict[str, Any]:
     }
 
 
+def _lawyer_cta(language: str) -> str:
+    if language == "kk":
+        return (
+            "Осы есептеу тармақтары бойынша құжатты бермес бұрын KORGAN заңгеріне "
+            "жүгінуге кеңес беремін."
+        )
+    return (
+        "По этим расчётным пунктам перед подачей документа советую обратиться "
+        "к юристу KORGAN."
+    )
+
+
+def _merge_client_todo(payload: dict[str, Any], language: str) -> dict[str, Any]:
+    """Put calculation uncertainty into the ready screen's existing safe list."""
+    calculation_todo = [
+        " ".join(str(item or "").split()).strip()
+        for item in list(payload.get("calculation_todo") or [])
+        if " ".join(str(item or "").split()).strip()
+    ]
+    if not calculation_todo:
+        return payload
+
+    todo = [
+        " ".join(str(item or "").split()).strip()
+        for item in list(payload.get("todo_before_filing") or [])
+        if " ".join(str(item or "").split()).strip()
+    ]
+    for item in calculation_todo:
+        if item not in todo:
+            todo.append(item)
+    cta = _lawyer_cta(language)
+    if cta not in todo:
+        todo.append(cta)
+    payload["todo_before_filing"] = todo[:8]
+    return payload
+
+
 async def _generate_payload(
     document_type: str,
     context: str,
@@ -70,6 +105,7 @@ async def _generate_payload(
         **_fields(draft, language),
     }
     payload = apply_release_policy(payload, case_id=case_id)
+    payload = _merge_client_todo(payload, language)
     await on_stage("document_render", 90)
     return payload
 
@@ -83,7 +119,10 @@ def _install_ready_payload() -> None:
         payload = original(case_id, case)
         payload["calculation_todo"] = list(case.get("calculation_todo") or [])
         payload["calculation_advisory"] = str(case.get("calculation_advisory") or "")
-        return payload
+        # The language is persisted on the case and survives closing/reopening
+        # Mini App, so the same localized recommendation is rebuilt on recovery.
+        language = "kk" if str(case.get("language") or "ru") == "kk" else "ru"
+        return _merge_client_todo(payload, language)
 
     with_advisory._korgan_calculation_advisory = True  # type: ignore[attr-defined]
     generation_runtime._document_payload = with_advisory
@@ -125,6 +164,7 @@ def _install_admin_free_payload() -> None:
                 },
                 case_id=job.case_id,
             )
+            payload = _merge_client_todo(payload, job.language)
             job.stage = "document_render"
             job.progress = 90
 
