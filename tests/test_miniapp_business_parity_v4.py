@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from korgan import miniapp_api_v4
+from korgan import miniapp_document_consultation
 from korgan.miniapp_professional_release import professional_release_allowed
 
 
@@ -18,18 +19,15 @@ def _routes(path: str, method: str):
 def test_direct_unlimited_consultation_route_is_replaced() -> None:
     routes = _routes("/miniapp/consultation", "POST")
     assert len(routes) == 1
-    assert routes[0].endpoint is miniapp_api_v4.consultation
+    # The assembled Mini App intentionally replaces v4 once more so a
+    # consultation may be pinned to the exact generated DOCX revision. Quota
+    # and payment behavior still comes from v4 under that final handler.
+    assert routes[0].endpoint is miniapp_document_consultation.consultation
+    assert routes[0].endpoint is not miniapp_api_v4.consultation
 
 
 def test_direct_document_generation_route_is_replaced_by_payment_gate() -> None:
-    """Прямой маршрут v2 снят; владельца проверяет tests/test_production_route_ownership.
-
-    Здесь фиксируется только то, что за это отвечает v4: маршрут не задвоен и
-    больше не ведёт в необлагаемую оплатой генерацию v2. Кто именно владеет им в
-    собранном приложении — вопрос всей цепочки слоёв, и утверждать это из
-    отдельного слоя нельзя: v5 добавляет поверх v4 оплату документа, и два
-    таких утверждения противоречили бы друг другу.
-    """
+    """Прямой маршрут v2 снят; владельца проверяет tests/test_production_route_ownership."""
     from korgan import miniapp_api_v2
 
     routes = _routes("/miniapp/documents/generate", "POST")
