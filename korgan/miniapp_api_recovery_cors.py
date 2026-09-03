@@ -20,9 +20,8 @@ from korgan import miniapp_generation_api as _miniapp_generation_api  # noqa: F4
 from korgan import document_truth_runtime as _document_truth_runtime  # noqa: F401
 from korgan import live_article_release_runtime as _live_article_release_runtime  # noqa: F401
 from korgan import senior_document_drafting_runtime as _senior_document_drafting_runtime  # noqa: F401
-# Bound the complete legal pipeline after all release/drafting wrappers are in
-# place. The budget includes research, drafting, deterministic QA, DOCX render
-# and final live citation verification; timing out never releases partial Word.
+# The generation timeout is a safety ceiling, not a product promise. The UI
+# reports real server stages while the legal pipeline works.
 from korgan import document_latency_budget_runtime as _document_latency_budget_runtime  # noqa: F401
 from korgan import miniapp_professional_consultation_runtime as _miniapp_professional_consultation_runtime  # noqa: F401
 from korgan import miniapp_case_activity as _miniapp_case_activity  # noqa: F401
@@ -55,6 +54,10 @@ _admin_test_enabled = str(os.getenv("KORGAN_ADMIN_FREE_DOCUMENT_TEST", "") or ""
 }
 if not _miniapp_settings.payments_enabled and _admin_test_enabled:
     from korgan import miniapp_admin_free_generation_runtime as _miniapp_admin_free_generation_runtime  # noqa: F401
+    # Install only after the free worker exists. This replaces its worker body
+    # with one that exposes actual legal-research/drafting/QA/Word/live-check
+    # boundaries through the existing job status endpoint.
+    from korgan import miniapp_real_generation_progress_runtime as _miniapp_real_generation_progress_runtime  # noqa: F401
 
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_consent_status as _miniapp_consent_status
