@@ -11,6 +11,7 @@ unavailable, stale, or the fast model call itself fails.
 """
 
 import logging
+import time
 from typing import Any, Awaitable, Callable
 
 from korgan import claim_corpus_health
@@ -200,10 +201,12 @@ class FastLocalConsultationAdapter:
         case_context: str = "",
         language: str = "ru",
     ) -> tuple[str, list[str]]:
+        total_started = time.perf_counter()
         query = (str(question or "") + "\n" + str(case_context or "")[:8000]).strip()
         corpus = None
         offered: list[Any] = []
         local_issue = ""
+        local_started = time.perf_counter()
         try:
             corpus = open_corpus()
             if corpus is None:
@@ -220,9 +223,14 @@ class FastLocalConsultationAdapter:
         finally:
             if corpus is not None:
                 corpus.close()
+        local_seconds = time.perf_counter() - local_started
 
         if local_issue:
-            LOGGER.warning("FAST_LOCAL_CONSULT %s; using web fallback", local_issue)
+            LOGGER.warning(
+                "FAST_LOCAL_CONSULT path=web_fallback reason=%s local_search_seconds=%.3f",
+                local_issue,
+                local_seconds,
+            )
             return await self.fallback(question, case_context=case_context, language=language)
 
         provisions = {
@@ -231,7 +239,10 @@ class FastLocalConsultationAdapter:
             if _is_adilet_source(str(provision.url or ""))
         }
         if not provisions:
-            LOGGER.warning("FAST_LOCAL_CONSULT no Adilet candidates; using web fallback")
+            LOGGER.warning(
+                "FAST_LOCAL_CONSULT path=web_fallback reason=no_adilet_candidates local_search_seconds=%.3f",
+                local_seconds,
+            )
             return await self.fallback(question, case_context=case_context, language=language)
 
         prompt = (
@@ -251,6 +262,7 @@ class FastLocalConsultationAdapter:
             f"ПРОВЕРЕННЫЕ КАНДИДАТЫ ИЗ ADILET:\n{_candidate_block(tuple(provisions.values()))}"
         )
 
+        model_started = time.perf_counter()
         try:
             payload, _ = await self.inner._structured_response(
                 model=self.settings.openai_model,
@@ -263,8 +275,13 @@ class FastLocalConsultationAdapter:
                 schema=_FAST_SCHEMA,
             )
         except Exception:
-            LOGGER.exception("FAST_LOCAL_CONSULT model call failed; using web fallback")
+            LOGGER.exception(
+                "FAST_LOCAL_CONSULT path=web_fallback reason=model_error local_search_seconds=%.3f model_seconds=%.3f",
+                local_seconds,
+                time.perf_counter() - model_started,
+            )
             return await self.fallback(question, case_context=case_context, language=language)
+        model_seconds = time.perf_counter() - model_started
 
         accepted: list[tuple[str, str, str]] = []
         sources: list[str] = []
@@ -286,9 +303,12 @@ class FastLocalConsultationAdapter:
             language=language,
         )
         LOGGER.info(
-            "FAST_LOCAL_CONSULT candidates=%d accepted=%d sources=%d",
+            "FAST_LOCAL_CONSULT path=local candidates=%d accepted=%d sources=%d local_search_seconds=%.3f model_seconds=%.3f total_seconds=%.3f",
             len(provisions),
             len(accepted),
             len(sources),
+            local_seconds,
+            model_seconds,
+            time.perf_counter() - total_started,
         )
         return text, sources
