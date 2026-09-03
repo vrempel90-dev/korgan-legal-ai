@@ -1,0 +1,19 @@
+/* Client-facing payment UI stays intentionally minimal.
+   Provider mechanics remain server-side and are not explained in the purchase flow. */
+
+/* The header already says "Оплата документа". Keep only the amount and actions. */
+.payment-page > h1,
+.payment-page > p,
+.payment-page > .analysis-card.manual-card {
+  display: none !important;
+}
+
+/* In the document picker show only the document price, not the payment mechanism. */
+.price-note > span {
+  font-size: 0 !important;
+}
+
+.price-note > span > strong {
+  font-size: 0.95rem !important;
+  line-height: 1.35;
+}
