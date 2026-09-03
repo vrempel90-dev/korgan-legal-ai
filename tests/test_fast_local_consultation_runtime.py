@@ -50,9 +50,14 @@ def provision() -> Provision:
     )
 
 
+def _fresh(monkeypatch) -> None:
+    monkeypatch.setattr(fast, "_freshness_issue", lambda _corpus, _provisions: "")
+
+
 def test_fast_consult_uses_local_corpus_without_web_tools(monkeypatch):
     corpus = FakeCorpus([provision()])
     monkeypatch.setattr(fast, "open_corpus", lambda: corpus)
+    _fresh(monkeypatch)
     fallback_calls = []
 
     async def fallback(*args, **kwargs):
@@ -91,6 +96,7 @@ def test_fast_consult_uses_local_corpus_without_web_tools(monkeypatch):
 
 def test_fast_consult_rejects_article_not_offered(monkeypatch):
     monkeypatch.setattr(fast, "open_corpus", lambda: FakeCorpus([provision()]))
+    _fresh(monkeypatch)
 
     async def fallback(*args, **kwargs):
         raise AssertionError("web fallback must not be used when corpus is available")
@@ -117,6 +123,7 @@ def test_fast_consult_rejects_article_not_offered(monkeypatch):
 
 def test_fast_consult_drops_normative_action_not_linked_to_accepted_statement(monkeypatch):
     monkeypatch.setattr(fast, "open_corpus", lambda: FakeCorpus([provision()]))
+    _fresh(monkeypatch)
 
     async def fallback(*args, **kwargs):
         raise AssertionError("fallback not expected")
@@ -147,6 +154,32 @@ def test_fast_consult_drops_normative_action_not_linked_to_accepted_statement(mo
 
     assert "обязаны подать иск" not in text
     assert "Сохраните расписку" in text
+
+
+def test_stale_local_corpus_falls_back_to_live_web(monkeypatch):
+    corpus = FakeCorpus([provision()])
+    monkeypatch.setattr(fast, "open_corpus", lambda: corpus)
+    monkeypatch.setattr(
+        fast,
+        "_freshness_issue",
+        lambda _corpus, _provisions: "акт GK_RK_OBSHAYA не сверялся более 7 дней",
+    )
+    fallback_calls = []
+
+    async def fallback(*args, **kwargs):
+        fallback_calls.append((args, kwargs))
+        return "web answer", ["https://adilet.zan.kz/"]
+
+    inner = FakeInner({})
+    text, sources = asyncio.run(
+        fast.FastLocalConsultationAdapter(inner, fallback=fallback).consult("Вопрос", language="ru")
+    )
+
+    assert corpus.closed is True
+    assert len(fallback_calls) == 1
+    assert inner.calls == []
+    assert text == "web answer"
+    assert sources == ["https://adilet.zan.kz/"]
 
 
 def test_old_110_second_setting_is_lifted_to_safety_floor(monkeypatch):
