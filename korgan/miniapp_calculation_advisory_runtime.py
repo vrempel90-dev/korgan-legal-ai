@@ -30,6 +30,7 @@ from korgan.client_calculation_advisory import (
 LOGGER = logging.getLogger(__name__)
 core = v5.core
 _INSTALLED = False
+_MAX_CLIENT_TODO = 8
 
 
 def _fields(draft: Any, language: str) -> dict[str, Any]:
@@ -54,7 +55,13 @@ def _lawyer_cta(language: str) -> str:
 
 
 def _merge_client_todo(payload: dict[str, Any], language: str) -> dict[str, Any]:
-    """Put calculation uncertainty into the ready screen's existing safe list."""
+    """Put calculation uncertainty into the ready screen's existing safe list.
+
+    Calculation items and the lawyer recommendation are the reason this runtime
+    exists, so they must never be truncated away by a long pre-existing filing
+    checklist. Existing tasks are preserved up to the remaining client-visible
+    capacity; the KORGAN lawyer CTA is always the final item.
+    """
     calculation_todo = [
         " ".join(str(item or "").split()).strip()
         for item in list(payload.get("calculation_todo") or [])
@@ -63,18 +70,18 @@ def _merge_client_todo(payload: dict[str, Any], language: str) -> dict[str, Any]
     if not calculation_todo:
         return payload
 
-    todo = [
+    cta = _lawyer_cta(language)
+    existing = [
         " ".join(str(item or "").split()).strip()
         for item in list(payload.get("todo_before_filing") or [])
         if " ".join(str(item or "").split()).strip()
     ]
-    for item in calculation_todo:
-        if item not in todo:
-            todo.append(item)
-    cta = _lawyer_cta(language)
-    if cta not in todo:
-        todo.append(cta)
-    payload["todo_before_filing"] = todo[:8]
+    # Remove duplicates from the old checklist before reserving space for the
+    # unresolved calculations and CTA.
+    existing = [item for item in existing if item not in calculation_todo and item != cta]
+    calculation_todo = calculation_todo[: _MAX_CLIENT_TODO - 1]
+    regular_capacity = max(0, _MAX_CLIENT_TODO - len(calculation_todo) - 1)
+    payload["todo_before_filing"] = existing[:regular_capacity] + calculation_todo + [cta]
     return payload
 
 
