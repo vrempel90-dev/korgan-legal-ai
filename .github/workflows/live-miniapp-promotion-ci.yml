@@ -1,0 +1,33 @@
+name: Live MiniApp promotion CI
+
+on:
+  pull_request:
+    branches:
+      - feature/miniapp-ui-v1
+    paths:
+      - 'miniapp/**'
+      - '.github/workflows/live-miniapp-promotion-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  live-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: miniapp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: miniapp/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Run frontend regression suite
+        run: npm test
+      - name: Build production MiniApp
+        run: npm run build
