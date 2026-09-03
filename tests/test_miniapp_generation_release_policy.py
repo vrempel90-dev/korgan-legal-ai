@@ -1,19 +1,9 @@
-"""Фоновая задача выпускает документ по тем же правилам, что и прямой запрос.
-
-Политика выпуска решает, что видит оплативший пользователь: полноценный
-документ, честно помеченный предварительный проект или отказ с сохранённой
-возможностью повтора. Пока подготовка шла внутри HTTP-запроса, правило стояло
-одно — обёртка вокруг `core.generate_document`. Фоновая задача вызывает более
-низкий слой, и без явной проверки она выпускала бы документ, который прямой
-запрос выпустить отказался бы.
-"""
+"""Generated Word is always delivered; QA controls filing readiness, not file existence."""
 
 from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-
-import pytest
 
 from korgan import miniapp_generation_jobs as jobs
 from korgan import miniapp_professional_release as release
@@ -73,23 +63,29 @@ def test_job_marks_weak_draft_preliminary_instead_of_releasing_it(monkeypatch) -
     assert payload["document_base64"]
 
 
-def test_job_refuses_release_when_preliminary_delivery_is_off(monkeypatch) -> None:
+def test_review_draft_is_delivered_even_if_legacy_flag_is_off(monkeypatch) -> None:
+    """Environment flags may not bring back the old 422/purge behaviour."""
     _install_generate(monkeypatch, filing_ready=False, release_status="draft")
     monkeypatch.setenv(release.FLAG_ENV, "off")
 
-    with pytest.raises(release.ReleaseBlocked):
-        asyncio.run(
-            jobs._generate_payload(
-                "claim",
-                "Проверяемые факты",
-                "ru",
-                case_id="case-1",
-                on_stage=_noop_stage,
-            )
+    payload = asyncio.run(
+        jobs._generate_payload(
+            "claim",
+            "Проверяемые факты",
+            "ru",
+            case_id="case-1",
+            on_stage=_noop_stage,
         )
+    )
+
+    assert payload["release_status"] == "preliminary"
+    assert payload["filing_ready"] is False
+    assert payload["document_base64"]
+    assert payload["filename"] == "claim.docx"
 
 
-def test_blocked_release_never_stores_document_and_keeps_payment(monkeypatch) -> None:
+def test_review_draft_is_stored_and_job_succeeds(monkeypatch) -> None:
+    """A successful generation remains a successful job even when QA has warnings."""
     _install_generate(monkeypatch, filing_ready=False, release_status="draft")
     monkeypatch.setenv(release.FLAG_ENV, "off")
     state: dict[str, object] = {"cases": {"case-1": {"id": "case-1"}}}
@@ -105,38 +101,41 @@ def test_blocked_release_never_stores_document_and_keeps_payment(monkeypatch) ->
         error_detail="",
     )
     updates: list[dict[str, object]] = []
+    consumed: list[int] = []
 
     async def fake_update(_job_id: str, **values):
         updates.append(values)
 
-    async def forbidden_consume(*args, **kwargs):
-        raise AssertionError("заблокированный выпуск не должен списывать оплату")
+    async def fake_consume(order_id: int, **kwargs):
+        consumed.append(order_id)
+        return True
 
     async def fake_claim(_job_id: str):
         return job
 
     monkeypatch.setattr(jobs, "claim_job", fake_claim)
     monkeypatch.setattr(jobs, "update_job", fake_update)
-    monkeypatch.setattr(jobs.document_store, "consume_document_order", forbidden_consume)
+    monkeypatch.setattr(jobs.document_store, "consume_document_order", fake_consume)
 
-    with pytest.raises(release.ReleaseBlocked):
-        asyncio.run(
-            jobs.run_job(
-                job,
-                identity="identity",
-                store=store,
-                document_type="claim",
-                context="Проверяемые факты",
-                language="ru",
-            )
+    asyncio.run(
+        jobs.run_job(
+            job,
+            identity="identity",
+            store=store,
+            document_type="claim",
+            context="Проверяемые факты",
+            language="ru",
         )
+    )
 
-    assert store.saved == []
-    assert "document_base64" not in state["cases"]["case-1"]
-    assert updates[-1]["status"] == "failed"
-    error = str(updates[-1]["error_detail"])
-    assert "профессиональную проверку" in error
-    assert "оплат" in error.lower()
+    saved_case = state["cases"]["case-1"]
+    assert consumed == [91]
+    assert store.saved
+    assert saved_case["document_base64"]
+    assert saved_case["release_status"] == "preliminary"
+    assert saved_case["filing_ready"] is False
+    assert updates[-1]["status"] == "succeeded"
+    assert updates[-1]["progress"] == 100
 
 
 def test_verified_document_passes_through_untouched(monkeypatch) -> None:
@@ -158,17 +157,8 @@ def test_verified_document_passes_through_untouched(monkeypatch) -> None:
     assert "preliminary" not in payload
 
 
-def test_block_reason_is_written_for_the_client_not_copied_from_the_gates() -> None:
-    """Отказ выпуска называет причину словами клиента, а не разметкой проверок.
-
-    Причина склеивалась из `quality_issues` и `verification_notes` как есть, а
-    там живёт внутренняя разметка. Оплативший пользователь читал на экране
-    подготовки строку вида «Причина: FILING_ACTION: указать банковские
-    реквизиты истца» — префикс из служебного протокола проверок, который ему
-    ничего не объясняет. Тот же список для помеченного черновика давно
-    переводится на человеческий язык; отказ обязан пользоваться тем же
-    правилом.
-    """
+def test_legacy_exception_text_is_client_safe() -> None:
+    """Compatibility exception must never expose internal gate vocabulary."""
     blocked = release.ReleaseBlocked(
         [
             "FILING_ACTION: указать банковские реквизиты истца",
@@ -180,25 +170,29 @@ def test_block_reason_is_written_for_the_client_not_copied_from_the_gates() -> N
     assert "FILING_ACTION" not in detail
     assert "указать банковские реквизиты истца" in detail
     assert "государственной пошлины" in detail
-    assert "профессиональную проверку" in detail
+    assert "проверки перед подачей" in detail
 
 
-def test_untranslatable_gate_wording_is_not_shown_instead_of_a_reason() -> None:
-    """Замечание, которому нет человеческого перевода, не показывается сырым.
-
-    Лучше объяснение без перечня причин, чем перечень, состоящий из внутренних
-    формулировок: пользователю всё равно остаётся сказано, что документ не
-    прошёл проверку и что повторная оплата не нужна.
-    """
+def test_untranslatable_gate_wording_is_not_shown_raw() -> None:
     detail = str(release.ReleaseBlocked(["gate_7 assertion failed: anchors=0"]))
 
     assert "gate_7" not in detail
     assert "anchors" not in detail
-    assert "профессиональную проверку" in detail
-    assert "оплат" in detail.lower()
+    assert "проверки перед подачей" in detail
 
 
 def test_release_policy_is_one_shared_rule() -> None:
-    """Прямой запрос и фоновая задача обязаны решать одинаково."""
+    """Direct and background paths use the same release semantics."""
     verified = {"filing_ready": True, "release_status": "verified"}
     assert release.apply_release_policy(dict(verified), case_id="case-1") == verified
+
+    review = {
+        "filing_ready": False,
+        "release_status": "draft",
+        "quality_issues": ["есть правовая ссылка, не прошедшая source-bound/corpus проверку"],
+        "verification_notes": [],
+        "document_base64": "docx",
+    }
+    released = release.apply_release_policy(review, case_id="case-2")
+    assert released["release_status"] == "preliminary"
+    assert released["document_base64"] == "docx"
