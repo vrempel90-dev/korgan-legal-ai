@@ -1,9 +1,21 @@
+body:not(.claim-calculator-active) #korgan-legal-tools-button {
+  display: none !important;
+}
+
+body.claim-calculator-active #root main.creation-page .input-meta {
+  margin-bottom: 76px;
+}
+
 .korgan-legal-tools-button.claim-calculator-launcher {
-  position: static;
+  position: absolute;
+  left: var(--claim-calc-left, 16px);
+  top: var(--claim-calc-top, 0);
+  right: auto;
+  bottom: auto;
   display: flex;
-  width: 100%;
+  width: var(--claim-calc-width, calc(100% - 32px));
   min-height: 52px;
-  margin: 12px 0 0;
+  margin: 0;
   align-items: center;
   justify-content: center;
   gap: 9px;
@@ -17,6 +29,7 @@
   letter-spacing: -.01em;
   text-align: center;
   cursor: pointer;
+  z-index: 70;
 }
 
 .korgan-legal-tools-button.claim-calculator-launcher::before {
