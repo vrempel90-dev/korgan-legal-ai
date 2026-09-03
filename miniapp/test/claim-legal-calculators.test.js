@@ -48,6 +48,13 @@ test('инструкция прямо объясняет куда попадёт
   assert.match(bridge, /проверьте текст и нажмите «Создать дело»/i);
 });
 
+test('инструкция обновляется вместе с RU KK языком приложения', () => {
+  assert.match(bridge, /article\.dataset\.language\s*=\s*lang/);
+  assert.match(bridge, /existingGuide\.dataset\.language\s*!==\s*lang/);
+  assert.match(bridge, /existingGuide\.replaceWith\(guide\(copy, lang\)\)/);
+  assert.match(bridge, /Қалай пайдалану керек/);
+});
+
 test('госпошлина и неустойка добавляются в controlled textarea иска', () => {
   assert.match(bridge, /Рассчитанная госпошлина для иска/);
   assert.match(bridge, /Рассчитанная неустойка по статье 353 ГК РК/);
