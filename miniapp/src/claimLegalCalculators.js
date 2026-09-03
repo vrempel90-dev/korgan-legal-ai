@@ -168,9 +168,10 @@ function waitForCalculation(kind, submitted = {}) {
   }, 120);
 }
 
-function guide(copy) {
+function guide(copy, lang) {
   const article = document.createElement('article');
   article.className = 'claim-calculator-guide';
+  article.dataset.language = lang;
   const title = document.createElement('h3');
   title.textContent = copy.guideTitle;
   const list = document.createElement('ol');
@@ -194,8 +195,11 @@ function preparePanel() {
   const subtitle = sheet.querySelector('.korgan-legal-tools-head p');
   if (heading) heading.textContent = copy.dialog;
   if (subtitle) subtitle.textContent = copy.subtitle;
-  if (!sheet.querySelector('.claim-calculator-guide')) {
-    sheet.querySelector('.korgan-legal-tools-head')?.insertAdjacentElement('afterend', guide(copy));
+  const existingGuide = sheet.querySelector('.claim-calculator-guide');
+  if (!existingGuide) {
+    sheet.querySelector('.korgan-legal-tools-head')?.insertAdjacentElement('afterend', guide(copy, lang));
+  } else if (existingGuide.dataset.language !== lang) {
+    existingGuide.replaceWith(guide(copy, lang));
   }
   const cards = sheet.querySelectorAll('.korgan-legal-tool-card');
   const dutyHint = cards[0]?.querySelector('.hint');
