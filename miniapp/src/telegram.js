@@ -12,7 +12,6 @@ function isDesktopTelegram(tg) {
   if (desktopPlatforms.has(platform)) return true;
   if (mobilePlatforms.has(platform)) return false;
 
-  // Fallback for future/unknown Telegram desktop clients.
   return Boolean(window.matchMedia?.('(min-width: 900px)').matches);
 }
 
@@ -23,8 +22,7 @@ function requestDesktopFullscreen(tg) {
   try {
     tg.requestFullscreen();
   } catch {
-    // Older Telegram clients may expose no fullscreen support. The responsive
-    // desktop layout remains the safe fallback in that case.
+    // Responsive desktop layout remains the safe fallback.
   }
 }
 
@@ -34,14 +32,9 @@ export function initTelegram() {
 
   tg.ready();
   tg.expand();
-
-  // Keep Telegram chrome visually consistent with the KORGAN Mini App.
   tg.setHeaderColor?.('#090b0d');
   tg.setBackgroundColor?.('#090b0d');
   tg.setBottomBarColor?.('#090b0d');
-
-  // Telegram Desktop normally opens Mini Apps in a narrow WebView. Ask modern
-  // desktop clients for fullscreen without changing mobile behaviour.
   window.setTimeout(() => requestDesktopFullscreen(tg), 80);
 
   return tg;

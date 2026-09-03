@@ -1,25 +1,52 @@
 import { requireProfessionalDocument, requireProfessionalRuntime } from './runtimeReadiness.js';
 import { createApiTransport } from './apiTransport.js';
 import { clearLifecycleNotificationCase } from './lifecycleNotifications.js';
-import { recoverGenerationStart } from './generationStartRecovery.js';
 
-const API_BASE = import.meta.env?.VITE_KORGAN_API_BASE || '';
+const API_BASE = import.meta.env.VITE_KORGAN_API_BASE || '';
+const DOCUMENT_CONSULTATION_SCOPE_KEY = 'korgan_document_consultation';
 const request = createApiTransport({
   baseUrl: API_BASE,
   getTelegramInitData: () => window.Telegram?.WebApp?.initData || '',
 });
 
-// Professional consultation can legitimately take longer than the ordinary
-// Mini App transport because the backend performs source-bound legal research
-// and verifies the cited Kazakhstan law before returning the answer. Keep the
-// global 30s timeout for normal API calls, but do not let the browser abort a
-// valid consultation while the backend is still checking sources.
-const CONSULTATION_TIMEOUT_MS = 90000;
-
 const LEGACY_UPLOAD_ONLY_DESCRIPTIONS = new Set([
   'Дело создано на основании загруженных материалов. Факты следует брать только из документов, загруженных пользователем.',
   'Іс жүктелген материалдар негізінде құрылды. Фактілерді тек пайдаланушы жүктеген құжаттардан алу керек.',
 ]);
+
+function documentConsultationScope() {
+  try {
+    const parsed = JSON.parse(globalThis.sessionStorage?.getItem(DOCUMENT_CONSULTATION_SCOPE_KEY) || '{}');
+    return {
+      caseId: String(parsed?.caseId || '').trim(),
+      title: String(parsed?.title || '').trim(),
+    };
+  } catch {
+    return { caseId: '', title: '' };
+  }
+}
+
+async function consultation(message, caseId, language = 'ru') {
+  const safeCaseId = caseId || null;
+  let documentRevision = null;
+  const scope = documentConsultationScope();
+  if (safeCaseId && scope.caseId === String(safeCaseId)) {
+    const currentCase = await request(`/miniapp/cases/${encodeURIComponent(safeCaseId)}`);
+    documentRevision = String(currentCase?.document_revision || '').trim() || null;
+    if (!documentRevision) {
+      throw new Error('Текущая версия документа недоступна. Откройте готовый документ заново и повторите вопрос.');
+    }
+  }
+  return request('/miniapp/consultation', {
+    method: 'POST',
+    body: JSON.stringify({
+      message,
+      case_id: safeCaseId,
+      language,
+      document_revision: documentRevision,
+    }),
+  });
+}
 
 async function uploadMaterial(caseId, file) {
   const body = new FormData();
@@ -39,47 +66,6 @@ async function uploadDocumentReceipt(orderId, file) {
   return request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}/receipt`, { method: 'POST', body });
 }
 
-async function generateDocument(caseId, documentType = 'claim', language = 'ru') {
-  try {
-    return await request('/miniapp/documents/generate', {
-      method: 'POST',
-      body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
-    });
-  } catch (error) {
-    return recoverGenerationStart({
-      caseId,
-      error,
-      fetchCaseGeneration: (id) => request(
-        `/miniapp/cases/${encodeURIComponent(id)}/generation`,
-        { timeoutMs: 4000 },
-      ),
-    });
-  }
-}
-
-async function consultation(message, caseId, language = 'ru') {
-  let documentRevision = '';
-  const id = String(caseId || '').trim();
-  if (id) {
-    // Consultation must follow the exact generated file the user is looking at.
-    // The server publishes SHA-256 for the current DOCX. Fetch it immediately
-    // before asking the legal AI so a regenerated file cannot be silently
-    // substituted between the case screen and the consultation request.
-    const result = await request(`/miniapp/cases/${encodeURIComponent(id)}`);
-    documentRevision = String(result?.case?.document_revision || '').trim();
-  }
-  return request('/miniapp/consultation', {
-    method: 'POST',
-    timeoutMs: CONSULTATION_TIMEOUT_MS,
-    body: JSON.stringify({
-      message,
-      case_id: id || null,
-      language,
-      document_revision: documentRevision || null,
-    }),
-  });
-}
-
 export const korganApi = {
   health: async (options = {}) => {
     const [health, parity] = await Promise.all([
@@ -90,6 +76,7 @@ export const korganApi = {
   },
   consentStatus: (options = {}) => request('/miniapp/consent', options),
   pricing: (options = {}) => request('/miniapp/pricing', options),
+  getConsultationQuota: (options = {}) => request('/miniapp/consultation/quota', options),
   consultation,
   uploadConsultationReceipt,
   retryPaidConsultation: (orderId) => request(`/miniapp/consultation/payments/${encodeURIComponent(orderId)}/retry`, {
@@ -114,6 +101,9 @@ export const korganApi = {
   documentAccess: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/document/access`, {
     method: 'POST',
   }),
+  sendDocumentToTelegram: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/document/telegram`, {
+    method: 'POST',
+  }),
   uploadMaterial,
   uploadMaterials: async (caseId, files, onProgress) => {
     const list = Array.from(files || []);
@@ -126,11 +116,17 @@ export const korganApi = {
     }
     return results;
   },
-  generateDocument,
+  // Запуск подготовки отвечает описанием задачи: сам документ готовится на
+  // сервере и приходит отдельным опросом состояния.
+  generateDocument: (caseId, documentType = 'claim', language = 'ru') => request('/miniapp/documents/generate', {
+    method: 'POST',
+    body: JSON.stringify({ case_id: caseId, document_type: documentType, language }),
+  }),
   generationStatus: (jobId) => request(`/miniapp/documents/generation/${encodeURIComponent(jobId)}`),
   retryGeneration: (jobId) => request(`/miniapp/documents/generation/${encodeURIComponent(jobId)}/retry`, {
     method: 'POST',
   }),
+  // Дело переживает закрытие Mini App, а идентификатор задачи — нет.
   caseGeneration: (caseId) => request(`/miniapp/cases/${encodeURIComponent(caseId)}/generation`),
   uploadDocumentReceipt,
   documentPaymentStatus: (orderId) => request(`/miniapp/documents/payments/${encodeURIComponent(orderId)}`),

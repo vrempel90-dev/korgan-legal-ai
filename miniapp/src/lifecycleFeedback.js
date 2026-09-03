@@ -1,5 +1,3 @@
-import { feedbackPreferences } from './feedbackPreferences.js';
-
 const TONES = {
   queued: [520, 0.045],
   running: [620, 0.045],
@@ -34,11 +32,6 @@ function getAudioContext(AudioContextClass) {
   return sharedAudioContext;
 }
 
-/**
- * Telegram WebView, как и обычный браузер, разрешает отложенный звук только
- * после пользовательского жеста. Bridge вызывает это на первом pointer/key
- * event, поэтому сигнал готовности через минуты не упирается в autoplay block.
- */
 export async function unlockLifecycleAudio({ AudioContextClass } = {}) {
   try {
     const context = getAudioContext(AudioContextClass);
@@ -50,17 +43,15 @@ export async function unlockLifecycleAudio({ AudioContextClass } = {}) {
   }
 }
 
-/** Короткий сигнал + Telegram haptic на реальный backend transition. */
 export async function playLifecycleFeedback(eventType, {
   telegram = globalThis.window?.Telegram?.WebApp,
   AudioContextClass,
-  storage = globalThis.localStorage,
+  soundEnabled = true,
+  vibrationEnabled = true,
 } = {}) {
-  const preferences = feedbackPreferences(storage);
-  if (preferences.vibration) telegramFeedback(eventType, telegram);
-
+  if (vibrationEnabled) telegramFeedback(eventType, telegram);
   const tone = TONES[eventType];
-  if (!tone || !preferences.sound) return { sounded: false };
+  if (!tone || !soundEnabled) return { sounded: false };
 
   try {
     const context = getAudioContext(AudioContextClass);
