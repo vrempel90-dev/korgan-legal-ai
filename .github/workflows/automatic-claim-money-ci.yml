@@ -1,0 +1,63 @@
+name: Automatic claim money CI
+
+on:
+  pull_request:
+    branches:
+      - recovery/miniapp-api-1600-sg
+  push:
+    branches:
+      - feature/auto-claim-calculations-20260904
+      - recovery/miniapp-api-1600-sg
+
+permissions:
+  contents: read
+
+jobs:
+  monetary-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TELEGRAM_BOT_TOKEN: test-token
+      OPENAI_API_KEY: test-key
+      PAYMENTS_ENABLED: "false"
+      CONSULTATION_LIMIT_ENABLED: "false"
+      KORGAN_LIVE_ARTICLE_VERIFY: "on"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Deterministic monetary and claim regressions
+        run: >-
+          python -m pytest -q
+          tests/test_automatic_claim_calculations_runtime.py
+          tests/test_client_calculation_advisory.py
+          tests/test_miniapp_calculation_advisory_runtime.py
+          tests/test_article_353_safe.py
+          tests/test_claim_state_duty.py
+          tests/test_contractual_penalty.py
+          tests/test_partial_payments.py
+          tests/test_penalty_engine.py
+          tests/test_legal_calc.py
+          tests/test_production_money_parity.py
+
+      - name: Production Mini App API smoke
+        run: python -m pytest -q tests/test_miniapp_api_smoke.py
+
+      - name: Active ASGI stack owns calculation advisory
+        run: |
+          python - <<'PY'
+          from korgan import miniapp_api_recovery_cors  # noqa: F401
+          from korgan import miniapp_calculation_advisory_runtime as advisory
+          from korgan import miniapp_generation_jobs as jobs
+
+          assert jobs._generate_payload is advisory._generate_payload
+          print("calculation advisory runtime active")
+          PY
+
+      - name: Ready screen keeps safe client checklist and lawyer CTA
+        run: node --test miniapp/test/ready-screen-notes.test.js

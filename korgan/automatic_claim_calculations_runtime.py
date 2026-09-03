@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+"""Automatic monetary calculations for production claims.
+
+The client describes the facts. KORGAN decides whether a civil/commercial money
+claim appears overdue, verifies the legal basis in the *existing* source-bound
+research pass, then lets deterministic calculators own the numbers.
+
+For a penalty introduced automatically by KORGAN, calculation uncertainty does
+not block the whole Word document: the uncertain penalty is excluded from the
+claim price and prayer and a filing-facing clarification is shown instead. An
+explicit penalty request from the client keeps the pre-existing blocking
+verification behaviour and is never silently removed.
+"""
+
+import re
+
+from korgan import claim_docx
+from korgan import fast_professional_litigation as fast
+from korgan import finalized_litigation as finalized
+from korgan import late_interest_hotfix as late
+from korgan.docx_blocks import Heading
+from korgan.i18n import KK
+from korgan.language_context import current_language
+from korgan.legal_types import ClaimDraft, VerificationStatus
+
+_INSTALLED = False
+_ORIGINAL_RESEARCH_PROMPT = fast._professional_research_prompt
+_ORIGINAL_FAST_RESEARCH = fast.FastProfessionalLitigationService.research_case
+_ORIGINAL_EXPLICIT = late._explicit_penalty_requested
+_ORIGINAL_MARK = late._mark_penalty_for_verification
+_ORIGINAL_BODY_BLOCKS = claim_docx._body_blocks
+
+_CIVIL_MONEY_RE = re.compile(
+    r"(?i)(?:договор\w*|поставк\w*|подряд\w*|услуг\w*|аренд\w*|займ\w*|за[её]м\w*|"
+    r"расписк\w*|аванс\w*|предоплат\w*|товар\w*|долг\w*|задолженн\w*|"
+    r"возврат\w*\s+денег|вернут\w*\s+денег|берешек\w*|қарыз\w*|шарт\w*)"
+)
+_BREACH_RE = re.compile(
+    r"(?i)(?:"
+    r"не\s+(?:вернул\w*|возвратил\w*|оплатил\w*|погасил\w*|исполнил\w*)|"
+    r"не\s+возвращ\w*|не\s+оплач\w*|"
+    r"просрочил\w*|оплатил\w*\s+с\s+просроч\w*|"
+    r"(?:есть|имеетс\w*|допущен\w*|образовал\w*|составля\w*)\s+просроч\w*|"
+    r"просрочк\w*\s+(?:оплат\w*|возврат\w*|исполн\w*)\s+(?:составля\w*\s+)?\d+|"
+    r"срок\w*\s+(?:ист[её]к|наруш\w*)|"
+    r"мерзім\w*\s+өт\w*|төлем\w*\s+жасалма\w*|қайтарма\w*)"
+)
+_PENALTY_RISK_RE = re.compile(
+    r"(?i)(?:ст\.?\s*353|стать\w*\s*353|неустойк\w*|пен[яию]\b|өсімпұл\w*|"
+    r"тұрақсыздық\s+айыб\w*|пользован\w*\s+чужими\s+деньг\w*|"
+    r"процент\w*\s+за\s+просроч\w*)"
+)
+_PRINCIPAL_VERIFICATION_RE = re.compile(
+    r"(?i)(?:"
+    r"основн\w*\s+(?:долг\w*|требован\w*|обязательств\w*)|"
+    r"основан\w*[^.\n]{0,80}основн\w*[^.\n]{0,40}(?:долг\w*|требован\w*|обязательств\w*)|"
+    r"материал[ьн]*о?-?правов\w*\s+основан\w*|"
+    r"(?:факт|налич|размер)\w*[^.\n]{0,40}(?:основн\w*\s+)?(?:долг\w*|задолженн\w*)|"
+    r"прав\w*\s+на\s+взыскан\w*[^.\n]{0,40}(?:основн\w*|долг\w*|задолженн\w*)"
+    r")"
+)
+
+
+def automatic_penalty_candidate(case_context: str) -> bool:
+    """Whether KORGAN should assess penalty without making the client ask for it.
+
+    Explicit requests keep their old behaviour. Automatic mode is deliberately
+    limited to a fact pattern that looks like an overdue civil/commercial money
+    obligation: a money amount, a civil-obligation marker and factual breach
+    evidence. A due obligation or a contractual clause alone is not evidence
+    that the debtor actually breached it.
+    """
+    text = str(case_context or "")
+    if _ORIGINAL_EXPLICIT(text):
+        return True
+    civil_marker = bool(_CIVIL_MONEY_RE.search(text) or late.parse_contractual_penalty_terms(text) is not None)
+    return bool(late._MONEY_TOKEN_RE.search(text) and civil_marker and _BREACH_RE.search(text))
+
+
+def _penalty_only_note(text: str) -> bool:
+    """True only when an unverified note is demonstrably limited to penalty.
+
+    Never infer "penalty-only" merely from the presence of the word penalty:
+    one model note can mention an unsupported principal and penalty together.
+    """
+    value = " ".join(str(text or "").split()).strip()
+    return bool(
+        value
+        and _PENALTY_RISK_RE.search(value)
+        and not _PRINCIPAL_VERIFICATION_RE.search(value)
+    )
+
+
+def _clarification_reason(reason: str) -> str:
+    value = " ".join(str(reason or "").split()).strip().rstrip(".")
+    if value == late.DUE_DATE_MISSING_NOTE.rstrip(".") or value == late.CONTRACT_DUE_DATE_MISSING_NOTE.rstrip("."):
+        return "не удалось однозначно установить дату начала просрочки"
+    if value == late.PARTIAL_PAYMENT_UNCLEAR_NOTE.rstrip("."):
+        return "упоминается частичная оплата, но её дату и сумму нельзя однозначно установить"
+    if value == late.PARTIAL_PAYMENT_NOTE.rstrip("."):
+        return "есть частичные оплаты, для которых требуется уточнить даты и суммы по периодам"
+    if value == late.CONTRACT_TERMS_MISSING_NOTE.rstrip("."):
+        return "не удалось подтвердить применимое основание и ставку неустойки"
+    if value == late.ARTICLE_353_MISSING_NOTE.rstrip("."):
+        return "статья 353 ГК РК не подтверждена source-bound исследованием для этого требования"
+    if value.startswith(late.RATE_MISSING_NOTE.rstrip(".")):
+        return value[:1].lower() + value[1:]
+    return value[:1].lower() + value[1:] if value else "нужны дополнительные исходные данные для точного расчёта"
+
+
+def _clarification_reason_kk(reason: str) -> str:
+    value = " ".join(str(reason or "").split()).strip().rstrip(".")
+    if value in {late.DUE_DATE_MISSING_NOTE.rstrip("."), late.CONTRACT_DUE_DATE_MISSING_NOTE.rstrip(".")}:
+        return "мерзімнің басталу күнін бірмәнді анықтау мүмкін болмады"
+    if value == late.PARTIAL_PAYMENT_UNCLEAR_NOTE.rstrip("."):
+        return "ішінара төлем көрсетілген, бірақ оның күні мен сомасын бірмәнді анықтау мүмкін болмады"
+    if value == late.PARTIAL_PAYMENT_NOTE.rstrip("."):
+        return "ішінара төлемдер бойынша күндер мен сомаларды нақтылау қажет"
+    if value == late.CONTRACT_TERMS_MISSING_NOTE.rstrip("."):
+        return "тұрақсыздық айыбының қолданылатын негізі мен мөлшерлемесін растау мүмкін болмады"
+    if value == late.ARTICLE_353_MISSING_NOTE.rstrip("."):
+        return "осы талап бойынша ҚР АК 353-бабының қолданылуы ресми дереккөзбен расталмады"
+    if value.startswith(late.RATE_MISSING_NOTE.rstrip(".")):
+        return "есептеу күніне ҚР Ұлттық Банкінің базалық мөлшерлемесі расталмады"
+    return "нақты есептеу үшін қосымша бастапқы деректер қажет"
+
+
+def soft_penalty_clarification(
+    draft: ClaimDraft,
+    reason: str,
+    *,
+    case_context: str,
+    detail: str = "",
+) -> None:
+    """Keep automatic uncertainty local, but preserve explicit-client gates."""
+    if _ORIGINAL_EXPLICIT(case_context):
+        _ORIGINAL_MARK(
+            draft,
+            reason,
+            case_context=case_context,
+            detail=detail,
+        )
+        return
+
+    draft.requests = [
+        str(item) for item in list(draft.requests or [])
+        if not late._PENALTY_LINE_RE.search(str(item))
+    ]
+    draft.legal_basis = [
+        str(item) for item in list(draft.legal_basis or [])
+        if not late._PENALTY_LINE_RE.search(str(item))
+        and not late._ARTICLE_353_LINE_RE.search(str(item))
+    ]
+    draft.verification_notes = [
+        str(item) for item in list(draft.verification_notes or [])
+        if not _penalty_only_note(str(item))
+    ]
+    late._drop_penalty_calculation(draft)
+    if current_language() == KK:
+        draft.late_interest = (
+            "Тұрақсыздық айыбы талап қою бағасына және талап қою бөліміне енгізілмеді. "
+            f"Нақтылау қажет: {_clarification_reason_kk(reason)}."
+        )
+    else:
+        draft.late_interest = (
+            "Неустойка в цену иска и просительную часть не включена. "
+            f"Требует уточнения: {_clarification_reason(reason)}."
+        )
+
+
+def _research_prompt(case_context: str, *, max_chars: int, checked_on: str, **kwargs: object) -> str:
+    base = _ORIGINAL_RESEARCH_PROMPT(
+        case_context,
+        max_chars=max_chars,
+        checked_on=checked_on,
+        **kwargs,
+    )
+    if not automatic_penalty_candidate(case_context):
+        return base
+    return base + (
+        "\n\nАВТОМАТИЧЕСКИЙ РАСЧЁТ ДЕНЕЖНЫХ ТРЕБОВАНИЙ:\n"
+        "26. Пользователь не обязан знать термин 'неустойка' и отдельно просить её. "
+        "Если из материалов следует просроченное денежное обязательство, В ЭТОМ ЖЕ source-bound проходе проверь право на неустойку автоматически.\n"
+        "27. Сначала проверь договор: если в материалах есть договорная пеня/неустойка, не подменяй её статьёй 353 ГК РК. "
+        "Если договорной ставки нет или она неприменима, проверь, применимы ли пункты 1 и 2 статьи 353 ГК РК к установленным фактам.\n"
+        "28. Не включай статью 353 только потому, что есть долг. Верни её как VERIFIED лишь когда действующая официальная норма и характер обязательства действительно позволяют этот способ взыскания.\n"
+        "29. Если правовое основание есть, но для точного расчёта не хватает срока исполнения, даты частичной оплаты или другого исходного факта, отрази это как NEEDS_FACTS в remedies. Не придумывай дату или ставку.\n"
+        "30. Сомнение только по автоматически проверяемой неустойке НЕ должно делать весь основной иск UNVERIFIED: не добавляй такое сомнение в unverified_claims, если оно не затрагивает основной долг. Используй REMEDY NEEDS_FACTS/EXCLUDE.\n"
+        "31. Госпошлину и арифметику не считай моделью: после drafting их вычисляет детерминированный код KORGAN."
+    )
+
+
+async def _research_case(self, case_context: str, language: str = "ru"):
+    """Keep optional automatic-penalty uncertainty local to that remedy."""
+    research = await _ORIGINAL_FAST_RESEARCH(self, case_context, language=language)
+    if not automatic_penalty_candidate(case_context):
+        return research
+    if _ORIGINAL_EXPLICIT(case_context):
+        return research
+
+    original_status = research.status
+    original_unverified = [str(item) for item in list(research.unverified_claims or [])]
+    remaining = [item for item in original_unverified if not _penalty_only_note(item)]
+    research.unverified_claims = remaining
+
+    penalty_only_downgrade = (
+        original_status == VerificationStatus.NEEDS_VERIFICATION
+        and bool(original_unverified)
+        and not remaining
+        and all(_penalty_only_note(item) for item in original_unverified)
+    )
+    if penalty_only_downgrade and research.verified_claims and research.source_urls:
+        research.status = VerificationStatus.VERIFIED
+    return research
+
+
+def _claim_body_blocks(draft: ClaimDraft, *, kk: bool):
+    """Use a filing-facing heading that matches what was actually established."""
+    blocks = _ORIGINAL_BODY_BLOCKS(draft, kk=kk)
+    if not (draft.late_interest or "").strip():
+        return blocks
+
+    current = "ҚР АК 353-бабы бойынша есеп" if kk else "Расчёт неустойки по статье 353 ГК РК"
+    text = str(draft.late_interest)
+    lowered = text.lower()
+    if "требует уточнения" in lowered or "нақтылау қажет" in lowered:
+        replacement = "Тұрақсыздық айыбы — нақтылау қажет" if kk else "Неустойка — требует уточнения"
+    elif "договорн" in lowered or "шарт" in lowered:
+        replacement = "Шарттық тұрақсыздық айыбын есептеу" if kk else "Расчёт договорной неустойки"
+    else:
+        replacement = current
+
+    for block in blocks:
+        if isinstance(block, Heading) and block.text == current:
+            block.text = replacement
+            break
+    return blocks
+
+
+def install() -> None:
+    global _INSTALLED
+    if _INSTALLED:
+        return
+
+    late._explicit_penalty_requested = automatic_penalty_candidate
+    late._mark_penalty_for_verification = soft_penalty_clarification
+    fast._apply_verified_article_353 = late._apply_verified_penalty
+    finalized._apply_verified_article_353 = late._apply_verified_penalty
+    fast._professional_research_prompt = _research_prompt
+    fast.FastProfessionalLitigationService.research_case = _research_case
+    claim_docx._body_blocks = _claim_body_blocks
+    _INSTALLED = True
+
+
+install()

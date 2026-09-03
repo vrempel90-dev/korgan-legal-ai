@@ -16,6 +16,11 @@ from korgan import miniapp_generation_api as _miniapp_generation_api  # noqa: F4
 from korgan import document_truth_runtime as _document_truth_runtime  # noqa: F401
 from korgan import live_article_release_runtime as _live_article_release_runtime  # noqa: F401
 from korgan import senior_document_drafting_runtime as _senior_document_drafting_runtime  # noqa: F401
+# The client only describes the case. This runtime makes the existing claim
+# engine assess overdue monetary obligations automatically, uses deterministic
+# penalty/state-duty calculators, and degrades an uncertain penalty to a visible
+# clarification note instead of blocking the whole Word document.
+from korgan import automatic_claim_calculations_runtime as _automatic_claim_calculations_runtime  # noqa: F401
 # Bound the complete legal pipeline after all release/drafting wrappers are in
 # place. The budget includes research, drafting, deterministic QA, DOCX render
 # and final live citation verification; timing out never releases partial Word.
@@ -51,6 +56,11 @@ _admin_test_enabled = str(os.getenv("KORGAN_ADMIN_FREE_DOCUMENT_TEST", "") or ""
 }
 if not _miniapp_settings.payments_enabled and _admin_test_enabled:
     from korgan import miniapp_admin_free_generation_runtime as _miniapp_admin_free_generation_runtime  # noqa: F401
+
+# Additive client metadata is installed after every generation owner above. This
+# lets paid production jobs and the explicit admin-free test worker persist the
+# same unresolved-calculation advice without changing payment or release policy.
+from korgan import miniapp_calculation_advisory_runtime as _miniapp_calculation_advisory_runtime  # noqa: F401
 
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_consent_status as _miniapp_consent_status
