@@ -38,7 +38,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
   font-size: 11px;
   line-height: 1.2;
   color: #64748b;
@@ -48,6 +48,58 @@
   color: #0f172a;
   font-size: 12px;
   font-weight: 800;
+}
+
+.korgan-generation-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #0d63ff;
+  font-weight: 750;
+}
+
+.korgan-generation-live i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 0 rgba(13,99,255,.25);
+  animation: korgan-generation-live-pulse 1.25s ease-out infinite;
+}
+
+.korgan-generation-current {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 12px;
+  margin: 0 0 15px;
+  padding: 10px 11px;
+  border-radius: 12px;
+  background: #f6f9ff;
+  border: 1px solid #e4ecfa;
+}
+
+.korgan-generation-current span {
+  grid-column: 1 / -1;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .035em;
+}
+
+.korgan-generation-current strong {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.korgan-generation-current small {
+  align-self: center;
+  color: #0d63ff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 850;
 }
 
 .korgan-generation-stage-track {
@@ -163,6 +215,12 @@
   50% { transform: scale(1.08); box-shadow: 0 0 0 9px rgba(13,99,255,.03); }
 }
 
+@keyframes korgan-generation-live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(13,99,255,.28); opacity: 1; }
+  70% { box-shadow: 0 0 0 7px rgba(13,99,255,0); opacity: .85; }
+  100% { box-shadow: 0 0 0 0 rgba(13,99,255,0); opacity: 1; }
+}
+
 @keyframes korgan-generation-bar-shimmer {
   0% { transform: translateX(-160%) skewX(-18deg); opacity: 0; }
   18% { opacity: 1; }
@@ -178,6 +236,7 @@
 @media (max-width: 390px) {
   .korgan-generation-stage-timeline { padding-left: 9px; padding-right: 9px; }
   .korgan-generation-stage-label { max-width: 62px; font-size: 8px; }
+  .korgan-generation-current { grid-template-columns: minmax(0, 1fr) auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -186,5 +245,6 @@
   .korgan-generation-stage-dot { transition: none !important; }
   .ready-page [role='progressbar'] > *::after,
   .korgan-generation-stage-line-fill::after,
-  .korgan-generation-stage.is-active .korgan-generation-stage-dot { animation: none !important; }
+  .korgan-generation-stage.is-active .korgan-generation-stage-dot,
+  .korgan-generation-live i { animation: none !important; }
 }
