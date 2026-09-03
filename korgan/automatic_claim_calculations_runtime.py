@@ -173,12 +173,21 @@ async def _research_case(self, case_context: str, language: str = "ru"):
     if not automatic_penalty_candidate(case_context):
         return research
 
-    remaining = [
-        str(item) for item in list(research.unverified_claims or [])
-        if not _penalty_only_note(str(item))
-    ]
+    original_status = research.status
+    original_unverified = [str(item) for item in list(research.unverified_claims or [])]
+    remaining = [item for item in original_unverified if not _penalty_only_note(item)]
     research.unverified_claims = remaining
-    if research.verified_claims and research.source_urls and not remaining:
+
+    # Promote back to VERIFIED only when the original downgrade was demonstrably
+    # caused *solely* by penalty-specific unverified notes. Never erase a status
+    # whose cause is not represented in unverified_claims.
+    penalty_only_downgrade = (
+        original_status == VerificationStatus.NEEDS_VERIFICATION
+        and bool(original_unverified)
+        and not remaining
+        and all(_penalty_only_note(item) for item in original_unverified)
+    )
+    if penalty_only_downgrade and research.verified_claims and research.source_urls:
         research.status = VerificationStatus.VERIFIED
     return research
 
