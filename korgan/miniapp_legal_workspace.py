@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from korgan import legal_calc
 from korgan import miniapp_api_v2 as core
+from korgan import miniapp_api_v4 as business
 
 router = APIRouter(prefix="/miniapp/legal-workspace", tags=["legal-workspace"])
 
@@ -147,7 +148,7 @@ async def stress_test(
     payload: StressTestRequest,
     x_telegram_init_data: str = Header(default=""),
 ) -> dict[str, object]:
-    _, state = await _require_identity(x_telegram_init_data)
+    identity, state = await _require_identity(x_telegram_init_data)
     case = state["cases"].get(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -167,11 +168,36 @@ async def stress_test(
     if focus:
         question += f"\n\nОсобый фокус клиента: {focus}"
 
-    answer, sources = await core.service.consult(
-        question,
-        case_context=context,
-        language=payload.language,
-    )
+    quota_id = business._quota_user_id(identity)
+    used: int | None = 0
+    if business.settings.consultation_limit_enabled:
+        used = await business.reserve_free_consultation(
+            quota_id,
+            business.settings.free_consultations_per_day,
+        )
+        if used is None:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Бесплатный лимит консультаций исчерпан. Stress Test временно недоступен; "
+                    "KORGAN не включает оплату из этого инструмента."
+                ),
+            )
+
+    try:
+        answer, sources = await core.service.consult(
+            question,
+            case_context=context,
+            language=payload.language,
+        )
+    except Exception as exc:
+        if business.settings.consultation_limit_enabled and used:
+            await business.release_free_consultation(quota_id)
+        raise HTTPException(
+            status_code=502,
+            detail="Не удалось выполнить Stress Test. Лимит запроса не списан — попробуйте ещё раз.",
+        ) from exc
+
     return {
         "status": "verified_analysis",
         "case_id": payload.case_id,
@@ -179,4 +205,9 @@ async def stress_test(
         "sources": sources,
         "current_law_only": True,
         "jurisdiction": "KZ",
+        "free_remaining": (
+            max(business.settings.free_consultations_per_day - int(used or 0), 0)
+            if business.settings.consultation_limit_enabled
+            else None
+        ),
     }
