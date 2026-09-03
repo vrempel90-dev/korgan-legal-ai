@@ -97,12 +97,14 @@ function scheduleApply() {
   });
 }
 
-document.addEventListener('click', rememberClickedDocument, true);
-document.addEventListener('click', scheduleApply, true);
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', rememberClickedDocument, true);
+  document.addEventListener('click', scheduleApply, true);
 
-const root = document.getElementById('root');
-if (root) {
-  const observer = new MutationObserver(() => scheduleApply());
-  observer.observe(root, { childList: true, subtree: true, characterData: true });
-  applyDocumentConsultationUi(root);
+  const root = document.getElementById('root');
+  if (root) {
+    const observer = new MutationObserver(() => scheduleApply());
+    observer.observe(root, { childList: true, subtree: true, characterData: true });
+    applyDocumentConsultationUi(root);
+  }
 }
