@@ -20,10 +20,6 @@ from korgan import miniapp_case_activity_cleanup as _miniapp_case_activity_clean
 from korgan import miniapp_manual_payment_admin as _miniapp_manual_payment_admin  # noqa: F401
 from korgan import miniapp_consultation_quota_api as _miniapp_consultation_quota_api  # noqa: F401
 from korgan import miniapp_tole_payments as _miniapp_tole_payments  # noqa: F401
-# This guard deliberately loads AFTER every payment provider. If PAYMENTS_ENABLED
-# is false, no later provider is allowed to replace the fail-closed /generate
-# route with a development/free fallback.
-from korgan import miniapp_document_payment_required as _miniapp_document_payment_required  # noqa: F401
 from korgan import miniapp_telegram_delivery as _miniapp_telegram_delivery  # noqa: F401
 from korgan import miniapp_consent_status as _miniapp_consent_status
 from korgan import miniapp_document_access as _miniapp_document_access
