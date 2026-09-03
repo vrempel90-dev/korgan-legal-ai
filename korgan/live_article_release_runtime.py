@@ -175,22 +175,63 @@ def _verify_wording(paragraph: str, live_text: str, reference: citation_audit.Pr
         )
 
 
-async def verify_document_articles(file_bytes: bytes) -> None:
-    text = _docx_text(file_bytes)
-    references = citation_audit.extract_references(text)
-    if not references:
-        return
+def _unique_references(
+    references: list[citation_audit.ProvisionReference],
+) -> list[citation_audit.ProvisionReference]:
+    """Verify every legal proposition once even if the Word repeats its citation."""
+    result: list[citation_audit.ProvisionReference] = []
+    seen: set[tuple[str, str, str]] = set()
+    for reference in references:
+        key = (reference.act, reference.article, reference.part)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(reference)
+    return result
 
+
+async def _load_required_acts(
+    references: list[citation_audit.ProvisionReference],
+) -> dict[str, LiveAct]:
+    """Load every official act needed by the final Word concurrently.
+
+    The old verifier awaited each act one after another. A claim that cited the
+    Civil Code, Civil Procedure Code, Tax Code and consumer law could therefore
+    spend several independent 35-second network windows after drafting had
+    already finished. The legal decision is unchanged here: unsupported acts
+    still fail closed, and any failed official fetch still blocks release. Only
+    independent I/O is overlapped, while the existing 30-minute cache remains
+    authoritative.
+    """
+    act_ids: list[str] = []
+    seen: set[str] = set()
     for reference in references:
         candidates = _ACT_CANDIDATES.get(reference.act)
         if not candidates:
             raise LiveArticleVerificationError(
                 f"для {reference.label()} нет детерминированного live-verifier; ссылка не выпускается"
             )
+        for act_id in candidates:
+            if act_id not in seen:
+                seen.add(act_id)
+                act_ids.append(act_id)
 
+    loaded = await asyncio.gather(*(_live_act(act_id) for act_id in act_ids))
+    return dict(zip(act_ids, loaded, strict=True))
+
+
+async def verify_document_articles(file_bytes: bytes) -> None:
+    text = _docx_text(file_bytes)
+    references = _unique_references(citation_audit.extract_references(text))
+    if not references:
+        return
+
+    acts = await _load_required_acts(references)
+    for reference in references:
+        candidates = _ACT_CANDIDATES[reference.act]
         matches: list[tuple[LiveAct, str]] = []
         for act_id in candidates:
-            live = await _live_act(act_id)
+            live = acts[act_id]
             provision = _article_text(live, reference.article, reference.part)
             if provision:
                 matches.append((live, provision))
