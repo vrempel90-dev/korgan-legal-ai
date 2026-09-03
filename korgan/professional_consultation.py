@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 from typing import Any
 
@@ -61,6 +62,20 @@ _CONSULT_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+# A model must not evade source binding by putting legal advice into an action
+# or risk and leaving basis_statement empty. Empty basis is reserved for truly
+# factual steps (keep evidence, obtain a copy, compare numbers, etc.).
+_NORMATIVE_ADVICE_RE = re.compile(
+    r"(?i)(?:"
+    r"\bобязан\w*|\bобязательн\w*|\bвправе\b|\bимеет\s+право\b|\bдолжен\w*|"
+    r"\bсрок\w*|\bподсуд\w*|\bгоспошлин\w*|\bнеустойк\w*|\bпен[яеи]\b|"
+    r"\bстать[яеию]\b|\bпункт\w*|\bиск\w*|\bжалоб\w*|\bходатайств\w*|"
+    r"\bпретензи\w*|\bсудебн\w*\s+приказ\w*|"
+    r"\bміндетт\w*|\bқұқыл\w*|\bмерзім\w*|\bмемлекеттік\s+баж\b|"
+    r"\bталап\s+арыз\w*|\bшағым\w*"
+    r")"
+)
+
 
 def _clean(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
@@ -72,17 +87,19 @@ def _linked_items(
     text_key: str,
     accepted_statements: set[str],
 ) -> list[str]:
-    """Keep neutral actions/risks or items explicitly tied to a verified point."""
+    """Keep factual advice or items explicitly tied to a verified legal point."""
     result: list[str] = []
     for item in items or []:
         text = _clean(item.get(text_key))
         basis = _clean(item.get("basis_statement"))
         if not text:
             continue
-        # Empty basis is allowed only for non-normative practical advice such as
-        # preserving evidence or obtaining a copy of an existing document. A
-        # claimed legal basis must match an accepted source-bound statement.
-        if basis and basis not in accepted_statements:
+        if basis:
+            if basis not in accepted_statements:
+                continue
+        elif _NORMATIVE_ADVICE_RE.search(text):
+            # Legal/procedural advice without a verified source is discarded,
+            # even if the model tried to classify it as a neutral practical step.
             continue
         if text not in result:
             result.append(text)
