@@ -37,9 +37,19 @@ def _client_detail(exc: BaseException) -> str:
     """Текст сбоя для экрана подготовки.
 
     Отказ выпуска (``ReleaseBlocked``) тоже написан для человека: он объясняет,
-    что документ не прошёл проверку и что платить второй раз не нужно.
+    что документ не прошёл проверку и что платить второй раз не нужно. То же
+    верно для превышения бюджета подготовки: причина «конвейер не уложился в
+    отведённое время» клиенту понятна и полезна, а под общим «не удалось
+    подготовить документ» она терялась.
     """
+    from korgan.document_latency_budget_runtime import DocumentGenerationTimeout
     from korgan.miniapp_professional_release import ReleaseBlocked
+
+    if isinstance(exc, DocumentGenerationTimeout):
+        # ``str(HTTPException)`` начинается с кода состояния: клиенту в строку
+        # задачи должен уйти сам текст, а не «504: ...».
+        message = str(exc.detail).strip()
+        return message or _TECHNICAL_FAILURE
 
     written_for_client = isinstance(exc, (GenerationFailure, ReleaseBlocked))
     message = str(exc).strip()

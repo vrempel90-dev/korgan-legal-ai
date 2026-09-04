@@ -12,6 +12,18 @@ from korgan import miniapp_api_v2 as core
 
 LOGGER = logging.getLogger(__name__)
 
+
+class DocumentGenerationTimeout(HTTPException):
+    """Превышение бюджета подготовки — с текстом, написанным для клиента.
+
+    Отдельный класс нужен фоновой задаче. Она пишет клиенту причину отказа и
+    обязана отличать сбой, объяснимый человеку, от технического исключения,
+    которое цитировать нельзя. Пока таймаут был обычным ``HTTPException``,
+    задача не могла их различить и подставляла общее «не удалось подготовить
+    документ»: клиент, прождавший две минуты, не узнавал ни что упёрлись в
+    бюджет времени, ни что повтор не потребует второй оплаты.
+    """
+
 _TIMEOUT_ENV = "KORGAN_DOCUMENT_GENERATION_TIMEOUT_SECONDS"
 _DEFAULT_TIMEOUT_SECONDS = 110.0
 # The product promise is a one-to-two minute preparation window. Keep a few
@@ -45,12 +57,12 @@ async def _bounded_generate(
             return await _ORIGINAL_GENERATE(document_type, context, language)
     except TimeoutError as exc:
         status = "timeout"
-        raise HTTPException(
+        raise DocumentGenerationTimeout(
             status_code=504,
             detail=(
                 "KORGAN остановил подготовку, потому что юридический конвейер не уложился "
                 f"в {int(timeout)} секунд. Непроверенный или незавершённый Word не выдан. "
-                "Материалы дела сохранены; повторите подготовку документа."
+                "Материалы дела сохранены; запустите повтор — новая оплата не потребуется."
             ),
         ) from exc
     except Exception:
