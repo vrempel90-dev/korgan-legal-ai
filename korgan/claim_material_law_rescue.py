@@ -37,6 +37,11 @@ _CONTRACTUAL_PENALTY_CONTEXT_RE = re.compile(
     r"шарт\w*.{0,180}(?:тұрақсыздық\s+айыб\w*|өсімпұл\w*|айыппұл\w*)|"
     r"(?:тұрақсыздық\s+айыб\w*|өсімпұл\w*|айыппұл\w*).{0,180}шарт\w*)"
 )
+_BASIS_LABEL_RE = re.compile(r"(?i)\[\s*основание\s*:\s*([^;\]]+)")
+_GENERIC_GK_ARTICLE_RE = re.compile(r"(?i)(?:ст\.?|статья)\s*(?:272|293)\b.*\bгк\b")
+_PROCEDURAL_OR_FISCAL_RE = re.compile(
+    r"(?i)(?:\bгпк\b|гражданск\w*\s+процессуальн\w*|\bнк\s*рк\b|налогов\w*\s+кодекс)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,24 +133,98 @@ def _already_present(research: LegalResearch, provision: Provision) -> bool:
     return any(label in str(line).lower() for line in research.verified_claims)
 
 
-def _append_verified(research: LegalResearch, provision: Provision) -> None:
+def _append_verified(research: LegalResearch, provision: Provision) -> bool:
     if _already_present(research, provision):
-        return
+        return False
     statement = " ".join(str(provision.body or "").split()).strip()
     if not statement:
-        return
+        return False
     line = verified_claim_line(statement, provision.label(), provision.body, provision.url)
     research.verified_claims.append(line)
     if provision.url and provision.url not in research.source_urls:
         research.source_urls.append(provision.url)
+    return True
+
+
+def _basis_labels(research: LegalResearch) -> list[str]:
+    labels: list[str] = []
+    for line in research.verified_claims:
+        match = _BASIS_LABEL_RE.search(str(line or ""))
+        if match:
+            label = " ".join(match.group(1).split()).strip()
+            if label:
+                labels.append(label)
+    return labels
+
+
+def _has_specific_primary_basis(research: LegalResearch) -> bool:
+    """True when research already owns a specific substantive legal basis.
+
+    Article 272 GK is a useful civil-law fallback, not a decoration that should
+    be appended to every contractual dispute.  Procedural GPK and fiscal NK
+    provisions do not replace a material-law basis.  A specific statute or a
+    specific Civil Code provision does, so the generic rescue must stay out.
+    """
+    for label in _basis_labels(research):
+        if _PROCEDURAL_OR_FISCAL_RE.search(label):
+            continue
+        if _GENERIC_GK_ARTICLE_RE.search(label):
+            continue
+        return True
+    return False
+
+
+def _has_verified_penalty_basis(research: LegalResearch) -> bool:
+    """Do not inject generic GK 293 when research already verified penalty law."""
+    for line in research.verified_claims:
+        value = str(line or "")
+        match = _BASIS_LABEL_RE.search(value)
+        if not match or _PROCEDURAL_OR_FISCAL_RE.search(match.group(1)):
+            continue
+        if _PENALTY_RE.search(value):
+            return True
+    return False
+
+
+def _fresh_act_ids(corpus: LegalCorpus, rules: list[_Rule]) -> set[str]:
+    fresh: set[str] = set()
+    for act_id in {rule.act_id for rule in rules}:
+        if _snapshot_issue(corpus, act_id, today=date.today()) is None:
+            fresh.add(act_id)
+        else:
+            LOGGER.warning("CLAIM_MATERIAL_LAW_RESCUE stale_act=%s", act_id)
+    return fresh
+
+
+def _append_rule(
+    corpus: LegalCorpus,
+    research: LegalResearch,
+    rule: _Rule,
+    fresh_acts: set[str],
+    added: list[str],
+) -> bool:
+    if rule.act_id not in fresh_acts:
+        return False
+    provision = _pick(corpus, rule)
+    if provision is None:
+        LOGGER.warning("CLAIM_MATERIAL_LAW_RESCUE no_match rule=%s", rule.name)
+        return False
+    if _append_verified(research, provision):
+        added.append(f"{rule.name}:{provision.article_id}")
+    return True
 
 
 def enrich_material_law_from_corpus(case_context: str, research: LegalResearch) -> LegalResearch:
-    """Rescue missing core material law from the fresh official Adilet snapshot.
+    """Rescue missing material law from the current official legal corpus.
 
-    Contractual-penalty rescue is deliberately gated to a civil contractual
-    context. Generic statutory penalties, including salary-delay penalties,
-    must never pull a Civil Code contractual-penalty provision into the filing.
+    Specific law wins over generic law.  For a supply dispute, the specific
+    supply/payment provision is tried first; Article 272 GK is used only when
+    there is still no specific verified substantive basis.  The same principle
+    applies to contractual penalties: Article 293 is a fallback only if research
+    has not already verified a penalty-specific basis.
+
+    Employment statutory penalties remain outside the Civil Code contractual
+    penalty path altogether.
     """
     if not local_corpus_enabled():
         return research
@@ -153,20 +232,21 @@ def enrich_material_law_from_corpus(case_context: str, research: LegalResearch) 
     context = str(case_context or "")
     employment_context = bool(_EMPLOYMENT_CONTEXT_RE.search(context))
     contract_debt = bool(_CONTRACT_DEBT_RE.search(context)) and not employment_context
+    supply_context = bool(contract_debt and _SUPPLY_RE.search(context))
     contractual_penalty = bool(
         not employment_context
         and _PENALTY_RE.search(context)
         and (contract_debt or _CONTRACTUAL_PENALTY_CONTEXT_RE.search(context))
     )
 
-    rules: list[_Rule] = []
+    candidate_rules: list[_Rule] = []
     if contract_debt:
-        rules.append(_PROPER_PERFORMANCE)
-        if _SUPPLY_RE.search(context):
-            rules.append(_SUPPLY_PAYMENT)
+        candidate_rules.append(_PROPER_PERFORMANCE)
+        if supply_context:
+            candidate_rules.append(_SUPPLY_PAYMENT)
     if contractual_penalty:
-        rules.append(_CONTRACTUAL_PENALTY)
-    if not rules:
+        candidate_rules.append(_CONTRACTUAL_PENALTY)
+    if not candidate_rules:
         return research
 
     corpus = open_corpus()
@@ -175,24 +255,21 @@ def enrich_material_law_from_corpus(case_context: str, research: LegalResearch) 
 
     added: list[str] = []
     try:
-        fresh_acts: set[str] = set()
-        for act_id in {rule.act_id for rule in rules}:
-            if _snapshot_issue(corpus, act_id, today=date.today()) is None:
-                fresh_acts.add(act_id)
-            else:
-                LOGGER.warning("CLAIM_MATERIAL_LAW_RESCUE stale_act=%s", act_id)
+        fresh_acts = _fresh_act_ids(corpus, candidate_rules)
+        has_specific_primary = _has_specific_primary_basis(research)
 
-        for rule in rules:
-            if rule.act_id not in fresh_acts:
-                continue
-            provision = _pick(corpus, rule)
-            if provision is None:
-                LOGGER.warning("CLAIM_MATERIAL_LAW_RESCUE no_match rule=%s", rule.name)
-                continue
-            before = len(research.verified_claims)
-            _append_verified(research, provision)
-            if len(research.verified_claims) > before:
-                added.append(f"{rule.name}:{provision.article_id}")
+        # Specific contract-type law first.  If it is verified, do not clutter
+        # the pleading with generic Article 272 merely because the dispute also
+        # contains the words "договор" and "долг".
+        if supply_context and not has_specific_primary:
+            if _append_rule(corpus, research, _SUPPLY_PAYMENT, fresh_acts, added):
+                has_specific_primary = True
+
+        if contract_debt and not has_specific_primary:
+            _append_rule(corpus, research, _PROPER_PERFORMANCE, fresh_acts, added)
+
+        if contractual_penalty and not _has_verified_penalty_basis(research):
+            _append_rule(corpus, research, _CONTRACTUAL_PENALTY, fresh_acts, added)
     except Exception:
         LOGGER.exception("CLAIM_MATERIAL_LAW_RESCUE failed; keeping source-bound research unchanged")
         return research
