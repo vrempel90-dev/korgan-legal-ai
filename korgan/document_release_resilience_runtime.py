@@ -9,9 +9,9 @@ into a 95% failure across claim/response/pretrial document types:
 * explicit KORGAN placeholders such as ``[ТРЕБУЕТ УТОЧНЕНИЯ: ...]`` are treated
   as placeholders, not as fabricated party/address/contract facts.
 
-Real contradictions remain blockers: a statutory right rewritten as a duty,
-a missing exclusive/conditional limitation, a fabricated amount, a wrong
-article, an exact-quote mismatch, or an unsupported factual value is not
+Real contradictions remain blockers: a statutory right rewritten as a duty or
+prohibition, a missing exclusive/conditional limitation, a fabricated amount, a
+wrong article, an exact-quote mismatch, or an unsupported factual value is not
 suppressed here.
 """
 
@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Callable
 
 from korgan import document_truth_runtime as truth
 from korgan import live_article_release_runtime as live
@@ -71,17 +70,21 @@ def _semantic_scope_filter(defect: str, *, claim: str, provision: str) -> bool:
 
     if "норма формулирует право, а не обязанность" in text:
         # ``не вправе`` contains the token ``вправе`` but is a prohibition; its
-        # dedicated prohibition check owns that case.
+        # dedicated prohibition check owns a prohibitory provision.
         if _PROHIBITION_RE.search(provision):
             return False
-        # A right becomes unsafe only when the paraphrase affirmatively turns it
-        # into a duty. Neutral wording or a synonym such as ``может`` is safe.
+        # A real right may be restated as ``может``/``имеет право`` or neutral
+        # descriptive wording. Turning it into a duty OR a prohibition remains
+        # a hard contradiction.
+        if _PROHIBITION_RE.search(claim):
+            return True
         return bool(_DUTY_RE.search(claim) and not _RIGHT_RE.search(claim))
 
     if "норма формулирует обязанность, а не право" in text:
-        # A duty is distorted only when the paraphrase affirmatively weakens it
-        # into a discretionary right. Neutral wording does not create that
-        # contradiction by itself.
+        # A duty is distorted when the paraphrase affirmatively weakens it into
+        # discretion or prohibition. Neutral wording alone is not that change.
+        if _PROHIBITION_RE.search(claim):
+            return True
         return bool(_RIGHT_RE.search(claim) and not _DUTY_RE.search(claim))
 
     if "норма предлагает альтернативу" in text:
