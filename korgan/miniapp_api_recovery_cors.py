@@ -19,6 +19,9 @@ from korgan import fast_professional_repair_guard as _fast_professional_repair_g
 from korgan import miniapp_generation_api as _miniapp_generation_api  # noqa: F401
 from korgan import document_truth_runtime as _document_truth_runtime  # noqa: F401
 from korgan import live_article_release_runtime as _live_article_release_runtime  # noqa: F401
+# Reuse the persistent corpus already validated from official Ministry of Justice
+# sources before attempting another fragile Adilet network fetch at release time.
+from korgan import live_article_release_stable_runtime as _live_article_release_stable_runtime  # noqa: F401
 from korgan import senior_document_drafting_runtime as _senior_document_drafting_runtime  # noqa: F401
 # The generation timeout is a safety ceiling, not a product promise. The UI
 # reports real server stages while the legal pipeline works.
