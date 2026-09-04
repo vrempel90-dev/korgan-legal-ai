@@ -14,6 +14,7 @@ from korgan.legal.corpus import (
     ACT_LABOR,
     ACT_TAX_DUTY,
 )
+from korgan.legal.official_sources import official_source_kind
 from korgan.legal.pipeline import local_corpus_enabled, open_corpus
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 from korgan.provision_check import paraphrase_defects
@@ -223,27 +224,125 @@ def _clean_basis_line(value: str) -> str:
     return re.sub(r"\.{2,}$", ".", text)
 
 
-def _ground_legal_basis(research: LegalResearch, draft: ClaimDraft) -> None:
-    """Re-bind every filing citation to the local Adilet corpus before DOCX release."""
-    if not local_corpus_enabled():
-        draft.legal_basis = []
-        draft.status = VerificationStatus.NEEDS_VERIFICATION
+#: Насколько длинной должна быть дословная выдержка нормы, чтобы её вообще
+#: имело смысл сверять с пересказом. Короткий обрывок совпадает с чем угодно.
+_MIN_PROVISION_QUOTE_CHARS = 40
+
+#: По каким словам в самой ссылке видно, о каком акте идёт речь. Нужны, чтобы
+#: поймать расхождение между названным актом и открытым источником: «статья 439
+#: ГК РК (Особенная часть)» со ссылкой на Общую часть — это уже другая норма,
+#: и без корпуса такую подмену больше нечем заметить.
+_ACT_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (ACT_GK_GENERAL, ("общая часть", "общей части")),
+    (ACT_GK_SPECIAL, ("особенная часть", "особенной части")),
+    (ACT_GPK, ("гпк", "процессуальн")),
+    (ACT_TAX_DUTY, ("нк рк", "налогов")),
+    (ACT_CONSUMER, ("потребител",)),
+    (ACT_LABOR, ("тк рк", "трудов")),
+)
+
+
+def _named_acts(article: str) -> set[str]:
+    lowered = (article or "").replace("ё", "е").lower()
+    return {act_id for act_id, markers in _ACT_MARKERS if any(m in lowered for m in markers)}
+
+
+def _source_bound_basis(research: LegalResearch, draft: ClaimDraft, *, reason: str) -> None:
+    """Выпустить правовое основание по официальному источнику самого research.
+
+    README обещает, что при выключенном или несобранном локальном корпусе
+    конвейер возвращается к source-bound исследованию, «rather than emitting a
+    claim with no legal basis». Код обещания не выполнял: он очищал
+    legal_basis, и иск уходил клиенту с пустым разделом о праве — то есть ровно
+    тем, чего обещание запрещало.
+
+    Здесь принимается только то, что research уже связал с реально открытым
+    официальным источником: у вывода должны быть статья, дословная выдержка
+    нормы и канонический адрес акта Adilet, а пересказ не должен расходиться с
+    выдержкой. Ничего из памяти модели сюда попасть не может — строка без этой
+    связки просто не разбирается.
+
+    Это слабее локальной сверки: без корпуса нельзя подтвердить, что выдержка
+    принадлежит именно названному номеру статьи. Поэтому иск в этом режиме
+    остаётся документом для юриста, а не готовым к подаче, и получает прямое
+    указание, что именно сверить перед подачей.
+    """
+    accepted: list[str] = []
+    rejected: list[str] = []
+
+    for raw in research.verified_claims:
+        line = str(raw or "").strip()
+        if not line or "официальный перечень судов" in line.lower():
+            continue
+        match = _VERIFIED_LINE_RE.match(line)
+        if match is None:
+            rejected.append("вывод не связан с текстом нормы и официальным источником")
+            continue
+
+        statement = _clean_basis_line(match.group("statement")).rstrip(".")
+        article = _clean_basis_line(match.group("article")).rstrip(".")
+        quote = match.group("quote").strip()
+        source = match.group("source").strip()
+
+        if _INTERNAL_MARKER_RE.search(statement) or _INTERNAL_MARKER_RE.search(article):
+            rejected.append("служебная пометка обнаружена внутри правового основания")
+            continue
+        act_id = _source_act_id(source)
+        if official_source_kind(source) is None or not act_id:
+            rejected.append(f"источник не является официальным актом РК: {article or 'без статьи'}")
+            continue
+        named = _named_acts(article)
+        if named and act_id not in named:
+            rejected.append(
+                f"ссылка называет один акт, а открыт другой: {article or 'без статьи'}"
+            )
+            continue
+        if not _article_number(article):
+            rejected.append(f"не определён номер статьи: {article or 'без статьи'}")
+            continue
+        if len(" ".join(quote.split())) < _MIN_PROVISION_QUOTE_CHARS:
+            rejected.append(f"нет дословной выдержки нормы для {article}")
+            continue
+        drift = paraphrase_defects(statement, quote)
+        if drift:
+            rejected.append(f"пересказ расходится с текстом нормы {article}: {drift[0]}")
+            continue
+
+        rendered = _clean_basis_line(f"{statement}. Правовое основание: {article}.")
+        if rendered not in accepted:
+            accepted.append(rendered)
+
+    draft.legal_basis = accepted
+    draft.status = VerificationStatus.NEEDS_VERIFICATION
+    if not accepted:
         _add_note(
             draft,
             LEGAL_GROUNDING_PREFIX
-            + "локальная сверка Adilet отключена; непроверенные правовые основания не выпущены в судебный текст.",
+            + f"{reason}; ни один правовой вывод не связан с официальным источником, "
+            "правовое обоснование не выпущено в судебный текст.",
         )
+        for detail in list(dict.fromkeys(rejected))[:6]:
+            _add_note(draft, LEGAL_GROUNDING_PREFIX + detail)
+        return
+
+    _add_filing_action(
+        draft,
+        "перед подачей сверить номера и действующие редакции процитированных норм с официальным "
+        f"источником: {reason}, поэтому принадлежность выдержки указанному номеру статьи не подтверждена.",
+    )
+    for detail in list(dict.fromkeys(rejected))[:4]:
+        _add_note(draft, LEGAL_GROUNDING_PREFIX + detail)
+
+
+def _ground_legal_basis(research: LegalResearch, draft: ClaimDraft) -> None:
+    """Re-bind every filing citation to the local Adilet corpus before DOCX release."""
+    if not local_corpus_enabled():
+        _source_bound_basis(research, draft, reason="локальная сверка Adilet выключена")
         return
 
     corpus = open_corpus()
     if corpus is None:
-        draft.legal_basis = []
-        draft.status = VerificationStatus.NEEDS_VERIFICATION
-        _add_note(
-            draft,
-            LEGAL_GROUNDING_PREFIX
-            + "локальный корпус Adilet недоступен; номера статей не выпущены в судебный текст без повторной сверки.",
-        )
+        _source_bound_basis(research, draft, reason="локальный корпус Adilet не собран")
         return
 
     accepted: list[str] = []

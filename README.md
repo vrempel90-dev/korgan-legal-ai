@@ -48,7 +48,37 @@ KORGAN_LOCAL_CORPUS=1 python -m korgan.bot
 
 The loader accepts only adilet's Russian edition: the URL must be on `/rus/`, and the text must actually read as Russian, because an English translation of a code parses just as cleanly. Rates used by the calculators live in `korgan/data/rates.json` with the date they were current on — update the file, not the code.
 
-With the flag off, an unbuilt corpus, or a query with no matches, the pipeline falls back to web search rather than emitting a claim with no legal basis.
+With the flag off, an unbuilt corpus, or a query with no matches, the pipeline falls back to the
+source-bound web-search research rather than emitting a claim with no legal basis. The fallback is
+not the model's memory: a conclusion is released only when it carries an article, the provision's
+own words and the canonical Adilet address of the act the model actually opened, the citation names
+the same act as that address, and the paraphrase does not drift from the quote
+(`claim_filing_accuracy._source_bound_basis`). What the fallback cannot confirm is that the quote
+belongs to the cited article number — that needs the corpus — so a claim grounded this way carries a
+`FILING_ACTION` note to re-check the numbers and editions and never reaches filing-ready.
+
+### Building the corpus in production (Railway)
+
+The corpus is a file, and a container filesystem does not survive a deploy. Point it at a volume
+first, otherwise every deploy silently drops back to the web-search fallback:
+
+```bash
+# 1. Mount a Railway volume (e.g. /data) on the service, then:
+KORGAN_CORPUS_DB=/data/corpus.sqlite3      # where the corpus lives across deploys
+KORGAN_LOCAL_CORPUS=1                      # enable the local cross-check
+
+# 2. One-off, from a Railway shell on that service (needs egress to adilet.zan.kz):
+python scripts/load_corpus.py --all
+
+# 3. Confirm the service agrees it is grounded:
+curl -s https://<service>/health | jq .legal_grounding
+# {"enabled": true, "available": true, "provisions": <N>, "ready": true, "reason": ""}
+```
+
+The loader accepts only adilet's Russian edition and refuses anything else (`SourceRejected`, exit
+code 1) without touching the acts it has not reached, so a failed refresh leaves the previous corpus
+in force. Re-run it on the same schedule as any other legal-data refresh; `legal_grounding.ready`
+and the `LEGAL_GROUNDING_DISABLED` line the worker logs at startup are what tell you it worked.
 
 ## Stack
 
