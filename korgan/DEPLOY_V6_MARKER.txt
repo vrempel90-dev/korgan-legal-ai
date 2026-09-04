@@ -1,0 +1,2 @@
+KORGAN durable document generation v6 deployment marker — 2026-09-04
+Payments are not enabled or modified by this deployment.
