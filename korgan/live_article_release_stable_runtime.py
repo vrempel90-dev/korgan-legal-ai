@@ -1,26 +1,28 @@
 """Stable final article verification for production document release.
 
 The legal corpus is refreshed from allowlisted Ministry of Justice sources in the
-background and lives on a persistent Railway volume.  Re-fetching the same whole
+background and lives on a persistent Railway volume. Re-fetching the same whole
 acts from Adilet for every generated Word made document delivery depend on a
 second, fragile network round-trip after drafting had already completed.
 
 This runtime keeps the strict wording/article checks from
-``live_article_release_runtime`` but changes how an act is obtained:
+``live_article_release_runtime`` but changes two production details:
 
-1. prefer the already source-validated persistent corpus;
-2. fall back to the existing live network verifier only when that act is absent
-   from the corpus or its stored provenance is not an allowlisted official
-   source.
+1. prefer the already source-validated persistent corpus and use the live
+   network verifier only when that act is absent or untrusted;
+2. for a paraphrase, verify the sentence that actually owns the citation rather
+   than unrelated factual/legal sentences that happen to share the same DOCX
+   paragraph.
 
-A missing article, wrong quotation or proposition drift still fails closed.  A
-transient Adilet/TLS outage no longer turns an already verified corpus provision
-into a false legal error at 95% generation progress.
+A missing article, wrong quotation or proposition drift still fails closed. A
+transient Adilet/TLS outage or an unrelated sentence in the same paragraph no
+longer turns an otherwise valid document into a false error at 95% generation.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from korgan import live_article_release_runtime as runtime
@@ -30,17 +32,74 @@ from korgan.legal.official_sources import is_allowed_adilet_url, is_allowed_zan_
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 _NETWORK_LIVE_ACT = runtime._live_act
+_ORIGINAL_CITATION_PARAGRAPH = runtime._citation_paragraph
+
+# A full stop inside an abbreviation such as ``ст. 9`` is followed by a digit,
+# so it is deliberately not a boundary. A semicolon is always a safe clause
+# boundary for this purpose. Exact quoted provisions are never narrowed.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=;)\s+|(?<=[.!?])\s+(?=[А-ЯЁA-Z«])")
 
 
 def _official_source_for_act(url: str, act_id: str) -> bool:
     return is_allowed_adilet_url(url, act_id=act_id) or is_allowed_zan_pdf_url(url, act_id=act_id)
 
 
+def _reference_in_statement(statement: str, reference: Any) -> bool:
+    """Whether this statement contains the exact act/article/part reference."""
+    for match in runtime.citation_audit._REFERENCE_RE.finditer(statement or ""):
+        article = match.group("article")
+        part = (match.group("part") or "").strip()
+        window = match.group(0) + " " + statement
+        act = runtime.citation_audit._detect_act(window)
+        candidate = runtime.citation_audit.ProvisionReference(act, article, part)
+        if reference.matches(candidate):
+            return True
+    return False
+
+
+def _citation_statement(text: str, reference: Any) -> str:
+    """Return the sentence that owns a paraphrased citation.
+
+    The original verifier used the whole DOCX paragraph. Production paragraphs
+    often contain several independent sentences: one states the legal rule and
+    cites an article, the next applies a contract term, amount, deadline or
+    remedy to the facts. Feeding both sentences to ``paraphrase_defects`` made
+    those factual/application terms look as if the cited article had to contain
+    every one of them.
+
+    Exact quotations stay paragraph-scoped so quote extraction is unchanged.
+    If sentence localisation is ambiguous, we also keep the original paragraph
+    and therefore retain the previous fail-closed behaviour.
+    """
+    paragraph = _ORIGINAL_CITATION_PARAGRAPH(text, reference)
+    if not paragraph:
+        return ""
+    if runtime.citation_audit._quote_in(paragraph):
+        return paragraph
+
+    statements = [part.strip() for part in _SENTENCE_SPLIT_RE.split(paragraph) if part.strip()]
+    if len(statements) <= 1:
+        return paragraph
+
+    matches = [statement for statement in statements if _reference_in_statement(statement, reference)]
+    if len(matches) != 1:
+        return paragraph
+
+    statement = matches[0]
+    LOGGER.info(
+        "LIVE_ARTICLE_SENTENCE_SCOPE reference=%s paragraph_chars=%d statement_chars=%d",
+        reference.label(),
+        len(paragraph),
+        len(statement),
+    )
+    return statement
+
+
 def load_official_corpus_act(act_id: str) -> runtime.LiveAct | None:
     """Build a ``LiveAct`` from the persistent source-validated corpus.
 
     The corpus loader has already bound the act identity to a fixed official
-    Adilet/ZAN URL and stored exact provisions.  We deliberately reject rows
+    Adilet/ZAN URL and stored exact provisions. We deliberately reject rows
     whose act-level provenance is not one of those allowlisted official URLs.
     """
 
@@ -128,8 +187,11 @@ def install_stable_live_article_release_runtime() -> None:
     if _INSTALLED:
         return
     runtime._live_act = _stable_live_act  # type: ignore[assignment]
+    runtime._citation_paragraph = _citation_statement  # type: ignore[assignment]
     _INSTALLED = True
-    LOGGER.info("Installed stable live article verifier: official corpus first, live network fallback")
+    LOGGER.info(
+        "Installed stable live article verifier: official corpus first, citation-sentence paraphrase scope"
+    )
 
 
 install_stable_live_article_release_runtime()
