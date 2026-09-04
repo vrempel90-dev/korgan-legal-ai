@@ -11,14 +11,15 @@ from korgan.legal.corpus import (
 from korgan.legal_types import LegalResearch, VerificationStatus
 
 
-def _research(*, unverified: list[str] | None = None) -> LegalResearch:
+def _research(*, unverified: list[str] | None = None, verified: list[str] | None = None) -> LegalResearch:
+    default_verified = [
+        "Иск должен соответствовать форме. [основание: ст. 148 ГПК РК; текст нормы: «служебная форма»; источник: https://adilet.zan.kz/rus/docs/K1500000377]"
+    ]
     return LegalResearch(
         status=VerificationStatus.NEEDS_VERIFICATION,
         applicable_law=[],
         procedural_requirements=[],
-        verified_claims=[
-            "Иск должен соответствовать форме. [основание: ст. 148 ГПК РК; текст нормы: «служебная форма»; источник: https://adilet.zan.kz/rus/docs/K1500000377]"
-        ],
+        verified_claims=list(default_verified if verified is None else verified),
         unverified_claims=list(unverified or []),
         source_urls=["https://adilet.zan.kz/rus/docs/K1500000377"],
         notes=[],
@@ -97,7 +98,7 @@ def _install_corpus(monkeypatch, corpus: LegalCorpus) -> None:
     monkeypatch.setattr(rescue, "open_corpus", lambda: corpus)
 
 
-def test_supply_debt_gets_material_law_from_current_corpus(monkeypatch) -> None:
+def test_supply_debt_prefers_specific_supply_law_over_generic_article_272(monkeypatch) -> None:
     corpus = _fresh_corpus()
     _install_corpus(monkeypatch, corpus)
 
@@ -110,14 +111,13 @@ def test_supply_debt_gets_material_law_from_current_corpus(monkeypatch) -> None:
     result = enrich_material_law_from_corpus(context, research)
     joined = "\n".join(result.verified_claims)
 
-    assert "ст. 272" in joined
     assert "ст. 469" in joined
     assert "ст. 293" in joined
-    assert "https://adilet.zan.kz/rus/docs/K940001000_" in result.source_urls
+    assert "ст. 272" not in joined
     assert "https://adilet.zan.kz/rus/docs/K990000409_" in result.source_urls
 
 
-def test_kazakh_supply_debt_and_contractual_penalty_get_rescue(monkeypatch) -> None:
+def test_kazakh_supply_debt_prefers_specific_supply_law(monkeypatch) -> None:
     corpus = _fresh_corpus()
     _install_corpus(monkeypatch, corpus)
     research = _research()
@@ -129,9 +129,68 @@ def test_kazakh_supply_debt_and_contractual_penalty_get_rescue(monkeypatch) -> N
     result = enrich_material_law_from_corpus(context, research)
     joined = "\n".join(result.verified_claims)
 
-    assert "ст. 272" in joined
     assert "ст. 469" in joined
     assert "ст. 293" in joined
+    assert "ст. 272" not in joined
+
+
+def test_generic_contract_debt_still_gets_article_272_as_fallback(monkeypatch) -> None:
+    corpus = _fresh_corpus()
+    _install_corpus(monkeypatch, corpus)
+    research = _research()
+
+    result = enrich_material_law_from_corpus(
+        "Договор оказания услуг. Заказчик услуги принял, но задолженность 900 000 тенге не оплатил.",
+        research,
+    )
+    joined = "\n".join(result.verified_claims)
+
+    assert "ст. 272" in joined
+    assert "ст. 469" not in joined
+
+
+def test_existing_specific_consumer_law_prevents_generic_article_272(monkeypatch) -> None:
+    corpus = _fresh_corpus()
+    _install_corpus(monkeypatch, corpus)
+    research = _research(
+        verified=[
+            "Потребитель вправе требовать возврата денег. "
+            "[основание: ст. 35 Закона РК «О защите прав потребителей»; "
+            "текст нормы: «потребитель вправе предъявить требование»; "
+            "источник: https://adilet.zan.kz/rus/docs/Z100000274_]"
+        ]
+    )
+
+    result = enrich_material_law_from_corpus(
+        "Договор с потребителем. Исполнитель не оказал услугу и не вернул задолженность 150 000 тенге.",
+        research,
+    )
+    joined = "\n".join(result.verified_claims)
+
+    assert "ст. 35 Закона" in joined
+    assert "ст. 272" not in joined
+
+
+def test_existing_penalty_specific_law_prevents_generic_article_293(monkeypatch) -> None:
+    corpus = _fresh_corpus()
+    _install_corpus(monkeypatch, corpus)
+    research = _research(
+        verified=[
+            "За просрочку предусмотрена законная неустойка. "
+            "[основание: ст. 42 Закона РК «О специальной ответственности»; "
+            "текст нормы: «за просрочку уплачивается неустойка»; "
+            "источник: https://adilet.zan.kz/rus/docs/Z000000001_]"
+        ]
+    )
+
+    result = enrich_material_law_from_corpus(
+        "Договор услуг: долг 500 000 тенге и неустойка за просрочку по закону.",
+        research,
+    )
+    joined = "\n".join(result.verified_claims)
+
+    assert "ст. 42 Закона" in joined
+    assert "ст. 293" not in joined
 
 
 def test_employment_statutory_penalty_does_not_inject_civil_contract_penalty(monkeypatch) -> None:
@@ -227,5 +286,5 @@ def test_unverified_claims_keep_needs_verification_after_successful_rescue(monke
         research,
     )
 
-    assert any("ст. 272" in line for line in result.verified_claims)
+    assert any("ст. 469" in line for line in result.verified_claims)
     assert result.status is VerificationStatus.NEEDS_VERIFICATION
