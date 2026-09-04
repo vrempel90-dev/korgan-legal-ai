@@ -166,6 +166,31 @@ def parse_amount_kzt(text: str) -> int | None:
     return amounts[0] if amounts else None
 
 
+def claim_price_amount(price_of_claim: str) -> int | None:
+    """Цена иска из строки — только если она определяется однозначно.
+
+    Поле цены иска пишется свободным текстом и часто содержит не одну сумму,
+    а итог со слагаемыми («1 200 000 тенге долга и 92 400 тенге неустойки,
+    итого 1 292 400 тенге»). Брать первую попавшуюся сумму нельзя: госпошлина
+    тогда считается от слагаемого, а не от цены иска, и документ уходит в суд
+    с заниженной пошлиной, поданной как точный расчёт.
+
+    Одна сумма — она и есть цена иска. Если сумм несколько, цена иска берётся
+    только тогда, когда ровно одна из них арифметически равна сумме остальных,
+    то есть является их итогом. Иначе величина не определена: код не угадывает
+    её и не складывает то, что не обязано быть слагаемыми, — вызывающая сторона
+    обязана обработать None как «требует расчёта».
+    """
+    amounts = parse_all_amounts_kzt(price_of_claim)
+    if not amounts:
+        return None
+    if len(amounts) == 1:
+        return amounts[0]
+    total = sum(amounts)
+    totals = [value for value in amounts if value * 2 == total]
+    return totals[0] if len(totals) == 1 else None
+
+
 def format_kzt(value: int) -> str:
     return f"{value:,}".replace(",", " ") + " тенге"
 
@@ -282,7 +307,7 @@ def claimant_is_individual(case_context: str) -> bool | None:
 
 def gosposhlina_line(case_context: str, price_of_claim: str) -> str:
     """Render the deterministic duty line for an ordinary property claim."""
-    amount = parse_amount_kzt(price_of_claim)
+    amount = claim_price_amount(price_of_claim)
     if amount is None:
         return NEEDS_CALCULATION_MARKER
     is_individual = claimant_is_individual(case_context)

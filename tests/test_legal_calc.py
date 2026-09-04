@@ -8,6 +8,7 @@ from korgan.legal_calc import (
     calc_gosposhlina_claim,
     calc_mixed_state_duty,
     calc_nonproperty_state_duty,
+    claim_price_amount,
     claimant_is_individual,
     format_kzt,
     gosposhlina_line,
@@ -174,3 +175,56 @@ def test_gosposhlina_line_for_legal_entity_from_12_996_000() -> None:
     assert line.startswith("389 880 тенге")
     assert "3%" in line
     assert "20 000 МРП" in line
+
+
+# --- цена иска в строке с несколькими суммами --------------------------------
+#
+# Поле цены иска пишет модель свободным текстом. Пока код брал первую сумму в
+# строке, разбивка «слагаемые, затем итог» давала госпошлину от слагаемого:
+# по делу на 1 292 400 тенге (1 200 000 долга + 92 400 неустойки) выходило
+# 12 000 тенге вместо 12 924. Заниженная пошлина в поданном иске — основание
+# оставить его без движения, а число подавалось как точный расчёт по статье 665
+# НК РК, без оговорок.
+
+CLAIMANT_CONTEXT = (
+    "Истец: Сериков Арман Нурланович, ИИН 900101300123\n"
+    "Ответчик: ТОО «Мебель Стандарт», БИН 180540012345\n"
+)
+
+
+def test_claim_price_from_single_amount() -> None:
+    assert claim_price_amount("1 292 400 тенге") == 1_292_400
+
+
+def test_claim_price_takes_total_not_first_amount() -> None:
+    assert claim_price_amount(
+        "1 292 400 тенге (1 200 000 тенге основной долг + 92 400 тенге неустойка)"
+    ) == 1_292_400
+    assert claim_price_amount(
+        "1 200 000 тенге основного долга и 92 400 тенге неустойки, итого 1 292 400 тенге"
+    ) == 1_292_400
+
+
+def test_claim_price_is_none_when_total_is_not_stated() -> None:
+    assert claim_price_amount("1 200 000 тенге и 92 400 тенге") is None
+
+
+def test_claim_price_is_none_when_total_is_ambiguous() -> None:
+    # Две равные суммы: каждая равна сумме остальных, итог не определён.
+    assert claim_price_amount("50 000 тенге и 50 000 тенге") is None
+
+
+def test_state_duty_uses_claim_price_total_not_first_component() -> None:
+    for price in (
+        "1 292 400 тенге (1 200 000 тенге основной долг + 92 400 тенге неустойка)",
+        "1 200 000 тенге основного долга и 92 400 тенге неустойки, итого 1 292 400 тенге",
+        "основной долг 1 200 000 тенге, неустойка 92 400 тенге — цена иска 1 292 400 тенге",
+    ):
+        assert gosposhlina_line(CLAIMANT_CONTEXT, price).startswith("12 924 тенге"), price
+
+
+def test_state_duty_fails_closed_when_claim_price_is_undeterminable() -> None:
+    assert (
+        gosposhlina_line(CLAIMANT_CONTEXT, "1 200 000 тенге и 92 400 тенге")
+        == NEEDS_CALCULATION_MARKER
+    )

@@ -2,23 +2,49 @@
 
 This file is the compact handoff from Codex to independent reviewers. Keep it short and replace stale content rather than appending an endless history.
 
-Task: NOT_STARTED
-Base/head: NOT_SET
+Task: P0 — государственная пошлина считалась от первой суммы в строке цены иска, а не от цены иска
+Base/head: 723787e -> рабочее дерево ветки ai/agent-team-setup
 
 Changed files:
-- none
+- korgan/legal_calc.py
+- tests/test_legal_calc.py
 
 Root cause:
-- not analysed
+- `gosposhlina_line` (korgan/legal_calc.py:307) определял цену иска через `parse_amount_kzt`, который
+  возвращает ПЕРВУЮ денежную сумму в строке. Поле `price_of_claim` — свободный текст модели
+  (схема: `korgan/openai_legal.py:61`, формат не задан ни схемой, ни инструкцией), поэтому разбивка
+  «слагаемые, затем итог» приводила к расчёту пошлины от слагаемого.
+
+Reproduction:
+- Тестовое дело: долг 1 200 000 ₸ + договорная неустойка 92 400 ₸, цена иска 1 292 400 ₸, истец — физлицо.
+- `price_of_claim = "1 200 000 тенге основного долга и 92 400 тенге неустойки, итого 1 292 400 тенге"`
+  давал строку «12 000 тенге (1% от цены иска; ... статья 665 Налогового кодекса РК)» вместо 12 924 тенге.
+- Занижение подавалось как детерминированный расчёт со ссылкой на норму, без оговорок и без
+  verification note (`_apply_state_duty`, korgan/production_legal.py:230 чистит заметки, когда число получено).
+- Последствие: оставление иска без движения из-за неполной уплаты госпошлины.
 
 Implementation:
-- none
+- Добавлена `claim_price_amount(price_of_claim)`: одна сумма — она и есть цена иска; при нескольких
+  суммах цена иска берётся, только если ровно одна из них арифметически равна сумме остальных (итог).
+  Иначе `None` — код не угадывает величину и не складывает то, что не обязано быть слагаемыми.
+- `gosposhlina_line` использует её вместо `parse_amount_kzt` и при `None` возвращает
+  `NEEDS_CALCULATION_MARKER`, то есть уходит в уже существующий fail-closed путь с verification note.
+- `parse_amount_kzt` не изменён: у остальных вызывающих (`_principal_amount`, `late_interest_hotfix`)
+  семантика «первая сумма» своя и в область задачи не входит.
 
 Tests run:
-- none
+- `pytest tests/test_legal_calc.py` — 38 passed (6 новых регрессионных).
+- `pytest` (полный набор) — 484 passed (было 478, регрессий нет).
 
 Known legal/security risk:
-- none recorded
+- Строка вида «X тенге (A + B); всего X тенге» (итог назван дважды) теперь не разрешается однозначно
+  и уходит в fail-closed маркер вместо верного числа. Это ухудшение UX, но не неверная сумма.
+- Не входило в задачу и остаётся открытым: `korgan/legal/calc.py` (в продакшн-путях не используется)
+  трактует датированные таблицы ставок как бессрочные — `Rates.base_rate_on` / `mrp_on` молча вернут
+  последнюю известную ставку для даты за пределами её действия. Продакшн-модуль `korgan/legal_calc.py`
+  такой границей обладает (`nb_base_rate_valid_through`), новый модуль — нет.
 
 Reviewer request:
-- Review only the current task/diff. Do not perform a full repository audit unless explicitly requested.
+- Проверить именно правило определения итога в `claim_price_amount`: достаточно ли безопасно
+  правило «ровно одна сумма равна сумме остальных» и приемлемо ли зафиксированное fail-closed
+  поведение при неоднозначности.
