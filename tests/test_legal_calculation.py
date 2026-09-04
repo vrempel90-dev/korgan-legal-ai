@@ -42,14 +42,14 @@ def test_contractual_penalty_component_exposes_every_element() -> None:
     component = contractual_penalty_component(penalty)
 
     assert component.penalty_base == 2_300_000
-    assert component.penalty_rate == "0.1% за каждый день просрочки"
+    assert component.penalty_rate == "0,1% за каждый день просрочки"
     assert component.start_date == date(2026, 3, 1)
     assert component.end_date == date(2026, 3, 31)
     assert component.days == 31
     assert component.amount == 71_300
     assert "пункт 6.3 договора" in component.basis
     line = component.render()
-    assert "2 300 000 тенге × 0.1% × 31 дн. = 71 300 тенге" in line
+    assert "2 300 000 тенге × 0,1% × 31 дн. = 71 300 тенге" in line
     assert "01.03.2026" in line and "31.03.2026" in line
 
 
@@ -190,7 +190,7 @@ def test_contractual_penalty_rounds_half_up_not_to_even() -> None:
     """Ровно половина тенге округляется вверх, как в бухгалтерском расчёте.
 
     Встроенный round() в Python округляет половину к чётному: 100 тенге под
-    0.5% за один день дают ровно 0.5 тенге, и float-путь вернул бы 0. Юрист,
+    0,5% за один день дают ровно 0.5 тенге, и float-путь вернул бы 0. Юрист,
     перепроверяющий расчёт на калькуляторе, получит 1.
     """
     terms = ContractualPenaltyTerms(rate_percent_per_day=0.5, cap_percent=None, clause="5.1")
@@ -223,5 +223,5 @@ def test_contractual_penalty_never_replaces_the_agreed_rate_with_article_353() -
     penalty = calc_contractual_penalty(1_000_000, terms, date(2026, 1, 1), date(2026, 1, 31))
     component = contractual_penalty_component(penalty)
 
-    assert "0.01%" in component.penalty_rate
+    assert "0,01%" in component.penalty_rate
     assert "353" not in component.render()

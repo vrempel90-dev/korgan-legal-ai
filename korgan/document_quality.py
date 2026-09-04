@@ -250,6 +250,33 @@ def _court_is_concrete(court: str) -> bool:
     return not any(marker in lowered for marker in _GENERIC_COURT_MARKERS)
 
 
+#: Документ, названный в материалах несуществующим, приложением не является.
+#: «Акт выполненных работ не подписан» означает, что акта нет: требовать его в
+#: приложениях бессмысленно, а в деле о невыполненных работах само его
+#: отсутствие и есть основание иска.
+_EVIDENCE_ABSENT_RE_TEMPLATE = (
+    r"{marker}\w*[^.;\n]{{0,80}}?\bне\s+(?:подписан\w*|составлен\w*|оформлен\w*|выдан\w*|"
+    r"направлял\w*|заключал\w*|представлен\w*|передан\w*)|"
+    r"(?:отсутству\w*|нет)\s+{marker}\w*"
+)
+
+
+def _mentioned_as_existing(marker: str, case_context: str) -> bool:
+    """Назван ли в материалах существующий документ этого вида.
+
+    Совпадение ищется по началу слова, а не по подстроке: «акт» внутри «факт»,
+    «фактически» и «контакты» превращал собственную фактическую часть иска в
+    замечание о потерянном приложении.
+    """
+    text = (case_context or "").lower()
+    absent = re.compile(_EVIDENCE_ABSENT_RE_TEMPLATE.format(marker=re.escape(marker)), re.IGNORECASE)
+    for mention in re.finditer(rf"(?<![а-яё]){re.escape(marker)}[а-яё]*", text):
+        window = text[mention.start():mention.end() + 120]
+        if not absent.search(window):
+            return True
+    return False
+
+
 def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) -> DocumentQualityReport:
     blockers: list[str] = []
     issues: list[str] = []
@@ -342,7 +369,7 @@ def _score_claim(case_context: str, research: LegalResearch, draft: ClaimDraft) 
     evidence = 1.0
     attachments = "\n".join(draft.attachments).lower()
     for marker in ("договор", "квитанц", "претензи", "расписк", "акт"):
-        if marker in (case_context or "").lower() and marker not in attachments:
+        if _mentioned_as_existing(marker, case_context) and marker not in attachments:
             issues.append(f"в приложениях потеряно упомянутое доказательство: {marker}")
             evidence -= 0.18
 

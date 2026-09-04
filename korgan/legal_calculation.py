@@ -30,7 +30,13 @@ from datetime import date
 from decimal import Decimal
 
 from korgan.contractual_penalty import ContractualPenalty, ContractualPenaltyTerms, calc_contractual_penalty
-from korgan.legal_calc import ARTICLE_353_LABEL, DAYS_IN_YEAR, LatePaymentPenalty, format_kzt
+from korgan.legal_calc import (
+    ARTICLE_353_LABEL,
+    DAYS_IN_YEAR,
+    LatePaymentPenalty,
+    format_kzt,
+    format_percent,
+)
 from korgan.penalty_engine import PenaltyCalculation
 
 
@@ -39,8 +45,8 @@ def _date(value: date) -> str:
 
 
 def _percent(value: Decimal) -> str:
-    text = format(value, "f")
-    return text.rstrip("0").rstrip(".") if "." in text else text
+    """Единый формат ставки: десятичный разделитель — запятая, как в тексте."""
+    return format_percent(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,8 +105,12 @@ def contractual_penalty_component(penalty: ContractualPenalty) -> MoneyComponent
     basis = f"пункт {clause} договора" if clause else "условие договора о неустойке"
     limits: list[str] = []
     if penalty.terms.cap_percent is not None:
+        # База предела берётся из самого договора: соседний раздел расчёта уже
+        # называет её словами договора, и две разные базы у одного условия
+        # читались бы как два разных предела.
+        cap_base = penalty.terms.base_label or "суммы долга"
         limits.append(
-            f"ограничение по договору: не более {_percent(penalty.terms.cap_percent)}% от суммы долга"
+            f"ограничение по договору: не более {_percent(penalty.terms.cap_percent)}% от {cap_base}"
         )
         if penalty.capped and penalty.cap_amount is not None:
             limits.append(f"начислено до предела: {format_kzt(penalty.cap_amount)}")
