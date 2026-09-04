@@ -10,6 +10,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(here, '..', 'src', 'generationStageTimeline.js'), 'utf8');
+const css = readFileSync(join(here, '..', 'src', 'generation-stage-timeline.css'), 'utf8');
 
 test('этапы отражают только реальные backend thresholds', () => {
   assert.equal(stageIndexForProgress(0), 0);
@@ -50,4 +51,11 @@ test('progress overlay не управляет нижней навигацией
   assert.ok(!source.includes('syncVisibleNavigation'), 'progress script не должен менять active у вкладок');
   assert.ok(!source.includes("addEventListener('pointerdown'"), 'progress script не должен перехватывать pointerdown вкладок');
   assert.ok(source.includes('root.dataset.signature === signature'), 'рендер обязан быть идемпотентным');
+});
+
+test('верхний progress bar с первого кадра использует KORGAN blue, а не базовый чёрный fill', () => {
+  assert.match(
+    css,
+    /\.ready-page \[role='progressbar'\] > \* \{[\s\S]*?background:\s*#0d63ff\s*!important;/,
+  );
 });
