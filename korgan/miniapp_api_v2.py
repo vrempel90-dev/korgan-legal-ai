@@ -5,7 +5,7 @@ import base64
 import hashlib
 import os
 import time
-from typing import Any
+from typing import Any, NamedTuple
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 # strict_bot, which installs the exact same production legal hardening layers
 # without starting Telegram polling.
 from korgan import ai_cost
+from korgan import claim_corpus_health as corpus_health
+from korgan import document_stage_latency as stage_latency
 from korgan import legal_calc
 from korgan import miniapp_api as legacy
 from korgan.ai_provider import openai_configured
@@ -176,48 +178,92 @@ def _release_metadata(document_type: str, context: str, research: Any, draft: An
     }
 
 
+class _Pipeline(NamedTuple):
+    """Чем один тип документа отличается от другого на общем конвейере."""
+
+    research: str
+    draft: str
+    render: Any
+    filename: str
+    #: Претензия и ответ на неё рендерятся с языком, остальные — без него.
+    render_takes_language: bool = False
+
+
+#: Пять веток конвейера отличались только этими именами, и всякая правка,
+#: общая для всех типов документа, переписывалась в них пять раз — замер стадий
+#: был бы двадцатью почти одинаковыми строками.
+_PIPELINE: dict[str, _Pipeline] = {
+    "claim": _Pipeline("research_case", "draft_claim", build_claim_docx, "KORGAN_iskovoe_zayavlenie.docx"),
+    "contract": _Pipeline("research_contract", "draft_contract", build_contract_docx, "KORGAN_dogovor.docx"),
+    "response": _Pipeline(
+        "research_response_to_claim",
+        "draft_response_to_claim",
+        build_response_to_claim_docx,
+        "KORGAN_otzyv_na_isk.docx",
+    ),
+    "pretrial": _Pipeline(
+        "research_pretrial",
+        "draft_pretrial",
+        build_pretrial_docx,
+        "KORGAN_dosudebnaya_pretenziya.docx",
+        render_takes_language=True,
+    ),
+    "pretrial_response": _Pipeline(
+        "research_pretrial_response",
+        "draft_pretrial_response",
+        build_pretrial_response_docx,
+        "KORGAN_otvet_na_pretenziyu.docx",
+        render_takes_language=True,
+    ),
+}
+
+
 async def _generate(document_type: str, context: str, language: str) -> tuple[Any, bytes, str, dict[str, Any]]:
-    if document_type == "claim":
-        research = await service.research_case(context, language=language)
-        draft = await service.draft_claim(context, research, language=language)
-        meta = _release_metadata(document_type, context, research, draft)
-        file_bytes = build_claim_docx(draft)
-        filename = "KORGAN_iskovoe_zayavlenie.docx"
-    elif document_type == "contract":
-        research = await legacy._method("research_contract")(context, language=language)
-        draft = await legacy._method("draft_contract")(context, research, language=language)
-        meta = _release_metadata(document_type, context, research, draft)
-        file_bytes = build_contract_docx(draft)
-        filename = "KORGAN_dogovor.docx"
-    elif document_type == "response":
-        research = await legacy._method("research_response_to_claim")(context, language=language)
-        draft = await legacy._method("draft_response_to_claim")(context, research, language=language)
-        meta = _release_metadata(document_type, context, research, draft)
-        file_bytes = build_response_to_claim_docx(draft)
-        filename = "KORGAN_otzyv_na_isk.docx"
-    elif document_type == "pretrial":
-        research = await legacy._method("research_pretrial")(context, language=language)
-        draft = await legacy._method("draft_pretrial")(context, research, language=language)
-        meta = _release_metadata(document_type, context, research, draft)
-        file_bytes = build_pretrial_docx(draft, language=language)
-        filename = "KORGAN_dosudebnaya_pretenziya.docx"
-    elif document_type == "pretrial_response":
-        research = await legacy._method("research_pretrial_response")(context, language=language)
-        draft = await legacy._method("draft_pretrial_response")(context, research, language=language)
-        meta = _release_metadata(document_type, context, research, draft)
-        file_bytes = build_pretrial_response_docx(draft, language=language)
-        filename = "KORGAN_otvet_na_pretenziyu.docx"
-    else:
+    pipeline = _PIPELINE.get(document_type)
+    if pipeline is None:
         raise HTTPException(status_code=400, detail="Unsupported document type")
 
-    if meta["filing_ready"]:
-        blockers = rendered_docx_blockers(file_bytes, ready_expected=True)
-        if blockers:
-            raise HTTPException(
-                status_code=422,
-                detail="Финальный Word не прошёл проверку целостности: " + str(blockers[0]),
+    timings = stage_latency.StageTimings(document_type)
+    status = "ok"
+    try:
+        # Иск ходит через адаптер pipeline v2 напрямую: он владеет собственным
+        # порядком research/critic, которого нет у остальных типов.
+        research_call = (
+            getattr(service, pipeline.research) if document_type == "claim" else legacy._method(pipeline.research)
+        )
+        draft_call = (
+            getattr(service, pipeline.draft) if document_type == "claim" else legacy._method(pipeline.draft)
+        )
+
+        with timings.stage(stage_latency.LEGAL_RESEARCH):
+            research = await research_call(context, language=language)
+        with timings.stage(stage_latency.DRAFTING):
+            draft = await draft_call(context, research, language=language)
+        # Детерминированные расчёты (цена иска, госпошлина, статья 353) и
+        # финальная юридическая проверка идут внутри draft/QA-слоёв, поэтому
+        # измеряются как одна стадия LEGAL_QA по её фактической границе.
+        with timings.stage(stage_latency.LEGAL_QA):
+            meta = _release_metadata(document_type, context, research, draft)
+        with timings.stage(stage_latency.DOCX_RENDER):
+            file_bytes = (
+                pipeline.render(draft, language=language)
+                if pipeline.render_takes_language
+                else pipeline.render(draft)
             )
-    return draft, file_bytes, filename, meta
+
+        if meta["filing_ready"]:
+            blockers = rendered_docx_blockers(file_bytes, ready_expected=True)
+            if blockers:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Финальный Word не прошёл проверку целостности: " + str(blockers[0]),
+                )
+        return draft, file_bytes, pipeline.filename, meta
+    except Exception:
+        status = "error"
+        raise
+    finally:
+        timings.log(status=status)
 
 
 @app.get("/health")
@@ -261,6 +307,12 @@ async def health() -> dict[str, Any]:
         # считается. Отказ правильный, но безмолвный: без этого поля о нём
         # узнавали бы по маркеру «требует проверки» в документе клиента.
         "legal_rates": legal_calc.rates_freshness(),
+        # Может ли сервис выпустить иск с правовым обоснованием. Без собранного
+        # локального корпуса Adilet ни один номер статьи не проходит финальную
+        # сверку, и каждый иск уходит клиенту без раздела о праве. Отказ
+        # правильный, но до сих пор его было видно только в уже выданном
+        # документе — здесь он виден до, а не после выдачи.
+        "legal_grounding": corpus_health.legal_grounding_readiness(),
         # Фактический расход, измеренный по ответам провайдера. До этого
         # monthly_ai_budget_usd попадал только в текст лог-сообщения, и
         # «бюджета хватит на четыре месяца» нельзя было ни подтвердить, ни

@@ -183,3 +183,59 @@ def enforce_claim_corpus_health(
         note = LEGAL_GROUNDING_PREFIX + issue
         if note not in draft.verification_notes:
             draft.verification_notes.append(note)
+
+
+def legal_grounding_readiness() -> dict[str, Any]:
+    """Может ли сервис вообще выпустить иск с правовым обоснованием.
+
+    `claim_filing_accuracy._ground_legal_basis` — единственный шлюз, через
+    который номера статей попадают в судебный текст, и он пропускает только то,
+    что сверено с локальным корпусом Adilet. Значит выключенный флаг или
+    несобранная база — это не «работает медленнее», а «каждый иск выходит без
+    правового обоснования». Отказ правильный (выдумывать нормы нельзя), но до
+    сих пор он был виден только внутри уже выданного клиенту документа: в
+    строке verification_notes, которую читают после демонстрации, а не до неё.
+
+    Здесь то же состояние отдаётся туда, куда смотрят заранее, — в лог при
+    старте и в `/health`, тем же способом, что и свежесть справочника ставок.
+    """
+    enabled = local_corpus_enabled()
+    if not enabled:
+        return {
+            "enabled": False,
+            "available": False,
+            "provisions": 0,
+            "ready": False,
+            "reason": (
+                "KORGAN_LOCAL_CORPUS выключен: правовое обоснование не будет выпущено "
+                "ни в одном иске, документ останется предварительным."
+            ),
+        }
+
+    corpus = open_corpus()
+    if corpus is None:
+        return {
+            "enabled": True,
+            "available": False,
+            "provisions": 0,
+            "ready": False,
+            "reason": (
+                "локальный корпус Adilet не собран: запустите scripts/load_corpus.py, "
+                "иначе правовое обоснование не будет выпущено ни в одном иске."
+            ),
+        }
+
+    try:
+        provisions = int(corpus.count())
+    except Exception:  # noqa: BLE001 - диагностика не должна ронять старт сервиса
+        provisions = 0
+    finally:
+        corpus.close()
+
+    return {
+        "enabled": True,
+        "available": True,
+        "provisions": provisions,
+        "ready": provisions > 0,
+        "reason": "" if provisions > 0 else "локальный корпус Adilet пуст",
+    }

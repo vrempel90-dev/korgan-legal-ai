@@ -344,3 +344,47 @@ def test_job_lookup_is_owner_scoped(monkeypatch) -> None:
     assert exc.value.status_code == 404
     sql = str(pool.fetchrow_calls[0][0])
     assert "id=$1 AND user_key=$2" in sql
+
+
+def test_latency_timeout_reason_reaches_the_client(monkeypatch) -> None:
+    """Превышение бюджета подготовки объясняется клиенту его собственным текстом.
+
+    Текст про «конвейер не уложился в отведённое время» написан для человека и
+    говорит главное — что повтор не потребует второй оплаты. Пока таймаут был
+    обычным ``HTTPException``, задача не отличала его от технического сбоя и
+    подставляла общее «не удалось подготовить документ»: клиент, прождавший две
+    минуты, не узнавал ни причины, ни того, что платить снова не нужно.
+    """
+    from korgan.document_latency_budget_runtime import DocumentGenerationTimeout
+
+    detail = _failed_detail(
+        monkeypatch,
+        DocumentGenerationTimeout(
+            status_code=504,
+            detail=(
+                "KORGAN остановил подготовку, потому что юридический конвейер не уложился "
+                "в 110 секунд. Непроверенный или незавершённый Word не выдан. "
+                "Материалы дела сохранены; запустите повтор — новая оплата не потребуется."
+            ),
+        ),
+    )
+
+    assert "не уложился" in detail
+    assert "новая оплата не потребуется" in detail
+    # Код состояния — часть HTTP-обёртки, а не объяснение для клиента.
+    assert not detail.startswith("504")
+    assert "504" not in detail
+
+
+def test_other_http_errors_are_still_not_quoted_to_the_client(monkeypatch) -> None:
+    """Не всякий ``HTTPException`` написан для клиента: 422 несёт технический текст."""
+    detail = _failed_detail(
+        monkeypatch,
+        HTTPException(
+            status_code=422,
+            detail="Финальный Word не прошёл проверку целостности: docx_body_marker_missing",
+        ),
+    )
+
+    assert "docx_body_marker_missing" not in detail
+    assert detail == jobs._TECHNICAL_FAILURE

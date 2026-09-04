@@ -149,9 +149,17 @@ def _body_blocks(draft: ClaimDraft, *, kk: bool) -> list[Block]:
         )
         if value and value.strip()
     ]
-    if draft.legal_basis or procedural:
+    # Подсудность, досудебный порядок, меры к примирению и исковая давность —
+    # процессуальные обстоятельства, а не правовое обоснование требований. Пока
+    # они делили один заголовок с нормами права, иск без единой статьи выглядел
+    # так, будто право в нём приведено: под «Правовым обоснованием» стояли
+    # четыре абзаца, ни один из которых не обосновывал требование. Заголовок про
+    # право теперь ставится только там, где право действительно есть.
+    if draft.legal_basis:
         blocks.append(Heading("Құқықтық негіздеме" if kk else "Правовое обоснование"))
         blocks.extend(Prose(basis) for basis in draft.legal_basis)
+    if procedural:
+        blocks.append(Heading("Процестік мән-жайлар" if kk else "Процессуальные обстоятельства"))
         blocks.extend(Prose(_kk_line(value) if kk else value) for value in procedural)
 
     blocks.append(Heading("Жоғарыда баяндалғандардың негізінде СОТТАН СҰРАЙМЫН:" if kk else "На основании изложенного ПРОШУ СУД:"))

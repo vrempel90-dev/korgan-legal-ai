@@ -5,6 +5,7 @@ import logging
 
 from korgan import bot
 from korgan import claim_quality_hotfix
+from korgan.claim_corpus_health import legal_grounding_readiness
 from korgan.finalized_litigation import FinalizedProductionClaimService
 from korgan.legal_calc import rates_freshness
 
@@ -36,9 +37,26 @@ def _log_rates_freshness() -> None:
             LOGGER.info("RATES_OK %s: осталось %d дн.", what, days)
 
 
+def _log_legal_grounding() -> None:
+    """Сказать в лог, выпустится ли вообще правовое обоснование.
+
+    Без собранного локального корпуса Adilet финальная сверка не пропускает ни
+    одной статьи, и каждый иск выходит без раздела о праве. Это не сбой
+    выполнения — конвейер отрабатывает и отдаёт предварительный документ, — но
+    для юридического продукта это отказ, и дежурный должен узнать о нём при
+    старте, а не по документу, уже ушедшему клиенту.
+    """
+    state = legal_grounding_readiness()
+    if state["ready"]:
+        LOGGER.info("LEGAL_GROUNDING_OK локальный корпус Adilet: %d положений", state["provisions"])
+    else:
+        LOGGER.error("LEGAL_GROUNDING_DISABLED %s", state["reason"])
+
+
 def main() -> None:
     """Install guarded claim runtime and use the finalized professional service."""
     _log_rates_freshness()
+    _log_legal_grounding()
     claim_quality_hotfix.install_runtime_hotfix()
 
     # Keep bot.py and every existing handler untouched. Railway starts through
