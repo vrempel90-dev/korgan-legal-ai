@@ -40,6 +40,7 @@ _DUTY_RE = re.compile(
 _PROHIBITION_RE = re.compile(
     r"(?i)(?:\bне\s+(?:вправе|может|могут|допускается)\b|\bзапрещ(?:ен\w*|ается)\b|\bне\s+имеет\s+права\b)"
 )
+_NEGATED_DUTY_RE = re.compile(r"(?i)\bне\s+(?:обязан\w*|должен\w*|требуется|подлежит)\b")
 _ALTERNATIVE_RE = re.compile(r"(?i)\b(?:либо|или)\b|\bодин\s+из\b|\bпо\s+выбору\b")
 _EXCLUSIVE_RE = re.compile(r"(?i)\b(?:только|исключительно|лишь)\b")
 _CONDITION_RE = re.compile(
@@ -83,7 +84,7 @@ def _semantic_scope_filter(defect: str, *, claim: str, provision: str) -> bool:
     if "норма формулирует обязанность, а не право" in text:
         # A duty is distorted when the paraphrase affirmatively weakens it into
         # discretion or prohibition. Neutral wording alone is not that change.
-        if _PROHIBITION_RE.search(claim):
+        if _PROHIBITION_RE.search(claim) or _NEGATED_DUTY_RE.search(claim):
             return True
         return bool(_RIGHT_RE.search(claim) and not _DUTY_RE.search(claim))
 
@@ -103,6 +104,32 @@ def _semantic_scope_filter(defect: str, *, claim: str, provision: str) -> bool:
     return True
 
 
+def _append_modal_contradictions(defects: list[str], *, claim: str, provision: str) -> list[str]:
+    """Catch contradictions that lexical overlap can hide.
+
+    The legacy checker sees the token ``вправе`` inside ``не вправе`` and the
+    token ``обязан`` inside ``не обязан``. Without this independent semantic
+    pass, an affirmative statutory right/duty can therefore look lexically
+    preserved even when the generated sentence states the opposite.
+    """
+    result = list(defects)
+    provision_is_prohibition = bool(_PROHIBITION_RE.search(provision))
+    provision_has_right = bool(_RIGHT_RE.search(provision)) and not provision_is_prohibition
+    provision_has_duty = bool(_DUTY_RE.search(provision)) and not _NEGATED_DUTY_RE.search(provision)
+
+    if provision_has_right and _PROHIBITION_RE.search(claim):
+        finding = "пересказ меняет предусмотренное нормой право на запрет"
+        if finding not in result:
+            result.append(finding)
+
+    if provision_has_duty and _NEGATED_DUTY_RE.search(claim):
+        finding = "пересказ отрицает предусмотренную нормой обязанность"
+        if finding not in result:
+            result.append(finding)
+
+    return result
+
+
 def semantic_paraphrase_defects(statement: str, provision_text: str) -> list[str]:
     defects = _ORIGINAL_PARAPHRASE_DEFECTS(statement, provision_text)
     claim = str(statement or "")
@@ -112,7 +139,8 @@ def semantic_paraphrase_defects(statement: str, provision_text: str) -> list[str
         for defect in defects
         if _semantic_scope_filter(defect, claim=claim, provision=provision)
     ]
-    removed = len(defects) - len(kept)
+    kept = _append_modal_contradictions(kept, claim=claim, provision=provision)
+    removed = len(defects) - len([item for item in defects if item in kept])
     if removed:
         LOGGER.info("PARAPHRASE_SCOPE_FALSE_POSITIVE_FILTERED removed=%d", removed)
     return kept
