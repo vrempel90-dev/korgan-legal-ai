@@ -151,6 +151,18 @@ _LEGAL_ENTITY_PHRASES = (
 _INDIVIDUAL_ENTREPRENEUR_RE = re.compile(
     r"(?i)(?:\bиндивидуальн\w*\s+предпринимател\w*\b|(?<!\w)ип(?!\w))"
 )
+#: Статус стороны, названный словами. Обратная половина уже существовала:
+#: «юридическое лицо» в блоке истца читалось как признак юридического лица.
+#: Клиент, написавший «Статус: физическое лицо», но не назвавший ИИН, оставался
+#: неопределённым, и государственная пошлина не считалась даже по полностью
+#: определённой цене иска — хотя ставка статьи 665 НК РК зависит именно от
+#: этого факта, а не от того, приложен ли идентификатор.
+_INDIVIDUAL_PHRASES = (
+    "физическое лицо",
+    "физического лица",
+    "физическим лицом",
+    "жеке тұлға",
+)
 # Каноническая форма денежной суммы в юридическом тексте РК. Это единственный
 # разбор сумм в KORGAN: любой другой модуль обязан использовать этот шаблон, а
 # не собирать свой. Отдельный, более узкий шаблон в
@@ -274,6 +286,21 @@ def format_kzt(value: int) -> str:
     return f"{value:,}".replace(",", " ") + " тенге"
 
 
+def format_percent(value: Decimal | float | int | str) -> str:
+    """Ставка в процентах так, как её пишут в документе на русском языке.
+
+    Десятичный разделитель — запятая: «0,1%», а не «0.1%». Точка здесь не
+    стилистическая мелочь, а машинный след в тексте, который читает судья, и
+    первое, по чему видно, что документ собран не юристом. Незначащие нули
+    отбрасываются, чтобы «10» не превращалось в «10,00».
+    """
+    number = value if isinstance(value, Decimal) else Decimal(str(value))
+    text = format(number, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text.replace(".", ",")
+
+
 def _before_next_party(text: str) -> tuple[str, bool]:
     match = _NEXT_PARTY_INLINE_RE.search(text or "")
     if match:
@@ -355,6 +382,11 @@ def _has_legal_entity_marker(segment: str) -> bool:
     )
 
 
+def _has_individual_marker(segment: str) -> bool:
+    lowered = (segment or "").lower()
+    return any(phrase in lowered for phrase in _INDIVIDUAL_PHRASES)
+
+
 def claimant_is_individual(case_context: str) -> bool | None:
     """Determine claimant type only from role-bound or explicitly labeled IDs.
 
@@ -372,6 +404,8 @@ def claimant_is_individual(case_context: str) -> bool | None:
         if _INDIVIDUAL_ENTREPRENEUR_RE.search(segment):
             return True
         if _IIN_LABELED_RE.search(segment) or _claimant_has_iin_elsewhere(case_context, segment):
+            return True
+        if _has_individual_marker(segment):
             return True
         return None
 

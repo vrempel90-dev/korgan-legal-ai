@@ -121,8 +121,8 @@ def test_partial_payment_is_calculated_by_intervals_not_by_one_formula() -> None
     assert not any("46 992" in item for item in draft.requests)
     assert "36 391 тенге" in draft.late_interest
     # Обе строки таблицы видны в документе и складываются в заявленную сумму.
-    assert "800 000 тенге × 16.75% × 51 дн. = 18 723 тенге" in draft.late_interest
-    assert "500 000 тенге × 16.75% × 77 дн. = 17 668 тенге" in draft.late_interest
+    assert "800 000 тенге × 16,75% × 51 дн. = 18 723 тенге" in draft.late_interest
+    assert "500 000 тенге × 16,75% × 77 дн. = 17 668 тенге" in draft.late_interest
     assert any("36 391 тенге" in item for item in draft.requests)
     # Основной долг код за юриста не уменьшает, но и молчать о платеже не вправе.
     assert any("300 000 тенге" in note for note in draft.verification_notes)

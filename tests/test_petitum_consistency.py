@@ -223,6 +223,6 @@ def test_reversed_kazakh_contractual_rate_stays_on_contractual_path() -> None:
     _apply_verified_penalty(context, _research(), draft, filing_date=date(2026, 8, 21))
 
     assert any("договорную неустойку" in item.lower() and "996 000 тенге" in item for item in draft.requests)
-    assert any("Пунктом 6.3 договора" in item and "0.1%" in item and "10%" in item for item in draft.legal_basis)
+    assert any("Пунктом 6.3 договора" in item and "0,1%" in item and "10%" in item for item in draft.legal_basis)
     assert not any("статьи 353" in item.lower() for item in draft.legal_basis)
     assert "12 996 000 тенге" in draft.price_of_claim

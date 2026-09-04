@@ -283,7 +283,7 @@ def test_contractual_penalty_uses_the_agreed_rate_not_article_353() -> None:
     component = contractual_penalty_component(penalty)
 
     assert component.amount == 71_300
-    assert "0.1%" in component.penalty_rate
+    assert "0,1%" in component.penalty_rate
     assert "353" not in component.render()
     assert "пункт 6.3 договора" in component.basis
 

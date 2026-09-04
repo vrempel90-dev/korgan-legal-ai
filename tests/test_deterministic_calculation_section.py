@@ -167,8 +167,8 @@ def test_contractual_penalty_after_a_partial_payment_is_charged_on_the_balance()
     body = "\n".join(draft.calculation)
     assert "1 020 000" not in body
     assert "Договорная неустойка: 804 000 тенге" in body
-    assert "31.05.2026—30.06.2026: 12 000 000 тенге × 0.1% × 31 дн. = 372 000 тенге" in body
-    assert "01.07.2026—23.08.2026: 8 000 000 тенге × 0.1% × 54 дн. = 432 000 тенге" in body
+    assert "31.05.2026—30.06.2026: 12 000 000 тенге × 0,1% × 31 дн. = 372 000 тенге" in body
+    assert "01.07.2026—23.08.2026: 8 000 000 тенге × 0,1% × 54 дн. = 432 000 тенге" in body
     assert any("804 000 тенге" in item for item in draft.requests)
     assert not any("1 020 000" in item for item in draft.requests)
 

@@ -24,6 +24,13 @@ class ContractualPenaltyTerms:
     rate_percent_per_day: Decimal
     cap_percent: Decimal | None
     clause: str
+    #: База неустойки словами договора — «стоимости невыполненного
+    #: обязательства», «цены договора». Пустая строка означает, что договор
+    #: базу не назвал, и документ пишет нейтральное «от суммы задолженности».
+    #: Подставлять эту формулировку вместо названной в договоре нельзя: для
+    #: заказчика, оплатившего работу вперёд, задолженности перед исполнителем
+    #: нет вовсе, и условие договора менялось бы по существу.
+    base_label: str = ""
 
     def __post_init__(self) -> None:
         # Callers historically passed numeric literals. Normalize at the boundary
@@ -48,9 +55,18 @@ class ContractualPenalty:
 
 _NUMBER = r"(?P<value>\d+(?:[.,]\d+)?)"
 _PERCENT_TOKEN = r"(?:%|процент(?:а|ов)?\b)"
+#: База, от которой договор считает неустойку. Раньше допускались только
+#: «от суммы задолженности» и «от долга», то есть денежное обязательство. Для
+#: подряда, поставки и оказания услуг договор называет базу иначе — «от
+#: стоимости невыполненного обязательства», «от стоимости работ», «от цены
+#: договора», — и ставка переставала извлекаться на самой типовой формулировке.
+#: База допускается любая словесная, но без цифр и процентов: иначе выражение
+#: перепрыгнуло бы через соседнюю ставку или через договорный предел и связало
+#: бы «за каждый день» с чужим числом.
+_PENALTY_BASE = r"(?:от\s+(?P<base>[^\d%.;,:\n()]{1,70}?)\s*)?"
 _RATE_RE = re.compile(
     rf"{_NUMBER}\s*{_PERCENT_TOKEN}\s*"
-    r"(?:от\s+(?:сумм\w*\s+)?(?:задолженн\w*|долг\w*)\s*)?"
+    rf"{_PENALTY_BASE}"
     r"(?:за\s+кажд\w*\s+день(?:\s+просроч\w*)?|в\s+день)\b",
     re.IGNORECASE,
 )
@@ -167,6 +183,23 @@ def _paragraph_for_position(text: str, position: int) -> str:
     return text[start:end]
 
 
+def _base_label(matches: list[re.Match[str]], position: int) -> str:
+    """База неустойки из того совпадения, которое дало ставку.
+
+    Группу ``base`` объявляет только русский шаблон ставки; у казахских и
+    обратного её нет, и обращение к ней там законно заканчивается ``IndexError``.
+    """
+    for match in matches:
+        if match.start() != position:
+            continue
+        try:
+            captured = match.group("base")
+        except IndexError:
+            return ""
+        return " ".join((captured or "").split())
+    return ""
+
+
 def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerms | None:
     """Parse an explicit contractual daily penalty without guessing missing terms.
 
@@ -198,6 +231,8 @@ def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerm
     if not _CONTRACT_RE.search(local) and not _CONTRACT_RE.search(paragraph):
         return None
 
+    base_label = _base_label(rate_matches, rate_position)
+
     cap_matches = [*_CAP_RE.finditer(paragraph), *_CAP_RE_KK.finditer(paragraph)]
     caps = _unique_numeric(cap_matches)
     if len(caps) > 1:
@@ -208,6 +243,7 @@ def parse_contractual_penalty_terms(case_context: str) -> ContractualPenaltyTerm
         rate_percent_per_day=rates[0],
         cap_percent=cap_percent,
         clause=_nearest_clause(text, rate_position),
+        base_label=base_label,
     )
 
 

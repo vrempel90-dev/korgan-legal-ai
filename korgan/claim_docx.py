@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -122,6 +123,22 @@ def _kk_line(value: str) -> str:
     return text
 
 
+#: Договорная неустойка и неустойка статьи 353 ГК РК — разные основания, и
+#: заголовок раздела не может называть закон, на который требование не
+#: опирается. Раньше расчёт по согласованной сторонами ставке печатался под
+#: заголовком «Расчёт неустойки по статье 353 ГК РК»: судья читал ссылку на
+#: норму, которой в требовании нет.
+_CONTRACTUAL_PENALTY_RE = re.compile(r"договорн\w*\s+ставк|услови\w*\s+договора\s+о\s+неустойке", re.IGNORECASE)
+_ARTICLE_353_MENTION_RE = re.compile(r"(?:стать[яию]|ст\.)\s*353|353-бап", re.IGNORECASE)
+
+
+def _penalty_heading(late_interest: str, *, kk: bool) -> str:
+    text = str(late_interest or "")
+    if _CONTRACTUAL_PENALTY_RE.search(text) and not _ARTICLE_353_MENTION_RE.search(text):
+        return "Шарттық тұрақсыздық айыбының есебі" if kk else "Расчёт договорной неустойки"
+    return "ҚР АК 353-бабы бойынша есеп" if kk else "Расчёт неустойки по статье 353 ГК РК"
+
+
 def _body_blocks(draft: ClaimDraft, *, kk: bool) -> list[Block]:
     """Разделы иска в порядке, в котором их читает суд.
 
@@ -136,7 +153,7 @@ def _body_blocks(draft: ClaimDraft, *, kk: bool) -> list[Block]:
         blocks.extend(Prose(_kk_line(line) if kk else line) for line in draft.calculation if line.strip())
 
     if draft.late_interest:
-        blocks.append(Heading("ҚР АК 353-бабы бойынша есеп" if kk else "Расчёт неустойки по статье 353 ГК РК"))
+        blocks.append(Heading(_penalty_heading(draft.late_interest, kk=kk)))
         blocks.append(Prose(_kk_line(draft.late_interest) if kk else draft.late_interest))
 
     procedural = [

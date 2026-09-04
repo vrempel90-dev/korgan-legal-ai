@@ -19,6 +19,7 @@ from korgan.legal_calc import (
     base_rate_on,
     calc_late_payment_penalty,
     format_kzt,
+    format_percent,
     gosposhlina_line,
     late_penalty_line,
     needs_rate_marker,
@@ -140,6 +141,27 @@ _PAYMENT_DUE_EXPIRED_RE = re.compile(
     rf"(?:срок\s+оплат\w*|срок\s+платеж\w*)\s+(?:ист[её]к|наступил|был)[^\d]{{0,40}}(?P<date>{_DATE_TOKEN})",
     re.IGNORECASE,
 )
+#: Срок исполнения неденежного обязательства. Раньше начало просрочки искалось
+#: только у денежного возврата («вернуть … до <дата>»), поэтому для подряда,
+#: поставки и оказания услуг дата не устанавливалась вовсе: договорная
+#: неустойка не считалась даже тогда, когда её ставка прямо названа в договоре,
+#: а требование клиента выходило в суд без размера.
+#:
+#: Обязателен и глагол исполнения, и предлог срока: «до 15 июня 2026 года» без
+#: названного обязательства сроком исполнения не является.
+_PERFORMANCE_VERB = (
+    r"(?:выполнени\w*|исполнени\w*|оказани\w*|поставк\w*|передач\w*|"
+    r"изготовлени\w*|установк\w*|сдач\w*|монтаж\w*)"
+)
+_PERFORMANCE_DONE = (
+    r"(?:выполнен\w*|исполнен\w*|оказан\w*|поставлен\w*|передан\w*|"
+    r"изготовлен\w*|установлен\w*|сдан\w*|смонтирован\w*)"
+)
+_PERFORMANCE_DUE_RE = re.compile(
+    rf"(?:срок\w*\s+{_PERFORMANCE_VERB}|{_PERFORMANCE_DONE})"
+    rf"[^.\n]{{0,120}}?(?:не\s+позднее|до)\s+(?P<date>{_DATE_TOKEN})",
+    re.IGNORECASE,
+)
 _PAYMENT_WITHIN_FROM_RE = re.compile(
     rf"оплат\w*\s+в\s+течени[еи]\s+(?P<days>\d{{1,4}})\s+(?:календарн\w*\s+)?дн\w*"
     rf"[^.\n]{{0,80}}?(?:с|от)\s+(?P<date>{_DATE_TOKEN})",
@@ -247,6 +269,8 @@ def _extract_due_date(case_context: str) -> date | None:
 
     for match in _DUE_RE.finditer(case_context or ""):
         add(match.group("date"))
+    for match in _PERFORMANCE_DUE_RE.finditer(case_context or ""):
+        add(match.group("date"))
     for match in _PAYMENT_DUE_EXPIRED_RE.finditer(case_context or ""):
         add(match.group("date"))
     for match in _PAYMENT_WITHIN_FROM_RE.finditer(case_context or ""):
@@ -259,13 +283,32 @@ def _extract_due_date(case_context: str) -> date | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
+#: Возврат уплаченного — тоже основное денежное требование, но не долг.
+#: Заказчик, оплативший работу вперёд, требует не погашения задолженности, а
+#: возврата собственных денег; то же у возврата предоплаты, аванса и стоимости
+#: оплаченного товара. Без этой ветки такое требование оставалось безымянной
+#: имущественной позицией, гейт сверки расчёта не находил основного требования
+#: и снимал из иска уже рассчитанную неустойку.
+_REFUND_MARKERS = (
+    "уплаченн", "оплаченн", "предоплат", "аванс", "внесённ", "внесенн",
+    "төленген", "алдын ала төлем",
+)
+_DEBT_MARKERS = ("основн", "долг", "задолж", "негізгі", "берешек", "қарыз")
+
+#: Общий префикс ярлыков основного требования. Гейт сверки и раздел расчёта
+#: опознают позицию по нему, а не по одной точной строке.
+PRINCIPAL_LABEL_PREFIX = "основн"
+DEBT_LABEL = "основной долг"
+REFUND_LABEL = "основная сумма требования"
+
+
 def _principal_amount(draft: ClaimDraft) -> int | None:
     """Prefer the standalone principal request over a model-written total claim price."""
     for request in draft.requests:
         if _PENALTY_LINE_RE.search(request) or _STATE_DUTY_OR_COST_RE.search(request):
             continue
         lowered = request.lower()
-        if any(marker in lowered for marker in ("основн", "долг", "задолж", "негізгі", "берешек", "қарыз")):
+        if any(marker in lowered for marker in _DEBT_MARKERS + _REFUND_MARKERS):
             amount = parse_amount_kzt(request)
             if amount:
                 return amount
@@ -393,8 +436,10 @@ def _component_label(request: str) -> str:
         return "неустойка по статье 353 ГК РК"
     if _PENALTY_LINE_RE.search(lowered):
         return "неустойка"
-    if any(marker in lowered for marker in ("основн", "долг", "задолж", "негізгі", "берешек", "қарыз")):
-        return "основной долг"
+    if any(marker in lowered for marker in _DEBT_MARKERS):
+        return DEBT_LABEL
+    if any(marker in lowered for marker in _REFUND_MARKERS):
+        return REFUND_LABEL
     return "имущественное требование"
 
 
@@ -458,7 +503,7 @@ def _write_deterministic_calculation(draft: ClaimDraft, detail: MoneyComponent) 
         if not used_detail and amount == detail.amount and _PENALTY_LINE_RE.search(text):
             rendered.append(detail)
             used_detail = True
-        elif label == "основной долг":
+        elif label == DEBT_LABEL:
             rendered.append(principal_component(amount, basis=""))
         else:
             rendered.append(MoneyComponent(title=_upper_first(label), basis="", amount=amount))
@@ -498,7 +543,7 @@ def _recompute_claim_price_and_duty(draft: ClaimDraft, case_context: str) -> Non
             _enforce_single_state_duty_request(draft)
             draft.status = VerificationStatus.NEEDS_VERIFICATION
             return
-        components = [("основной долг", principal)]
+        components = [(DEBT_LABEL, principal)]
 
     total = sum(amount for _, amount in components)
     if len(components) == 1:
@@ -520,7 +565,7 @@ def _interval_penalty_line(calculation: PenaltyCalculation, *, rate_label: str, 
     last = calculation.intervals[-1]
     rows = "; ".join(
         f"{i.period_from.strftime('%d.%m.%Y')}—{i.period_to.strftime('%d.%m.%Y')}: "
-        f"{format_kzt(i.principal)} × {i.rate:g}% × {i.days} дн. = {format_kzt(i.subtotal)}"
+        f"{format_kzt(i.principal)} × {format_percent(i.rate)}% × {i.days} дн. = {format_kzt(i.subtotal)}"
         for i in calculation.intervals
     )
     cap = ""
@@ -549,20 +594,32 @@ def _interval_penalty_request(
     )
 
 
+def _penalty_base_label(terms: ContractualPenaltyTerms) -> str:
+    """База неустойки словами договора, а при их отсутствии — нейтральная.
+
+    Договор считает неустойку от названной им величины. Заменять её на «сумму
+    задолженности» нельзя: у заказчика, оплатившего работу вперёд, перед
+    исполнителем задолженности нет, и подмена меняла бы само условие договора,
+    на которое иск ссылается.
+    """
+    return terms.base_label or "суммы задолженности"
+
+
 def _contractual_penalty_line(penalty: ContractualPenalty) -> str:
     terms = penalty.terms
     clause = f"; пункт {terms.clause} договора" if terms.clause else "; условие договора о неустойке"
+    rate = format_percent(terms.rate_percent_per_day)
     cap = ""
     if terms.cap_percent is not None and penalty.cap_reached_on is not None:
         cap = (
-            f"; лимит {terms.cap_percent:g}% = {format_kzt(penalty.cap_amount or 0)}, "
+            f"; лимит {format_percent(terms.cap_percent)}% = {format_kzt(penalty.cap_amount or 0)}, "
             f"достигается {penalty.cap_reached_on.strftime('%d.%m.%Y')}"
         )
     return (
         f"{format_kzt(penalty.amount)} за период с {penalty.start.strftime('%d.%m.%Y')} "
         f"по {penalty.end.strftime('%d.%m.%Y')} ({penalty.days} дн.; договорная ставка "
-        f"{terms.rate_percent_per_day:g}% от суммы задолженности за каждый день просрочки{clause}{cap}): "
-        f"{format_kzt(penalty.principal)} × {terms.rate_percent_per_day:g}% × {penalty.days} дн."
+        f"{rate}% от {_penalty_base_label(terms)} за каждый день просрочки{clause}{cap}): "
+        f"{format_kzt(penalty.principal)} × {rate}% × {penalty.days} дн."
     )
 
 
@@ -573,7 +630,7 @@ def _contractual_penalty_request(penalty: ContractualPenalty) -> str:
         f"Взыскать с ответчика в пользу истца договорную неустойку {clause} "
         f"в размере {format_kzt(penalty.amount)} за период с {penalty.start.strftime('%d.%m.%Y')} "
         f"по {penalty.end.strftime('%d.%m.%Y')} ({penalty.days} дн.) исходя из ставки "
-        f"{terms.rate_percent_per_day:g}% от суммы задолженности за каждый день просрочки"
+        f"{format_percent(terms.rate_percent_per_day)}% от {_penalty_base_label(terms)} за каждый день просрочки"
     )
     if terms.cap_percent is None:
         return text + "; за последующий период — по день фактической уплаты суммы долга."
@@ -581,13 +638,13 @@ def _contractual_penalty_request(penalty: ContractualPenalty) -> str:
         reached = penalty.cap_reached_on.strftime("%d.%m.%Y") if penalty.cap_reached_on else "установленную дату"
         return (
             text
-            + f"; предельный размер {terms.cap_percent:g}% от суммы задолженности достигнут {reached}, "
+            + f"; предельный размер {format_percent(terms.cap_percent)}% от {_penalty_base_label(terms)} достигнут {reached}, "
             "дальнейшее начисление сверх договорного лимита не заявляется."
         )
     return (
         text
         + "; за последующий период — по день фактической уплаты суммы долга, "
-        f"но не более {terms.cap_percent:g}% от суммы задолженности."
+        f"но не более {format_percent(terms.cap_percent)}% от {_penalty_base_label(terms)}."
     )
 
 
@@ -639,16 +696,18 @@ def _enforce_calculation_gate(
     """
     components, unresolved = _property_components(draft)
     penalties = [amount for label, amount, _ in components if "неустойк" in label]
-    principals = [amount for label, amount, _ in components if label == "основной долг"]
+    principals = [
+        amount for label, amount, _ in components if label.startswith(PRINCIPAL_LABEL_PREFIX)
+    ]
     others = sum(
         amount
         for label, amount, _ in components
-        if "неустойк" not in label and label != "основной долг"
+        if "неустойк" not in label and not label.startswith(PRINCIPAL_LABEL_PREFIX)
     )
     reasoning = parse_amount_kzt(draft.late_interest)
     in_calculation = _calculation_line_amount(draft, "неустойк")
     total = parse_amount_kzt(draft.price_of_claim)
-    principal_in_document = _calculation_line_amount(draft, "основной долг")
+    principal_in_document = _calculation_line_amount(draft, PRINCIPAL_LABEL_PREFIX)
 
     missing = (
         unresolved
@@ -756,7 +815,7 @@ def _apply_article_353_by_intervals(
         _recompute_claim_price_and_duty(draft, case_context)
         return
 
-    rate_label = f"{rate:g}% годовых (базовая ставка НБ РК на {end.strftime('%d.%m.%Y')})"
+    rate_label = f"{format_percent(rate)}% годовых (базовая ставка НБ РК на {end.strftime('%d.%m.%Y')})"
     _note_principal_needs_check(draft, events)
     old_penalty = _existing_penalty_amount(draft)
     old_price = parse_amount_kzt(draft.price_of_claim)
@@ -838,7 +897,7 @@ def _apply_contractual_penalty_by_intervals(
         _recompute_claim_price_and_duty(draft, case_context)
         return True
 
-    rate_label = f"{terms.rate_percent_per_day:g}% за каждый день просрочки"
+    rate_label = f"{format_percent(terms.rate_percent_per_day)}% за каждый день просрочки"
     _note_principal_needs_check(draft, events)
     old_penalty = _existing_penalty_amount(draft)
     old_price = parse_amount_kzt(draft.price_of_claim)
@@ -853,7 +912,7 @@ def _apply_contractual_penalty_by_intervals(
     _drop_article_353_lines(draft)
     basis_line = (
         f"{clause[0].upper()}{clause[1:]} предусмотрена договорная неустойка в размере "
-        f"{terms.rate_percent_per_day:g}% от суммы задолженности за каждый день просрочки; "
+        f"{format_percent(terms.rate_percent_per_day)}% от {_penalty_base_label(terms)} за каждый день просрочки; "
         "при частичном погашении долга неустойка начисляется на остаток задолженности."
     )
     if basis_line not in draft.legal_basis:
@@ -931,9 +990,9 @@ def _apply_contractual_penalty(
     _drop_article_353_lines(draft)
     clause = f"Пунктом {terms.clause} договора" if terms.clause else "Условием договора о неустойке"
     basis = (
-        f"{clause} предусмотрена договорная неустойка в размере {terms.rate_percent_per_day:g}% "
-        "от суммы задолженности за каждый день просрочки"
-        + (f", но не более {terms.cap_percent:g}% от суммы задолженности." if terms.cap_percent is not None else ".")
+        f"{clause} предусмотрена договорная неустойка в размере {format_percent(terms.rate_percent_per_day)}% "
+        f"от {_penalty_base_label(terms)} за каждый день просрочки"
+        + (f", но не более {format_percent(terms.cap_percent)}% от {_penalty_base_label(terms)}." if terms.cap_percent is not None else ".")
     )
     if basis not in draft.legal_basis:
         draft.legal_basis.append(basis)
@@ -1065,7 +1124,7 @@ def _apply_verified_penalty(
     draft.requests.append(
         "Взыскать с ответчика в пользу истца неустойку по статье 353 ГК РК "
         f"в размере {format_kzt(penalty.amount)} за период {penalty.period()} "
-        f"исходя из базовой ставки НБ РК {penalty.rate_percent:g}% на дату предъявления иска; "
+        f"исходя из базовой ставки НБ РК {format_percent(penalty.rate_percent)}% на дату предъявления иска; "
         "за последующий период — по день фактической уплаты суммы долга в порядке статьи 353 ГК РК."
     )
     _recompute_claim_price_and_duty(draft, case_context)
