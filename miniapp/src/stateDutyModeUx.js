@@ -57,9 +57,9 @@ function install() {
     if (id === 'korgan-legal-tools-button') {
       window.setTimeout(() => syncStateDutyMode(), 0);
     }
-    // Capture phase runs before Legal Workspace's button handler. This guarantees
-    // irrelevant values cannot leak into its JSON payload without changing the
-    // stable API client itself.
+    // Capture phase runs before Legal Workspace's button handler. Irrelevant
+    // fields are normalized to backend-neutral values before its JSON payload is
+    // built, while the visible form shows only fields that apply to the mode.
     if (id === 'klt-duty-submit') syncStateDutyMode();
   }, true);
 
