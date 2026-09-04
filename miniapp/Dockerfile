@@ -1,10 +1,11 @@
 FROM node:24-alpine AS build
 WORKDIR /app
-ENV VITE_KORGAN_API_BASE=https://korgan-miniapp-api-recovery-1600-production.up.railway.app
+ARG VITE_KORGAN_API_BASE=https://korgan-miniapp-api-production.up.railway.app
+ENV VITE_KORGAN_API_BASE=${VITE_KORGAN_API_BASE}
 COPY package*.json ./
 RUN npm install
 COPY . .
-RUN npm run build
+RUN npm test && npm run build
 
 FROM node:24-alpine
 WORKDIR /app
