@@ -433,3 +433,61 @@ def test_generation_timeout_reports_a_reason_the_client_can_act_on(provider, wir
     assert captured, "клиенту не сказали ничего"
     assert "не уложился" in captured[-1]
     assert "новая оплата не потребуется" in captured[-1]
+
+
+def test_docx_render_failure_is_reported_as_failure_not_as_a_ready_document(provider, wired, monkeypatch) -> None:
+    """Сбой рендера Word — отказ, а не задача со статусом «готово»."""
+    from korgan import miniapp_api_v2 as core
+
+    store, recorder, consumed = wired
+
+    def exploding_render(draft):
+        raise RuntimeError("docx writer failed")
+
+    monkeypatch.setitem(
+        core._PIPELINE,
+        "claim",
+        core._PIPELINE["claim"]._replace(render=exploding_render),
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(
+            jobs.run_job(
+                _job(),
+                identity="identity",
+                store=store,
+                document_type="claim",
+                context=CONTEXT,
+                language="ru",
+            )
+        )
+
+    assert ("succeeded", "completed") not in recorder.transitions
+    assert ("failed", "failed") in recorder.transitions
+    assert not (store.state["cases"]["case-1"].get("document_base64") or "")
+    assert consumed == [], "оплата списана за документ, которого нет"
+
+
+def test_success_requires_a_document_in_the_saved_case(provider, wired, monkeypatch) -> None:
+    """Успех без сохранённого файла невозможен: это и есть false READY.
+
+    Если дело исчезло за время подготовки, задача обязана упасть, а не
+    отчитаться о готовности документа, которого клиенту негде взять.
+    """
+    store, recorder, _ = wired
+    store.state = {"cases": {}}
+
+    with pytest.raises(jobs.GenerationFailure):
+        asyncio.run(
+            jobs.run_job(
+                _job(),
+                identity="identity",
+                store=store,
+                document_type="claim",
+                context=CONTEXT,
+                language="ru",
+            )
+        )
+
+    assert ("succeeded", "completed") not in recorder.transitions
+    assert ("failed", "failed") in recorder.transitions
