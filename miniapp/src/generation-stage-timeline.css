@@ -8,6 +8,7 @@
 .ready-page [role='progressbar'] > * {
   position: relative;
   overflow: hidden;
+  background: #0d63ff !important;
   transition: width .7s cubic-bezier(.22,.61,.36,1) !important;
 }
 
