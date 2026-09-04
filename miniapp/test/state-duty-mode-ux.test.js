@@ -22,8 +22,8 @@ test('property mode suppresses irrelevant nonproperty count before submit', () =
 });
 
 test('nonproperty and mixed modes require at least one nonproperty demand', () => {
-  assert.match(code, /nonproperty\.min = '1'/);
-  assert.match(code, /if \(!Number\.isFinite\(value\) \|\| value < 1\) nonproperty\.value = '1'/);
+  assert.match(code, /input\.min = '1'/);
+  assert.match(code, /if \(!Number\.isFinite\(value\) \|\| value < 1\) input\.value = '1'/);
   assert.match(code, /nonproperty\.required = usesNonproperty/);
 });
 
