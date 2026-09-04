@@ -5,7 +5,13 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from korgan.legal_calc import format_kzt
+from korgan.claim_price import (
+    MIXED_CLAIM_NOTE,
+    ClaimPriceStatus,
+    format_price_note,
+    resolve_claim_price,
+)
+from korgan.legal_calc import NEEDS_CALCULATION_MARKER, claim_price_amount, format_kzt
 from korgan.legal_types import ClaimDraft, LegalResearch, VerificationStatus
 
 _DATA_PATH = Path(__file__).resolve().parent / "data" / "court_registry.json"
@@ -16,7 +22,6 @@ _VERIFIED_LINE_RE = re.compile(
 )
 _COURT_SOURCE_RE = re.compile(r"\[основание:\s*официальный перечень судов;\s*источник:", re.IGNORECASE)
 _ARTICLE_RE = re.compile(r"(?:статья|статьи|ст\.)\s*\d+(?:-\d+)?", re.IGNORECASE)
-_MONEY_RE = re.compile(r"(?<!\d)(\d[\d\s\u00a0]*(?:[.,]\d{1,2})?)\s*(?:тенге|тг\b|₸)", re.IGNORECASE)
 _MORAL_RE = re.compile(r"моральн\w*\s+вред|нравственн\w*\s+страдан|моральн\w*\s+страдан", re.IGNORECASE)
 _SUBJECTIVE_RE = re.compile(
     r"переживан\w*|стресс\w*|нервн\w*|нравственн\w*\s+страдан\w*|"
@@ -29,9 +34,6 @@ _PROCESS_MOTION_RE = re.compile(
     re.IGNORECASE,
 )
 _TERMINATION_RE = re.compile(r"расторг|прекращен|прекратить\s+договор|признать\s+договор\s+прекращ", re.IGNORECASE)
-_STATE_DUTY_RE = re.compile(r"пошлин", re.IGNORECASE)
-_COST_RE = re.compile(r"судебн\w*\s+расход|расход\w*\s+по\s+оплат", re.IGNORECASE)
-_ALTERNATIVE_RE = re.compile(r"альтернативн", re.IGNORECASE)
 _CONSUMER_VENUE_RE = re.compile(r"стать(?:я|и)\s*30\b.*потребител|потребител.*стать(?:я|и)\s*30\b", re.IGNORECASE | re.DOTALL)
 _GENERAL_VENUE_RE = re.compile(r"стать(?:я|и)\s*29\b", re.IGNORECASE)
 
@@ -193,25 +195,50 @@ def _sanitize_relief(case_context: str, research: LegalResearch, draft: ClaimDra
         draft.requests = [item for item in draft.requests if not _TERMINATION_RE.search(item)]
 
 
-def _parse_amount(value: str) -> int:
-    digits = re.sub(r"[\s\u00a0]", "", value).replace(",", ".")
-    try:
-        return round(float(digits))
-    except ValueError:
-        return 0
+def _add_note(draft: ClaimDraft, note: str) -> None:
+    """The finalizer runs twice in the production path; notes stay unique."""
+    if note not in draft.verification_notes:
+        draft.verification_notes.append(note)
 
 
-def _recalculate_price(draft: ClaimDraft) -> None:
-    amounts: list[int] = []
-    for request in draft.requests:
-        if _STATE_DUTY_RE.search(request) or _COST_RE.search(request) or _ALTERNATIVE_RE.search(request):
-            continue
-        for match in _MONEY_RE.finditer(request):
-            amount = _parse_amount(match.group(1))
-            if amount > 0:
-                amounts.append(amount)
-    if amounts:
-        draft.price_of_claim = format_kzt(sum(amounts))
+def _apply_claim_price(draft: ClaimDraft) -> None:
+    """Synchronise the claim price with the structured pecuniary demands.
+
+    ``korgan.claim_price`` is the only place allowed to decide what the price of
+    the claim is. When it cannot decide, the price is cleared instead of being
+    guessed: a guessed price is turned into a deterministic-looking state duty
+    by ``_apply_state_duty`` further down the pipeline, and a wrong duty makes
+    the filing defective.
+    """
+    price = resolve_claim_price(draft)
+
+    if price.has_non_pecuniary_money():
+        # The moral-damage demand is kept in the prayer, but it is not part of
+        # the price of the pecuniary claim and its duty is charged separately.
+        _add_note(draft, MIXED_CLAIM_NOTE)
+
+    if price.status is ClaimPriceStatus.NO_MONETARY_RELIEF:
+        # Nothing monetary to derive the price from; the existing value stands.
+        return
+
+    total = price.total
+    if price.status is ClaimPriceStatus.AMBIGUOUS or total is None:
+        draft.price_of_claim = ""
+        # The duty is invalidated here rather than left to the caller: a stale
+        # number next to an unknown price is exactly the failure this guards.
+        draft.state_duty = NEEDS_CALCULATION_MARKER
+        _add_note(draft, format_price_note(price.reason))
+        return
+
+    if claim_price_amount(draft.price_of_claim) == total:
+        # The current wording already states the correct total and may carry a
+        # deterministic breakdown (e.g. principal + article 353 penalty).
+        # Rewriting it to a bare number would lose that breakdown. The check
+        # uses the same reader as gosposhlina_line, so a wording kept here is
+        # guaranteed to yield this very total when the duty is computed.
+        return
+
+    draft.price_of_claim = format_kzt(total)
 
 
 def finalize_professional_claim(
@@ -223,7 +250,7 @@ def finalize_professional_claim(
     _resolve_court(case_context, research, draft)
     _apply_verified_legal_basis(research, draft)
     _sanitize_relief(case_context, research, draft)
-    _recalculate_price(draft)
+    _apply_claim_price(draft)
 
     # Any remaining internal score note is never part of the filing-facing draft.
     draft.verification_notes = [
