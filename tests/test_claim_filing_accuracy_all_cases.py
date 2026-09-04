@@ -314,15 +314,27 @@ def test_supplied_bank_and_filing_documents_clear_corresponding_actions(groundin
     assert draft.status == VerificationStatus.VERIFIED
 
 
-def test_disabled_local_corpus_fails_closed_without_filing_basis(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_disabled_local_corpus_releases_source_bound_basis_but_never_filing_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Без локальной сверки право берётся из source-bound исследования.
+
+    Вывод связан с реально открытым официальным актом и приложенной выдержкой
+    нормы, поэтому он выпускается: иск без права — не документ юриста. Чего
+    подтвердить нельзя, то названо прямо в замечании, и готовым к подаче такой
+    иск не становится.
+    """
     monkeypatch.delenv("KORGAN_LOCAL_CORPUS", raising=False)
     draft = _draft()
 
     finalize_professional_claim(_case_context(), _research(_valid_service_claim()), draft)
 
     assert draft.status == VerificationStatus.NEEDS_VERIFICATION
-    assert draft.legal_basis == []
-    assert any(note.startswith(LEGAL_GROUNDING_PREFIX) for note in draft.verification_notes)
+    assert any("статья 685" in item.lower() for item in draft.legal_basis)
+    assert any(
+        note.startswith(FILING_ACTION_PREFIX) and "сверить номера" in note
+        for note in draft.verification_notes
+    ), draft.verification_notes
 
 
 def test_internal_verification_marker_never_reaches_claim_docx(monkeypatch: pytest.MonkeyPatch) -> None:

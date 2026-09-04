@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable
 import asyncpg
 from fastapi import HTTPException
 
+from korgan import document_stage_latency as stage_latency
 from korgan import miniapp_document_payments as document_store
 
 LOGGER = logging.getLogger(__name__)
@@ -38,12 +39,13 @@ def _client_detail(exc: BaseException) -> str:
 
     Отказ выпуска (``ReleaseBlocked``) тоже написан для человека: он объясняет,
     что документ не прошёл проверку и что платить второй раз не нужно. То же
-    верно для превышения бюджета подготовки: причина «конвейер не уложился в
-    отведённое время» клиенту понятна и полезна, а под общим «не удалось
-    подготовить документ» она терялась.
+    верно для превышения бюджета подготовки и для отказа финальной проверки
+    договора: под общим «не удалось подготовить документ» терялись и причина, и
+    единственное, что позволяет повтору пройти, — знание, что именно уточнить.
     """
     from korgan.document_latency_budget_runtime import DocumentGenerationTimeout
     from korgan.miniapp_professional_release import ReleaseBlocked
+    from korgan.robust_production_legal import ContractQualityBlocked
 
     if isinstance(exc, DocumentGenerationTimeout):
         # ``str(HTTPException)`` начинается с кода состояния: клиенту в строку
@@ -51,7 +53,9 @@ def _client_detail(exc: BaseException) -> str:
         message = str(exc.detail).strip()
         return message or _TECHNICAL_FAILURE
 
-    written_for_client = isinstance(exc, (GenerationFailure, ReleaseBlocked))
+    written_for_client = isinstance(
+        exc, (GenerationFailure, ReleaseBlocked, ContractQualityBlocked)
+    )
     message = str(exc).strip()
     return message if written_for_client and message else _TECHNICAL_FAILURE
 
@@ -444,6 +448,12 @@ async def run_job(
         return
 
     heartbeat = asyncio.create_task(_heartbeat(job.id), name=f"korgan-generation-alive-{job.id}")
+    # Юридический конвейер измеряет себя сам, но выдачу документа он не видит:
+    # списание оплаты и сохранение состояния происходят уже здесь. Без этой
+    # стадии из логов нельзя было бы сказать, укладывается ли в бюджет весь
+    # путь до клиента или только подготовка Word.
+    timings = stage_latency.StageTimings(document_type)
+    status = "ok"
     try:
         await on_stage("starting", 5)
         result = await _generate_payload(
@@ -457,23 +467,25 @@ async def run_job(
         # документ видимым обычному запросу дела, и в этот момент задача уже
         # обязана быть оплаченной, иначе клиент увидел бы готовность, за
         # которую никто не заплатил.
-        await _claim_payment(job)
-        # Снимок состояния из HTTP-запроса за минуту подготовки успевает
-        # устареть: пользователь мог добавить материалы, создать другое дело
-        # или удалить это. Сохранять снимок значило бы затирать всё это.
-        state = await store.load(identity)
-        case = (state.get("cases") or {}).get(job.case_id)
-        if case is None:
-            raise GenerationFailure("Дело удалено во время подготовки документа")
-        case.update(result)
-        await store.save(identity, state)
-        await update_job(
-            job.id,
-            status="succeeded",
-            stage="completed",
-            progress=100,
-        )
+        with timings.stage(stage_latency.DELIVERY):
+            await _claim_payment(job)
+            # Снимок состояния из HTTP-запроса за минуту подготовки успевает
+            # устареть: пользователь мог добавить материалы, создать другое дело
+            # или удалить это. Сохранять снимок значило бы затирать всё это.
+            state = await store.load(identity)
+            case = (state.get("cases") or {}).get(job.case_id)
+            if case is None:
+                raise GenerationFailure("Дело удалено во время подготовки документа")
+            case.update(result)
+            await store.save(identity, state)
+            await update_job(
+                job.id,
+                status="succeeded",
+                stage="completed",
+                progress=100,
+            )
     except Exception as exc:
+        status = "error"
         await update_job(
             job.id,
             status="failed",
@@ -485,3 +497,11 @@ async def run_job(
         raise
     finally:
         heartbeat.cancel()
+        # Одна строка на задачу: сколько заняла выдача и сколько весь путь от
+        # запроса до документа у клиента. По ней после деплоя и проверяют
+        # обещание «одна-две минуты».
+        LOGGER.info(
+            "%s job_id=%s",
+            timings.as_log_line(status=status, label=stage_latency.JOB_LABEL),
+            job.id,
+        )

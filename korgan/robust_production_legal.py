@@ -143,6 +143,57 @@ def _contract_body(draft: ContractDraft) -> str:
     return "\n".join(draft.body_lines())
 
 
+#: Что нельзя показывать клиенту в объяснении отказа: служебные протоколы
+#: проверок, ответы чужого API и имена внутренних схем.
+_INTERNAL_ISSUE_MARKERS = (
+    "filing_action:",
+    "legal_grounding:",
+    "senior_preflight_score",
+    "contract_qa_block",
+    "korgan_",
+    "error code",
+    "traceback",
+    "schema",
+)
+
+
+def _client_safe_issue(issue: str) -> str:
+    """Одно замечание проверки в том виде, в каком его можно показать клиенту."""
+    text = " ".join(str(issue or "").split()).strip(" ;.")
+    if not text or any(marker in text.lower() for marker in _INTERNAL_ISSUE_MARKERS):
+        return ""
+    return text if len(text) <= 200 else text[:197].rstrip() + "…"
+
+
+class ContractQualityBlocked(RuntimeError):
+    """Финальная проверка не выпустила договор — и говорит клиенту, что уточнить.
+
+    Отказ правильный: договор с перепутанными сторонами, выдуманной суммой или
+    неподтверждённой ссылкой на закон подписывать нельзя. Но клиент видел общее
+    «не удалось подготовить документ» и нажимал повтор с теми же материалами —
+    проверка снова находила тот же дефект, и так по кругу. Петля ломается не
+    ослаблением проверки, а названной причиной: из этого текста видно, что
+    именно исправить в материалах, чтобы повтор имел шанс пройти.
+
+    Технический текст сюда не попадает: замечания фильтруются, а если показать
+    нечего, остаётся объяснение без перечня — оно честнее перечня служебных
+    строк.
+    """
+
+    def __init__(self, issues: list[str]) -> None:
+        self.issues = list(issues)
+        reasons = [safe for safe in (_client_safe_issue(item) for item in self.issues) if safe]
+        detail = (
+            "KORGAN не выпустил договор: финальная юридическая проверка нашла в нём то, "
+            "что нельзя подписывать. Уточните материалы и запустите повтор — "
+            "новая оплата не потребуется."
+        )
+        if reasons:
+            detail += " Требует уточнения: " + "; ".join(reasons[:4]) + "."
+        self.detail = detail
+        super().__init__(detail)
+
+
 def _contract_hard_issues(draft: ContractDraft) -> list[str]:
     lowered = _contract_body(draft).lower()
     return [f"служебный/чатовый текст попал в договор: {needle}" for needle in _FORBIDDEN_CONTRACT_TEXT if needle in lowered]
@@ -645,7 +696,8 @@ class ProductionOpenAILegalService(_FastV2):
             if blocking:
                 # Do not emit a legally unsafe contract as final. Missing terms
                 # are allowed as PRELIMINARY; fabricated/unsupported content is not.
-                raise RuntimeError("CONTRACT_QA_BLOCK: " + "; ".join(blocking[:10]))
+                LOGGER.error("CONTRACT_QA_BLOCK: %s", "; ".join(blocking[:10]))
+                raise ContractQualityBlocked(blocking)
 
         # A preamble the model would not repair is not fatal: the export
         # renders the identification block with visible gaps, and the defect is

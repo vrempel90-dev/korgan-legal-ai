@@ -130,3 +130,87 @@ def test_stage_latency_is_recorded_when_generation_fails(monkeypatch, caplog) ->
     assert "status=error" in line
     assert f"{stage_latency.DRAFTING}=" in line
     assert f"{stage_latency.DOCX_RENDER}=" not in line
+
+
+def test_delivery_stage_and_job_total_are_logged_for_every_job(monkeypatch, caplog) -> None:
+    """Выдача документа тоже должна быть видна в логах после деплоя.
+
+    Юридический конвейер измеряет себя сам, но списание оплаты и сохранение
+    состояния происходят за его границей. Без стадии DELIVERY из логов нельзя
+    сказать, укладывается ли в бюджет весь путь до клиента или только
+    подготовка Word.
+    """
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    from korgan import miniapp_generation_jobs as jobs
+
+    class _Pool:
+        @asynccontextmanager
+        async def acquire(self):
+            yield self
+
+        async def execute(self, *args):
+            return "UPDATE 1"
+
+        async def fetchrow(self, *args):
+            return None
+
+    class _Store:
+        def __init__(self) -> None:
+            self.state = {"cases": {"case-1": {"id": "case-1"}}}
+
+        def user_key(self, _identity):
+            return "user-key"
+
+        async def load(self, _identity):
+            return self.state
+
+        async def save(self, _identity, state):
+            self.state = state
+
+    job = jobs.GenerationJob(
+        id="job-latency",
+        payment_order_id=7,
+        user_key="user-key",
+        case_id="case-1",
+        status="queued",
+        stage="queued",
+        progress=0,
+        error_detail="",
+    )
+
+    async def fake_claim(job_id):
+        return job
+
+    async def fake_update(job_id, *, status, stage, progress, error_detail=""):
+        return None
+
+    async def fake_payload(document_type, context, language, *, case_id, on_stage):
+        return {"status": "document_ready", "document_base64": "ZmlsZQ==", "filename": "claim.docx"}
+
+    async def fake_consume(order_id, *, user_key):
+        return True
+
+    monkeypatch.setattr(jobs, "_POOL", _Pool())
+    monkeypatch.setattr(jobs, "claim_job", fake_claim)
+    monkeypatch.setattr(jobs, "update_job", fake_update)
+    monkeypatch.setattr(jobs, "_generate_payload", fake_payload)
+    monkeypatch.setattr(jobs.document_store, "consume_document_order", fake_consume)
+
+    with caplog.at_level(logging.INFO, logger="korgan.miniapp_generation_jobs"):
+        asyncio.run(
+            jobs.run_job(
+                job,
+                identity="identity",
+                store=_Store(),
+                document_type="claim",
+                context="материалы",
+                language="ru",
+            )
+        )
+
+    line = next(m for m in caplog.messages if m.startswith(stage_latency.JOB_LABEL))
+    assert f"{stage_latency.DELIVERY}=" in line
+    assert f"{stage_latency.TOTAL}=" in line
+    assert "status=ok" in line

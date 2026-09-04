@@ -113,13 +113,59 @@ def _build_corpus(
 
 
 def _assert_fail_closed() -> None:
-    """Корпус недоступен или не содержит нужную статью — сверять было нечего.
+    """Корпус есть, но нужной статьи в нём нет — сверять было нечего.
 
-    Здесь ни одна ссылка не прошла сверку с текстом нормы, поэтому в судебный
-    текст не выпускается ничего: правовое обоснование пустое.
+    Собранный корпус — авторитетный источник: если он не содержит
+    процитированного положения, ссылку нечем подтвердить, и в судебный текст не
+    выпускается ничего.
     """
     draft = _draft()
     finalize_professional_claim(_context(), _research(), draft)
+    assert draft.status == VerificationStatus.NEEDS_VERIFICATION
+    assert draft.legal_basis == []
+    assert any(str(note).startswith("LEGAL_GROUNDING: ") for note in draft.verification_notes)
+
+
+def _assert_source_bound_fallback() -> None:
+    """Локальной сверки нет — работает source-bound исследование.
+
+    Это не то же самое, что «сверять было нечего»: вывод уже связан с реально
+    открытым официальным актом Adilet, к нему приложена дословная выдержка
+    нормы, и пересказ с ней не расходится. Стирать такое правовое основание
+    значит отдать клиенту иск вообще без права — README обещает обратное
+    («rather than emitting a claim with no legal basis»).
+
+    Чего подтвердить нельзя без корпуса — что выдержка принадлежит именно
+    названному номеру статьи. Поэтому иск остаётся документом для юриста:
+    статус понижен, а в замечаниях стоит прямое указание сверить номера и
+    редакции перед подачей. Готовым к подаче он в этом режиме быть не может.
+    """
+    draft = _draft()
+    finalize_professional_claim(_context(), _research(), draft)
+    assert draft.status == VerificationStatus.NEEDS_VERIFICATION
+    assert any("статья 685" in item.lower() for item in draft.legal_basis)
+    assert any(
+        str(note).startswith("FILING_ACTION: ") and "сверить номера" in str(note)
+        for note in draft.verification_notes
+    ), draft.verification_notes
+    # Служебных пометок внутри самого судебного текста быть не должно.
+    assert all(STALE_SNAPSHOT_MARKER not in item for item in draft.legal_basis)
+
+
+def _assert_nothing_to_release() -> None:
+    """Ни один вывод не связан с официальным источником — выпускать нечего."""
+    draft = _draft()
+    research = LegalResearch(
+        status=VerificationStatus.VERIFIED,
+        applicable_law=[],
+        procedural_requirements=[],
+        # Вывод без связки «статья + текст нормы + официальный источник».
+        verified_claims=["Заказчик обязан оплатить оказанные услуги."],
+        unverified_claims=[],
+        source_urls=[],
+        notes=[],
+    )
+    finalize_professional_claim(_context(), research, draft)
     assert draft.status == VerificationStatus.NEEDS_VERIFICATION
     assert draft.legal_basis == []
     assert any(str(note).startswith("LEGAL_GROUNDING: ") for note in draft.verification_notes)
@@ -144,23 +190,60 @@ def _assert_controlled_verification_path() -> None:
     assert all(STALE_SNAPSHOT_MARKER in item for item in draft.legal_basis)
 
 
-def test_disabled_corpus_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_disabled_corpus_falls_back_to_source_bound_research(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("KORGAN_LOCAL_CORPUS", raising=False)
-    _assert_fail_closed()
+    _assert_source_bound_fallback()
 
 
-def test_missing_corpus_file_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_corpus_file_falls_back_to_source_bound_research(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("KORGAN_LOCAL_CORPUS", "1")
     monkeypatch.setattr(pipeline, "DEFAULT_DB_PATH", tmp_path / "missing.sqlite3")
-    _assert_fail_closed()
+    _assert_source_bound_fallback()
 
 
-def test_unreadable_corpus_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unreadable_corpus_falls_back_to_source_bound_research(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "broken.sqlite3"
     path.write_bytes(b"not a sqlite database")
     monkeypatch.setenv("KORGAN_LOCAL_CORPUS", "1")
     monkeypatch.setattr(pipeline, "DEFAULT_DB_PATH", path)
-    _assert_fail_closed()
+    _assert_source_bound_fallback()
+
+
+def test_without_corpus_unbound_conclusions_are_still_not_released(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Отказ от корпуса не открывает дорогу праву по памяти модели."""
+    monkeypatch.delenv("KORGAN_LOCAL_CORPUS", raising=False)
+    _assert_nothing_to_release()
+
+
+def test_without_corpus_unofficial_source_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Источник не с официального акта РК правовым основанием не становится."""
+    monkeypatch.delenv("KORGAN_LOCAL_CORPUS", raising=False)
+    draft = _draft()
+    research = LegalResearch(
+        status=VerificationStatus.VERIFIED,
+        applicable_law=[],
+        procedural_requirements=[],
+        verified_claims=[
+            verified_claim_line(
+                "Заказчик обязан оплатить оказанные ему услуги в сроки и в порядке, "
+                "которые указаны в договоре возмездного оказания услуг.",
+                "статья 685 ГК РК (Особенная часть)",
+                ARTICLE_685,
+                "https://online.zakon.kz/document/?doc_id=1006061",
+            )
+        ],
+        unverified_claims=[],
+        source_urls=[],
+        notes=[],
+    )
+    finalize_professional_claim(_context(), research, draft)
+
+    assert draft.legal_basis == []
+    assert any("не является официальным актом" in str(note) for note in draft.verification_notes)
 
 
 def test_partial_corpus_missing_cited_article_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -232,3 +315,38 @@ def test_fresh_complete_corpus_still_releases_grounded_basis(tmp_path: Path, mon
     assert draft.status == VerificationStatus.VERIFIED
     assert any("статья 685" in item.lower() for item in draft.legal_basis)
     assert not any(str(note).startswith("LEGAL_GROUNDING: ") for note in draft.verification_notes)
+
+
+def test_without_corpus_act_named_in_citation_must_match_the_opened_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Названный акт и открытый источник должны совпадать.
+
+    Статья 685 живёт в Особенной части ГК. Ссылка на Общую часть с тем же
+    номером — уже другая норма, и без локального корпуса эту подмену больше
+    нечем заметить: сама выдержка настоящая, источник официальный, расхождения
+    пересказа нет.
+    """
+    monkeypatch.delenv("KORGAN_LOCAL_CORPUS", raising=False)
+    draft = _draft()
+    research = LegalResearch(
+        status=VerificationStatus.VERIFIED,
+        applicable_law=[],
+        procedural_requirements=[],
+        verified_claims=[
+            verified_claim_line(
+                "Заказчик обязан оплатить оказанные ему услуги в сроки и в порядке, "
+                "которые указаны в договоре возмездного оказания услуг.",
+                "статья 685 ГК РК (Особенная часть)",
+                ARTICLE_685,
+                "https://adilet.zan.kz/rus/docs/K940001000_",
+            )
+        ],
+        unverified_claims=[],
+        source_urls=[],
+        notes=[],
+    )
+    finalize_professional_claim(_context(), research, draft)
+
+    assert draft.legal_basis == []
+    assert any("называет один акт, а открыт другой" in str(note) for note in draft.verification_notes)

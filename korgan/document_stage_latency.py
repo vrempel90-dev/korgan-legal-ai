@@ -33,6 +33,11 @@ DOCX_RENDER = "DOCX_RENDER"
 DELIVERY = "DELIVERY"
 TOTAL = "TOTAL"
 
+#: По этим меткам латентность и ищут в логах после деплоя: первая — про
+#: юридический конвейер, вторая — про весь путь задачи до документа у клиента.
+PIPELINE_LABEL = "DOCUMENT_STAGE_LATENCY"
+JOB_LABEL = "DOCUMENT_JOB_LATENCY"
+
 STAGE_ORDER: tuple[str, ...] = (
     FACT_EXTRACTION,
     LEGAL_RESEARCH,
@@ -72,18 +77,18 @@ class StageTimings:
     def total(self) -> float:
         return time.perf_counter() - self._started
 
-    def as_log_line(self, *, status: str) -> str:
+    def as_log_line(self, *, status: str, label: str = PIPELINE_LABEL) -> str:
         measured = " ".join(
             f"{name}={self.seconds[name]:.2f}" for name in STAGE_ORDER if name in self.seconds
         )
         return (
-            f"DOCUMENT_STAGE_LATENCY document_type={self.document_type} status={status} "
+            f"{label} document_type={self.document_type} status={status} "
             f"{measured} {TOTAL}={self.total():.2f}"
         ).replace("  ", " ")
 
-    def log(self, *, status: str) -> None:
+    def log(self, *, status: str, label: str = PIPELINE_LABEL) -> None:
         """Одна строка на генерацию — её и читают при разборе латентности."""
         try:
-            LOGGER.info("%s", self.as_log_line(status=status))
+            LOGGER.info("%s", self.as_log_line(status=status, label=label))
         except Exception:  # noqa: BLE001 - телеметрия не роняет выдачу документа
-            LOGGER.warning("DOCUMENT_STAGE_LATENCY logging failed document_type=%s", self.document_type)
+            LOGGER.warning("%s logging failed document_type=%s", label, self.document_type)
