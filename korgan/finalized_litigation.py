@@ -6,6 +6,8 @@ from korgan import document_quality as _dq
 from korgan import senior_claim_preflight as _sp
 from korgan.claim_filing_completeness import enforce_article148_party_completeness
 from korgan.claim_quality_hotfix import FILING_ACTION_PREFIX, ProductionClaimService
+from korgan.claim_release_consistency import enforce_release_consistency
+from korgan.claim_substantive_basis import enforce_substantive_basis
 from korgan.claim_state_duty import apply_professional_state_duty
 from korgan.fast_v2_production_legal import _deterministic_pre_qa
 from korgan.late_interest_hotfix import _apply_verified_article_353, _today_kz
@@ -46,7 +48,21 @@ class FinalizedProductionClaimService(ProductionClaimService):
         # only here, immediately before senior preflight/export readiness.
         enforce_article148_party_completeness(draft)
 
+        # Слои выше устанавливают суд и пошлину независимо друг от друга и
+        # каждый оставляет собственную задачу «уточнить». Когда факт уже
+        # установлен, задача о нём — противоречие, а не подстраховка: документ
+        # одновременно называл суд и просил его подтвердить.
+        enforce_release_consistency(draft, case_context)
+
+        # Правовое обоснование пересобирается целиком из подтверждённых выводов
+        # исследования. Всё, что не прошло сверку, отбрасывается — и вместе с
+        # ним могла уйти норма о существе долга, оставив иск на одних
+        # процессуальных статьях. Отбрасывание правильно, молчание — нет.
+        substantive = enforce_substantive_basis(research, draft)
+
         deterministic = _sp.deterministic_claim_preflight(case_context, research, draft)
+        if substantive:
+            deterministic = list(dict.fromkeys([*substantive, *deterministic]))
         quality = _dq.assess_document_quality("claim", case_context, research, draft)
         LOGGER.info(
             "FINALIZED_PROFESSIONAL_CLAIM score=%.1f ready=%s deterministic=%s blockers=%s",
@@ -75,6 +91,7 @@ class FinalizedProductionClaimService(ProductionClaimService):
             else:
                 draft.status = VerificationStatus.VERIFIED
                 draft.verification_notes.clear()
+            enforce_release_consistency(draft, case_context)
             return draft
 
         draft.status = VerificationStatus.NEEDS_VERIFICATION
@@ -85,4 +102,7 @@ class FinalizedProductionClaimService(ProductionClaimService):
             + ("; ".join(remaining[:6]) or "не достигнут порог 8.5")
         )
         draft.verification_notes = list(dict.fromkeys([*filing, *nonfiling, score_note]))
+        # Пересборка перечня возвращает в него замечания гейтов качества: среди
+        # них снова оказываются задачи об уже установленных суде и пошлине.
+        enforce_release_consistency(draft, case_context)
         return draft

@@ -48,10 +48,6 @@ def _install_generate(monkeypatch, *, filing_ready: bool, release_status: str) -
     monkeypatch.setattr(core, "_generate", fake_generate)
 
 
-async def _noop_stage(_stage: str, _progress: int) -> None:
-    return None
-
-
 def test_job_marks_weak_draft_preliminary_instead_of_releasing_it(monkeypatch) -> None:
     _install_generate(monkeypatch, filing_ready=False, release_status="draft")
     monkeypatch.delenv(release.FLAG_ENV, raising=False)
@@ -62,7 +58,7 @@ def test_job_marks_weak_draft_preliminary_instead_of_releasing_it(monkeypatch) -
             "Проверяемые факты",
             "ru",
             case_id="case-1",
-            on_stage=_noop_stage,
+            report_stage=lambda *_: None,
         )
     )
 
@@ -84,7 +80,7 @@ def test_job_refuses_release_when_preliminary_delivery_is_off(monkeypatch) -> No
                 "Проверяемые факты",
                 "ru",
                 case_id="case-1",
-                on_stage=_noop_stage,
+                report_stage=lambda *_: None,
             )
         )
 
@@ -149,7 +145,7 @@ def test_verified_document_passes_through_untouched(monkeypatch) -> None:
             "Проверяемые факты",
             "ru",
             case_id="case-1",
-            on_stage=_noop_stage,
+            report_stage=lambda *_: None,
         )
     )
 

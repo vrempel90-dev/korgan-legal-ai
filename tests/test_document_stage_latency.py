@@ -186,7 +186,7 @@ def test_delivery_stage_and_job_total_are_logged_for_every_job(monkeypatch, capl
     async def fake_update(job_id, *, status, stage, progress, error_detail=""):
         return None
 
-    async def fake_payload(document_type, context, language, *, case_id, on_stage):
+    async def fake_payload(document_type, context, language, *, case_id, report_stage):
         return {"status": "document_ready", "document_base64": "ZmlsZQ==", "filename": "claim.docx"}
 
     async def fake_consume(order_id, *, user_key):

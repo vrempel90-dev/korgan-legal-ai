@@ -6,7 +6,7 @@ import {
   ScrollText, Reply, Send, Download, LockKeyhole, Sparkles, Trash2,
   Languages, AlertTriangle, Paperclip, FileSignature, Headphones, CircleHelp,
   RefreshCw, ExternalLink, CreditCard, BadgeCheck, Clock3, WifiOff, Link2,
-  LoaderCircle, ShieldAlert, Banknote, ClipboardCheck, XCircle
+  LoaderCircle, ShieldAlert, Banknote, ClipboardCheck, XCircle, Check, Circle
 } from 'lucide-react';
 import './styles.css';
 import { isBackendConnected, korganApi } from './korganApi';
@@ -19,6 +19,7 @@ import { PERSONAL_LAWYER_URL, personalLawyerCopy } from './personalLawyer';
 import { deliverDocument, openSignedDocument } from './documentDelivery';
 import { isAutomaticDocumentPayment, requireDocumentPayment, shouldPollDocumentPayment, startDocumentPaymentPolling } from './documentPaymentPolling';
 import { interpretGeneration, startGenerationPolling } from './generationJob';
+import { generationSteps } from './generationStages';
 import { recoverCaseWorkspace } from './caseRecovery';
 import { createBootstrapSession } from './bootstrapSession';
 import { resolveScreen } from './screenState';
@@ -94,6 +95,8 @@ const STAGE_TEXT = {
   ru: {
     queued: 'Дело принято в работу', starting: 'Материалы дела подготовлены к анализу',
     legal_research: 'Проверяю право Республики Казахстан и источники',
+    drafting: 'Формирую текст документа', legal_qa: 'Считаю суммы и проверяю документ',
+    delivery: 'Сохраняю готовый документ',
     quality_control: 'Проверяю факты, суммы и требования документа',
     document_render: 'Формирую документ Word', completed: 'Документ готов',
     interrupted: 'Работа прервалась и может быть продолжена', failed: 'Подготовка не завершилась',
@@ -101,6 +104,8 @@ const STAGE_TEXT = {
   kk: {
     queued: 'Іс жұмысқа қабылданды', starting: 'Іс материалдары талдауға дайындалды',
     legal_research: 'Қазақстан Республикасының құқығы мен дереккөздер тексерілуде',
+    drafting: 'Құжат мәтіні жасалуда', legal_qa: 'Сомалар есептеліп, құжат тексерілуде',
+    delivery: 'Дайын құжат сақталуда',
     quality_control: 'Фактілер, сомалар және құжат талаптары тексерілуде',
     document_render: 'Word құжаты жасалуда', completed: 'Құжат дайын',
     interrupted: 'Жұмыс үзілді және жалғастырылуы мүмкін', failed: 'Дайындау аяқталмады',
@@ -585,6 +590,10 @@ function App() {
         <span style={{ display: 'block', height: '100%', width: `${generation.progress}%`, background: 'currentColor', transition: 'width .4s ease' }}/>
       </div>
       <div className="release-grid"><div><span>{t.status}</span><strong>{stageText(generation.stage, language)}</strong></div><div><span>{t.progress}</span><strong>{generation.progress}%</strong></div></div>
+      <ol className="generation-steps">{generationSteps(generation, language).map(step => <li key={step.id} className={`generation-step ${step.state}`}>
+        <span className="generation-step-mark" aria-hidden="true">{step.state === 'done' ? <Check size={15}/> : step.state === 'active' ? <LoaderCircle className="spin" size={15}/> : step.state === 'failed' ? <XCircle size={15}/> : <Circle size={15}/>}</span>
+        <span>{step.label}</span>
+      </li>)}</ol>
       {notice && <div className="warning-note"><AlertTriangle size={17}/>{notice}</div>}
       {failed && generation.retryable && <button className="primary wide" disabled={busy} onClick={retryGeneration}>{busy ? <LoaderCircle className="spin" size={18}/> : <RefreshCw size={18}/>} {t.retryGeneration}</button>}
       <button className="secondary wide" onClick={() => go('case')}><ArrowLeft size={18}/>{t.backToCase}</button>

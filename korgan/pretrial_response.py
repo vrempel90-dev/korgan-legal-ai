@@ -12,6 +12,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Pt
 
 from korgan.document_release import review_lines
+from korgan.document_type_routing import requests_pretrial_response
+from korgan.pretrial_role_guard import pretrial_response_role_issues
 from korgan.legal_calc import parse_all_amounts_kzt
 from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.pretrial import PretrialProductionService
@@ -62,10 +64,17 @@ _ADVICE = re.compile(r"(?i)^\s*как\b|\bқалай\b")
 
 
 def is_pretrial_response_request(text: str | None) -> bool:
+    """Просят ли подготовить ОТВЕТ на претензию, а не саму претензию.
+
+    Детектор живёт в ``document_type_routing`` вместе с зеркальным детектором
+    претензии: прямая просьба подготовить претензию всегда сильнее упоминания
+    ответа внутри фабулы. Раньше строка «ответа на претензию не поступило» в
+    описании обычного долга переводила заявку на противоположный документ.
+    """
     value = " ".join((text or "").split())
     if not value or _ADVICE.search(value):
         return False
-    return bool((_INTENT_RU.search(value) or _INTENT_KK.search(value)) and _ACTION.search(value))
+    return requests_pretrial_response(value)
 
 
 @dataclass(slots=True)
@@ -220,6 +229,10 @@ def pretrial_response_quality_issues(draft: PretrialResponseDraft, research: Leg
     # база, ставка. Без этого спор о сумме сводится к «мы не согласны».
     if money_claimed(draft) and not draft.calculation_review:
         issues.append("расчёт контрагента не разобран")
+
+    # Зеркальная проверка ролей: ответ пишет получатель претензии, и заголовок
+    # «ПРЕТЕНЗИЯ» здесь означает, что документ подготовлен от имени не той стороны.
+    issues.extend(pretrial_response_role_issues(draft))
 
     report = review_lines(draft.body_lines(), verified_claims=research.verified_claims)
     issues.extend(report.blocking)

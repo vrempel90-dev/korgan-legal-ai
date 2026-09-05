@@ -146,13 +146,16 @@ def test_run_job_persists_real_stages_and_marks_success_after_document_save(monk
         assert job_id == job.id
         stages.append((stage, progress))
 
-    async def fake_generate(document_type: str, context: str, language: str, *, case_id: str, on_stage):
+    async def fake_generate(document_type: str, context: str, language: str, *, case_id: str, report_stage):
         assert (document_type, context, language) == ("claim", "Проверяемые факты", "ru")
         assert case_id == "case-1"
-        await on_stage("legal_research", 20)
-        await on_stage("legal_drafting", 55)
-        await on_stage("quality_control", 80)
-        await on_stage("document_render", 90)
+        # Стадии конвейера приходят через приёмник и пишутся отдельно: они не
+        # вправе двигать общую строку задачи назад, поэтому в `stages` ниже
+        # видны только собственные переходы самой задачи.
+        report_stage("legal_research", 15)
+        report_stage("drafting", 45)
+        report_stage("legal_qa", 70)
+        report_stage("document_render", 85)
         return {
             "status": "document_ready",
             "title": "Иск",
@@ -194,10 +197,7 @@ def test_run_job_persists_real_stages_and_marks_success_after_document_save(monk
 
     assert stages == [
         ("starting", 5),
-        ("legal_research", 20),
-        ("legal_drafting", 55),
-        ("quality_control", 80),
-        ("document_render", 90),
+        ("delivery", 93),
         ("completed", 100),
     ]
     assert consumed == [91]
