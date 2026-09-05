@@ -64,3 +64,22 @@ test('чужое или неполное дело отвергается', async
     caseGeneration: async () => ({ job: null }),
   }), /выбранное дело/i);
 });
+
+test('после перезагрузки идущая задача показывает реальные шаги, а не пустой список', async () => {
+  const { generationSteps } = await import('../src/generationStages.js');
+  const running = { ...JOB, stage: 'legal_qa', progress: 70 };
+  const result = await recoverCaseWorkspace('case-1', {
+    getCase: async () => ({ case: CASE }),
+    caseGeneration: async () => ({ job: running }),
+  });
+
+  assert.equal(result.view, 'generating');
+  assert.equal(result.generation.stage, 'legal_qa');
+
+  // Список шагов восстанавливается из стадии сервера: закрытие Mini App не
+  // отбрасывает подготовку в начало и не выдаёт пустой экран за живую работу.
+  const steps = generationSteps(result.generation);
+  assert.deepEqual(steps.map((item) => item.state), [
+    'done', 'done', 'done', 'active', 'pending', 'pending',
+  ]);
+});
