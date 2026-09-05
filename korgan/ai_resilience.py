@@ -141,7 +141,9 @@ def is_transient(error: BaseException) -> bool:
     """Может ли следующая попытка дать другой ответ."""
     if is_domain_failure(error):
         return False
-    if isinstance(error, (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError)):
+    # Именно сетевые отказы, а не любой OSError: «файл не найден» и «нет прав»
+    # тоже OSError, и повторять их — значит ждать заведомо того же ответа.
+    if isinstance(error, (TimeoutError, ConnectionError)):
         return True
 
     for item in (error, *_causes(error)):
@@ -190,9 +192,7 @@ async def call_with_retry(
         except asyncio.CancelledError:
             # Отмену задачи повторять нельзя: её запросил тот, кто ждал ответа.
             raise
-        except BaseException as error:  # noqa: BLE001 — решение принимается ниже по типу
-            if not isinstance(error, Exception) and not isinstance(error, asyncio.TimeoutError):
-                raise
+        except Exception as error:  # noqa: BLE001 — решение принимается ниже по типу
             last_error = error
             if attempt >= attempts or not is_transient(error):
                 raise

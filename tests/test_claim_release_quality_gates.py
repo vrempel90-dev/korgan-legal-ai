@@ -314,3 +314,31 @@ def test_pretrial_section_with_its_own_content_survives() -> None:
     )
     enforce_release_consistency(draft, CASE)
     assert draft.pretrial_compliance
+
+
+def test_court_established_from_the_official_registry_survives_the_gate() -> None:
+    """Суд, поставленный слоями выпуска из официального перечня, остаётся в иске.
+
+    Оба слоя, которые вправе назвать суд, оставляют о нём запись VERIFIED_COURT.
+    Гейт согласованности не должен стирать этот результат: иначе установленный
+    по реестру суд превращался бы в пометку «уточнить» на ровном месте.
+    """
+    from korgan.claim_filing_accuracy import _apply_court_gate
+
+    research = _research([SUBSTANTIVE_LINE])
+    # Так исследование сообщает установленный по официальному источнику суд.
+    research.verified_claims.append(
+        f"Спор подсуден экономическому суду: {COURT} "
+        "[основание: официальный перечень судов; источник: "
+        "https://www.gov.kz/memleket/entities/almaty/press/article/details/203196]"
+    )
+    research.notes.append(f"VERIFIED_COURT: {COURT}")
+
+    draft = _draft(court="")
+    _apply_court_gate(CASE, research, draft)
+    assert draft.court == COURT, "слой выпуска не поставил подтверждённый суд"
+
+    established = draft.court
+    enforce_release_consistency(draft, CASE, research)
+    assert draft.court == established
+    assert contradictory_release_issues(draft) == []

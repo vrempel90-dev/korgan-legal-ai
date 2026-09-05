@@ -252,3 +252,25 @@ def test_next_attempt_succeeds_after_a_previous_api_failure() -> None:
     )
     assert asyncio.run(client.responses.create(model="m")) == "secondary-1"
     assert asyncio.run(client.responses.create(model="m")) == "secondary-2"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [FileNotFoundError("нет файла"), PermissionError("нет прав"), IsADirectoryError("каталог")],
+)
+def test_local_os_errors_are_not_mistaken_for_network_failures(error: Exception) -> None:
+    """OSError бывает и не сетевым: повторять «нет прав» бессмысленно."""
+    assert ai_resilience.is_transient(error) is False
+
+
+def test_cancellation_is_never_retried() -> None:
+    """Отмену запросил тот, кто ждал ответа: повтор здесь — работа впустую."""
+    attempts: list[int] = []
+
+    async def operation():
+        attempts.append(1)
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        _run(operation, retries=3)
+    assert len(attempts) == 1
