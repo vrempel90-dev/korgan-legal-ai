@@ -21,6 +21,7 @@ from korgan.asgi_lifespan import add_lifespan
 from korgan.claim_docx import build_claim_docx
 from korgan.claim_pipeline_v2 import ClaimPipelineV2Adapter
 from korgan.config import get_settings
+from korgan.document_type_routing import DOCUMENT_TYPES, resolve_document_type
 from korgan.contract_docx import build_contract_docx
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
 from korgan.legal_types import VerificationStatus
@@ -49,7 +50,9 @@ store = MiniAppStore(
     retention_days=int(os.getenv("MINIAPP_RETENTION_DAYS", "30")),
 )
 
-_DOCUMENT_TYPES = {"claim", "contract", "response", "pretrial", "pretrial_response"}
+# Набор типов задаётся один раз в `document_type_routing`: там же зафиксировано
+# правило, что выбор пользователя окончателен и текстом дела не уточняется.
+_DOCUMENT_TYPES = set(DOCUMENT_TYPES)
 _ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".docx", ".txt", ".jpg", ".jpeg", ".png", ".webp"}
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 _MAX_CONVERSATION_MESSAGES = 40
@@ -300,8 +303,11 @@ async def get_document(case_id: str, x_telegram_init_data: str = Header(default=
 async def create_case(payload: CaseRequest, x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
     user_id = _identity(x_telegram_init_data)
     state = await _require_consent(user_id)
-    document_type = payload.document_type.strip().lower()
-    if document_type not in _DOCUMENT_TYPES:
+    # Карточка документа в Mini App и есть выбор пользователя. Описание дела в
+    # том же запросе на тип не влияет: именно попытка «уточнить» выбор по тексту
+    # переворачивала претензию в ответ на претензию.
+    document_type = resolve_document_type(payload.document_type)
+    if document_type is None:
         raise HTTPException(status_code=400, detail="Выберите поддерживаемый тип документа")
     digest = hashlib.sha256(f"{user_id}:{payload.description}:{time.time_ns()}".encode()).hexdigest()[:12]
     case_id = f"KOR-{digest.upper()}"

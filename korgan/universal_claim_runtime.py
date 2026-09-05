@@ -11,6 +11,7 @@ from aiogram.types import BufferedInputFile, Message
 
 from korgan import bot as base_bot
 from korgan import document_quality
+from korgan.document_type_routing import intent_may_switch
 from korgan.citation_audit import ProvisionReference, extract_references
 from korgan.claim_core_release import core_claim_release_blockers
 from korgan.claim_docx import build_claim_docx, missing_required_fields
@@ -54,6 +55,8 @@ class _ClaimIntent(Filter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
         if data.get("mode") in {"consultation", "contract_details", "response_details"}:
+            return False
+        if not intent_may_switch(data, "claim"):
             return False
         text = message.text or ""
         if is_main_menu_text(text):

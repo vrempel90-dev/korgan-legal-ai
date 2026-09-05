@@ -151,7 +151,7 @@ def test_running_job_reports_that_it_is_alive(monkeypatch) -> None:
         beats.append(job_id)
 
     async def slow_generate(*_args, **kwargs):
-        await kwargs["on_stage"]("legal_research", 20)
+        kwargs["report_stage"]("legal_research", 15)
         for _ in range(40):
             await asyncio.sleep(0)
             if beats:

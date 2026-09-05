@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from korgan import bot as base_bot
+from korgan.document_type_routing import intent_may_switch
 from korgan.i18n import KK, normalize_language
 from korgan.pretrial_response import (
     build_pretrial_response_docx,
@@ -51,6 +52,11 @@ class _Intent(BaseFilter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
         if data.get("mode") in {"consultation", "contract_details", "response_details", "pretrial_waiting"}:
+            return False
+        # Заявка, открытая кнопкой «Досудебная претензия», принадлежит претензии
+        # до самого конца: строка «ответа на претензию не поступило» в её же
+        # фабуле не является просьбой подготовить ответ.
+        if not intent_may_switch(data, "pretrial_response"):
             return False
         text = message.text or ""
         if _LEGACY_MIXED_RU.search(text):

@@ -145,7 +145,7 @@ async def _schedule_job(
 async def _generation_scope(
     payload: core.GenerateRequest,
     x_telegram_init_data: str,
-) -> tuple[str, dict[str, Any], dict[str, Any], str, str, str, str]:
+) -> tuple[str, dict[str, Any], dict[str, Any], str, str, str, str, str]:
     identity = core.legacy._identity(x_telegram_init_data)
     state = await core.legacy._require_consent(identity)
     case = state.get("cases", {}).get(payload.case_id)
@@ -163,7 +163,7 @@ async def _generation_scope(
         raise HTTPException(status_code=422, detail="Добавьте описание ситуации или загрузите материалы дела")
     user_key = core.store.user_key(identity)
     scope = v5.v4._document_scope(case, document_type, language)
-    return identity, state, case, user_key, scope, document_type, language
+    return identity, state, case, user_key, scope, document_type, language, context
 
 
 # This is the final owner of generation. Payment gating remains in the same
@@ -180,7 +180,7 @@ async def generate_document_job(
     if not settings.kaspi_payment_url.strip():
         raise HTTPException(status_code=503, detail="Kaspi-оплата временно не настроена. Документ не запущен.")
 
-    identity, state, case, user_key, scope, document_type, language = await _generation_scope(
+    identity, state, case, user_key, scope, document_type, language, context = await _generation_scope(
         payload,
         x_telegram_init_data,
     )
@@ -246,7 +246,10 @@ async def generate_document_job(
                 job=job,
                 identity=identity,
                 document_type=document_type,
-                context=core._case_context(case),
+                # Материалы дела уже собраны выше при проверке, что дело не
+                # пустое. Второй сбор читал бы те же вложения повторно — работа
+                # без результата внутри и без того длинной подготовки.
+                context=context,
                 language=language,
             )
         return {

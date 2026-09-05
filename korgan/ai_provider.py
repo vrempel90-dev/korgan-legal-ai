@@ -19,6 +19,7 @@ import logging
 import os
 from typing import Any
 
+from korgan import ai_resilience as resilience
 from korgan.ai_cost import METER
 from korgan.config import Settings
 
@@ -104,6 +105,30 @@ class LazyClient:
         self.responses = LazyResponses(factory)
 
 
+class BoundedResponses:
+    """Единственный провайдер: тот же таймаут и тот же ограниченный повтор.
+
+    Без запасного пути откатываться некуда, поэтому один 429 стоил бы клиенту
+    всей подготовки документа. Обёртка ставится и здесь, чтобы поведение при
+    одном провайдере не отличалось от поведения при двух.
+    """
+
+    def __init__(self, inner: Any, *, provider: str):
+        self._inner = inner
+        self._provider = provider
+
+    async def create(self, **kwargs: Any) -> Any:
+        return await resilience.call_with_retry(
+            lambda: self._inner.create(**kwargs),
+            provider=self._provider,
+        )
+
+
+class BoundedClient:
+    def __init__(self, inner: Any, *, provider: str):
+        self.responses = BoundedResponses(inner.responses, provider=provider)
+
+
 class MeteredResponses:
     """Считает расход на каждом ответе модели.
 
@@ -133,7 +158,20 @@ class MeteredClient:
 
 
 class FallbackResponses:
-    """Основной провайдер с одной попыткой у запасного при его отказе."""
+    """Основной провайдер с ограниченным повтором, затем один заход к запасному.
+
+    Порядок именно такой. Всплеск 429 у основного проходит за секунду, и
+    повтор у него дешевле переключения: запасной провайдер отвечает другой
+    моделью и по другой цене. Но повтор ограничен сверху — подготовка документа
+    обещана клиенту за одну-две минуты, и «пробуем ещё» не должно превращаться
+    в ожидание без конца.
+
+    Отказ, который повтор не изменит (400, 401, 403, 404, 422), к запасному всё
+    же уходит: расхождение в поддержке схемы у двух SDK — обычное дело, и
+    ради него запасной провайдер и заведён. Что не уходит никуда — отказ самого
+    продукта: fail-closed юридической проверки обязан остаться отказом, а не
+    становиться поводом попросить документ у другого поставщика.
+    """
 
     def __init__(self, primary: Any, secondary: Any, *, primary_name: str, secondary_name: str):
         self._primary = primary
@@ -143,16 +181,23 @@ class FallbackResponses:
 
     async def create(self, **kwargs: Any) -> Any:
         try:
-            return await self._primary.create(**kwargs)
+            return await resilience.call_with_retry(
+                lambda: self._primary.create(**kwargs),
+                provider=self._primary_name,
+            )
         except Exception as error:  # noqa: BLE001 — откат должен пережить любой отказ провайдера
+            if resilience.is_domain_failure(error):
+                raise
             LOGGER.warning(
-                "KORGAN AI provider %s failed (%s: %s) — retrying via %s",
+                "KORGAN AI provider %s failed (%s) — retrying via %s",
                 self._primary_name,
                 type(error).__name__,
-                error,
                 self._secondary_name,
             )
-            return await self._secondary.create(**kwargs)
+            return await resilience.call_with_retry(
+                lambda: self._secondary.create(**kwargs),
+                provider=self._secondary_name,
+            )
 
 
 class FallbackClient:
@@ -179,7 +224,7 @@ def build_legal_client(settings: Settings) -> tuple[Any, str]:
         # Здесь OpenAI не запасной, а единственный. Отсутствие ключа — это не
         # потеря запасного пути, а невозможность ответить вообще, и отказ
         # должен быть немедленным и названным по имени переменной.
-        return MeteredClient(build_openai_client(settings)), "openai"
+        return MeteredClient(BoundedClient(build_openai_client(settings), provider="openai")), "openai"
 
     try:
         from anthropic import AsyncAnthropic
@@ -189,7 +234,7 @@ def build_legal_client(settings: Settings) -> tuple[Any, str]:
         # Пакет не поставлен — это состояние окружения, а не выбор оператора.
         # Отказать в консультации из-за него нельзя, поэтому работает запасной.
         LOGGER.warning("KORGAN anthropic SDK unavailable (%s) — using OpenAI", error)
-        return MeteredClient(build_openai_client(settings)), "openai"
+        return MeteredClient(BoundedClient(build_openai_client(settings), provider="openai")), "openai"
 
     # Роль различается только по имени модели OpenAI, с которым пришёл запрос.
     # Если оператор задал отдельную модель для роли, чьё имя совпало с основной,

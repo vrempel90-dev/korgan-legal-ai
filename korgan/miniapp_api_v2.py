@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from korgan import ai_cost
 from korgan import claim_corpus_health as corpus_health
 from korgan import document_stage_latency as stage_latency
+from korgan import generation_progress as progress
 from korgan import legal_calc
 from korgan import miniapp_api as legacy
 from korgan.ai_provider import openai_configured
@@ -24,6 +25,7 @@ from korgan.asgi_lifespan import add_lifespan
 from korgan.claim_docx import build_claim_docx
 from korgan.contract_docx import build_contract_docx
 from korgan.document_quality import assess_document_quality, rendered_docx_blockers
+from korgan.document_type_routing import resolve_document_type
 from korgan.legal_types import VerificationStatus
 from korgan.pretrial import build_pretrial_docx
 from korgan.pretrial_response import build_pretrial_response_docx
@@ -235,15 +237,22 @@ async def _generate(document_type: str, context: str, language: str) -> tuple[An
             getattr(service, pipeline.draft) if document_type == "claim" else legacy._method(pipeline.draft)
         )
 
+        # Границы стадий одни и те же для замера латентности и для экрана
+        # подготовки: клиент видит ровно то, что измеряется в логах, а не
+        # отдельную выдуманную шкалу.
+        progress.report(progress.LEGAL_RESEARCH)
         with timings.stage(stage_latency.LEGAL_RESEARCH):
             research = await research_call(context, language=language)
+        progress.report(progress.DRAFTING)
         with timings.stage(stage_latency.DRAFTING):
             draft = await draft_call(context, research, language=language)
         # Детерминированные расчёты (цена иска, госпошлина, статья 353) и
         # финальная юридическая проверка идут внутри draft/QA-слоёв, поэтому
         # измеряются как одна стадия LEGAL_QA по её фактической границе.
+        progress.report(progress.LEGAL_QA)
         with timings.stage(stage_latency.LEGAL_QA):
             meta = _release_metadata(document_type, context, research, draft)
+        progress.report(progress.DOCX_RENDER)
         with timings.stage(stage_latency.DOCX_RENDER):
             file_bytes = (
                 pipeline.render(draft, language=language)
@@ -376,8 +385,9 @@ async def get_document(case_id: str, x_telegram_init_data: str = Header(default=
 async def create_case(payload: CaseRequest, x_telegram_init_data: str = Header(default="")) -> dict[str, Any]:
     user_id = legacy._identity(x_telegram_init_data)
     state = await legacy._require_consent(user_id)
-    document_type = payload.document_type.strip().lower()
-    if document_type not in _DOCUMENT_TYPES:
+    # Выбор карточки документа окончателен: тип не выводится из описания дела.
+    document_type = resolve_document_type(payload.document_type)
+    if document_type is None:
         raise HTTPException(status_code=400, detail="Выберите поддерживаемый тип документа")
 
     description = payload.description.strip()

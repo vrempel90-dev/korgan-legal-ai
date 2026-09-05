@@ -14,6 +14,8 @@ from docx.shared import Cm, Pt
 
 from korgan.claim_money_ledger import money_kind
 from korgan.document_release import review_lines
+from korgan.document_type_routing import requests_pretrial
+from korgan.pretrial_role_guard import pretrial_role_issues
 from korgan.legal_calc import AMOUNT_PATTERN as _AMOUNT_TOKEN_RE, format_kzt, parse_all_amounts_kzt, parse_amount_kzt
 from korgan.legal_types import LegalResearch, VerificationStatus
 from korgan.stable_legal_release import StableLegalProductionService, clean_language_labels, sanitize_research_sources
@@ -63,10 +65,18 @@ _LAWFUL_CONSEQUENCE_RE = re.compile(
 
 
 def is_pretrial_request(text: str | None) -> bool:
+    """Просят ли подготовить саму досудебную претензию.
+
+    Разбор вынесен в ``document_type_routing``: там же живёт зеркальный детектор
+    ответа на претензию, и только рядом их можно держать взаимоисключающими.
+    Пока каждый искал своё слово сам, фабула обычной претензии («ответа на
+    претензию не поступило») удовлетворяла обоим — и документ выходил с
+    перевёрнутыми ролями сторон.
+    """
     value = " ".join((text or "").split())
     if not value or _ADVICE_RU.search(value) or _ADVICE_KK.search(value):
         return False
-    return bool((_INTENT_RU.search(value) or _INTENT_KK.search(value)) and _ACTION.search(value))
+    return requests_pretrial(value)
 
 
 @dataclass(slots=True)
@@ -251,6 +261,10 @@ def pretrial_quality_issues(draft: PretrialDraft, research: LegalResearch) -> li
     consequences = " ".join(draft.consequences)
     if consequences.strip() and not _LAWFUL_CONSEQUENCE_RE.search(consequences):
         issues.append("последствия неисполнения не названы конкретным законным шагом")
+
+    # Роли сторон проверяются здесь, а не только на маршрутизации: конвейер
+    # может быть выбран верно, а документ всё равно написан от имени должника.
+    issues.extend(pretrial_role_issues(draft))
 
     report = review_lines(draft.body_lines(), verified_claims=research.verified_claims)
     issues.extend(report.blocking)

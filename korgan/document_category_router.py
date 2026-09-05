@@ -7,6 +7,7 @@ from aiogram.filters import Filter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from korgan import document_type_routing as routing
 from korgan.request_scope import active_document_kind, is_main_menu_text
 
 router = Router(name="strict-document-category-router")
@@ -76,6 +77,13 @@ def preferred_document_category(text: str | None) -> str | None:
 
         direction, gap, category = min(candidates, key=lambda item: (item[0], item[1]))
         if (direction == 0 and gap <= 120) or (direction == 1 and gap <= 60):
+            # Претензия и ответ на неё решаются одним взаимоисключающим
+            # детектором. Ближайшее существительное здесь не годится: оборот
+            # «ответ на претензию» содержит слово «претензию» внутри себя,
+            # поэтому обе категории всегда совпадают на одном и том же месте
+            # текста, и победитель определялся порядком перебора, а не смыслом.
+            if category in {"pretrial", "pretrial_response"}:
+                return routing.resolve_document_type(None, value) or category
             return category
 
     return None

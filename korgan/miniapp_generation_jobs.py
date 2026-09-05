@@ -5,12 +5,13 @@ import base64
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Callable
 
 import asyncpg
 from fastapi import HTTPException
 
 from korgan import document_stage_latency as stage_latency
+from korgan import generation_progress as progress
 from korgan import miniapp_document_payments as document_store
 
 LOGGER = logging.getLogger(__name__)
@@ -20,13 +21,16 @@ _POOL: asyncpg.Pool | None = None
 # иначе живую работу объявили бы прерванной из-за одной медленной записи.
 _HEARTBEAT_SECONDS = 20.0
 _LEASE_SECONDS = 120.0
+# Сколько ждать дописывания отметок о стадиях перед завершением задачи.
+_STAGE_FLUSH_SECONDS = 2.0
 
 # Строка задачи доходит до экрана подготовки как есть, поэтому в неё попадает
 # только то, что написано для человека. Технический текст исключения остаётся в
 # журнале: клиенту он ничего не объясняет, а имена полей и коды чужого API
 # показывать ему нельзя.
 _TECHNICAL_FAILURE = (
-    "Не удалось подготовить документ. Нажмите повтор — новая оплата не потребуется."
+    "Сервис временно не смог завершить подготовку документа. "
+    "Ваши материалы сохранены. Повторная попытка не потребует повторной оплаты."
 )
 
 
@@ -331,6 +335,26 @@ async def update_job(
     )
 
 
+async def advance_stage(job_id: str, *, stage: str, progress_value: int) -> None:
+    """Продвинуть строку задачи к стадии, но никогда не назад.
+
+    Сообщения о стадиях пишутся отдельными задачами и могут прийти в базу не в
+    том порядке, в каком случились. Условие `progress < $3` делает порядок
+    неважным: полоса на экране клиента не вправе поехать назад — назад работа
+    не идёт.
+    """
+    await _require_pool().execute(
+        """
+        UPDATE korgan_miniapp_generation_jobs
+        SET stage=$2, progress=$3, updated_at=NOW()
+        WHERE id=$1 AND status='running' AND progress < $3
+        """,
+        job_id,
+        stage,
+        max(0, min(int(progress_value), 100)),
+    )
+
+
 def public_job(job: GenerationJob) -> dict[str, Any]:
     return {
         "job_id": job.id,
@@ -350,17 +374,15 @@ async def _generate_payload(
     language: str,
     *,
     case_id: str,
-    on_stage: Callable[[str, int], Awaitable[None]],
+    report_stage: Callable[[str, int], None] | None = None,
 ) -> dict[str, Any]:
     from korgan import miniapp_api_v2 as core
     from korgan.miniapp_professional_release import apply_release_policy
 
-    await on_stage("legal_research", 20)
-    draft, file_bytes, filename, meta = await core._generate(document_type, context, language)
-    # The legal runtime currently performs research, drafting, QA and rendering in
-    # one bounded call. The persisted stages become authoritative at its completed
-    # boundaries; no client-side timer fabricates intermediate percentages.
-    await on_stage("quality_control", 80)
+    # Конвейер сообщает о своих фактических границах сам. Раньше между «20%» и
+    # «80%» лежала вся работа целиком, и минуту с лишним экран не менялся.
+    with progress.reporting_to(report_stage):
+        draft, file_bytes, filename, meta = await core._generate(document_type, context, language)
     # Фоновая задача вызывает движок ниже HTTP-обёртки, поэтому политику выпуска
     # она обязана применить сама: иначе документ, забракованный финальной
     # проверкой, дошёл бы до клиента только потому, что готовился в фоне.
@@ -379,7 +401,6 @@ async def _generate_payload(
         },
         case_id=case_id,
     )
-    await on_stage("document_render", 90)
     return payload
 
 
@@ -454,19 +475,30 @@ async def run_job(
     # путь до клиента или только подготовка Word.
     timings = stage_latency.StageTimings(document_type)
     status = "ok"
+    # Сообщение о стадии не вправе задерживать юридический конвейер, поэтому
+    # запись в базу идёт отдельной задачей. Порядок записей при этом не
+    # гарантирован — за него отвечает условие «только вперёд» в `advance_stage`.
+    stage_tasks: set[asyncio.Task[None]] = set()
+
+    def report_stage(stage: str, value: int) -> None:
+        task = asyncio.create_task(advance_stage(job.id, stage=stage, progress_value=value))
+        stage_tasks.add(task)
+        task.add_done_callback(stage_tasks.discard)
+
     try:
-        await on_stage("starting", 5)
+        await on_stage(progress.STARTING, progress.progress_for(progress.STARTING))
         result = await _generate_payload(
             document_type,
             context,
             language,
             case_id=job.case_id,
-            on_stage=on_stage,
+            report_stage=report_stage,
         )
         # Оплата списывается до публикации: одно сохранение состояния делает
         # документ видимым обычному запросу дела, и в этот момент задача уже
         # обязана быть оплаченной, иначе клиент увидел бы готовность, за
         # которую никто не заплатил.
+        await on_stage(progress.DELIVERY, progress.progress_for(progress.DELIVERY))
         with timings.stage(stage_latency.DELIVERY):
             await _claim_payment(job)
             # Снимок состояния из HTTP-запроса за минуту подготовки успевает
@@ -497,6 +529,19 @@ async def run_job(
         raise
     finally:
         heartbeat.cancel()
+        # Отметки о стадиях дописываются, а не отменяются: последняя стадия
+        # обычно ставится за мгновение до конца работы, и отмена стирала бы
+        # именно то состояние, ради которого экран подготовки и существует.
+        # Ждать бесконечно при этом нельзя — выдачу документа задерживать не
+        # вправе и телеметрия.
+        pending = [task for task in stage_tasks if not task.done()]
+        if pending:
+            done, unfinished = await asyncio.wait(pending, timeout=_STAGE_FLUSH_SECONDS)
+            for task in unfinished:
+                task.cancel()
+            for task in done:
+                if not task.cancelled() and task.exception() is not None:
+                    LOGGER.warning("Mini App generation stage update failed job_id=%s", job.id)
         # Одна строка на задачу: сколько заняла выдача и сколько весь путь от
         # запроса до документа у клиента. По ней после деплоя и проверяют
         # обещание «одна-две минуты».

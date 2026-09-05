@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from korgan import bot as base_bot
+from korgan.document_type_routing import intent_may_switch
 from korgan.i18n import KK, normalize_language
 from korgan.pretrial import build_pretrial_docx, is_pretrial_request, pretrial_quality_issues
 from korgan.request_scope import (
@@ -40,6 +41,9 @@ class _Intent(BaseFilter):
     async def __call__(self, message: Message, state: FSMContext) -> bool:
         data = await state.get_data()
         if data.get("mode") in {"consultation", "contract_details", "response_details"}:
+            return False
+        # Выбранный кнопкой раздел старше любого слова в фабуле дела.
+        if not intent_may_switch(data, "pretrial"):
             return False
         return is_pretrial_request(message.text)
 
