@@ -16,6 +16,7 @@
  */
 
 import test from 'node:test';
+import { clientDocumentNotes } from '../src/clientMessage.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -86,7 +87,7 @@ test('казахское серверное сообщение сохраняе�
   assert.equal(shown, 'Құжат әзірге дайын емес');
 });
 
-test('сообщения транспорта остаются собственными', () => {
+test('технические названия в сообщениях транспорта скрываются', () => {
   const timeout = clientMessage(
     failure('Превышено время ожидания ответа KORGAN API', { code: 'KORGAN_API_TIMEOUT' }),
     TEXTS,
@@ -96,8 +97,8 @@ test('сообщения транспорта остаются собствен�
     TEXTS,
   );
 
-  assert.equal(timeout, 'Превышено время ожидания ответа KORGAN API');
-  assert.equal(network, 'Не удалось подключиться к KORGAN API');
+  assert.equal(timeout, TEXTS.down);
+  assert.equal(network, TEXTS.down);
 });
 
 test('отказ в подписи Telegram объясняется отдельно', () => {
@@ -130,4 +131,11 @@ test('замена служебному тексту есть на обоих я
   for (const declaration of declarations) {
     assert.match(declaration, /[Ѐ-ӿ]/, 'замена служебному тексту сама написана служебно');
   }
+});
+
+test('служебная пометка на русском не попадает в сообщение или документ', () => {
+  const notes = ['Проверьте адрес ответчика', 'Сбой Tole webhook: provider_status', 'SENIOR_PREFLIGHT: проверить факты'];
+  assert.deepEqual(clientDocumentNotes(notes), ['Проверьте адрес ответчика']);
+  assert.equal(clientMessage(failure(notes[1]), TEXTS), TEXTS.down);
+  assert.deepEqual(clientDocumentNotes(null), []);
 });
