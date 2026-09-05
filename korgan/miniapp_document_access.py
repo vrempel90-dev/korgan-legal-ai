@@ -83,6 +83,7 @@ def _secret() -> str:
 
 
 def _decode_document(case: dict[str, Any]) -> bytes:
+    from korgan.client_docx import clean_client_docx
     encoded = str(case.get("document_base64") or "")
     if not encoded:
         raise HTTPException(status_code=404, detail="Документ по этому делу ещё не готов")
@@ -94,7 +95,7 @@ def _decode_document(case: dict[str, Any]) -> bytes:
         raise HTTPException(status_code=404, detail="Документ по этому делу ещё не готов")
     if len(payload) > _MAX_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="Документ слишком большой")
-    return payload
+    return clean_client_docx(payload)
 
 
 def _safe_filename(value: str) -> str:

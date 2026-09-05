@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -15,6 +16,8 @@ LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 _ORIGINAL_APPROVE = tole_runtime._approve_order_from_tole
 _AUTO_TASKS: dict[str, asyncio.Task[None]] = {}
+_RECONCILE_INTERVAL_SECONDS = 5.0
+_RECONCILE_BATCH_SIZE = 5
 
 _SCOPE_CHANGED = (
     "Материалы дела изменились после создания оплаты. Повторно не платите: "
@@ -48,6 +51,9 @@ async def _mark_failed(job: jobs.GenerationJob, detail: str) -> None:
 
 async def _load_paid_case(order: document_store.DocumentPaymentOrder) -> tuple[dict[str, Any], dict[str, Any], str]:
     state = await generation_runtime.core.store.load_by_user_key(order.user_key)
+    consent = state.get("consent")
+    if not isinstance(consent, dict) or not consent.get("accepted"):
+        raise jobs.GenerationFailure("Для подготовки документа требуется согласие на обработку материалов.")
     case = (state.get("cases") or {}).get(order.case_id)
     if case is None:
         raise jobs.GenerationFailure(_MISSING_CASE)
@@ -177,6 +183,83 @@ async def start_paid_generation(order_id: int) -> jobs.GenerationJob | None:
     return job
 
 
+async def reconcile_paid_work() -> None:
+    """Repair payment -> job gaps even when every client WebView is closed.
+
+    Approved orders are themselves the durable work queue. If the process dies
+    between saving approval and inserting a job, the next cycle finds the order.
+    A unique payment_order_id plus claim_job's database transition owns execution.
+    Failed legal work is not retried blindly; its findings remain available.
+    """
+    if not generation_runtime.settings.payments_enabled or not tole_runtime.tole_configured():
+        return
+    await tole_runtime._ensure_schema()
+    # Startup may happen before an interrupted job's lease expires. Revisit
+    # silent running jobs, but leave queued jobs available for rescheduling.
+    await jobs.recover_interrupted_jobs(jobs._require_pool())
+    rows = await document_store._require_pool().fetch(
+        """
+        SELECT o.id
+        FROM korgan_miniapp_document_orders o
+        JOIN korgan_miniapp_tole_payments t ON t.order_id=o.id
+        LEFT JOIN korgan_miniapp_generation_jobs j ON j.payment_order_id=o.id
+        WHERE o.status IN ('approved', 'consumed')
+          AND (j.id IS NULL OR j.status='queued')
+        ORDER BY o.id ASC
+        LIMIT $1
+        """,
+        _RECONCILE_BATCH_SIZE,
+    )
+    for row in rows:
+        try:
+            await start_paid_generation(int(row["id"]))
+        except Exception:
+            LOGGER.exception("Paid job scheduling unavailable order_id=%s", row["id"])
+    # Repair already-approved work before waiting on the external provider.
+    try:
+        await tole_runtime._reconcile_pending_payments(limit=_RECONCILE_BATCH_SIZE)
+    except Exception:
+        LOGGER.exception("Paid payment reconciliation unavailable")
+
+
+async def _reconciliation_loop() -> None:
+    while True:
+        try:
+            await reconcile_paid_work()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.exception("Paid work recovery cycle failed")
+        await asyncio.sleep(_RECONCILE_INTERVAL_SECONDS)
+
+
+def _install_background_lifespan() -> None:
+    app = generation_runtime.app
+    previous = app.router.lifespan_context
+
+    @contextlib.asynccontextmanager
+    async def lifespan(scope_app: Any):
+        # All state/payment/job stores must be open before the worker starts;
+        # cancel its work before the earlier lifespan closes those stores.
+        async with previous(scope_app):
+            worker = None
+            if generation_runtime.settings.payments_enabled and tole_runtime.tole_configured():
+                worker = asyncio.create_task(_reconciliation_loop(), name="korgan-paid-work-recovery")
+            try:
+                yield
+            finally:
+                tasks = list(_AUTO_TASKS.values())
+                if worker is not None:
+                    tasks.append(worker)
+                for task in tasks:
+                    task.cancel()
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                _AUTO_TASKS.clear()
+
+    app.router.lifespan_context = lifespan
+
+
 async def _approve_and_autostart(order_id: int, *, provider_intent_id: str) -> None:
     await _ORIGINAL_APPROVE(order_id, provider_intent_id=provider_intent_id)
     try:
@@ -194,6 +277,7 @@ def install_paid_autostart_runtime() -> None:
     if _INSTALLED:
         return
     tole_runtime._approve_order_from_tole = _approve_and_autostart  # type: ignore[assignment]
+    _install_background_lifespan()
     _INSTALLED = True
     LOGGER.info("Installed Tole paid-document autostart runtime")
 

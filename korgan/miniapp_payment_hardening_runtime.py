@@ -79,6 +79,7 @@ async def _generation_result(identity: str, order: document_store.DocumentPaymen
 
     result: dict[str, Any] = {
         "payment_required": False,
+        "payment_confirmed": True,
         "generation_started": job.status in {"queued", "running"},
         "job": jobs.public_job(job),
     }
@@ -118,6 +119,19 @@ def install_payment_hardening_runtime() -> None:
             raise HTTPException(status_code=503, detail=_PAYMENT_DISABLED)
 
         tole_runtime._require_tole_runtime()
+        # A consumed order is deliberately absent from get_scope_order. Read
+        # its durable job first so reopening a completed case never creates a
+        # second invoice for the same paid set of materials.
+        identity, _, _, user_key, scope, _, _ = await generation_runtime._generation_scope(
+            payload, x_telegram_init_data
+        )
+        existing = await jobs.latest_job_for_case(
+            user_key=user_key, case_id=payload.case_id, case_fingerprint=scope
+        )
+        if existing is not None:
+            paid_order = await document_store.get_document_order(existing.payment_order_id, user_key=user_key)
+            if paid_order is not None and paid_order.status in {"approved", "consumed"}:
+                return await _generation_result(identity, paid_order)
         identity, order = await tole_runtime._resolve_document_order(payload, x_telegram_init_data)
         order, payment = await _reconcile_existing_payment(order)
 
@@ -146,7 +160,7 @@ def install_payment_hardening_runtime() -> None:
             )
             raise HTTPException(
                 status_code=502,
-                detail="Не удалось создать оплату Tole. Повторно платить не нужно; повторите попытку позже.",
+                detail="Не удалось открыть оплату. Повторите попытку позже. Если деньги уже списались, повторно не платите.",
             ) from exc
 
         order = await _refresh_order(order)
@@ -154,8 +168,7 @@ def install_payment_hardening_runtime() -> None:
             raise HTTPException(
                 status_code=503,
                 detail=(
-                    "Tole ещё создаёт ссылку оплаты. Повторите через несколько секунд; "
-                    "новая платёжная заявка не создастся."
+                    "Ссылка оплаты ещё готовится. Повторите через несколько секунд."
                 ),
             )
         return {
@@ -183,6 +196,7 @@ def install_payment_hardening_runtime() -> None:
         # race without issuing a second generation command or creating a second
         # order. Extra fields are additive and safe for older clients.
         if order.status in {"approved", "consumed"}:
+            result["payment_confirmed"] = True
             job = await jobs.latest_job_for_case(
                 user_key=order.user_key,
                 case_id=order.case_id,

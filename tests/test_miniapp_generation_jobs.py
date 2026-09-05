@@ -62,7 +62,8 @@ def test_startup_recovers_interrupted_running_jobs_as_retryable_failures() -> No
 
     sql = str(pool.execute_calls[0][0])
     assert "status='failed'" in sql
-    assert "status IN ('queued', 'running')" in sql
+    assert "WHERE status='running'" in sql
+    assert "'queued'" not in sql, "очередь должна автоматически возобновляться"
     assert "Сервис перезапустился" in sql
 
 

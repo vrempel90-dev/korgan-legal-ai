@@ -11,7 +11,6 @@ false "provision absent" even after the same provision was loaded from Adilet.
 
 from __future__ import annotations
 
-import io
 import logging
 import re
 import sqlite3
@@ -20,7 +19,7 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
-from docx import Document
+from korgan.client_docx import clean_client_docx
 
 from korgan.legal.corpus import (
     ACT_GK_GENERAL,
@@ -123,38 +122,6 @@ def sanitize_client_text(value: str | None) -> str | None:
     text = re.sub(r"^[ \t]*:[ \t]*", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip() or _GENERIC_CHECK_MESSAGE
-
-
-def _remove_paragraph(paragraph: Any) -> None:
-    element = paragraph._element
-    parent = element.getparent()
-    if parent is not None:
-        parent.remove(element)
-
-
-def clean_client_docx(data: bytes) -> bytes:
-    """Strip pure internal QA labels from a DOCX before Telegram delivery."""
-    try:
-        document = Document(io.BytesIO(data))
-    except Exception:
-        return data
-
-    changed = False
-    for paragraph in list(document.paragraphs):
-        upper = (paragraph.text or "").strip().upper()
-        if upper.startswith("KORGAN QA STATUS:") or upper in {
-            "PRELIMINARY DRAFT",
-            "LAWYER-REVIEW DRAFT",
-            "READY FOR FINAL HUMAN REVIEW",
-        }:
-            _remove_paragraph(paragraph)
-            changed = True
-
-    if not changed:
-        return data
-    output = io.BytesIO()
-    document.save(output)
-    return output.getvalue()
 
 
 def _clean_upload(document: Any) -> Any:

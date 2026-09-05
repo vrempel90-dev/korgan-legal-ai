@@ -66,7 +66,7 @@ def test_paid_order_schedules_generation_without_second_client_request(monkeypat
         async def load_state(user_key: str):
             assert user_key == "a" * 64
             return {
-                "consent": True,
+                "consent": {"accepted": True},
                 "cases": {
                     "case-paid": {
                         "document_type": "claim",
@@ -150,7 +150,7 @@ def test_paid_order_with_changed_case_scope_fails_closed_without_generation(monk
             return queued
 
         async def load_state(user_key: str):
-            return {"consent": True, "cases": {"case-changed": {"description": "новые факты"}}}
+            return {"consent": {"accepted": True}, "cases": {"case-changed": {"description": "новые факты"}}}
 
         async def update_job(job_id: str, **kwargs):
             updates.append(kwargs["error_detail"])
