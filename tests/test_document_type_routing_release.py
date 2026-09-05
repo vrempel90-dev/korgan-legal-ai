@@ -128,6 +128,10 @@ class _Draft:
         self.position: list[str] = []
         self.objections: list[str] = []
         self.response_terms: list[str] = []
+        self.reference = ""
+        self.claim_summary: list[str] = []
+        self.sender: list[str] = []
+        self.recipient: list[str] = []
         for key, value in values.items():
             setattr(self, key, value)
 
@@ -166,5 +170,52 @@ def test_ordinary_pretrial_response_passes_the_role_guard() -> None:
     draft = _Draft(
         title="ОТВЕТ НА ПРЕТЕНЗИЮ",
         position=["Изложенные в претензии требования не признаём."],
+    )
+    assert enforce_pretrial_response_roles(draft) == []
+
+
+def test_response_sent_by_the_party_that_wrote_the_demand_is_blocked() -> None:
+    """Ответ пишет получатель претензии, а не тот, кто её направил.
+
+    Заголовок при этом может быть совершенно правильным: перевёрнутый ответ
+    проходил проверку с оценкой 10.0 и без единого замечания, потому что роли
+    сторон никто не сверял с ссылкой на исходную претензию.
+    """
+    draft = _Draft(
+        title="ОТВЕТ НА ПРЕТЕНЗИЮ",
+        reference="На претензию ТОО «Альфа Трейд» от 15.02.2026, полученную 17.02.2026",
+        claim_summary=["Заявитель требует оплаты 4 500 000 тенге по договору поставки № 12."],
+        sender=["ТОО «Альфа Трейд», БИН 123456789012"],
+        recipient=["ТОО «Бета Снаб», БИН 210987654321"],
+        position=["Изложенные требования не признаём."],
+    )
+    issues = enforce_pretrial_response_roles(draft)
+    assert issues
+    assert "перевёрнут" in issues[0]
+    assert draft.status is VerificationStatus.NEEDS_VERIFICATION
+
+
+def test_response_from_the_actual_recipient_passes() -> None:
+    draft = _Draft(
+        title="ОТВЕТ НА ПРЕТЕНЗИЮ",
+        reference="На претензию ТОО «Альфа Трейд» от 15.02.2026, полученную 17.02.2026",
+        claim_summary=["Заявитель требует оплаты 4 500 000 тенге по договору поставки № 12."],
+        sender=["ТОО «Бета Снаб», БИН 210987654321"],
+        recipient=["ТОО «Альфа Трейд», БИН 123456789012"],
+        position=["Изложенные требования не признаём."],
+    )
+    assert enforce_pretrial_response_roles(draft) == []
+    assert draft.status is VerificationStatus.VERIFIED
+
+
+def test_response_without_a_reference_makes_no_role_claim() -> None:
+    """Без ссылки на исходную претензию роли не утверждаются наугад."""
+    draft = _Draft(
+        title="ОТВЕТ НА ПРЕТЕНЗИЮ",
+        reference="",
+        claim_summary=[],
+        sender=["ТОО «Бета Снаб»"],
+        recipient=["ТОО «Альфа Трейд»"],
+        position=["Изложенные требования не признаём."],
     )
     assert enforce_pretrial_response_roles(draft) == []

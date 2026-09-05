@@ -131,18 +131,51 @@ def test_placeholder_duty_keeps_its_task() -> None:
 
 # --- суд -------------------------------------------------------------------
 
-def test_named_court_and_a_task_to_clarify_it_cannot_coexist() -> None:
+COURT = "Специализированный межрайонный экономический суд города Алматы"
+
+
+def test_verified_court_is_named_without_a_task_to_clarify_it() -> None:
+    """Подтверждённый суд называется прямо — и задачи подтвердить его не остаётся."""
+    research = _research([SUBSTANTIVE_LINE])
+    research.notes.append(f"VERIFIED_COURT: {COURT}")
     draft = _draft(
         verification_notes=[
             "FILING_ACTION: подтвердить точное официальное наименование экономического "
             "суда по месту надлежащей подсудности.",
         ],
     )
-    assert court_is_resolved(draft) is True
     assert contradictory_release_issues(draft)
-    enforce_release_consistency(draft, CASE)
+
+    enforce_release_consistency(draft, CASE, research)
+    assert draft.court == COURT
     assert contradictory_release_issues(draft) == []
     assert not any("наименование" in note and "суда" in note for note in draft.verification_notes)
+
+
+def test_unverified_court_is_not_named_confidently() -> None:
+    """Неподтверждённое наименование не печатается: оно и есть выдуманный факт."""
+    from korgan.claim_release_consistency import (
+        UNVERIFIED_COURT_PLACEHOLDER,
+        enforce_verified_court_only,
+    )
+
+    draft = _draft()
+    assert enforce_verified_court_only(draft, CASE, _research()) is False
+    assert draft.court == UNVERIFIED_COURT_PLACEHOLDER
+    assert draft.status is VerificationStatus.NEEDS_VERIFICATION
+
+    court_tasks = [note for note in draft.verification_notes if "суда" in note]
+    assert len(court_tasks) == 1, "задача о суде должна быть ровно одна"
+    assert contradictory_release_issues(draft) == []
+
+
+def test_court_named_in_the_case_materials_is_accepted() -> None:
+    """Суд, названный самим клиентом, подтверждением обладает."""
+    from korgan.claim_release_consistency import enforce_verified_court_only
+
+    draft = _draft()
+    assert enforce_verified_court_only(draft, CASE + f" Иск подаётся в {COURT}.", _research()) is True
+    assert draft.court == COURT
 
 
 def test_unresolved_court_keeps_its_task_and_its_marker() -> None:
@@ -257,3 +290,27 @@ def test_internal_pipeline_vocabulary_in_the_body_is_reported() -> None:
 def test_clean_claim_reports_no_contradictions_at_all() -> None:
     draft = _draft()
     assert contradictory_release_issues(draft) == []
+
+
+def test_pretrial_narrative_is_not_repeated_in_a_second_section() -> None:
+    """Досудебный порядок не пересказывает фабулу слово в слово."""
+    from korgan.claim_release_consistency import duplicated_narrative_fields
+
+    line = "15.02.2026 истцом направлена претензия, полученная ответчиком 17.02.2026."
+    draft = _draft(facts=[line], pretrial_compliance=line)
+    assert duplicated_narrative_fields(draft) == ["pretrial_compliance"]
+    assert contradictory_release_issues(draft)
+
+    enforce_release_consistency(draft, CASE)
+    assert draft.pretrial_compliance == ""
+    assert draft.facts == [line], "сама фабула обязана остаться на месте"
+    assert contradictory_release_issues(draft) == []
+
+
+def test_pretrial_section_with_its_own_content_survives() -> None:
+    draft = _draft(
+        facts=["15.02.2026 истцом направлена претензия."],
+        pretrial_compliance="Обязательный досудебный порядок соблюдён: ответ на претензию не поступил.",
+    )
+    enforce_release_consistency(draft, CASE)
+    assert draft.pretrial_compliance

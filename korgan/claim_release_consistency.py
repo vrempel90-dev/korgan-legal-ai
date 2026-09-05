@@ -135,6 +135,35 @@ def _dedupe_narrative(lines: list[str]) -> list[str]:
     return result
 
 
+#: Профессиональные разделы иска, которые обязаны говорить о своём предмете, а
+#: не пересказывать фабулу. Досудебный порядок повторял хронологию претензии
+#: слово в слово: судья читал одно и то же описание дважды подряд и не понимал,
+#: идёт ли речь о двух разных претензиях.
+_ECHO_FIELDS = ("jurisdiction_reason", "pretrial_compliance", "reconciliation_measures", "limitation_period")
+
+
+def _drop_narrative_echo(draft: object) -> None:
+    known = {_normalized(line) for line in _lines(getattr(draft, "facts", [])) if _normalized(line)}
+    if not known:
+        return
+    for field in _ECHO_FIELDS:
+        value = str(getattr(draft, field, "") or "").strip()
+        if value and _normalized(value) in known:
+            setattr(draft, field, "")
+
+
+def duplicated_narrative_fields(draft: object) -> list[str]:
+    """Разделы, дословно повторяющие уже изложенную фабулу."""
+    known = {_normalized(line) for line in _lines(getattr(draft, "facts", [])) if _normalized(line)}
+    if not known:
+        return []
+    return [
+        field for field in _ECHO_FIELDS
+        if _normalized(str(getattr(draft, field, "") or "")) in known
+        and str(getattr(draft, field, "") or "").strip()
+    ]
+
+
 def unsupported_cost_requests(draft: object, case_context: str = "") -> list[str]:
     """Требования о расходах на представителя, не опертые на материалы дела."""
     proof_text = "\n".join(
@@ -161,8 +190,63 @@ def internal_text_leaks(draft: object) -> list[str]:
     return [line for line in body if _INTERNAL_TEXT_RE.search(line)]
 
 
-def enforce_release_consistency(draft: object, case_context: str = "") -> None:
+#: Чем заменяется уверенно названный, но неподтверждённый суд. Точное
+#: наименование, которого никто не проверил, судья читает как утверждение
+#: истца о подсудности — и возвращает иск, если оно неверно.
+UNVERIFIED_COURT_PLACEHOLDER = (
+    "[ТРЕБУЕТ УТОЧНЕНИЯ: точное наименование суда по надлежащей подсудности]"
+)
+UNVERIFIED_COURT_ACTION = (
+    "FILING_ACTION: подтвердить точное наименование суда и территориальную "
+    "подсудность по официальному перечню судов перед подачей."
+)
+
+
+def enforce_verified_court_only(draft: object, case_context: str = "", research: object = None) -> bool:
+    """Оставить в документе только подтверждённое наименование суда.
+
+    Два состояния взаимоисключающи. Суд либо подтверждён — материалами дела или
+    записью ``VERIFIED_COURT`` из source-bound исследования — и тогда называется
+    прямо, либо не подтверждён — и тогда не называется вовсе. Раньше документ
+    делал и то и другое сразу: печатал «Специализированный межрайонный
+    экономический суд города Алматы» и рядом сообщал, что это наименование ничем
+    не подтверждено. Подставить название за юриста нельзя, поэтому неподтверждённый
+    суд заменяется видимой пометкой и одной задачей.
+
+    Возвращает признак «суд подтверждён».
+    """
+    from korgan.document_quality import _court_is_concrete, _court_supported
+    from korgan.legal_types import LegalResearch, VerificationStatus
+
+    court = str(getattr(draft, "court", "") or "").strip()
+    if not court or not _court_is_concrete(court):
+        return False
+
+    if research is None:
+        research = LegalResearch(
+            status=VerificationStatus.NEEDS_VERIFICATION,
+            applicable_law=[],
+            procedural_requirements=[],
+            verified_claims=[],
+            unverified_claims=[],
+            source_urls=[],
+            notes=[],
+        )
+    if _court_supported(str(case_context or ""), research, court):
+        return True
+
+    draft.court = UNVERIFIED_COURT_PLACEHOLDER
+    notes = _lines(getattr(draft, "verification_notes", []))
+    notes = _drop(notes, lambda note: bool(_COURT_NOTE_RE.search(note)))
+    notes.append(UNVERIFIED_COURT_ACTION)
+    draft.verification_notes = list(dict.fromkeys(notes))
+    draft.status = VerificationStatus.NEEDS_VERIFICATION
+    return False
+
+
+def enforce_release_consistency(draft: object, case_context: str = "", research: object = None) -> None:
     """Снять противоречия между установленными фактами и перечнем задач."""
+    enforce_verified_court_only(draft, case_context, research)
     notes = _lines(getattr(draft, "verification_notes", []))
 
     if court_is_resolved(draft):
@@ -182,6 +266,7 @@ def enforce_release_consistency(draft: object, case_context: str = "") -> None:
     facts = _lines(getattr(draft, "facts", []))
     if facts:
         draft.facts = _dedupe_narrative(facts)
+    _drop_narrative_echo(draft)
 
     # Расходы на представителя без договора и оплаты в материалах — требование,
     # которое суд отклонит. Заявлять его «на всякий случай» нельзя.
@@ -209,6 +294,8 @@ def contradictory_release_issues(draft: object) -> list[str]:
     facts = _lines(getattr(draft, "facts", []))
     if len(facts) != len({_normalized(line) for line in facts if _normalized(line)}):
         issues.append("фабула повторена дважды в разделе фактических обстоятельств")
+    for field in duplicated_narrative_fields(draft):
+        issues.append(f"раздел «{field}» дословно повторяет уже изложенную фабулу")
 
     for leak in internal_text_leaks(draft):
         issues.append(f"служебный текст конвейера попал в судебный документ: {leak}")

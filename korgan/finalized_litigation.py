@@ -52,7 +52,7 @@ class FinalizedProductionClaimService(ProductionClaimService):
         # каждый оставляет собственную задачу «уточнить». Когда факт уже
         # установлен, задача о нём — противоречие, а не подстраховка: документ
         # одновременно называл суд и просил его подтвердить.
-        enforce_release_consistency(draft, case_context)
+        enforce_release_consistency(draft, case_context, research)
 
         # Правовое обоснование пересобирается целиком из подтверждённых выводов
         # исследования. Всё, что не прошло сверку, отбрасывается — и вместе с
@@ -91,7 +91,7 @@ class FinalizedProductionClaimService(ProductionClaimService):
             else:
                 draft.status = VerificationStatus.VERIFIED
                 draft.verification_notes.clear()
-            enforce_release_consistency(draft, case_context)
+            enforce_release_consistency(draft, case_context, research)
             return draft
 
         draft.status = VerificationStatus.NEEDS_VERIFICATION
@@ -104,5 +104,5 @@ class FinalizedProductionClaimService(ProductionClaimService):
         draft.verification_notes = list(dict.fromkeys([*filing, *nonfiling, score_note]))
         # Пересборка перечня возвращает в него замечания гейтов качества: среди
         # них снова оказываются задачи об уже установленных суде и пошлине.
-        enforce_release_consistency(draft, case_context)
+        enforce_release_consistency(draft, case_context, research)
         return draft

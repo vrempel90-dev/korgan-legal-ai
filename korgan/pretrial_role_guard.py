@@ -68,6 +68,31 @@ TITLE_ROLE_NOTE = (
 )
 
 
+#: Название организации в кавычках-ёлочках — самый надёжный опознавательный
+#: признак стороны в казахстанском деловом документе: ТОО «Альфа Трейд».
+#: Фамилия физического лица берётся как отдельное слово с заглавной буквы.
+_ORG_NAME_RE = re.compile(r"[«\"]([^»\"]{2,80})[»\"]")
+
+
+def _party_names(values: object) -> set[str]:
+    """Опознавательные имена стороны — по названию в кавычках."""
+    return {
+        " ".join(match.group(1).split()).casefold()
+        for match in _ORG_NAME_RE.finditer(_text(values))
+    }
+
+
+def _claimant_of_the_original_demand(draft: object) -> set[str]:
+    """Кто направил исходную претензию — по ссылке на неё в самом ответе."""
+    reference = " ".join(
+        [
+            _text(getattr(draft, "reference", "")),
+            _text(getattr(draft, "claim_summary", [])),
+        ]
+    )
+    return _party_names(reference)
+
+
 def _text(values: object) -> str:
     if isinstance(values, (list, tuple)):
         return " ".join(str(item or "") for item in values)
@@ -121,6 +146,25 @@ def pretrial_response_role_issues(draft: object) -> list[str]:
             "ответ на претензию сформулирован как требование к другой стороне — "
             "проверьте, от чьего имени готовится документ"
         )
+
+    # Ответ пишет тот, кто претензию получил. Если в шапке отправителем стоит
+    # сторона, которая эту претензию и направила, документ говорит от чужого
+    # имени — заголовок при этом может быть совершенно правильным, и одной его
+    # проверки мало: именно так перевёрнутый ответ получал 10.0 без замечаний.
+    demanding = _claimant_of_the_original_demand(draft)
+    if demanding:
+        sender = _party_names(getattr(draft, "sender", []))
+        recipient = _party_names(getattr(draft, "recipient", []))
+        if sender and sender & demanding:
+            issues.append(
+                "отправителем ответа указана сторона, которая сама направила претензию — "
+                "роли отправителя и адресата перевёрнуты"
+            )
+        elif recipient and sender and not (recipient & demanding):
+            issues.append(
+                "адресатом ответа указана не та сторона, которая направила претензию — "
+                "проверьте реквизиты отправителя и адресата"
+            )
     return issues
 
 
