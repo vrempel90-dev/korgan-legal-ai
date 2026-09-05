@@ -26,7 +26,9 @@ export function shouldPollDocumentPayment(payment) {
   const status = String(payment?.status || '').trim();
   if (!status) return false;
   if (isAutomaticDocumentPayment(payment)) {
-    return status === 'pending_receipt' || status === 'awaiting_admin';
+    // A confirmed payment can precede durable job creation. Keep reading until
+    // the server returns the job; never send a second generation command.
+    return ['pending_receipt', 'awaiting_admin', 'approved', 'consumed'].includes(status);
   }
   return status === 'awaiting_admin';
 }
@@ -40,8 +42,10 @@ export function startDocumentPaymentPolling({
   orderId,
   fetchStatus,
   onPayment,
+  onGeneration,
   onError,
-  intervalMs = 8000,
+  intervalMs = 3000,
+  immediate = false,
   schedule = globalThis.setTimeout,
   cancelSchedule = globalThis.clearTimeout,
 }) {
@@ -65,7 +69,15 @@ export function startDocumentPaymentPolling({
       const result = await fetchStatus(id);
       if (stopped) return;
       const payment = requireDocumentPayment(result);
+      if (String(payment.order_id || '') !== id) throw new Error('Получен статус другой оплаты');
       onPayment(payment);
+      if (['approved', 'consumed'].includes(payment.status) && result.job && onGeneration) {
+        if (result.job.case_id !== payment.case_id) throw new Error('Получен документ другого дела');
+        await onGeneration(result);
+        return;
+      }
+      // Older callers only consume payment state; keep their stop behaviour.
+      if (!onGeneration && ['approved', 'consumed'].includes(payment.status)) return;
       if (!shouldPollDocumentPayment(payment)) return;
     } catch (error) {
       if (stopped) return;
@@ -74,7 +86,7 @@ export function startDocumentPaymentPolling({
     queue();
   };
 
-  queue();
+  if (immediate) check(); else queue();
   return () => {
     stopped = true;
     if (timer !== null) cancelSchedule(timer);

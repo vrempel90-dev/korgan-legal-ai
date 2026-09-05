@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { interpretGeneration } from '../src/generationJob.js';
 
 import {
   isAutomaticDocumentPayment,
@@ -224,5 +225,81 @@ test('ответ завершившегося экрана не меняет с�
 
   assert.deepEqual(payments, []);
   assert.deepEqual(errors, []);
+  assert.equal(options.clock.jobs.size, 0);
+});
+
+for (const status of ['approved', 'consumed']) {
+  test(`${status}: серверная задача открывается без второй команды генерации`, async () => {
+    const states = [];
+    const payment = { order_id: 'DOC-42', case_id: 'case-1', status, automatic_confirmation: true };
+    const job = { job_id: 'job-1', case_id: 'case-1', status: 'running', stage: 'legal_drafting', progress: 55 };
+    const options = pollingOptions({
+      fetchStatus: async () => ({ payment, job, payment_confirmed: true }),
+      onGeneration: result => states.push(interpretGeneration(result)),
+    });
+    startDocumentPaymentPolling(options);
+    await options.clock.runNext();
+    assert.equal(states.length, 1);
+    assert.equal(states[0].status, 'running');
+    assert.equal(states[0].job.jobId, 'job-1');
+    assert.equal(options.clock.jobs.size, 0);
+  });
+}
+
+test('подтверждение раньше задачи продолжает опрос и получает уже готовый Word', async () => {
+  let reads = 0;
+  const states = [];
+  const payment = { order_id: 'DOC-42', case_id: 'case-1', status: 'consumed', automatic_confirmation: true };
+  const options = pollingOptions({
+    fetchStatus: async () => (++reads === 1 ? { payment } : {
+      payment,
+      job: { job_id: 'job-1', case_id: 'case-1', status: 'succeeded', stage: 'completed', progress: 100 },
+      document: { filename: 'claim.docx', title: 'Исковое заявление' },
+    }),
+    onGeneration: result => states.push(interpretGeneration(result)),
+  });
+  startDocumentPaymentPolling(options);
+  await options.clock.runNext();
+  assert.equal(states.length, 0);
+  assert.equal(options.clock.jobs.size, 1);
+  await options.clock.runNext();
+  assert.equal(states[0].status, 'ready');
+  assert.equal(states[0].document.filename, 'claim.docx');
+  assert.equal(options.clock.jobs.size, 0);
+});
+
+test('чужой заказ или документ не открывается после оплаты', async () => {
+  for (const mismatch of ['order', 'case']) {
+    const errors = [];
+    const options = pollingOptions({
+      fetchStatus: async () => ({
+        payment: { order_id: mismatch === 'order' ? 'DOC-99' : 'DOC-42', case_id: 'case-1', status: 'approved' },
+        job: { case_id: mismatch === 'case' ? 'case-99' : 'case-1' },
+      }),
+      onGeneration: () => assert.fail('открыт документ другого дела'),
+      onError: error => errors.push(error),
+    });
+    startDocumentPaymentPolling(options);
+    await options.clock.runNext();
+    assert.equal(errors.length, 1);
+    assert.equal(options.clock.jobs.size, 1);
+  }
+});
+
+test('возврат из Kaspi сразу проверяет оплату, закрытый экран не меняется', async () => {
+  let resolve;
+  let reads = 0;
+  const response = new Promise(done => { resolve = done; });
+  const options = pollingOptions({
+    immediate: true,
+    fetchStatus: () => { reads += 1; return response; },
+    onGeneration: () => assert.fail('закрытый экран получил задачу'),
+    onPayment: () => assert.fail('закрытый экран получил статус'),
+  });
+  const stop = startDocumentPaymentPolling(options);
+  assert.equal(reads, 1);
+  stop();
+  resolve({ payment: { order_id: 'DOC-42', status: 'approved' }, job: {} });
+  await response;
   assert.equal(options.clock.jobs.size, 0);
 });

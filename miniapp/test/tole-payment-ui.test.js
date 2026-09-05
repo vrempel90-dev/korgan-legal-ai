@@ -22,10 +22,10 @@ test('payment screen does not expose provider or technical confirmation mechanic
   assert.match(main, /documentPaymentText: 'Оплатите документ через Kaspi\.'/);
 });
 
-test('approved automatic payment auto-starts the existing generation path once', () => {
-  assert.match(main, /autoStartedPayment = useRef\(''\)/);
-  assert.match(main, /docPayment\?\.status === 'approved'/);
-  assert.match(main, /autoStartedPayment\.current = approvedOrder;\s*generateDocument\(\)/);
+test('payment status hands its server job directly to the generation screen', () => {
+  assert.match(main, /onGeneration: result => applyGenerationState\(result\)/);
+  assert.doesNotMatch(main, /autoStartedPayment/);
+  assert.match(main, /role="status" className="success-note payment-received"/);
 });
 
 test('deferred global generation progress UI remains present and untouched', () => {
