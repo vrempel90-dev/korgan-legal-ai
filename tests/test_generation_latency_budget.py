@@ -136,3 +136,31 @@ def test_clean_draft_needs_no_repair_call() -> None:
     )
     assert result is clean
     assert calls == []
+
+
+def test_backend_and_mini_app_agree_on_the_list_of_stages() -> None:
+    """Экран подготовки перечисляет ровно те стадии, которые отмечает бэкенд.
+
+    Разъехавшись, эти два списка дают самый неприятный вид ошибки: шаг на
+    экране никогда не закрывается, потому что бэкенд сообщает о стадии, которой
+    во фронтенде нет, — и подготовка выглядит зависшей, хотя идёт.
+    """
+    import pathlib
+    import re
+
+    from korgan import generation_progress
+
+    source = pathlib.Path("miniapp/src/generationStages.js").read_text(encoding="utf-8")
+    block = re.search(r"export const STAGE_ORDER = \[(.*?)\];", source, re.DOTALL)
+    assert block is not None, "во фронтенде не найден список стадий"
+    frontend = tuple(re.findall(r"'([a-z_]+)'", block.group(1)))
+    assert frontend == generation_progress.STAGE_ORDER
+
+
+def test_every_reported_stage_has_a_progress_value() -> None:
+    from korgan import generation_progress
+
+    for stage in generation_progress.STAGE_ORDER:
+        assert generation_progress.progress_for(stage) > 0
+    values = [generation_progress.progress_for(stage) for stage in generation_progress.STAGE_ORDER]
+    assert values == sorted(values), "стадии обязаны идти по возрастанию готовности"

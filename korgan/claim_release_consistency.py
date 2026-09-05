@@ -61,7 +61,7 @@ _DUTY_AMOUNT_NOTE_RE = re.compile(
 _REPRESENTATIVE_COST_RE = re.compile(
     r"(?i)(?:расход\w*\s+(?:на|по)\s+(?:(?:оплат\w*|услуг\w*)\s+){0,2}"
     r"(?:представител\w*|адвокат\w*|юрист\w*|юридическ\w*)|"
-    r"öкіл\w*\s+шығын\w*|өкіл\w*\s+шығын\w*)"
+    r"өкіл\w*\s+шығын\w*)"
 )
 _REPRESENTATIVE_PROOF_RE = re.compile(
     r"(?i)(?:договор\w*[^.\n]{0,60}(?:юридическ\w*|представител\w*|адвокат\w*)|"

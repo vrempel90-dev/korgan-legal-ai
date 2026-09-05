@@ -5,7 +5,7 @@ import base64
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Callable
 
 import asyncpg
 from fastapi import HTTPException
