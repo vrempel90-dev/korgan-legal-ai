@@ -142,7 +142,8 @@ async def recover_interrupted_jobs(pool: Any) -> None:
     задачу значило бы сказать клиенту «подготовка не завершилась» о работе,
     которая идёт: он нажал бы повтор, и вторая генерация писала бы документ в то
     же дело одновременно с первой. Живая задача о себе сообщает, поэтому
-    прерванной считается та, что молчит дольше аренды.
+    прерванной считается та, что молчит дольше аренды. Задачи в очереди
+    подхватит фоновое восстановление: они ещё не начинали подготовку.
     """
     await pool.execute(
         """
@@ -150,7 +151,7 @@ async def recover_interrupted_jobs(pool: Any) -> None:
         SET status='failed', stage='interrupted', progress=0,
             error_detail='Сервис перезапустился во время подготовки документа. Запустите повтор без новой оплаты.',
             finished_at=NOW(), updated_at=NOW()
-        WHERE status IN ('queued', 'running')
+        WHERE status='running'
           AND updated_at < NOW() - make_interval(secs => $1::double precision)
         """,
         _LEASE_SECONDS,
@@ -365,6 +366,13 @@ async def _generate_payload(
         },
         case_id=case_id,
     )
+    from korgan.client_docx import clean_client_docx
+
+    # Only the released artifact is cleaned; verification findings and the
+    # original draft remain available to every gate above.
+    if payload.get("document_base64"):
+        released_bytes = base64.b64decode(payload["document_base64"], validate=True)
+        payload["document_base64"] = base64.b64encode(clean_client_docx(released_bytes)).decode("ascii")
     await on_stage("document_render", 90)
     return payload
 

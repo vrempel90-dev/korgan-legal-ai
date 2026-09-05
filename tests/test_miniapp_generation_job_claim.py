@@ -215,7 +215,7 @@ def test_recovery_spares_a_job_that_is_still_reporting(monkeypatch) -> None:
     asyncio.run(jobs.recover_interrupted_jobs(pool))
 
     sql = str(pool.execute_calls[0][0])
-    assert "status IN ('queued', 'running')" in sql
+    assert "WHERE status='running'" in sql
     assert "updated_at <" in sql, "восстановление объявляет прерванной живую задачу"
     assert jobs._LEASE_SECONDS in pool.execute_calls[0]
     assert jobs._LEASE_SECONDS > jobs._HEARTBEAT_SECONDS * 2

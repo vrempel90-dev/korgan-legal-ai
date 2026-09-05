@@ -5,8 +5,12 @@ import hashlib
 import hmac
 import inspect
 import json
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
+import pytest
 
 from korgan import miniapp_tole_payments as tole_payments
 from korgan.miniapp_tole_payments import ToleClient, verify_tole_webhook_signature
@@ -140,3 +144,50 @@ def test_tole_orders_never_enter_legacy_manual_admin_state() -> None:
 
         approve_source = inspect.getsource(autostart._ORIGINAL_APPROVE)
     assert "WHERE id=$1 AND status='pending_receipt'" in approve_source
+
+
+@pytest.mark.parametrize("changes,approved", [
+    ({}, True),
+    ({"status": "processing"}, False),
+    ({"status": "operation.succeeded"}, False),
+    ({"id": "other-intent"}, False),
+    ({"id": None}, False),
+    ({"amount": 999}, False),
+    ({"amount": "1000"}, False),
+    ({"currency": None}, False),
+    ({"currency": "USD"}, False),
+    ({"environment": "sandbox"}, False),
+    ({"providerStatus": "SandboxProcessed"}, False),
+])
+def test_only_the_saved_live_intent_with_exact_money_authorizes_generation(monkeypatch, changes, approved):
+    payment = tole_payments.TolePayment(42, "intent-42", "cmd-42", "stable-key", "https://qr.kaspi.kz/example", "", "created", 1000, "KZT")
+    data = {"id": "intent-42", "status": "paid", "amount": 1000, "currency": "KZT", **changes}
+    approve = AsyncMock()
+
+    async def save(order_id, **values):
+        nonlocal payment
+        assert order_id == 42
+        payment = replace(payment, **values)
+
+    async def get(order_id):
+        assert order_id == 42
+        return payment
+
+    monkeypatch.setattr(tole_payments, "_upsert_provider_result", save)
+    monkeypatch.setattr(tole_payments, "_get_tole_payment", get)
+    monkeypatch.setattr(tole_payments, "_approve_order_from_tole", approve)
+    client = SimpleNamespace(get_qr_intent=AsyncMock(return_value={"ok": True, "data": data}))
+    asyncio.run(tole_payments._reconcile_payment(payment, client=client))
+    assert approve.await_count == int(approved)
+    if approved:
+        approve.assert_awaited_once_with(42, provider_intent_id="intent-42")
+
+
+def test_test_key_cannot_enable_real_paid_documents(monkeypatch):
+    from fastapi import HTTPException
+
+    monkeypatch.setenv("TOLE_API_KEY", "tole_sk_test_v1.example")
+    monkeypatch.setenv("TOLE_CONNECTION_ID", "connection-42")
+    with pytest.raises(HTTPException) as exc:
+        tole_payments._client()
+    assert exc.value.status_code == 503

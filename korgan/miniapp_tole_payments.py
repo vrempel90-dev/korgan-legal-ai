@@ -180,7 +180,9 @@ def _client() -> ToleClient:
     api_key = _env("TOLE_API_KEY")
     connection_id = _env("TOLE_CONNECTION_ID")
     if not api_key or not connection_id:
-        raise HTTPException(status_code=503, detail="Автоматическая оплата Tole временно не настроена")
+        raise HTTPException(status_code=503, detail="Оплата временно недоступна. Попробуйте позже.")
+    if api_key.startswith("tole_sk_test_"):
+        raise HTTPException(status_code=503, detail="Приём оплаты ещё не открыт.")
     return ToleClient(api_key=api_key, connection_id=connection_id)
 
 
@@ -384,10 +386,19 @@ async def _reconcile_payment(payment: TolePayment, *, client: ToleClient | None 
     payload = await api.get_qr_intent(payment.provider_intent_id)
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     status = str(data.get("status") or "").lower()
-    amount = int(data.get("amount") or 0)
-    currency = str(data.get("currency") or "KZT").upper()
+    amount = data.get("amount")
+    currency = str(data.get("currency") or "").upper()
 
-    if amount != payment.amount_kzt or currency != "KZT":
+    # A signature or HTTP 200 alone does not bind the payment to this order.
+    # Live credentials scope the request to its saved connection. Reject any
+    # inconsistent identity/test evidence instead of defaulting missing fields.
+    if (str(data.get("id") or "") != payment.provider_intent_id
+            or str(data.get("environment") or "live").lower() != "live"
+            or str(data.get("providerStatus") or "").lower().startswith("sandbox")):
+        await _upsert_provider_result(payment.order_id, provider_status="verification_required")
+        return (await _get_tole_payment(payment.order_id)) or payment
+
+    if type(amount) is not int or amount != payment.amount_kzt or currency != "KZT":
         LOGGER.error(
             "TOLE_PAYMENT_AMOUNT_MISMATCH order_id=%s provider_intent=%s expected=%s actual=%s currency=%s",
             payment.order_id, payment.provider_intent_id, payment.amount_kzt, amount, currency,
@@ -421,6 +432,9 @@ async def _reconcile_pending_payments(limit: int = 50) -> int:
     processed = 0
     for row in rows:
         try:
+            # Rotate attempts even on a provider timeout; five abandoned or
+            # unavailable intents must not starve newer paid orders forever.
+            await _upsert_provider_result(int(row["order_id"]))
             await _reconcile_payment(_payment_from_row(row), client=client)  # type: ignore[arg-type]
             processed += 1
         except Exception:
