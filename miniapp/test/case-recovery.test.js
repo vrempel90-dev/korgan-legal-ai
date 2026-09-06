@@ -64,3 +64,46 @@ test('чужое или неполное дело отвергается', async
     caseGeneration: async () => ({ job: null }),
   }), /выбранное дело/i);
 });
+
+test('упавшая задача не прячет уже сохранённый документ', async () => {
+  // Задача могла упасть на повторе или быть объявлена прерванной после
+  // перезапуска сервиса. Документ при этом уже лежит в деле, и открывать вместо
+  // него «подготовка не завершена» значит прятать оплаченный результат.
+  const failed = { ...JOB, status: 'failed', stage: 'failed', progress: 0, retryable: true, error: 'Подготовка прервана' };
+  const document = { case_id: 'case-1', status: 'document_ready', filename: 'claim.docx' };
+
+  const result = await recoverCaseWorkspace('case-1', {
+    getCase: async () => ({ case: { ...CASE, has_document: true } }),
+    caseGeneration: async () => ({ job: failed }),
+    getDocument: async () => document,
+  });
+
+  assert.equal(result.view, 'ready');
+  assert.equal(result.document, document);
+});
+
+test('упавшая задача без документа по-прежнему показывает отказ', async () => {
+  const failed = { ...JOB, status: 'failed', stage: 'failed', progress: 0, retryable: true, error: 'Подготовка прервана' };
+
+  const result = await recoverCaseWorkspace('case-1', {
+    getCase: async () => ({ case: { ...CASE, has_document: false } }),
+    caseGeneration: async () => ({ job: failed }),
+    getDocument: async () => { throw new Error('документа нет'); },
+  });
+
+  assert.equal(result.view, 'generating');
+  assert.equal(result.generation.status, 'failed');
+});
+
+test('идущая подготовка не перекрывается старым документом', async () => {
+  // Повторная подготовка по тому же делу действительно идёт: показать вместо
+  // неё прошлый документ значило бы соврать о происходящем.
+  const result = await recoverCaseWorkspace('case-1', {
+    getCase: async () => ({ case: { ...CASE, has_document: true } }),
+    caseGeneration: async () => ({ job: { ...JOB, status: 'running', stage: 'drafting', progress: 45 } }),
+    getDocument: async () => ({ case_id: 'case-1', status: 'document_ready', filename: 'old.docx' }),
+  });
+
+  assert.equal(result.view, 'generating');
+  assert.equal(result.generation.progress, 45);
+});

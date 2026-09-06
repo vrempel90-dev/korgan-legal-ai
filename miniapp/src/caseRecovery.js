@@ -43,6 +43,17 @@ export async function recoverCaseWorkspace(caseId, api) {
     };
   }
 
+  // Сохранённый документ старше неудачи последней попытки. Задача могла упасть
+  // на повторе или быть объявлена прерванной после перезапуска сервиса, но
+  // документ при этом уже лежит в деле — и открывать вместо него экран
+  // «подготовка не завершена» значит прятать от клиента то, за что он заплатил.
+  // Состояние идущей подготовки так не перекрывается: она действительно идёт.
+  const documentSaved = Boolean(caseData.has_document) || caseData.status === 'document_ready';
+  if (generationState.status === 'failed' && documentSaved && typeof api.getDocument === 'function') {
+    const document = await api.getDocument(id);
+    return { view: 'ready', caseData, generation: null, document, generationError: null };
+  }
+
   if (generationState.status === 'running' || generationState.status === 'failed') {
     return {
       view: 'generating',
@@ -53,7 +64,7 @@ export async function recoverCaseWorkspace(caseId, api) {
     };
   }
 
-  if ((caseData.has_document || caseData.status === 'document_ready') && typeof api.getDocument === 'function') {
+  if (documentSaved && typeof api.getDocument === 'function') {
     const document = await api.getDocument(id);
     return { view: 'ready', caseData, generation: null, document, generationError: null };
   }
