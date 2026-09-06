@@ -41,23 +41,32 @@ function clampProgress(value) {
   return Math.max(0, Math.min(100, Math.round(number)));
 }
 
+/**
+ * Состояния, дальше которых дело не меняется. Опрашивать их бессмысленно, а
+ * показывать над ними полоску подготовки — значит утверждать, что работа идёт.
+ */
+export const TERMINAL_KINDS = new Set(['ready', 'failed', 'idle', 'payment']);
+
 export function caseProgressSnapshot(result, language = 'ru') {
   const t = copy(language);
   let state;
   try {
     state = interpretGeneration(result);
   } catch {
-    return { kind: 'unavailable', progress: null, label: t.unavailable, poll: true };
+    // Непонятный ответ — это неизвестность, а не «идёт подготовка». Опрос
+    // здесь допускается, но конечное число раз: сколько именно, решает
+    // вызывающий, у которого есть счётчик неудач по делу.
+    return { kind: 'unavailable', progress: null, label: t.unavailable, poll: true, terminal: false };
   }
 
   if (state.status === 'idle') {
-    return { kind: 'idle', progress: 0, label: t.idle, poll: false };
+    return { kind: 'idle', progress: 0, label: t.idle, poll: false, terminal: true };
   }
   if (state.status === 'payment_required') {
-    return { kind: 'payment', progress: 0, label: t.payment, poll: false };
+    return { kind: 'payment', progress: 0, label: t.payment, poll: false, terminal: true };
   }
   if (state.status === 'ready') {
-    return { kind: 'ready', progress: 100, label: t.ready, poll: false };
+    return { kind: 'ready', progress: 100, label: t.ready, poll: false, terminal: true };
   }
   if (state.status === 'failed') {
     return {
@@ -65,6 +74,7 @@ export function caseProgressSnapshot(result, language = 'ru') {
       progress: clampProgress(state.job?.progress),
       label: t.failed,
       poll: false,
+      terminal: true,
     };
   }
 
@@ -74,5 +84,6 @@ export function caseProgressSnapshot(result, language = 'ru') {
     progress: clampProgress(state.job?.progress),
     label: t[stage] || t.starting,
     poll: true,
+    terminal: false,
   };
 }

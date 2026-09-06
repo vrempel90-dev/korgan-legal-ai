@@ -36,6 +36,23 @@ let progressActive = false;
 let progressEpoch = 0;
 let progressTimer = null;
 
+/** Состояния, при которых полоска подготовки вообще уместна. */
+const PROGRESS_KINDS = new Set(['running', 'unavailable']);
+
+/**
+ * Сколько неудачных опросов подряд карточка терпит, прежде чем замолчать.
+ * Без предела временная недоступность превращалась в вечный опрос: каждая
+ * ошибка планировала следующую попытку, и так до закрытия приложения.
+ */
+const MAX_PROBE_FAILURES = 3;
+const failedProbes = new Map();
+
+/** Диагностика остаётся в консоли, к пользователю уходит только состояние. */
+function reportProbeFailure(caseId, error, attempts) {
+  const reason = error instanceof Error ? error.message : String(error || '');
+  console.warn(`KORGAN case progress probe failed case=${caseId} attempt=${attempts}: ${reason}`);
+}
+
 function language() {
   return loadState().language === 'kk' ? 'kk' : 'ru';
 }
@@ -111,6 +128,11 @@ function removeCaseProgressNodes() {
   for (const node of document.querySelectorAll('[data-korgan-case-progress]')) node.remove();
 }
 
+/** Убрать полоску с одной карточки, не трогая остальные. */
+function clearCaseProgress(button) {
+  for (const node of button.querySelectorAll('[data-korgan-case-progress]')) node.remove();
+}
+
 function stopCaseProgress() {
   if (!progressActive && progressTimer === null) {
     removeCaseProgressNodes();
@@ -120,13 +142,27 @@ function stopCaseProgress() {
   progressEpoch += 1;
   if (progressTimer !== null) window.clearTimeout(progressTimer);
   progressTimer = null;
+  failedProbes.clear();
   removeCaseProgressNodes();
 }
 
+/**
+ * Идентификатор дела берётся из данных карточки, а не из её текста.
+ *
+ * Раньше он вычитывался обратно из подписи: `<small>` начинался с номера дела,
+ * и парсер брал всё до первого « · ». Когда подпись сменили на «Файлов: 0 · Word»,
+ * тем же способом стало извлекаться «Файлов: 0» — и приложение начало опрашивать
+ * состояние несуществующего дела: `GET /miniapp/cases/Файлов%3A%200/generation`
+ * отвечал 404, карточка показывала «Статус временно недоступен», а опрос при
+ * ошибке продлевал сам себя — по несколько запросов в секунду с каждого
+ * открытого экрана.
+ *
+ * Текст на экране — не хранилище данных: он меняется от правок вёрстки и
+ * перевода. `data-case-id` ставит React из того же объекта дела, из которого
+ * рисует карточку.
+ */
 function caseIdFromButton(button) {
-  const metadata = String(button.querySelector('small')?.textContent || '').trim();
-  const separator = metadata.indexOf(' · ');
-  return String(separator >= 0 ? metadata.slice(0, separator) : metadata).trim();
+  return String(button?.dataset?.caseId || '').trim();
 }
 
 function progressHost(button) {
@@ -171,6 +207,13 @@ async function syncCaseProgress(epoch) {
   if (!progressActive || !isCases() || epoch !== progressEpoch) return;
   const buttons = [...document.querySelectorAll('.subbar + .page .case-list-item')];
   for (const button of buttons) {
+    // Готовому делу полоска не положена даже на мгновение: раньше она
+    // появлялась на всех карточках сразу, ещё до того, как приложение узнавало
+    // их состояние, и на завершённых так и оставалась.
+    if (button.dataset.caseStatus === 'completed') {
+      clearCaseProgress(button);
+      continue;
+    }
     if (!button.querySelector('[data-korgan-case-progress]')) {
       renderCaseProgress(button, { kind: 'pending', progress: null, label: text().progressChecking });
     }
@@ -180,18 +223,40 @@ async function syncCaseProgress(epoch) {
   await Promise.all(buttons.map(async button => {
     const caseId = caseIdFromButton(button);
     if (!caseId) return;
+    // Готовое дело своё состояние уже не меняет: опрашивать его нечего, и
+    // полоска подготовки на нём — ложь о происходящем.
+    if (button.dataset.caseStatus === 'completed') {
+      clearCaseProgress(button);
+      return;
+    }
+    let snapshot;
     try {
       const result = await korganApi.caseGeneration(caseId);
       if (!progressActive || !isCases() || epoch !== progressEpoch || !button.isConnected) return;
-      const snapshot = caseProgressSnapshot(result, language());
-      renderCaseProgress(button, snapshot);
-      if (snapshot.poll) shouldContinue = true;
-    } catch {
+      snapshot = caseProgressSnapshot(result, language());
+      failedProbes.delete(caseId);
+    } catch (error) {
       if (!progressActive || !isCases() || epoch !== progressEpoch || !button.isConnected) return;
-      const snapshot = caseProgressSnapshot({}, language());
-      renderCaseProgress(button, snapshot);
-      shouldContinue = true;
+      // Ошибка опроса не отменяет того, что уже известно о деле, и не может
+      // длиться вечно: после нескольких неудач подряд карточка перестаёт
+      // спрашивать и остаётся в последнем известном виде.
+      const attempts = (failedProbes.get(caseId) || 0) + 1;
+      failedProbes.set(caseId, attempts);
+      reportProbeFailure(caseId, error, attempts);
+      if (attempts >= MAX_PROBE_FAILURES) {
+        clearCaseProgress(button);
+        return;
+      }
+      snapshot = caseProgressSnapshot({}, language());
     }
+    // Полоска принадлежит только идущей подготовке. Для готового, упавшего и
+    // не начатого дела её быть не должно.
+    if (!snapshot.poll && !PROGRESS_KINDS.has(snapshot.kind)) {
+      clearCaseProgress(button);
+      return;
+    }
+    renderCaseProgress(button, snapshot);
+    if (snapshot.poll) shouldContinue = true;
   }));
 
   if (!progressActive || !isCases() || epoch !== progressEpoch) return;

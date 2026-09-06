@@ -139,3 +139,33 @@ test('служебная пометка на русском не попадае�
   assert.equal(clientMessage(failure(notes[1]), TEXTS), TEXTS.down);
   assert.deepEqual(clientDocumentNotes(null), []);
 });
+
+test('обрыв связи не объявляется отказом сервиса', () => {
+  // Работа продолжается на сервере: клиент просто не дозвонился. Называть это
+  // отказом значит сообщать пользователю, что подготовка встала.
+  const texts = { down: 'Сервис временно недоступен', connectionLost: 'Связь прервалась', notFound: 'Не найдено', sessionExpired: 'Сессия истекла' };
+
+  assert.equal(clientMessage({ code: 'KORGAN_API_NETWORK_ERROR', message: 'fetch failed' }, texts), 'Связь прервалась');
+  assert.equal(clientMessage({ code: 'KORGAN_API_TIMEOUT', message: 'timeout' }, texts), 'Связь прервалась');
+});
+
+test('отказ сервера по-прежнему называется отказом', () => {
+  const texts = { down: 'Сервис временно недоступен', connectionLost: 'Связь прервалась', notFound: 'Не найдено', sessionExpired: 'Сессия истекла' };
+  assert.equal(clientMessage({ status: 500, message: 'KORGAN_API_500' }, texts), 'Сервис временно недоступен');
+});
+
+test('причина отказа остаётся в консоли, а не на экране', () => {
+  const texts = { down: 'Сервис временно недоступен', connectionLost: 'Связь прервалась', notFound: 'Не найдено', sessionExpired: 'Сессия истекла' };
+  const warnings = [];
+  const original = console.warn;
+  console.warn = message => warnings.push(String(message));
+  try {
+    const shown = clientMessage({ status: 503, code: 'KORGAN_API_503', message: 'KORGAN_API_503' }, texts);
+    assert.equal(shown, 'Сервис временно недоступен');
+  } finally {
+    console.warn = original;
+  }
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /status=503/);
+  assert.match(warnings[0], /code=KORGAN_API_503/);
+});
