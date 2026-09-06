@@ -17,6 +17,9 @@ from korgan.miniapp_payment_idempotency import app
 from korgan import legal_search_latency_guard as _legal_search_latency_guard  # noqa: F401
 from korgan import fast_professional_repair_guard as _fast_professional_repair_guard  # noqa: F401
 from korgan import miniapp_generation_api as _miniapp_generation_api  # noqa: F401
+# Wire actual legal-pipeline boundaries into the persistent paid-generation job.
+# This is backend-driven progress only: no timer and no extra model calls.
+from korgan import miniapp_paid_generation_progress_runtime as _miniapp_paid_generation_progress_runtime  # noqa: F401
 from korgan import document_truth_runtime as _document_truth_runtime  # noqa: F401
 from korgan import live_article_release_runtime as _live_article_release_runtime  # noqa: F401
 # Reuse the persistent corpus already validated from official Ministry of Justice
@@ -44,6 +47,9 @@ from korgan import miniapp_tole_payments as _miniapp_tole_payments  # noqa: F401
 # Install only after Tole owns its routes: the wrapper turns a verified `paid`
 # transition into the durable generation job without requiring another client tap.
 from korgan import miniapp_paid_autostart_runtime as _miniapp_paid_autostart_runtime  # noqa: F401
+# Fiscal-receipt confirmation must enter the same durable queue as Tole, and
+# approved work must be recoverable even while every Mini App is closed.
+from korgan import miniapp_paid_receipt_handoff_runtime as _miniapp_paid_receipt_handoff_runtime  # noqa: F401
 # Replace only the document-payment/generation routes after Tole + autostart are
 # installed. This removes the legacy KASPI_PAYMENT_URL dependency and makes
 # approved/consumed payment recovery idempotent without enabling payments.
