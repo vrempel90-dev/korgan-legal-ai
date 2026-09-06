@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "test": "node --test",
-    "preview": "vite preview --host 0.0.0.0 --port ${PORT:-4173}"
+    "preview": "vite preview --host 0.0.0.0 --port ${PORT:-4173}",
+    "check": "node scripts/check-syntax.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "6.1.1",

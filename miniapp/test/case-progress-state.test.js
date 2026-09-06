@@ -41,6 +41,8 @@ test('ready is shown only when backend returned a saved document', () => {
     progress: 100,
     label: 'Документ готов',
     poll: false,
+    // Готовое дело дальше не меняется: опрашивать его больше не нужно.
+    terminal: true,
   });
 });
 
