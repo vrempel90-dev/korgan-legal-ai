@@ -1,9 +1,16 @@
 /* Client-facing payment UI stays intentionally minimal.
    Provider mechanics remain server-side and are not explained in the purchase flow. */
 
-/* The header already says "Оплата документа". Keep only the amount and actions. */
+/* The header already says "Оплата документа". Keep only the amount and actions.
+
+   Одно исключение: пояснение о том, что произойдёт после оплаты. Правило
+   писалось против служебных абзацев экрана (пересказ заголовка, механика
+   провайдера), но скрывало любой прямой абзац — вместе с ним пропадал и
+   единственный текст, который человеку здесь нужен. Строка при этом
+   присутствовала и в JSX, и в бандле, поэтому проверки исходника считали
+   экран исправленным. */
 .payment-page > h1,
-.payment-page > p,
+.payment-page > p:not(.payment-guidance),
 .payment-page > .analysis-card.manual-card {
   display: none !important;
 }
