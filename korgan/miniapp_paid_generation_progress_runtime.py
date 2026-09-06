@@ -17,6 +17,7 @@ Important invariants:
 
 import asyncio
 import logging
+from types import MethodType
 from typing import Any, Awaitable, Callable
 
 from korgan import generation_progress
@@ -52,7 +53,7 @@ def _wrap_async_method(name: str, stage: str, start_progress: int, done_progress
         return result
 
     _mark_wrapped(wrapped)
-    setattr(core.service, name, type(original)(wrapped, core.service) if hasattr(original, "__self__") else wrapped)
+    setattr(core.service, name, MethodType(wrapped, core.service))
 
 
 def _wrap_release_metadata() -> None:
