@@ -17,26 +17,36 @@ export function isAutomaticDocumentPayment(payment) {
   return payment?.payment_provider === 'tole' || payment?.automatic_confirmation === true;
 }
 
+/** Подтверждённый заказ больше никогда не должен возвращать экран к оплате. */
+export function isConfirmedDocumentPayment(payment) {
+  const status = String(payment?.status || '').trim();
+  return status === 'approved' || status === 'consumed';
+}
+
 /**
- * Ручной legacy-платёж опрашивается только после отправки чека. Tole нужно
- * опрашивать и до оплаты: webhook является быстрым сигналом, а этот GET —
- * резервная reconciliation-проверка durable payment intent у провайдера.
+ * Ручной legacy-платёж опрашивается после отправки чека. Tole нужно опрашивать
+ * и до оплаты: webhook является быстрым сигналом, а GET — резервной сверкой.
+ *
+ * После подтверждения любой провайдер остаётся в polling до появления durable
+ * generation job. Это закрывает короткое окно "оплата уже approved, задача ещё
+ * не видна" и не отправляет вторую команду генерации.
  */
 export function shouldPollDocumentPayment(payment) {
   const status = String(payment?.status || '').trim();
   if (!status) return false;
   if (isAutomaticDocumentPayment(payment)) {
-    // A confirmed payment can precede durable job creation. Keep reading until
-    // the server returns the job; never send a second generation command.
     return ['pending_receipt', 'awaiting_admin', 'approved', 'consumed'].includes(status);
   }
-  return status === 'awaiting_admin';
+  return ['awaiting_admin', 'approved', 'consumed'].includes(status);
 }
 
 /**
  * Последовательно проверяет подтверждение оплаты. Следующий запрос планируется
- * только после ответа на предыдущий: ни Tole, ни legacy admin flow не получают
- * параллельные polling-запросы.
+ * только после ответа на предыдущий: параллельных polling-запросов нет.
+ *
+ * При возврате из внешнего банковского приложения visibilitychange запускает
+ * одну немедленную сверку вместо ожидания следующего 3-секундного тика. In-flight
+ * guard не позволяет возврату создать второй одновременный запрос.
  */
 export function startDocumentPaymentPolling({
   orderId,
@@ -48,6 +58,7 @@ export function startDocumentPaymentPolling({
   immediate = false,
   schedule = globalThis.setTimeout,
   cancelSchedule = globalThis.clearTimeout,
+  visibilityTarget = globalThis.document,
 }) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('Не указан заказ для проверки оплаты');
@@ -57,39 +68,72 @@ export function startDocumentPaymentPolling({
 
   let stopped = false;
   let timer = null;
+  let checking = false;
+
+  const clearTimer = () => {
+    if (timer !== null) cancelSchedule(timer);
+    timer = null;
+  };
 
   const queue = () => {
-    if (stopped) return;
+    if (stopped || checking || timer !== null) return;
     timer = schedule(check, intervalMs);
   };
 
   const check = async () => {
-    timer = null;
+    if (stopped || checking) return;
+    checking = true;
+    clearTimer();
+    let keepPolling = true;
+
     try {
       const result = await fetchStatus(id);
       if (stopped) return;
       const payment = requireDocumentPayment(result);
       if (String(payment.order_id || '') !== id) throw new Error('Получен статус другой оплаты');
       onPayment(payment);
-      if (['approved', 'consumed'].includes(payment.status) && result.job && onGeneration) {
+
+      if (isConfirmedDocumentPayment(payment) && result.job && onGeneration) {
         if (result.job.case_id !== payment.case_id) throw new Error('Получен документ другого дела');
         await onGeneration(result);
+        keepPolling = false;
         return;
       }
-      // Older callers only consume payment state; keep their stop behaviour.
-      if (!onGeneration && ['approved', 'consumed'].includes(payment.status)) return;
-      if (!shouldPollDocumentPayment(payment)) return;
+
+      // Старые callers используют только состояние оплаты и после подтверждения
+      // должны остановиться, как раньше.
+      if (!onGeneration && isConfirmedDocumentPayment(payment)) {
+        keepPolling = false;
+        return;
+      }
+
+      keepPolling = shouldPollDocumentPayment(payment);
     } catch (error) {
       if (stopped) return;
       onError(error instanceof Error ? error : new Error(String(error || 'Ошибка проверки оплаты')));
+      keepPolling = true;
+    } finally {
+      checking = false;
+      if (!stopped && keepPolling) queue();
     }
-    queue();
   };
 
-  if (immediate) check(); else queue();
+  const onVisible = () => {
+    if (stopped || visibilityTarget?.hidden) return;
+    clearTimer();
+    void check();
+  };
+
+  if (visibilityTarget && typeof visibilityTarget.addEventListener === 'function') {
+    visibilityTarget.addEventListener('visibilitychange', onVisible);
+  }
+
+  if (immediate) void check(); else queue();
   return () => {
     stopped = true;
-    if (timer !== null) cancelSchedule(timer);
-    timer = null;
+    clearTimer();
+    if (visibilityTarget && typeof visibilityTarget.removeEventListener === 'function') {
+      visibilityTarget.removeEventListener('visibilitychange', onVisible);
+    }
   };
 }
