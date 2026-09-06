@@ -256,6 +256,53 @@ async def generate_document_job(
         }
 
 
+#: Сколько задача вправе простоять в очереди, прежде чем её подхватит любой
+#: процесс, к которому пришёл опрос состояния. Одного цикла опроса клиента
+#: (2.5 секунды) заведомо мало: исполнитель мог просто не успеть стартовать.
+_ORPHAN_QUEUE_SECONDS = 30.0
+
+
+async def _resume_orphan_job(job: jobs.GenerationJob, identity: str, state: dict[str, Any]) -> jobs.GenerationJob:
+    """Дать исполнителя задаче, которая осталась в очереди ни за кем.
+
+    Задачу запускает тот процесс, который принял HTTP-запрос на подготовку, и
+    реестр исполнителей живёт в его памяти. Если этот процесс перезапустился
+    сразу после создания задачи — или запрос пришёл в одну реплику, а опрос
+    состояния идёт в другую, — задача остаётся `queued` навсегда: подхватить её
+    некому, а восстановление при старте трогает только `running`. Клиент при
+    этом видит вечную подготовку, за которой никто не работает.
+
+    Опрос состояния приходит в любой живой процесс, поэтому подхват делается
+    здесь. Второго исполнителя это не создаёт: право на работу выдаёт переход
+    состояния в самой базе (`claim_job`), и выигрывает его ровно один.
+    """
+    if job.status != "queued":
+        return job
+    case = (state.get("cases") or {}).get(job.case_id)
+    if case is None:
+        return job
+
+    document_type = str(case.get("document_type") or "claim")
+    language = "kk" if str(case.get("language") or "ru") == "kk" else "ru"
+    context = core._case_context(case)
+    if not context.strip():
+        return job
+
+    LOGGER.warning(
+        "Mini App generation job resumed from queue job_id=%s case_id=%s",
+        job.id,
+        job.case_id,
+    )
+    await _schedule_job(
+        job=job,
+        identity=identity,
+        document_type=document_type,
+        context=context,
+        language=language,
+    )
+    return job
+
+
 @app.get("/miniapp/documents/generation/{job_id}")
 async def generation_status(
     job_id: str,
@@ -265,6 +312,8 @@ async def generation_status(
     state = await core.legacy._require_consent(identity)
     user_key = core.store.user_key(identity)
     job = await jobs.require_job(job_id, user_key=user_key)
+    if job.status == "queued" and await jobs.job_is_stale_in_queue(job.id, _ORPHAN_QUEUE_SECONDS):
+        job = await _resume_orphan_job(job, identity, state)
     result: dict[str, Any] = {"job": jobs.public_job(job)}
     if job.status == "succeeded":
         result["document"] = _ready_document(state, job.case_id)
@@ -294,6 +343,8 @@ async def case_generation_status(
     job = await jobs.latest_job_for_case(user_key=user_key, case_id=case_id)
     if job is None:
         return {"job": None}
+    if job.status == "queued" and await jobs.job_is_stale_in_queue(job.id, _ORPHAN_QUEUE_SECONDS):
+        job = await _resume_orphan_job(job, identity, state)
     result: dict[str, Any] = {"job": jobs.public_job(job)}
     if job.status == "succeeded":
         result["document"] = _ready_document(state, case_id)

@@ -217,5 +217,14 @@ def test_recovery_spares_a_job_that_is_still_reporting(monkeypatch) -> None:
     sql = str(pool.execute_calls[0][0])
     assert "WHERE status='running'" in sql
     assert "updated_at <" in sql, "восстановление объявляет прерванной живую задачу"
-    assert jobs._LEASE_SECONDS in pool.execute_calls[0]
-    assert jobs._LEASE_SECONDS > jobs._HEARTBEAT_SECONDS * 2
+    lease = jobs.lease_seconds()
+    assert lease in pool.execute_calls[0]
+    assert lease > jobs._HEARTBEAT_SECONDS * 2
+
+    # Аренда не может быть короче бюджета подготовки: система, разрешающая
+    # работать десять минут, не вправе объявлять эту работу мёртвой через две.
+    # Раньше так и было — бюджет 600 секунд против аренды 120, — и пауза в
+    # событийном цикле дольше двух минут стоила клиенту готового документа.
+    from korgan.document_latency_budget_runtime import document_generation_timeout_seconds
+
+    assert lease > document_generation_timeout_seconds()
