@@ -4,6 +4,9 @@ import asyncio
 import logging
 from typing import Any
 
+from fastapi import HTTPException
+
+from korgan import generation_progress as progress
 from korgan import miniapp_api_v5 as v5
 from korgan import miniapp_document_payments as document_store
 from korgan import miniapp_generation_api as generation_runtime
@@ -71,12 +74,12 @@ async def _run_paid_job(
     order: document_store.DocumentPaymentOrder,
     context: str,
 ) -> None:
-    async def on_stage(stage: str, progress: int) -> None:
+    async def on_stage(stage: str, value: int) -> None:
         await jobs.update_job(
             job.id,
             status="running",
             stage=stage,
-            progress=progress,
+            progress=value,
         )
 
     if await jobs.claim_job(job.id) is None:
@@ -87,14 +90,17 @@ async def _run_paid_job(
         jobs._heartbeat(job.id),
         name=f"korgan-paid-autostart-heartbeat-{job.id}",
     )
+    # Тот же приёмник стадий, что и у обычного запуска: конвейер зовёт его
+    # синхронно, поэтому собственная async-версия здесь только теряла бы стадии.
+    report_stage = jobs.StageReporter(job.id)
     try:
-        await on_stage("starting", 5)
+        await on_stage(progress.STARTING, progress.progress_for(progress.STARTING))
         result = await jobs._generate_payload(
             order.document_type,
             context,
             order.language,
             case_id=order.case_id,
-            on_stage=on_stage,
+            report_stage=report_stage,
         )
 
         # Re-read the encrypted case before publishing. Payment authorizes only
@@ -126,6 +132,7 @@ async def _run_paid_job(
     finally:
         heartbeat.cancel()
         await asyncio.gather(heartbeat, return_exceptions=True)
+        await report_stage.flush()
 
 
 async def start_paid_generation(order_id: int) -> jobs.GenerationJob | None:
@@ -177,6 +184,52 @@ async def start_paid_generation(order_id: int) -> jobs.GenerationJob | None:
     return job
 
 
+_SCHEDULE_UNAVAILABLE = (
+    "Оплата подтверждена и сохранена. Подготовку документа сейчас не удалось "
+    "поставить в очередь — повторно платить не нужно, откройте дело через минуту."
+)
+
+
+async def _durable_run_approved_document(
+    order: document_store.DocumentPaymentOrder,
+    *,
+    x_telegram_init_data: str,
+) -> dict[str, Any]:
+    """Подтверждённая оплата ставит задачу в очередь, а не готовит документ здесь.
+
+    Прежний обработчик вызывал юридический конвейер прямо внутри HTTP-запроса.
+    Подготовка занимает около двух минут, поэтому запрос жил на грани таймаута
+    Telegram WebView и прокси, а строки задачи не существовало вовсе: показать
+    прогресс было нечем, закрытие Mini App теряло работу, и оборванный запрос
+    выглядел для клиента как «Сервис временно недоступен» при списанной оплате.
+
+    Здесь оба платёжных провайдера сходятся в одну сохраняемую задачу. Ответ
+    несёт и её состояние, и сам платёж: экран оплаты разбирает именно `payment`,
+    а экран подготовки — `job`.
+
+    ``x_telegram_init_data`` не используется: задача находит оплаченное дело по
+    необратимому ключу пользователя из самого ордера, поэтому подготовка не
+    зависит ни от подписи Telegram, ни от того, вернулся ли человек в Mini App.
+    """
+    try:
+        job = await start_paid_generation(order.id)
+    except Exception as exc:  # noqa: BLE001 — оплата уже подтверждена и сохранена
+        # Имя недоступного хранилища ничего не объясняет человеку и не должно
+        # доходить до экрана. Причина остаётся в журнале, ордер — оплаченным.
+        LOGGER.exception("PAID_DOCUMENT_SCHEDULE_UNAVAILABLE order_id=%s", order.id)
+        raise HTTPException(status_code=503, detail=_SCHEDULE_UNAVAILABLE) from exc
+    if job is None:
+        raise HTTPException(status_code=503, detail=_SCHEDULE_UNAVAILABLE)
+    return {
+        "payment_required": False,
+        "generation_started": job.status in {"queued", "running"},
+        "job": jobs.public_job(job),
+        "paid": True,
+        "payment_order_id": order.id,
+        "payment": v5._payment_payload(order),
+    }
+
+
 async def _approve_and_autostart(order_id: int, *, provider_intent_id: str) -> None:
     await _ORIGINAL_APPROVE(order_id, provider_intent_id=provider_intent_id)
     try:
@@ -190,12 +243,22 @@ async def _approve_and_autostart(order_id: int, *, provider_intent_id: str) -> N
 
 
 def install_paid_autostart_runtime() -> None:
+    """Подключить сохраняемую подготовку к обоим способам подтверждения оплаты.
+
+    Заменяется не внешний `v5._run_approved_document`, а тот внутренний
+    обработчик, который вызывает слой идемпотентности: блокировка платежа и
+    перепроверка статуса ордера остаются на месте, меняется только то, что
+    происходит после подтверждения — очередь вместо работы внутри запроса.
+    """
     global _INSTALLED
     if _INSTALLED:
         return
+    from korgan import miniapp_payment_idempotency as idempotency
+
     tole_runtime._approve_order_from_tole = _approve_and_autostart  # type: ignore[assignment]
+    idempotency._ORIGINAL_RUN_APPROVED_DOCUMENT = _durable_run_approved_document  # type: ignore[assignment]
     _INSTALLED = True
-    LOGGER.info("Installed Tole paid-document autostart runtime")
+    LOGGER.info("Installed paid-document autostart runtime for Tole and fiscal-receipt confirmation")
 
 
 install_paid_autostart_runtime()

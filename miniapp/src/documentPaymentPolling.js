@@ -32,6 +32,17 @@ export function shouldPollDocumentPayment(payment) {
 }
 
 /**
+ * Оплата подтверждена провайдером и больше не ждёт действий человека.
+ *
+ * `consumed` тоже подтверждена: заказ уже израсходован задачей подготовки, и
+ * возвращать экран к оплате по нему нельзя — деньги списаны один раз.
+ */
+export function isConfirmedDocumentPayment(payment) {
+  const status = String(payment?.status || '').trim();
+  return status === 'approved' || status === 'consumed';
+}
+
+/**
  * Последовательно проверяет подтверждение оплаты. Следующий запрос планируется
  * только после ответа на предыдущий: ни Tole, ни legacy admin flow не получают
  * параллельные polling-запросы.

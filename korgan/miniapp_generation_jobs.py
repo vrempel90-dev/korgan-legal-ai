@@ -368,6 +368,52 @@ def public_job(job: GenerationJob) -> dict[str, Any]:
     }
 
 
+class StageReporter:
+    """Приёмник стадий конвейера: синхронный вызов — запись в строку задачи.
+
+    Конвейер сообщает о стадии обычным вызовом (`generation_progress.report`),
+    поэтому приёмник обязан быть синхронным: корутина, которую никто не ждёт,
+    оставила бы полосу на месте и молча потеряла бы стадию. Запись идёт
+    отдельной задачей — сообщение о стадии не вправе задерживать подготовку
+    документа, — а порядок записей обеспечивает условие «только вперёд» в
+    `advance_stage`.
+
+    Тот же приёмник используют оба пути запуска: обычный `run_job` и автозапуск
+    сразу после подтверждённой оплаты. Две копии этой механики уже разошлись
+    однажды: в одной из них параметр назывался иначе, и каждый автозапуск падал
+    первым же вызовом конвейера.
+    """
+
+    def __init__(self, job_id: str) -> None:
+        self._job_id = job_id
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    def __call__(self, stage: str, progress_value: int) -> None:
+        task = asyncio.create_task(
+            advance_stage(self._job_id, stage=stage, progress_value=progress_value)
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def flush(self) -> None:
+        """Дописать отметки о стадиях, но не задерживать выдачу документа.
+
+        Последняя стадия обычно ставится за мгновение до конца работы, и отмена
+        стирала бы именно то состояние, ради которого экран подготовки и
+        существует. Ждать бесконечно при этом нельзя: телеметрия не вправе
+        задерживать документ.
+        """
+        pending = [task for task in self._tasks if not task.done()]
+        if not pending:
+            return
+        done, unfinished = await asyncio.wait(pending, timeout=_STAGE_FLUSH_SECONDS)
+        for task in unfinished:
+            task.cancel()
+        for task in done:
+            if not task.cancelled() and task.exception() is not None:
+                LOGGER.warning("Mini App generation stage update failed job_id=%s", self._job_id)
+
+
 async def _generate_payload(
     document_type: str,
     context: str,
@@ -475,15 +521,7 @@ async def run_job(
     # путь до клиента или только подготовка Word.
     timings = stage_latency.StageTimings(document_type)
     status = "ok"
-    # Сообщение о стадии не вправе задерживать юридический конвейер, поэтому
-    # запись в базу идёт отдельной задачей. Порядок записей при этом не
-    # гарантирован — за него отвечает условие «только вперёд» в `advance_stage`.
-    stage_tasks: set[asyncio.Task[None]] = set()
-
-    def report_stage(stage: str, value: int) -> None:
-        task = asyncio.create_task(advance_stage(job.id, stage=stage, progress_value=value))
-        stage_tasks.add(task)
-        task.add_done_callback(stage_tasks.discard)
+    report_stage = StageReporter(job.id)
 
     try:
         await on_stage(progress.STARTING, progress.progress_for(progress.STARTING))
@@ -529,19 +567,7 @@ async def run_job(
         raise
     finally:
         heartbeat.cancel()
-        # Отметки о стадиях дописываются, а не отменяются: последняя стадия
-        # обычно ставится за мгновение до конца работы, и отмена стирала бы
-        # именно то состояние, ради которого экран подготовки и существует.
-        # Ждать бесконечно при этом нельзя — выдачу документа задерживать не
-        # вправе и телеметрия.
-        pending = [task for task in stage_tasks if not task.done()]
-        if pending:
-            done, unfinished = await asyncio.wait(pending, timeout=_STAGE_FLUSH_SECONDS)
-            for task in unfinished:
-                task.cancel()
-            for task in done:
-                if not task.cancelled() and task.exception() is not None:
-                    LOGGER.warning("Mini App generation stage update failed job_id=%s", job.id)
+        await report_stage.flush()
         # Одна строка на задачу: сколько заняла выдача и сколько весь путь от
         # запроса до документа у клиента. По ней после деплоя и проверяют
         # обещание «одна-две минуты».
