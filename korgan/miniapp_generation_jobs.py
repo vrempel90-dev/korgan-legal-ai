@@ -18,7 +18,27 @@ _POOL: asyncpg.Pool | None = None
 # считают прерванной. Аренда заведомо длиннее нескольких пропущенных отметок,
 # иначе живую работу объявили бы прерванной из-за одной медленной записи.
 _HEARTBEAT_SECONDS = 20.0
-_LEASE_SECONDS = 120.0
+#: Нижняя граница аренды. Выше неё аренда считается от бюджета подготовки:
+#: система, которая разрешает работать десять минут, не вправе объявлять эту
+#: работу мёртвой через две. Раньше так и было — бюджет 600 секунд против
+#: аренды 120, — и любая пауза в событийном цикле дольше двух минут
+#: (тяжёлый рендер Word, чтение локального корпуса) стоила клиенту документа:
+#: живая подготовка становилась «прерванной», хотя шла.
+_MIN_LEASE_SECONDS = 120.0
+#: Запас поверх бюджета: несколько пропущенных отметок живой задачи не должны
+#: складываться в приговор.
+_LEASE_MARGIN_SECONDS = 3 * _HEARTBEAT_SECONDS
+
+
+def lease_seconds() -> float:
+    """Сколько молчания задачи считается обрывом подготовки."""
+    from korgan.document_latency_budget_runtime import document_generation_timeout_seconds
+
+    try:
+        budget = float(document_generation_timeout_seconds())
+    except Exception:  # noqa: BLE001 — телеметрия бюджета не решает судьбу задачи
+        budget = _MIN_LEASE_SECONDS
+    return max(_MIN_LEASE_SECONDS, budget + _LEASE_MARGIN_SECONDS)
 
 # Строка задачи доходит до экрана подготовки как есть, поэтому в неё попадает
 # только то, что написано для человека. Технический текст исключения остаётся в
@@ -154,7 +174,7 @@ async def recover_interrupted_jobs(pool: Any) -> None:
         WHERE status='running'
           AND updated_at < NOW() - make_interval(secs => $1::double precision)
         """,
-        _LEASE_SECONDS,
+        lease_seconds(),
     )
 
 
