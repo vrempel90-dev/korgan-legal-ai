@@ -64,7 +64,8 @@ test('готовый документ без материалов не прев�
   const meta = caseCardMeta({ materials_count: 0, has_document: true }, 'ru');
 
   assert.doesNotMatch(meta, /Файлов: 0/);
-  assert.match(meta, /Документ готов · Word/);
+  assert.doesNotMatch(meta, /Материалы не загружены/);
+  assert.equal(meta, 'Документ готов · Word');
 });
 
 test('подпись переведена на казахский полностью', () => {

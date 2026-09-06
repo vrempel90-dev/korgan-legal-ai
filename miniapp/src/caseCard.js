@@ -92,7 +92,9 @@ export function caseCardMeta(item, language = 'ru') {
   const t = copy(language);
   const materials = Number(item?.materials_count);
   const count = Number.isFinite(materials) && materials > 0 ? materials : 0;
-  const parts = [count > 0 ? `${t.materials}: ${count}` : t.noMaterials];
+  const parts = [];
+  if (count > 0) parts.push(`${t.materials}: ${count}`);
   if (item?.has_document) parts.push(`${t.document} · Word`);
+  if (parts.length === 0) parts.push(t.noMaterials);
   return parts.join(' · ');
 }
