@@ -12,14 +12,14 @@ import { requireProfessionalDocument, requireProfessionalRuntime } from '../src/
 /** Ответы, снятые с собранного korgan.miniapp_api_recovery_cors. */
 const HEALTH = {
   status: 'ok',
-  legal_runtime: 'strict_bot',
-  word_quality_target: '10/10',
-  preliminary_fallback: true,
+  service: 'korgan-miniapp-api',
+  storage: 'postgres',
 };
 
 const PARITY = {
   status: 'ok',
   api_version: '1.0.0',
+  legal_runtime: 'strict_bot',
   service_outer: 'ClaimPipelineV2Adapter',
   service_claim_mux: 'ClaimServiceMux',
   service_stable: 'PretrialResponseProductionService',
@@ -56,9 +56,18 @@ test('ответ без версии не признаётся ответом KO
 });
 
 test('подмена юридического движка по-прежнему останавливает приложение', () => {
-  assert.throws(() => requireProfessionalRuntime({ ...HEALTH, legal_runtime: 'demo' }, PARITY));
+  assert.throws(() => requireProfessionalRuntime(HEALTH, { ...PARITY, legal_runtime: 'demo' }));
   assert.throws(() => requireProfessionalRuntime(HEALTH, { ...PARITY, service_stable: 'StubService' }));
-  assert.throws(() => requireProfessionalRuntime({ ...HEALTH, word_quality_target: '7/10' }, PARITY));
+  assert.throws(() => requireProfessionalRuntime(HEALTH, { ...PARITY, word_quality_target: '7/10' }));
+});
+
+test('health отвечает только за инфраструктуру и не обязан дублировать parity', () => {
+  assert.doesNotThrow(() => requireProfessionalRuntime({
+    status: 'ok',
+    service: 'korgan-miniapp-api',
+    storage: 'postgres',
+    state_encryption: 'AES-256-GCM',
+  }, PARITY));
 });
 
 test('production Tole automatic confirmation признаётся безопасным платёжным путём', () => {
