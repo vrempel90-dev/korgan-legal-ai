@@ -21,21 +21,55 @@ class MiniAppStore:
     Case state is AES-256-GCM encrypted before it reaches PostgreSQL.
     """
 
-    def __init__(self, database_url: str, *, secret: str, retention_days: int = 30) -> None:
+    def __init__(
+        self,
+        database_url: str,
+        *,
+        secret: str,
+        legacy_secrets: tuple[str, ...] = (),
+        retention_days: int = 30,
+    ) -> None:
         self.database_url = database_url.strip()
         self.secret = secret.encode("utf-8")
+        if not self.secret:
+            raise ValueError("Mini App state secret must not be empty")
+        legacy: list[bytes] = []
+        for candidate in legacy_secrets:
+            encoded = str(candidate or "").encode("utf-8")
+            if encoded and encoded != self.secret and encoded not in legacy:
+                legacy.append(encoded)
+        self._legacy_secrets = tuple(legacy)
         self.retention_days = max(1, min(int(retention_days), 365))
         self.pool: asyncpg.Pool | None = None
         self.memory: dict[str, dict[str, Any]] = {}
-        self._encryption_key = HKDF(
+        self._encryption_key = self._derive_encryption_key(self.secret)
+        self._legacy_encryption_keys = tuple(
+            self._derive_encryption_key(candidate) for candidate in self._legacy_secrets
+        )
+
+    @staticmethod
+    def _derive_encryption_key(secret: bytes) -> bytes:
+        return HKDF(
             algorithm=hashes.SHA256(),
             length=32,
             salt=b"korgan-miniapp-state-v1",
             info=b"korgan-miniapp-aes-256-gcm",
-        ).derive(self.secret)
+        ).derive(secret)
+
+    @staticmethod
+    def _hmac_user_key(secret: bytes, user_id: str) -> str:
+        return hmac.new(secret, str(user_id).encode("utf-8"), hashlib.sha256).hexdigest()
 
     def user_key(self, user_id: str) -> str:
-        return hmac.new(self.secret, str(user_id).encode("utf-8"), hashlib.sha256).hexdigest()
+        return self._hmac_user_key(self.secret, user_id)
+
+    def _candidate_user_keys(self, user_id: str) -> tuple[str, ...]:
+        keys = [self.user_key(user_id)]
+        for secret in self._legacy_secrets:
+            candidate = self._hmac_user_key(secret, user_id)
+            if candidate not in keys:
+                keys.append(candidate)
+        return tuple(keys)
 
     @staticmethod
     def _validated_user_key(user_key: str) -> str:
@@ -69,13 +103,31 @@ class MiniAppStore:
         try:
             nonce = base64.b64decode(str(value["nonce"]), validate=True)
             ciphertext = base64.b64decode(str(value["ciphertext"]), validate=True)
-            plaintext = AESGCM(self._encryption_key).decrypt(nonce, ciphertext, aad.encode("ascii"))
-            decoded = json.loads(plaintext.decode("utf-8"))
         except Exception as exc:
-            raise RuntimeError("Mini App state decryption failed") from exc
-        if not isinstance(decoded, dict):
-            raise RuntimeError("Mini App state payload is invalid")
-        return decoded, False
+            raise RuntimeError("Mini App state envelope is invalid") from exc
+
+        last_error: Exception | None = None
+        candidate_keys = (self._encryption_key, *self._legacy_encryption_keys)
+        for index, encryption_key in enumerate(candidate_keys):
+            try:
+                plaintext = AESGCM(encryption_key).decrypt(
+                    nonce,
+                    ciphertext,
+                    aad.encode("ascii"),
+                )
+            except Exception as exc:
+                last_error = exc
+                continue
+
+            try:
+                decoded = json.loads(plaintext.decode("utf-8"))
+            except Exception as exc:
+                raise RuntimeError("Mini App state payload is invalid") from exc
+            if not isinstance(decoded, dict):
+                raise RuntimeError("Mini App state payload is invalid")
+            return decoded, index > 0
+
+        raise RuntimeError("Mini App state decryption failed") from last_error
 
     async def open(self) -> None:
         if not self.database_url:
@@ -102,27 +154,38 @@ class MiniAppStore:
             await self.pool.close()
             self.pool = None
 
-    async def load_by_user_key(self, user_key: str) -> dict[str, Any]:
-        """Load encrypted state using only the persisted HMAC lookup key.
-
-        This is an internal server-side path for trusted background workflows
-        such as payment webhooks. It does not recover or persist a Telegram id;
-        AES-GCM uses the same HMAC key as AAD as the ordinary ``load`` path.
-        """
+    async def _load_existing_by_user_key(self, user_key: str) -> dict[str, Any] | None:
         key = self._validated_user_key(user_key)
         if self.pool is None:
-            return json.loads(json.dumps(self.memory.get(key) or {"consent": None, "cases": {}}, ensure_ascii=False))
+            if key not in self.memory:
+                return None
+            return json.loads(json.dumps(self.memory[key], ensure_ascii=False))
+
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT state_json FROM korgan_miniapp_state WHERE user_key=$1",
                 key,
             )
         if row is None:
-            return {"consent": None, "cases": {}}
+            return None
+
         state, needs_migration = self._decode_state(row["state_json"], aad=key)
         if needs_migration:
+            # Re-encrypt in place with the permanent primary state key. This
+            # preserves the persisted HMAC lookup key used by already-created
+            # payment orders while removing dependence on a rotated bot token.
             await self.save_by_user_key(key, state)
         return state
+
+    async def load_by_user_key(self, user_key: str) -> dict[str, Any]:
+        """Load encrypted state using only the persisted HMAC lookup key.
+
+        Background payment jobs may hold a legacy HMAC key. The stored row is
+        therefore decrypted with the primary key first and legacy keys second;
+        successful legacy decrypts are transparently re-encrypted in place.
+        """
+        state = await self._load_existing_by_user_key(user_key)
+        return state if state is not None else {"consent": None, "cases": {}}
 
     async def save_by_user_key(self, user_key: str, state: dict[str, Any]) -> None:
         """Persist encrypted state by its HMAC lookup key for background work."""
@@ -144,18 +207,34 @@ class MiniAppStore:
             )
 
     async def load(self, user_id: str) -> dict[str, Any]:
-        return await self.load_by_user_key(self.user_key(user_id))
+        keys = self._candidate_user_keys(user_id)
+        primary_key = keys[0]
+        for index, key in enumerate(keys):
+            state = await self._load_existing_by_user_key(key)
+            if state is None:
+                continue
+            if index > 0:
+                # Migrate the lookup key as soon as the user returns. Existing
+                # payment orders keep their legacy row key until they finish,
+                # so the old row is intentionally retained.
+                await self.save_by_user_key(primary_key, state)
+            return state
+        return {"consent": None, "cases": {}}
 
     async def save(self, user_id: str, state: dict[str, Any]) -> None:
         await self.save_by_user_key(self.user_key(user_id), state)
 
     async def delete(self, user_id: str) -> None:
-        key = self.user_key(user_id)
-        self.memory.pop(key, None)
+        keys = self._candidate_user_keys(user_id)
+        for key in keys:
+            self.memory.pop(key, None)
         if self.pool is None:
             return
         async with self.pool.acquire() as conn:
-            await conn.execute("DELETE FROM korgan_miniapp_state WHERE user_key=$1", key)
+            await conn.execute(
+                "DELETE FROM korgan_miniapp_state WHERE user_key = ANY($1::text[])",
+                list(keys),
+            )
 
     async def purge_expired(self) -> int:
         if self.pool is None:
