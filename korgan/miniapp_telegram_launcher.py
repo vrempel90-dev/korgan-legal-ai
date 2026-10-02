@@ -40,7 +40,11 @@ def _telegram_api(token: str, method: str, payload: dict[str, object] | None = N
 
 def _versioned_miniapp_url(url: str) -> str:
     """Force Telegram WebView to fetch the current Mini App shell after deploys."""
-    version = os.getenv("KORGAN_MINIAPP_CACHE_VERSION", "").strip()
+    version = (
+        os.getenv("KORGAN_MINIAPP_CACHE_VERSION", "").strip()
+        or os.getenv("RAILWAY_GIT_COMMIT_SHA", "").strip()
+        or os.getenv("RAILWAY_DEPLOYMENT_ID", "").strip()
+    )
     if not version:
         return url
     parsed = urllib.parse.urlsplit(url)
