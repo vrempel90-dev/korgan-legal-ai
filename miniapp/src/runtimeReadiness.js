@@ -29,10 +29,10 @@ function hasVerifiedDocumentPaymentPath(parity) {
 /** Готовность юридического рантайма; иначе — исключение. */
 export function requireProfessionalRuntime(health, parity) {
   if (
+    // /health answers infrastructure readiness only. Legal-runtime guarantees
+    // belong to /miniapp/parity; requiring them from /health made a healthy
+    // API look unavailable even while both endpoints returned HTTP 200.
     health?.status !== 'ok'
-    || health?.legal_runtime !== 'strict_bot'
-    || health?.word_quality_target !== '10/10'
-    || health?.preliminary_fallback !== true
     || parity?.status !== 'ok'
     // Версия обязана присутствовать: так виден ответ именно parity-эндпоинта
     // KORGAN, а не случайного прокси. Совпадение с зашитым числом не требуется.
