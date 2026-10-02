@@ -248,13 +248,19 @@ async def _generate(document_type: str, context: str, language: str) -> tuple[An
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
+async def health() -> dict[str, Any]:
+    # Keep infrastructure readiness compact, but retain these legal-runtime
+    # markers for backward compatibility with already-cached Mini App bundles.
+    # The authoritative detailed contract remains /miniapp/parity.
     return {
         "status": "ok",
         "service": "korgan-miniapp-api",
         "version": "0.6.1",
         "storage": "postgres" if store.pool is not None else "memory",
         "state_encryption": "AES-256-GCM",
+        "legal_runtime": "strict_bot",
+        "word_quality_target": "10/10",
+        "preliminary_fallback": True,
     }
 
 
