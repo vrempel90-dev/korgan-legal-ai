@@ -34,6 +34,7 @@ export function requireProfessionalRuntime(health, parity) {
     // API look unavailable even while both endpoints returned HTTP 200.
     health?.status !== 'ok'
     || parity?.status !== 'ok'
+    || parity?.legal_runtime !== 'strict_bot'
     // Версия обязана присутствовать: так виден ответ именно parity-эндпоинта
     // KORGAN, а не случайного прокси. Совпадение с зашитым числом не требуется.
     || !isFilled(parity?.api_version)
