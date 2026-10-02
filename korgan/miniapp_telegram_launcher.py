@@ -4,6 +4,7 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import uvicorn
@@ -37,9 +38,26 @@ def _telegram_api(token: str, method: str, payload: dict[str, object] | None = N
     return data
 
 
+def _versioned_miniapp_url(url: str) -> str:
+    """Force Telegram WebView to fetch the current Mini App shell after deploys."""
+    version = os.getenv("KORGAN_MINIAPP_CACHE_VERSION", "").strip()
+    if not version:
+        return url
+    parsed = urllib.parse.urlsplit(url)
+    query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    query["v"] = version
+    return urllib.parse.urlunsplit((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path or "/",
+        urllib.parse.urlencode(query),
+        parsed.fragment,
+    ))
+
+
 def register_miniapp_menu() -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    miniapp_url = os.getenv("MINIAPP_PUBLIC_URL", "").strip()
+    miniapp_url = _versioned_miniapp_url(os.getenv("MINIAPP_PUBLIC_URL", "").strip())
     button_text = os.getenv("TELEGRAM_MINIAPP_MENU_TEXT", "Открыть KORGAN").strip() or "Открыть KORGAN"
 
     if not token:
