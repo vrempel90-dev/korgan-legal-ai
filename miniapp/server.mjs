@@ -27,10 +27,16 @@ function sendFile(req, res, filePath) {
 
     const ext = path.extname(filePath).toLowerCase();
     const isAsset = filePath.includes(`${path.sep}assets${path.sep}`);
+    const isHtml = ext === '.html';
     res.writeHead(200, {
       'Content-Type': mime[ext] || 'application/octet-stream',
       'Content-Length': stat.size,
-      'Cache-Control': isAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'Cache-Control': isAsset
+        ? 'public, max-age=31536000, immutable'
+        : isHtml
+          ? 'no-store, no-cache, must-revalidate, max-age=0'
+          : 'no-cache',
+      ...(isHtml ? { Pragma: 'no-cache', Expires: '0' } : {}),
       'X-Content-Type-Options': 'nosniff',
     });
 
