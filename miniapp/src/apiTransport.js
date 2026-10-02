@@ -1,5 +1,5 @@
 const DEFAULT_TIMEOUT_MS = 30000;
-const DEFAULT_GET_RETRIES = 1;
+const DEFAULT_GET_RETRIES = 3;
 const TRANSIENT_STATUSES = new Set([429, 502, 503, 504]);
 
 function apiError(message, properties = {}) {
@@ -95,7 +95,7 @@ export function createApiTransport({
   fetchImpl = globalThis.fetch?.bind(globalThis),
   timeoutMs: defaultTimeoutMs = DEFAULT_TIMEOUT_MS,
   maxGetRetries = DEFAULT_GET_RETRIES,
-  retryDelay = attempt => delay(250 * attempt),
+  retryDelay = attempt => delay(Math.min(250 * (2 ** (attempt - 1)), 1500)),
 }) {
   const base = String(baseUrl || '').replace(/\/+$/, '');
 
