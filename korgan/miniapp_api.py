@@ -43,9 +43,20 @@ app.add_middleware(
 
 settings = get_settings()
 service = ClaimPipelineV2Adapter(PretrialResponseProductionService(settings))
+
+# State encryption must survive Telegram bot-token rotation. The dedicated
+# secret is permanent; the current bot token remains a legacy fallback so rows
+# written before this migration can be decrypted and re-encrypted automatically.
+_state_secret = os.getenv("KORGAN_MINIAPP_STATE_SECRET", "").strip() or settings.telegram_bot_token
+_legacy_state_secrets = (
+    (settings.telegram_bot_token,)
+    if _state_secret != settings.telegram_bot_token
+    else ()
+)
 store = MiniAppStore(
     settings.database_url,
-    secret=settings.telegram_bot_token,
+    secret=_state_secret,
+    legacy_secrets=_legacy_state_secrets,
     retention_days=int(os.getenv("MINIAPP_RETENTION_DAYS", "30")),
 )
 
