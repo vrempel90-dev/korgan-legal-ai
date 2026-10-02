@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 from typing import Any
 
@@ -11,6 +12,9 @@ import asyncpg
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class MiniAppStore:
@@ -147,12 +151,52 @@ class MiniAppStore:
                 "CREATE INDEX IF NOT EXISTS idx_korgan_miniapp_state_updated_at "
                 "ON korgan_miniapp_state(updated_at)"
             )
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS korgan_miniapp_state_quarantine (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_key TEXT NOT NULL,
+                    state_json JSONB NOT NULL,
+                    reason TEXT NOT NULL,
+                    quarantined_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_korgan_miniapp_state_quarantine_user_key "
+                "ON korgan_miniapp_state_quarantine(user_key)"
+            )
         await self.purge_expired()
 
     async def close(self) -> None:
         if self.pool is not None:
             await self.pool.close()
             self.pool = None
+
+    async def _quarantine_unreadable_state(self, key: str, reason: str) -> bool:
+        """Atomically preserve an unreadable row and remove it from the hot path."""
+        if self.pool is None:
+            return self.memory.pop(key, None) is not None
+
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    "DELETE FROM korgan_miniapp_state WHERE user_key=$1 RETURNING state_json",
+                    key,
+                )
+                if row is None:
+                    return False
+                payload = json.dumps(row["state_json"], ensure_ascii=False, separators=(",", ":"))
+                await conn.execute(
+                    """
+                    INSERT INTO korgan_miniapp_state_quarantine(user_key, state_json, reason, quarantined_at)
+                    VALUES($1, $2::jsonb, $3, NOW())
+                    """,
+                    key,
+                    payload,
+                    str(reason or "unreadable state")[:500],
+                )
+        return True
 
     async def _load_existing_by_user_key(self, user_key: str) -> dict[str, Any] | None:
         key = self._validated_user_key(user_key)
@@ -169,7 +213,18 @@ class MiniAppStore:
         if row is None:
             return None
 
-        state, needs_migration = self._decode_state(row["state_json"], aad=key)
+        try:
+            state, needs_migration = self._decode_state(row["state_json"], aad=key)
+        except RuntimeError as exc:
+            quarantined = await self._quarantine_unreadable_state(key, str(exc))
+            LOGGER.warning(
+                "Mini App state quarantined user_key_prefix=%s quarantined=%s reason=%s",
+                key[:12],
+                quarantined,
+                exc,
+            )
+            return None
+
         if needs_migration:
             # Re-encrypt in place with the permanent primary state key. This
             # preserves the persisted HMAC lookup key used by already-created

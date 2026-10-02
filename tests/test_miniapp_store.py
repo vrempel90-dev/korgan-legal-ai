@@ -49,3 +49,21 @@ def test_plain_staging_state_is_marked_for_encryption_migration() -> None:
     decoded, needs_migration = store._decode_state(old, aad=store.user_key("7"))
     assert decoded == old
     assert needs_migration is True
+
+
+def test_legacy_secret_can_decrypt_and_requests_migration() -> None:
+    legacy = MiniAppStore("", secret="old-bot-token")
+    aad = legacy.user_key("42")
+    state = {"consent": {"accepted": True}, "cases": {"KOR-1": {"status": "created"}}}
+    envelope = legacy._encode_state(state, aad=aad)
+
+    rotated = MiniAppStore(
+        "",
+        secret="permanent-state-secret",
+        legacy_secrets=("old-bot-token",),
+    )
+    decoded, needs_migration = rotated._decode_state(envelope, aad=aad)
+
+    assert decoded == state
+    assert needs_migration is True
+    assert rotated.user_key("42") != aad
